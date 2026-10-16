@@ -5,6 +5,53 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
 
+## Console / Logger API（必要なModだけ使用）
+
+コンソールとデバッグ出力APIは**ヘッダーオンリー・独立モジュール**です。
+JSON取得、MinHook、シンボルResolver、イベントループには依存しません。
+
+```cpp
+#include <bedrock/console.hpp>
+#include <bedrock/logger.hpp>
+
+void initializeDebug() { // DllMainではなく、初期化用ワーカースレッドから実行
+    bedrock::Console::open(L"Bedrock Debug"); // 明示的に開いたときだけ表示
+
+    bedrock::Logger log{"MyClient"};
+    log.debug("Client initialized");
+    log.info("Version: ", "1.26.52.3");
+    log.warn("ClientInstance not available");
+    log.error("Failed to resolve function: ", "getLocalPlayer");
+
+    log.setLevel(bedrock::LogLevel::Warn);
+    // DEBUGとINFOはフィルタされ、WARNとERRORのみ出力。
+    // Console::close() はこのDLLが作成したコンソールだけを閉じる。
+}
+```
+
+- `bedrock::Console::open(L"タイトル")` / `isOpen()` / `close()`
+- `bedrock::Logger logger{"ModName"}`、`debug/info/warn/error`
+- `logger.setLevel(bedrock::LogLevel::Info)` などで出力レベルを変更
+- `logger.setSink(callback, context)` による外部ログ出力への差し替えも可能
+- Win32では `OutputDebugStringA` に常時出力し、コンソールがある場合だけそこにも出力
+- Linuxではデフォルトでstderrへ出力し、Consoleオープンは非対応（false）
+
+**ゲームのstdin/stdout/stderrを付け替えません。** `CONOUT$` に直接書き込み、
+別のモジュールが既に開いているコンソールを勝手に閉じることもありません。
+多スレッドログは出力を直列化します。ログの文字列生成は該当レベルが
+有効なときだけ行われます。ロガー自身に自動スレッド・ファイル書込・
+ネットワーク処理はありません。
+
+CMakeは `bedrock::logging` のみをリンクすればOK。これはINTERFACEターゲットのため
+静的ライブラリのビルドも不要です。
+
+```cmake
+target_link_libraries(MyClient PRIVATE bedrock::events bedrock::logging)
+```
+
+コンソール表示はMod側が任意で選択できます。DllMain内部で開かず、
+DLLが完全にロードされてから使用してください。
+
 ## 軽量なEvent API（推奨）
 
 SDKにはクライアント固有のスプリント動作・DLLエントリポイント・

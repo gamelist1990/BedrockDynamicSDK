@@ -25,3 +25,9 @@ its own target, and the live PE identity. Unrecognized/invalid metadata are skip
 AOB matches, RTTI and historic SDK offsets do **not** establish runtime ABI safety.
 The sample AutoSprint uses OS keyboard input and does not invoke unknown C++ ABI
 or read unverified game object fields.
+
+## Modular runtime APIs
+
+`bedrock::events` and `bedrock::logging` are independent header-only CMake
+INTERFACE targets. Neither downloads symbol JSON, creates background threads,
+installs hooks, or changes Minecraft memory. `bedrock::symbols` is optional.

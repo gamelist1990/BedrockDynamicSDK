@@ -8,6 +8,14 @@ target_include_directories(bedrock_events INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_features(bedrock_events INTERFACE cxx_std_20)
 add_library(bedrock::events ALIAS bedrock_events)
 
+# Independent opt-in console/logger API: header only; nothing is initialized
+# until a mod explicitly logs or opens a console.
+add_library(bedrock_logging INTERFACE)
+target_include_directories(bedrock_logging INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(bedrock_logging INTERFACE cxx_std_20)
+add_library(bedrock::logging ALIAS bedrock_logging)
+
+
 add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp)
 if(NOT PROJECT_IS_TOP_LEVEL)
     set_target_properties(bedrock_resolver PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -88,6 +96,14 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         target_compile_options(events_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME events_test COMMAND events_test)
+    add_executable(logging_test tests/logging_test.cpp)
+    target_link_libraries(logging_test PRIVATE bedrock::logging)
+    if(MSVC)
+        target_compile_options(logging_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(logging_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME logging_test COMMAND logging_test)
     add_executable(text_hash_test tests/text_hash_test.cpp)
     target_link_libraries(text_hash_test PRIVATE bedrock_resolver)
     if(MSVC)
