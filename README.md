@@ -118,6 +118,21 @@ bedrock::gui::GuiHost::run(options, [] {
 `GuiHost::run` は呼び出したUIスレッドを使い、コンソール・ゲームの裏側で
 勝手にワーカースレッドを起動しません。DllMain内では呼ばないでください。
 
+### 起動直後・ホーム画面からの描画
+
+LatiteのDXGI初期化と同じく、
+`IDXGIFactory2::CreateSwapChainForHwnd` の引数からDX12キューを捕捉します。
+実際のMinecraftでは注入時にSwapChainがすでに作られている場合があるので、
+`ExecuteCommandLists` だけではなく、`ID3D12CommandQueue::Signal/Wait`
+からもキューを捕捉します。ゲームのホーム画面でも既存の
+`Present` に即座に描画できるようにするためです。
+
+さらに**DXGIのフックをネイティブCursor/MouseのGitHubプロファイル取得より先に
+有効化**し、そのネットワーク処理中は描画側のロックを保持しません。
+プロファイル取得に失敗しても描画は有効なまま、未検証のネイティブ入力
+フックだけ無効にします。対応版の入力フックが確保できたら後から有効化します。
+実際のMinecraft/Proton内での起動直後表示はユーザー実機で要確認です。
+
 ### Minecraft画面内へ直接描画する（DX11 / DX12）
 
 **ゲーム側のクリック・ホットバー操作抑止（Latiteと同じ入力境界）:**

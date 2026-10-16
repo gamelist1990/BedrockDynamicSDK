@@ -45,6 +45,11 @@ using Resize1Fn = HRESULT (STDMETHODCALLTYPE*)(
     IDXGISwapChain3*, UINT, UINT, UINT, DXGI_FORMAT, UINT,
     const UINT*, IUnknown* const*);
 using QueueFn = void (STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
+using QueueSignalFn = HRESULT (STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+using QueueWaitFn = HRESULT (STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+using CreateSwapChainForHwndFn = HRESULT (STDMETHODCALLTYPE*)(
+    IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
 using MouseInputFn = bool (__fastcall*)(void*, void*, void*);
 
 std::recursive_mutex mutex;
@@ -86,6 +91,8 @@ ComPtr<ID3D11Device> device11;
 ComPtr<ID3D11DeviceContext> context11;
 ComPtr<ID3D11On12Device> device11on12;
 ComPtr<ID3D12CommandQueue> capturedQueue;
+ComPtr<ID3D12Device> pendingDx12Device;
+bool queueWaitingLogged = false;
 ComPtr<ID3D11RenderTargetView> renderTarget;
 struct WrappedBuffer {
     ComPtr<ID3D11Resource> dx11;
@@ -101,6 +108,9 @@ ResizeFn resize11 = nullptr;
 ResizeFn resize12 = nullptr;
 Resize1Fn resize12_1 = nullptr;
 QueueFn execute12 = nullptr;
+QueueSignalFn signal12 = nullptr;
+QueueWaitFn wait12 = nullptr;
+CreateSwapChainForHwndFn createSwapChainForHwnd = nullptr;
 
 void trace(const char* line) { OutputDebugStringA(line); }
 
@@ -309,7 +319,8 @@ bool makeDx11Dummy(HWND hwnd, void** present, void** resize) {
     *resize = method<void*>(chain.Get(), 13); // IDXGISwapChain::ResizeBuffers
     return *present && *resize;
 }
-bool makeDx12Dummy(HWND hwnd, void** present, void** resize, void** resize1, void** execute) {
+bool makeDx12Dummy(HWND hwnd, void** present, void** resize, void** resize1,
+                   void** execute, void** signal, void** wait) {
     ComPtr<ID3D12Device> dev;
     if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
                                  IID_PPV_ARGS(&dev)))) {
@@ -343,8 +354,10 @@ bool makeDx12Dummy(HWND hwnd, void** present, void** resize, void** resize1, voi
     *present = method<void*>(chain3.Get(), 8);
     *resize = method<void*>(chain3.Get(), 13);
     *resize1 = method<void*>(chain3.Get(), 39);  // IDXGISwapChain3::ResizeBuffers1
-    *execute = method<void*>(queue.Get(), 10);  // ID3D12CommandQueue::ExecuteCommandLists
-    return *present && *resize && *resize1 && *execute;
+    *execute = method<void*>(queue.Get(), 10);  // ExecuteCommandLists
+    *signal = method<void*>(queue.Get(), 14);   // ID3D12CommandQueue::Signal
+    *wait = method<void*>(queue.Get(), 15);     // ID3D12CommandQueue::Wait
+    return *present && *resize && *resize1 && *execute && *signal && *wait;
 }
 
 void cleanupRenderer() {
@@ -438,11 +451,24 @@ bool initRenderer(IDXGISwapChain* chain) {
     usingDx12 = false;
     ComPtr<ID3D12Device> device12;
     if (SUCCEEDED(chain->GetDevice(IID_PPV_ARGS(&device12)))) {
-        if (!capturedQueue) return false; // Wait for real ExecuteCommandLists
+        pendingDx12Device = device12;
+        if (!capturedQueue) {
+            if (!queueWaitingLogged) {
+                trace("BedrockGuiOverlay: waiting for DX12 game command queue; renderer is independent of mouse capture\n");
+                queueWaitingLogged = true;
+            }
+            return false;
+        }
         ComPtr<ID3D12Device> queueDevice;
         if (FAILED(capturedQueue->GetDevice(IID_PPV_ARGS(&queueDevice))) ||
-            queueDevice.Get() != device12.Get())
-            return false; // Do not mix unrelated GPU queues
+            queueDevice.Get() != device12.Get()) {
+            if (!queueWaitingLogged) {
+                trace("BedrockGuiOverlay: waiting for correct DX12 queue for presented device\n");
+                queueWaitingLogged=true;
+            }
+            return false; // Never mix unrelated GPU queues
+        }
+        queueWaitingLogged = false;
         UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
         IUnknown* queues[] = {capturedQueue.Get()};
         if (FAILED(D3D11On12CreateDevice(device12.Get(), flags, nullptr, 0,
@@ -625,13 +651,49 @@ HRESULT STDMETHODCALLTYPE onResize1(IDXGISwapChain3* chain, UINT buffers, UINT w
     return resize12_1 ? resize12_1(chain,buffers,w,h,fmt,flags,nodes,queues)
                       : DXGI_ERROR_INVALID_CALL;
 }
-void STDMETHODCALLTYPE onExecute(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists) {
-    if (installed.load() && queue) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
-        if (!capturedQueue && queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
-            capturedQueue = queue;
+void captureQueue(ID3D12CommandQueue* queue, const char* source) {
+    if (!installed.load(std::memory_order_acquire) || !queue ||
+        queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
+    // The queue can be used by another DX12 device inside the same process.
+    // Prefer the queue belonging to the presented swapchain when known.
+    ComPtr<ID3D12Device> device;
+    if (FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (pendingDx12Device && pendingDx12Device.Get() != device.Get()) return;
+    if (capturedQueue.Get() != queue) {
+        capturedQueue = queue;
+        queueWaitingLogged=false;
+        trace(source);
     }
+}
+void STDMETHODCALLTYPE onExecute(ID3D12CommandQueue* queue, UINT count,
+                                  ID3D12CommandList* const* lists) {
+    captureQueue(queue,"BedrockGuiOverlay: DX12 queue acquired via ExecuteCommandLists\n");
     if (execute12) execute12(queue,count,lists);
+}
+HRESULT STDMETHODCALLTYPE onSignal(ID3D12CommandQueue* queue, ID3D12Fence* fence, UINT64 value) {
+    captureQueue(queue,"BedrockGuiOverlay: DX12 queue acquired via Signal\n");
+    return signal12 ? signal12(queue,fence,value) : E_FAIL;
+}
+HRESULT STDMETHODCALLTYPE onWait(ID3D12CommandQueue* queue, ID3D12Fence* fence, UINT64 value) {
+    captureQueue(queue,"BedrockGuiOverlay: DX12 queue acquired via Wait\n");
+    return wait12 ? wait12(queue,fence,value) : E_FAIL;
+}
+HRESULT STDMETHODCALLTYPE onCreateSwapChainForHwnd(
+        IDXGIFactory2* factory, IUnknown* device, HWND hwnd,
+        const DXGI_SWAP_CHAIN_DESC1* desc,
+        const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen,
+        IDXGIOutput* output, IDXGISwapChain1** swapchain) {
+    if (device) {
+        ComPtr<ID3D12CommandQueue> queue;
+        if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&queue)))) {
+            captureQueue(queue.Get(),
+                "BedrockGuiOverlay: DX12 queue acquired at CreateSwapChainForHwnd (Latite path)\n");
+        }
+    }
+    return createSwapChainForHwnd ?
+        createSwapChainForHwnd(factory,device,hwnd,desc,fullscreen,output,swapchain)
+        : E_FAIL;
 }
 bool hookMethod(void* target, void* detour, void** original) {
     if (!target) return false;
@@ -663,7 +725,7 @@ struct DummyWindow {
 
 bool Overlay::install(RenderCallback render, void* userdata,
                       std::string& error, OverlayOptions options) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::unique_lock<std::recursive_mutex> lock(mutex);
     if (installed.load()) { error="Already installed"; return false; }
     if (!render) { error="Missing draw callback"; return false; }
     if (options.requireMinecraftProcess && !minecraftProcess()) {
@@ -676,8 +738,17 @@ bool Overlay::install(RenderCallback render, void* userdata,
     void* d11Present=nullptr; void* d11Resize=nullptr;
     void* d12Present=nullptr; void* d12Resize=nullptr;
     void* d12Resize1=nullptr; void* d12Execute=nullptr;
+    void* d12Signal=nullptr; void* d12Wait=nullptr;
+    void* factoryCreateHwnd=nullptr;
     const bool supported11 = makeDx11Dummy(dummy.hwnd,&d11Present,&d11Resize);
-    const bool supported12 = makeDx12Dummy(dummy.hwnd,&d12Present,&d12Resize,&d12Resize1,&d12Execute);
+    const bool supported12 = makeDx12Dummy(dummy.hwnd,&d12Present,&d12Resize,
+                                          &d12Resize1,&d12Execute,
+                                          &d12Signal,&d12Wait);
+    if (supported12) {
+        ComPtr<IDXGIFactory2> factory;
+        if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+            factoryCreateHwnd=method<void*>(factory.Get(),15);
+    }
     if (!supported11 && !supported12) {
         error="Could not discover any DXGI swap-chain implementation";
         return false;
@@ -700,9 +771,50 @@ bool Overlay::install(RenderCallback render, void* userdata,
             else okay = hookMethod(d12Resize,(void*)&onResize,(void**)&resize12);
         }
         if (okay) okay = hookMethod(d12Resize1,(void*)&onResize1,(void**)&resize12_1) &&
-                         hookMethod(d12Execute,(void*)&onExecute,(void**)&execute12);
+                         hookMethod(d12Execute,(void*)&onExecute,(void**)&execute12) &&
+                         hookMethod(d12Signal,(void*)&onSignal,(void**)&signal12) &&
+                         hookMethod(d12Wait,(void*)&onWait,(void**)&wait12);
+        // Matching Latite, capture the DIRECT queue at swapchain creation too.
+        // Some games don't submit new command lists at a static title screen.
+        if (okay && factoryCreateHwnd) {
+            if (!hookMethod(factoryCreateHwnd,(void*)&onCreateSwapChainForHwnd,
+                            (void**)&createSwapChainForHwnd))
+                trace("BedrockGuiOverlay: optional swapchain creation hook unavailable\n");
+        }
     }
-    if (okay && options.nativeCursor && options.requireMinecraftProcess) {
+    // Stage 1: enable rendering independently of profile download/mouse setup.
+    if (okay) for (void* target : targets) {
+        if (MH_QueueEnableHook(target) != MH_OK) { okay = false; break; }
+    }
+    renderCallback=render;
+    renderUserdata=userdata;
+    enabled.store(options.initiallyVisible);
+    toggleKey.store(options.toggleVirtualKey);
+    captureInput.store(options.captureInput);
+    togglePreviouslyDown=false;
+    previousMouseButtons.fill(false);
+    installed.store(okay);
+    if (!okay || MH_ApplyQueued()!=MH_OK) {
+        installed.store(false);
+        enabled.store(false);
+        for (void* target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
+        targets.clear();
+        if (minhookOwned) MH_Uninitialize();
+        minhookOwned=false;
+        renderCallback=nullptr;
+        renderUserdata=nullptr;
+        error="Could not install DXGI render hooks";
+        return false;
+    }
+    trace("BedrockGuiOverlay: rendering armed BEFORE native mouse/profile setup\n");
+
+    // Release the lock NOW. Profile download/verification may be slow; the
+    // Present thread must be able to render while the native mouse setup runs.
+    lock.unlock();
+    // Stage 2: mouse cursor hooks are optional; a paused network request,
+    // missing profile or unavailable ClientInstance must never hide the UI.
+    const std::size_t rendererHookCount=targets.size();
+    if (options.nativeCursor && options.requireMinecraftProcess) {
         std::string versionJson, resolveError;
         bedrock::ProfileChoice chosen;
         bedrock::Resolver resolver;
@@ -713,7 +825,7 @@ bool Overlay::install(RenderCallback render, void* userdata,
             !resolver.loadJson(versionJson,resolveError) ||
             !resolver.attachWindowsMainModule(resolveError) ||
             !resolver.exactBuild()) {
-            error="Native cursor requires a recognized Bedrock game build: "+resolveError;
+            trace("BedrockGuiOverlay: native mouse unavailable; overlay renderer remains active\n");
             okay=false;
         } else {
             const auto grab=resolver.resolve("ClientInstance::grabCursor",true);
@@ -721,9 +833,14 @@ bool Overlay::install(RenderCallback render, void* userdata,
             if (!grab || !release || !grab->exact_build || !release->exact_build ||
                 grab->method!="exact-rva" || release->method!="exact-rva" ||
                 grab->address==release->address) {
-                error="Native ClientInstance grab/release anchors not available";
+                trace("BedrockGuiOverlay: no exact ClientInstance cursor symbols; render-only mode\n");
                 okay=false;
             } else {
+                lock.lock();
+                if (!installed.load()) {
+                    error="Overlay was shut down during native setup";
+                    return false;
+                }
                 nativeGrabAddress=reinterpret_cast<void*>(grab->address);
                 nativeReleaseAddress=reinterpret_cast<void*>(release->address);
                 ClientCursorMethod fnGrab=nullptr,fnRelease=nullptr;
@@ -763,33 +880,27 @@ bool Overlay::install(RenderCallback render, void* userdata,
             }
         }
     }
-    if (okay) for (void* target : targets) {
-        if (MH_QueueEnableHook(target) != MH_OK) { okay = false; break; }
+    // Stage 2 only: NEVER queue-enable old render hooks a second time.
+    if (!lock.owns_lock()) lock.lock();
+    if (!installed.load()) return false;
+    if (okay) for (std::size_t i=rendererHookCount; i<targets.size(); ++i) {
+        if (MH_QueueEnableHook(targets[i]) != MH_OK) {
+            okay=false;
+            break;
+        }
     }
-    // Store callback before enabling hooks to avoid a zero-function race.
-    renderCallback=render;
-    renderUserdata=userdata;
-    enabled.store(options.initiallyVisible);
-    toggleKey.store(options.toggleVirtualKey);
-    captureInput.store(options.captureInput);
-    togglePreviouslyDown=false;
-    previousMouseButtons.fill(false);
-    installed.store(okay);
-    if (okay && MH_ApplyQueued() == MH_OK) {
+    if (okay && MH_ApplyQueued()==MH_OK) {
         error.clear();
-        trace(supported12 ? "BedrockGuiOverlay: DX12/DX11 Present hooks enabled\n"
-                          : "BedrockGuiOverlay: DX11 Present hook enabled\n");
+        trace("BedrockGuiOverlay: optional native mouse hooks enabled\n");
         return true;
     }
-    installed.store(false);
-    enabled.store(false);
-    // Undo any hooks queued by this module. Never uninitialize hooks owned by another module.
-    for (void* target : targets) { MH_DisableHook(target); MH_RemoveHook(target); }
-    targets.clear();
-    if (minhookOwned) MH_Uninitialize();
-    minhookOwned=false;
-    renderCallback=nullptr;
-    renderUserdata=nullptr;
+    // Native setup failed: remove only the newly created mouse hooks, keep
+    // the already running DXGI Present/Execute/Signal/Wait renderer untouched.
+    for (std::size_t i=rendererHookCount; i<targets.size(); ++i) {
+        MH_DisableHook(targets[i]);
+        MH_RemoveHook(targets[i]);
+    }
+    targets.resize(rendererHookCount);
     nativeCursorEnabled.store(false);
     mouseBlockHookEnabled.store(false);
     originalGameMouseInput.store(nullptr);
@@ -798,8 +909,12 @@ bool Overlay::install(RenderCallback render, void* userdata,
     nativeReleaseOriginal.store(nullptr);
     nativeGrabAddress=nativeReleaseAddress=nullptr;
     nativeClient.clear();
-    if (error.empty()) error="Could not install/enable all DXGI hooks";
-    return false;
+    // Avoid an uncommitted queued-enable request from native hooks.
+    // They have been removed; queue is cleared by MH_ApplyQueued.
+    MH_ApplyQueued();
+    trace("BedrockGuiOverlay: optional cursor hooks unavailable; GUI still visible\n");
+    error.clear();
+    return true;
 }
 void Overlay::show(bool value) noexcept {
     const bool changed=enabled.exchange(value)!=value;

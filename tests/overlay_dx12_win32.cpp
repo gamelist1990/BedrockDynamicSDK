@@ -72,18 +72,13 @@ int main() {
         return 7;
     }
 
-    // Make an actual D3D12 command list and submit it, so the live queue
-    // hook can identify the game's DIRECT queue before Present.
-    ComPtr<ID3D12CommandAllocator> allocator;
-    if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                              IID_PPV_ARGS(&allocator)))) return 8;
-    ComPtr<ID3D12GraphicsCommandList> list;
-    if (FAILED(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                         allocator.Get(),nullptr,
-                                         IID_PPV_ARGS(&list)))) return 9;
-    if (FAILED(list->Close())) return 10;
-    ID3D12CommandList* work[]={list.Get()};
-    queue->ExecuteCommandLists(1,work);
+    // Title-screen regression: a static main menu may present frames without
+    // submitting NEW command lists. Queue::Signal still identifies the DIRECT
+    // queue, so the overlay must render without entering a world/pause menu.
+    ComPtr<ID3D12Fence> fence;
+    if (FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))
+        return 8;
+    if (FAILED(queue->Signal(fence.Get(),1))) return 9;
 
     for (int i=0;i<4;++i) chain->Present(0,0);
     const bool invoked=callbackFrames.load()>=1;
