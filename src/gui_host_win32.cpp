@@ -14,6 +14,11 @@
 #include <exception>
 #include <string>
 
+// Dear ImGui intentionally omits this from the public Win32 backend header
+// (it is inside #if 0 there), to avoid forcing Windows types into client code.
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 namespace bedrock::gui {
 namespace {
 struct WindowState {
@@ -126,7 +131,7 @@ bool GuiHost::run(const HostOptions& options, FrameHandler render,
     wc.style = CS_CLASSDC;
     wc.lpfnWndProc = guiWndProc;
     wc.hInstance = instance;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)); // IDC_ARROW
     wc.lpszClassName = klass;
     const ATOM atom = RegisterClassExW(&wc);
     if (!atom && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
