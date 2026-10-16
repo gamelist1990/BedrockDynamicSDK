@@ -52,6 +52,80 @@ target_link_libraries(MyClient PRIVATE bedrock::events bedrock::logging)
 コンソール表示はMod側が任意で選択できます。DllMain内部で開かず、
 DLLが完全にロードされてから使用してください。
 
+## オプション: GUI API（Dear ImGui / DirectX 11）
+
+高品質なGUIを自由に作りたいModだけ、**別モジュール `bedrock::gui`** を有効化できます。
+デフォルトはOFF。OFFの場合、Dear ImGui・DirectXのライブラリは取得もビルドもされません。
+
+```cpp
+#include <bedrock/gui.hpp>
+
+void renderClientUi() {
+    bedrock::gui::Window win("My Client");
+    if (win) {
+        static bool enabled = true;
+        static float opacity = 0.7f;
+
+        bedrock::gui::heading("Client Settings");
+        bedrock::gui::toggle("Enable", enabled);
+        bedrock::gui::slider("Opacity", opacity, 0.1f, 1.f);
+        bedrock::gui::Panel panel("Module list", {350, 180});
+        if (panel)
+            bedrock::gui::text("My modules");
+    }
+}
+```
+
+使える機能：
+
+- `Window`・`Panel`・`Tabs`・`Tab`：入れ子、ドッキング、タブ
+- `toggle`・`button`・`slider`・`combo`・`input`・`colorPicker`・`progress`
+- `Theme::dark(accent)`：角丸・余白・カラーの統一テーマ
+- `draw::filledRect`・`gradient`・`circle`・`line`・`text`：自由描画
+- `smooth(..., deltaSeconds)`：時間差分を考慮した滑らかなアニメーション
+- **`ImGui::` をそのまま呼べる**：独自ウィジェット、DockSpace、フォント、描画リスト、
+  テクスチャ、グラフなどを拡張可能
+
+CMakeの使い方：
+
+```cmake
+# FetchContent_Declare(bedrock_sdk ...) を呼ぶ前に
+set(BEDROCK_SDK_ENABLE_GUI ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(bedrock_sdk)
+
+target_link_libraries(MyClient PRIVATE bedrock::gui)
+```
+
+Dear ImGuiのバージョンは `v1.92.9b-docking` に固定しているため、ビルドが再現可能です。
+`bedrock::gui` はUI機能だけで、ウィンドウ作成・入力処理・レンダリングは
+**呼び出し側のゲーム描画Adapterまたはホストが提供**します。
+
+Windowsで独立ウィンドウを表示するための任意ターゲット `bedrock::gui_host`
+（Win32/DirectX 11）も用意しました。
+
+```cpp
+#include <bedrock/gui.hpp>
+#include <bedrock/gui_host.hpp>
+
+std::string error;
+bedrock::gui::HostOptions options;
+bedrock::gui::GuiHost::run(options, [] {
+    bedrock::gui::Window panel("Example");
+    if (panel) bedrock::gui::text("Hello, Bedrock!");
+}, error);
+```
+
+`GuiHost::run` は呼び出したUIスレッドを使い、コンソール・ゲームの裏側で
+勝手にワーカースレッドを起動しません。DllMain内では呼ばないでください。
+
+**制約：** `GuiHost` が表示するのは別のWin32ウィンドウであり、
+Minecraftの画面内へ直接オーバーレイ描画するものではありません。
+Minecraft内部の描画には、対象バージョンで動作確認したSwapChain/レンダリング
+Adapterが別途必要です。この点は実装済みだと偽らないよう分けています。
+
+サンプル：<https://github.com/gamelist1990/BedrockGuiDemo>
+（ダッシュボード、設定画面、タブ、グラフ風描画、グラデーションなど）
+
 ## 軽量なEvent API（推奨）
 
 SDKにはクライアント固有のスプリント動作・DLLエントリポイント・
@@ -178,6 +252,8 @@ Bedrock LensのSQLiteを利用する `lens-import`、既存シグネチャーを
 ## C++ライブラリ / DLL
 
 - `bedrock::events`：ヘッダーオンリーのEvent API（依存なし）。
+- `bedrock::gui`：オプションのDear ImGui GUI（通常はビルドしない）。
+- `bedrock::gui_host`：GUIが有効なWindowsのみの別ウィンドウ描画ホスト。
 - `bedrock::symbols` / `bedrock_resolver`：追加選択するC++20静的ライブラリ。EXEの身元確認、RVA/AOB検査、GitHubからのHTTPSダウンロード・検証を含みます。
 - `BedrockAutoSprint.dll`：別リポジトリでビルドするサンプル。SDKに実装を含めません。
 - `BedrockClientLocator.dll`：実機未検証のClientInstance捕捉用実験DLL。
