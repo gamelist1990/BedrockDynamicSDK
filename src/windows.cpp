@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include "bedrock/resolver.hpp"
+#include "bedrock/remote_catalog.hpp"
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -81,6 +82,47 @@ done:
     return ok;
 }
 } // namespace
+
+bool inspectLoadedGame(GameIdentity& identity, std::string& error) {
+    identity = {};
+    const HMODULE handle = GetModuleHandleW(nullptr);
+    if (!handle) { error = "GetModuleHandleW failed"; return false; }
+    const auto* base = reinterpret_cast<const std::byte*>(handle);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+        dos->e_lfanew > 0x100000) {
+        error = "no DOS header"; return false;
+    }
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        error = "main module is not AMD64 PE"; return false;
+    }
+    const auto* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i=0; i<nt->FileHeader.NumberOfSections; ++i) {
+        if (std::string(reinterpret_cast<const char*>(section[i].Name), 5) == ".text") {
+            identity.imageSize = nt->OptionalHeader.SizeOfImage;
+            identity.textRva = section[i].VirtualAddress;
+            identity.textSize = section[i].SizeOfRawData;
+            break;
+        }
+    }
+    if (!identity.textSize || identity.textRva >= identity.imageSize ||
+        identity.textSize > identity.imageSize - identity.textRva) {
+        error = "invalid mapped .text"; return false;
+    }
+    if (!hashMemory(base + identity.textRva, identity.textSize, identity.textSha256)) {
+        error = "failed to SHA-256 game code"; return false;
+    }
+    std::array<wchar_t, 32768> filename{};
+    const auto length = GetModuleFileNameW(handle,filename.data(),
+        static_cast<DWORD>(filename.size()));
+    if (length && length < filename.size())
+        hashFile(std::filesystem::path(filename.data()), identity.fileSha256);
+    error.clear();
+    return true;
+}
 
 bool Resolver::attachWindowsMainModule(std::string& error) {
     HMODULE module = GetModuleHandleW(nullptr);

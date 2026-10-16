@@ -93,7 +93,9 @@ def test_manifest_index(tmp_path):
     data.mkdir(parents=True)
     (data/"windows-x64.json").write_text(json.dumps({
       "schema": 1,
-      "target": {"version": "1.26.52.3", "arch": "x64", "sha256": "a"*64},
+      "target": {"version": "1.26.52.3", "arch": "x64", "sha256": "a"*64,
+                 "text_sha256": "b"*64,"size_of_image":2048,
+                 "text_rva":"0x100", "text_size":256},
       "symbols": {"alpha": {"rva": "0x10"}}
     }))
     idx = build_index(tmp_path/"data")

@@ -13,6 +13,7 @@ from .rtti import extract_rtti
 from .client_profile import make_client_profile
 from .layout_hints import extract_layout_hints
 from .embed import make_header
+from .bundle import build_unified_profile
 
 
 def main() -> int:
@@ -46,7 +47,9 @@ def main() -> int:
     client.add_argument("--version", required=True)
     client.add_argument("--latite-commit", default="9f74635")
     client.add_argument("--output", type=Path, required=True)
-    client.add_argument("--compatibility-output", type=Path, required=True)
+    client.add_argument("--compatibility-output", type=Path)
+    client.add_argument("--latite-repo", type=Path,
+                        help="Also include RTTI and SDK hints directly in windows-x64.json")
     rtti = sub.add_parser("rtti", help="Generate MSVC RTTI type name data from an x64 PE")
     rtti.add_argument("binary", type=Path)
     rtti.add_argument("--version", required=True)
@@ -91,14 +94,21 @@ def main() -> int:
                 "export_count": len(pe.exports()), "pdata_function_count": len(pe.pdata_bounds())
             }
         elif args.command == "client-profile":
-            output, compatibility = make_client_profile(
-                pe, args.version, args.latite_addresses, args.latite_commit)
+            if args.latite_repo:
+                output = build_unified_profile(
+                    pe, args.version, args.latite_addresses,
+                    args.latite_repo, args.latite_commit)
+                compatibility = output["analysis"]["latite_compatibility"]
+            else:
+                output, compatibility = make_client_profile(
+                    pe, args.version, args.latite_addresses, args.latite_commit)
             write_json(args.output, output)
-            write_json(args.compatibility_output, compatibility)
+            if args.compatibility_output:
+                write_json(args.compatibility_output, compatibility)
             print(json.dumps({
                 "output": str(args.output), "symbols": len(output["symbols"]),
                 "latite_matched": compatibility["matched"],
-                "compatibility_output": str(args.compatibility_output)
+                "rtti_types": output.get("analysis", {}).get("rtti", {}).get("count", 0)
             }, indent=2))
             return 0
         elif args.command == "rtti":

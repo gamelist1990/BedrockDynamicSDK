@@ -4,14 +4,14 @@
     "1.26.52.3": {
       "windows-x64": {
         "path": "data/1.26.52.3/windows-x64.json",
-        "sha256": "023d5a576c1bd42b277b040d42a4f558995cc1a00cd0b5ac93d6b8c59174304a",
+        "sha256": "c3a06d8a8ea78a174d3347040968d2e2c667b37f08378f1cfcacc9ca68429a81",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
         "symbols": 40,
-        "rtti": {
-          "path": "data/1.26.52.3/types-windows-x64.json",
-          "sha256": "3a792dbc5eb4f9b691c0d55829b6b86bfd4bb387da67cbd6b2f77b6531ad1a7e",
-          "type_count": 1879
-        }
+        "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
+        "size_of_image": 314576896,
+        "text_rva": "0x1000",
+        "text_size": 240802816,
+        "rtti_types": 1879
       }
     }
   }

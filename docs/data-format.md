@@ -1,47 +1,27 @@
-# Schema v1 (versioned function location data)
+# BedrockDynamicSDK data format (schema v1)
 
-`target.sha256` is SHA-256 of the original *on-disk plaintext PE file*, not its .text
-digest. `target.text_sha256` is the raw .text section digest. Both must be tied to
-the executable used for generation.
+Per version there is **exactly one JSON file**: `data/<version>/windows-x64.json`.
 
-`target.image_base` is the PE preferred base; `rva` is an offset from the actual
-loaded base (independent of ASLR). `text_rva` and `text_size` refer to the analyzed
-PE file. The C++ runtime scans the **live** .text mapping passed at attach-time, not
-the old mapping, when probing cross-version candidates.
+- `schema: 1`
+- `target`: `product`, `kind`, `platform`, `arch`, `version`, `sha256`,
+  `text_sha256`, `image_base`, `size_of_image`, `text_rva`, `text_size`.
+- `symbols`: function names to `rva`, `entry_check`, `signature`, `status`,
+  `source`, `function_boundary`, `category`, `abi_verified`.
+- `analysis.rtti`: compiler-emitted decorated TypeDescriptor names; **not** field layouts.
+- `analysis.latite_compatibility`: historic 54-pattern comparison for forensic review.
+- `analysis.layout_hints`: unverified historical offsets and virtual slots, **never used
+  by the runtime resolver**.
 
-Symbols:
-- `rva`: exact build RVA, never blindly portable.
-- `signature`: full-instruction x86-64 pattern; `??` wildcards rel32 branches and
-  RIP-relative displacements.
-- `entry_check`: exact prefix guard used for exact-hash RVA resolution.
-- `status`: `verified` (trusted on exact hash only) or `candidate` (manual review).
-- `function_boundary`: whether .pdata declares the RVA as a function start.
-- `source`: evidence origin; not a proof of C++ ABI compatibility.
+The `manifest.json` has `versions[version]["windows-x64"]` entries with `path`,
+`sha256` of the JSON itself, `module_sha256`, `module_text_sha256`,
+`size_of_image`, `text_rva`, `text_size`, and symbol/RTTI counts.
 
-Safety:
-- On hash mismatch, default C++ lookup returns **no address**.
-- Candidate retrieval must be explicitly requested, and returns `verified=false`.
-- Multiple matches return no result. No guessed addresses or write/patch are performed.
-- No JSON data alone can guarantee argument types, virtual tables, or object layout.
-- Don't publish Minecraft EXEs or proprietary IDA databases in the symbol repository.
+Runtime selection requires a manifest entry that matches the loaded game by file SHA-256
+or mapped code SHA-256 **plus the exact PE layout**. The path must be
+`data/<exact-version>/windows-x64.json`, and is retrieved from the pinned HTTPS host
+`raw.githubusercontent.com`. The downloaded JSON must match the manifest's SHA-256,
+its own target, and the live PE identity. Unrecognized/invalid metadata are skipped.
 
-- When the signature is empty, cross_version_signature_available=false; restricted to exact-build RVA candidate.
-
-## Latite/client-profile provenance (2026-10-16)
-
-The generator scans historical Latite signatures (commit 9f7463515dd298a496da918285936d78c7416aad),
-retains **only unique direct function matches with x64 .pdata function boundaries**,
-then generates new AOB signatures from the current PE. Historical labels are
-not semantic proof, and all are `candidate` with `abi_verified: false`.
-`category`, `origin_key`, `confidence`, and `reference_commit` identify provenance.
-
-`latite-compatibility.json` includes full assessment of matching, missing, and
-invalid signatures. Globals from RIP-relative LEA addresses and matches *inside*
-a function aren't silently turned into callable functions.
-
-`layout-hints-unverified.json` contains older Latite field/vtable offsets, not
-validated for the newer build. It is NOT fed to the C++ Resolver.
-
-Runtime on GDK/Proton may derive full loaded .text hash via BCrypt rather than
-hashing the encrypted on-disk EXE. Both the image size and .text RVA/size must
-also match, otherwise exact-RVA resolution fails closed.
+AOB matches, RTTI and historic SDK offsets do **not** establish runtime ABI safety.
+The sample AutoSprint uses OS keyboard input and does not invoke unknown C++ ABI
+or read unverified game object fields.
