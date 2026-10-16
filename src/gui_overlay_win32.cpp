@@ -91,6 +91,7 @@ ComPtr<ID3D11Device> device11;
 ComPtr<ID3D11DeviceContext> context11;
 ComPtr<ID3D11On12Device> device11on12;
 ComPtr<ID3D12CommandQueue> capturedQueue;
+std::atomic<ID3D12CommandQueue*> capturedQueueFast{nullptr};
 ComPtr<ID3D12Device> pendingDx12Device;
 bool queueWaitingLogged = false;
 ComPtr<ID3D11RenderTargetView> renderTarget;
@@ -651,17 +652,29 @@ HRESULT STDMETHODCALLTYPE onResize1(IDXGISwapChain3* chain, UINT buffers, UINT w
     return resize12_1 ? resize12_1(chain,buffers,w,h,fmt,flags,nodes,queues)
                       : DXGI_ERROR_INVALID_CALL;
 }
-void captureQueue(ID3D12CommandQueue* queue, const char* source) {
-    if (!installed.load(std::memory_order_acquire) || !queue ||
-        queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
-    // The queue can be used by another DX12 device inside the same process.
-    // Prefer the queue belonging to the presented swapchain when known.
+void captureQueue(ID3D12CommandQueue* queue, const char* source,
+                  bool authoritative = false) {
+    if (!installed.load(std::memory_order_acquire) || !queue) return;
+    // Avoid locking the Present mutex on every frame's fence Signal or Wait;
+    // D3D11On12 itself may submit fence signals while rendering.
+    if (!authoritative && capturedQueueFast.load(std::memory_order_acquire)==queue)
+        return;
+    if (queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
     ComPtr<ID3D12Device> device;
     if (FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))) return;
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (pendingDx12Device && pendingDx12Device.Get() != device.Get()) return;
+    if (!authoritative && capturedQueue) {
+        // Don't randomly switch from the real game queue to a second DIRECT
+        // queue on the same device used for uploads/background effects.
+        if (!pendingDx12Device) return;
+        ComPtr<ID3D12Device> currentDevice;
+        if (SUCCEEDED(capturedQueue->GetDevice(IID_PPV_ARGS(&currentDevice))) &&
+            currentDevice.Get()==pendingDx12Device.Get()) return;
+    }
     if (capturedQueue.Get() != queue) {
         capturedQueue = queue;
+        capturedQueueFast.store(queue,std::memory_order_release);
         queueWaitingLogged=false;
         trace(source);
     }
@@ -688,7 +701,8 @@ HRESULT STDMETHODCALLTYPE onCreateSwapChainForHwnd(
         ComPtr<ID3D12CommandQueue> queue;
         if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&queue)))) {
             captureQueue(queue.Get(),
-                "BedrockGuiOverlay: DX12 queue acquired at CreateSwapChainForHwnd (Latite path)\n");
+                "BedrockGuiOverlay: DX12 queue acquired at CreateSwapChainForHwnd (Latite path)\n",
+                true);
         }
     }
     return createSwapChainForHwnd ?
@@ -947,7 +961,9 @@ void Overlay::shutdown() noexcept {
     targets.clear();
     removeWndProc();
     cleanupRenderer();
+    capturedQueueFast.store(nullptr,std::memory_order_release);
     capturedQueue.Reset();
+    pendingDx12Device.Reset();
     if (minhookOwned) MH_Uninitialize();
     minhookOwned=false;
     nativeCursorEnabled.store(false);
