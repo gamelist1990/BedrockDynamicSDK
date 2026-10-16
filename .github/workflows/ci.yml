@@ -30,8 +30,11 @@ jobs:
         shell: pwsh
         run: |
           cmake -S . -B build -A x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: BedrockSymbolProbe-windows-x64

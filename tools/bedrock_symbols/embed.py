@@ -9,7 +9,7 @@ def make_header(source: Path, destination: Path) -> None:
     value = json.loads(data)
     if value.get("schema") != 1 or "symbols" not in value:
         raise ValueError("expected a Bedrock symbol database schema 1")
-    marker = "BEDROCK_SYMBOLS_DH2C"
+    marker = "BDK_SYM_V1"  # <= 16 chars by the C++ standard
     if f"){marker}\"" in data:
         raise ValueError("raw string marker collision")
     header = (
