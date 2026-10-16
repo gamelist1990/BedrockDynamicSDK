@@ -24,6 +24,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <cfloat>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -43,6 +46,17 @@ std::atomic<bool> installed{false};
 std::atomic<bool> enabled{false};
 std::atomic<unsigned> toggleKey{0x79};
 std::atomic<bool> captureInput{true};
+std::atomic<bool> unlockMouse{true};
+bool togglePreviouslyDown = false;
+bool cursorUnlocked = false;
+bool savedClipValid = false;
+RECT savedClip{};
+int cursorShowIncrements = 0;
+std::array<bool,5> previousMouseButtons{};
+using SetCursorFn = BOOL (WINAPI*)(int, int);
+using ClipCursorFn = BOOL (WINAPI*)(const RECT*);
+SetCursorFn originalSetCursorPos = nullptr;
+ClipCursorFn originalClipCursor = nullptr;
 Overlay::RenderCallback renderCallback = nullptr;
 void* renderUserdata = nullptr;
 bool minhookOwned = false;
@@ -72,6 +86,106 @@ Resize1Fn resize12_1 = nullptr;
 QueueFn execute12 = nullptr;
 
 void trace(const char* line) { OutputDebugStringA(line); }
+
+// Prefer the game's foreground window, never inject into other apps' input.
+bool gameFocused() {
+    if (!gameWindow) return false;
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground) return false;
+    DWORD owner = 0;
+    GetWindowThreadProcessId(foreground, &owner);
+    return owner == GetCurrentProcessId();
+}
+
+// Minecraft locks/warps its cursor during gameplay. The overlay needs an
+// independent, genuine OS cursor; prevent game warps/clips ONLY while its
+// GUI is visible, its window is focused, and the option is enabled.
+bool interceptCursor() {
+    return installed.load(std::memory_order_acquire) &&
+           enabled.load(std::memory_order_relaxed) &&
+           captureInput.load(std::memory_order_relaxed) &&
+           unlockMouse.load(std::memory_order_relaxed) &&
+           gameFocused();
+}
+BOOL WINAPI hookedSetCursorPos(int x, int y) {
+    return interceptCursor() ? TRUE : (originalSetCursorPos ?
+           originalSetCursorPos(x,y) : FALSE);
+}
+BOOL WINAPI hookedClipCursor(const RECT* rect) {
+    return interceptCursor() && rect ? TRUE :
+           (originalClipCursor ? originalClipCursor(rect) : FALSE);
+}
+
+void releaseGameCursor() {
+    if (cursorUnlocked || !gameWindow || !IsWindow(gameWindow)) return;
+    cursorUnlocked = true;
+    savedClipValid = GetClipCursor(&savedClip) != 0;
+    if (originalClipCursor) originalClipCursor(nullptr);
+    else ClipCursor(nullptr);
+    if (GetCapture() == gameWindow) ReleaseCapture();
+    cursorShowIncrements = 0;
+    // ShowCursor uses a display counter. Track each increment and undo it
+    // precisely on close instead of blindly corrupting the game counter.
+    for (int n=0; n<16; ++n) {
+        const int count = ShowCursor(TRUE);
+        ++cursorShowIncrements;
+        if (count >= 0) break;
+    }
+    RECT rect{};
+    if (GetClientRect(gameWindow,&rect)) {
+        POINT center{(rect.left+rect.right)/2,(rect.top+rect.bottom)/2};
+        if (ClientToScreen(gameWindow,&center)) {
+            if (originalSetCursorPos) originalSetCursorPos(center.x,center.y);
+        }
+    }
+    trace("BedrockGuiOverlay: OS cursor unlocked for interactive UI\n");
+}
+void restoreGameCursor() {
+    if (!cursorUnlocked) return;
+    cursorUnlocked = false;
+    if (originalClipCursor && savedClipValid) originalClipCursor(&savedClip);
+    if (originalClipCursor && !savedClipValid) originalClipCursor(nullptr);
+    for (int i=0; i<cursorShowIncrements; ++i) ShowCursor(FALSE);
+    cursorShowIncrements = 0;
+    previousMouseButtons.fill(false);
+}
+
+// Poll the physical key every Present; native Minecraft/Proton often consumes
+// F10 via its raw input path without producing an observable WM_KEYDOWN.
+// A single rising edge prevents repeated toggles while F10 is held.
+void updateToggleKey() {
+    const auto key = toggleKey.load();
+    const bool pressed = key && gameFocused() && (GetAsyncKeyState(key) & 0x8000);
+    if (pressed && !togglePreviouslyDown) {
+        enabled.store(!enabled.load());
+        trace(enabled.load() ? "BedrockGuiOverlay: F10 OPEN\n" :
+                               "BedrockGuiOverlay: F10 CLOSED\n");
+    }
+    togglePreviouslyDown = pressed;
+}
+
+void pollMouse(ImGuiIO& io) {
+    if (!gameWindow || !gameFocused()) {
+        io.AddMousePosEvent(-FLT_MAX,-FLT_MAX);
+        for (int i=0; i<5; ++i) {
+            if (previousMouseButtons[i]) io.AddMouseButtonEvent(i,false);
+            previousMouseButtons[i]=false;
+        }
+        return;
+    }
+    POINT point{};
+    if (GetCursorPos(&point) && ScreenToClient(gameWindow,&point))
+        io.AddMousePosEvent(static_cast<float>(point.x),
+                            static_cast<float>(point.y));
+    const int virtualKeys[5]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_XBUTTON1,VK_XBUTTON2};
+    for (int i=0;i<5;++i) {
+        const bool down=(GetAsyncKeyState(virtualKeys[i])&0x8000)!=0;
+        if (down!=previousMouseButtons[i]) {
+            io.AddMouseButtonEvent(i,down);
+            previousMouseButtons[i]=down;
+        }
+    }
+}
 
 bool minecraftProcess() {
     wchar_t path[32768]{};
@@ -169,6 +283,7 @@ void cleanupRenderer() {
         contextImGui = nullptr;
     }
     backendInitialized = false;
+    restoreGameCursor();
     renderTarget.Reset();
     wrapped.clear();
     context11.Reset();
@@ -181,10 +296,11 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (installed.load()) {
         const auto key = toggleKey.load();
-        if (key && msg == WM_KEYDOWN && wp == key && !(lp & (1LL << 30))) {
-            enabled.store(!enabled.load());
+        // Consume F10 even when the native game window receives it. Actual
+        // toggle is handled once per Present via the physical key state.
+        if (key && (msg==WM_KEYDOWN || msg==WM_SYSKEYDOWN ||
+                    msg==WM_KEYUP || msg==WM_SYSKEYUP) && wp==key)
             return 0;
-        }
         if (enabled.load() && captureInput.load() && contextImGui) {
             ImGui::SetCurrentContext(contextImGui);
             const auto handled = ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
@@ -258,8 +374,36 @@ bool initRenderer(IDXGISwapChain* chain) {
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
     io.MouseDrawCursor = true; // visible when Minecraft normally hides cursor
-    ImGui::GetIO().Fonts->AddFontDefault();
+    // A high-resolution TrueType font avoids the jagged 13px bitmap look
+    // seen in the original screenshot. Prefer installed OS fonts, not bundled
+    // proprietary font files; fallback to ImGui's embedded *vector* font.
+    const char* fonts[] = {
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\tahoma.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf"
+    };
+    ImFontConfig cfg{};
+    cfg.SizePixels = 18.0f;
+    cfg.OversampleH = 3;
+    cfg.OversampleV = 2;
+    cfg.RasterizerMultiply = 1.05f;
+    ImFont* font = nullptr;
+    for (const char* filename : fonts) {
+        font=io.Fonts->AddFontFromFileTTF(filename,18.0f,&cfg);
+        if (font) break;
+    }
+    if (!font) font = io.Fonts->AddFontDefaultVector(&cfg);
+    if (font) io.FontDefault=font;
     Theme::dark();
+    auto& style=ImGui::GetStyle();
+    style.AntiAliasedLines=true;
+    style.AntiAliasedLinesUseTex=true;
+    style.AntiAliasedFill=true;
+    style.WindowPadding={20.f,20.f};
+    style.FramePadding={13.f,9.f};
+    style.ItemSpacing={12.f,12.f};
+    style.WindowRounding=16.f;
+    style.FrameRounding=10.f;
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) return false;
     if (!ImGui_ImplDX11_Init(device11.Get(), context11.Get())) {
         ImGui_ImplWin32_Shutdown();
@@ -280,6 +424,8 @@ void drawImGui(IDXGISwapChain* chain) {
     ImGui::SetCurrentContext(contextImGui);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    // Windows messages alone are not enough for Bedrock's raw input path.
+    pollMouse(ImGui::GetIO());
     ImGui::NewFrame();
     try {
         renderCallback(renderUserdata);
@@ -325,6 +471,7 @@ HRESULT STDMETHODCALLTYPE onPresent(IDXGISwapChain* chain, UINT sync, UINT flags
         std::lock_guard<std::recursive_mutex> lock(mutex);
         // Initialize even while hidden, so WndProc sees the toggle shortcut.
         if (installed.load()) {
+            updateToggleKey();
             if (!backendInitialized || activeChain.Get() != chain) {
                 removeWndProc();
                 cleanupRenderer();
@@ -333,8 +480,12 @@ HRESULT STDMETHODCALLTYPE onPresent(IDXGISwapChain* chain, UINT sync, UINT flags
                     cleanupRenderer();
                 }
             }
-            if (enabled.load() && backendInitialized)
-                drawImGui(chain);
+            if (backendInitialized) {
+                if (enabled.load() && captureInput.load() &&
+                    unlockMouse.load() && gameFocused()) releaseGameCursor();
+                else restoreGameCursor();
+                if (enabled.load()) drawImGui(chain);
+            }
         }
     }
     return original ? original(chain,sync,flags) : DXGI_ERROR_INVALID_CALL;
@@ -441,6 +592,15 @@ bool Overlay::install(RenderCallback render, void* userdata,
         if (okay) okay = hookMethod(d12Resize1,(void*)&onResize1,(void**)&resize12_1) &&
                          hookMethod(d12Execute,(void*)&onExecute,(void**)&execute12);
     }
+    if (okay && options.unlockMouse) {
+        // Intercept only the process-local user32 exports; outside the active
+        // GUI these trampoline calls preserve the game's original behavior.
+        const auto user32=GetModuleHandleW(L"user32.dll");
+        auto setpos=user32 ? (void*)GetProcAddress(user32,"SetCursorPos") : nullptr;
+        auto clip=user32 ? (void*)GetProcAddress(user32,"ClipCursor") : nullptr;
+        okay = hookMethod(setpos,(void*)&hookedSetCursorPos,(void**)&originalSetCursorPos) &&
+               hookMethod(clip,(void*)&hookedClipCursor,(void**)&originalClipCursor);
+    }
     if (okay) for (void* target : targets) {
         if (MH_QueueEnableHook(target) != MH_OK) { okay = false; break; }
     }
@@ -450,6 +610,9 @@ bool Overlay::install(RenderCallback render, void* userdata,
     enabled.store(options.initiallyVisible);
     toggleKey.store(options.toggleVirtualKey);
     captureInput.store(options.captureInput);
+    unlockMouse.store(options.unlockMouse);
+    togglePreviouslyDown=false;
+    previousMouseButtons.fill(false);
     installed.store(okay);
     if (okay && MH_ApplyQueued() == MH_OK) {
         error.clear();

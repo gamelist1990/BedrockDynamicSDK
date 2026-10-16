@@ -11,6 +11,9 @@ struct OverlayOptions {
     unsigned toggleVirtualKey = 0x79;
     bool initiallyVisible = true;
     bool captureInput = true;
+    // Release the game OS cursor and prevent re-centering while the UI is open.
+    // Uses process-local user32 interception; set false to opt out.
+    bool unlockMouse = true;
     // Fail closed if loaded outside a Minecraft.Windows.exe process.
     bool requireMinecraftProcess = true;
 };
