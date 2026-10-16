@@ -180,15 +180,8 @@ unsigned start() {
     }
     g_originalGrab.store(originalGrab, std::memory_order_release);
     g_originalRelease.store(originalRelease, std::memory_order_release);
-    if (MH_QueueEnableHook(g_grabTarget) != MH_OK ||
-        MH_QueueEnableHook(g_releaseTarget) != MH_OK ||
-        MH_ApplyQueued() != MH_OK) {
-        removeHooks();
-        g_status.store(LocatorHookFailure);
-        return LocatorHookFailure;
-    }
-    // Prevent unloading a DLL that contains active detours. Pinned DLLs stay
-    // loaded until process termination even after BedrockLocator_Stop().
+    // Pin before exposing a trampoline; the OS must never unload code to
+    // which another thread is currently being redirected.
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
@@ -197,10 +190,23 @@ unsigned start() {
         g_status.store(LocatorHookFailure);
         return LocatorHookFailure;
     }
-    g_enabled = true;
+    if (MH_QueueEnableHook(g_grabTarget) != MH_OK ||
+        MH_QueueEnableHook(g_releaseTarget) != MH_OK) {
+        removeHooks();
+        g_status.store(LocatorHookFailure);
+        return LocatorHookFailure;
+    }
+    // Advertise waiting *before* enabling hooks. An immediately dispatched
+    // cursor event may set LocatorCaptured and must not be overwritten.
     g_status.store(LocatorWaitingForClientEvent, std::memory_order_release);
+    if (MH_ApplyQueued() != MH_OK) {
+        removeHooks();
+        g_status.store(LocatorHookFailure);
+        return LocatorHookFailure;
+    }
+    g_enabled = true;
     trace("BedrockClientLocator: hooked cursor methods; waiting for normal cursor event.\n");
-    return LocatorWaitingForClientEvent;
+    return g_status.load(std::memory_order_acquire);
 }
 unsigned stop() {
     std::lock_guard<std::mutex> lock(g_control);
