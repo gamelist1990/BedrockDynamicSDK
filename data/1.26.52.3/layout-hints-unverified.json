@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "source": "LatiteClient/Latite@9f7463515dd298a496da918285936d78c7416aad",
+  "status": "historical_unverified",
+  "note": "Offsets and vtable indices are from Latite's historical SDK and must NOT be used in 1.26.52.3 until independently validated.",
+  "classes": {
+    "ClientInstance": {
+      "members": [
+        {
+          "name": "minecraftGame",
+          "cpp_type_hint": "class MinecraftGame*",
+          "offset": "0x1A8",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "minecraft",
+          "cpp_type_hint": "class Minecraft*",
+          "offset": "0x1B0",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "levelRenderer",
+          "cpp_type_hint": "class LevelRenderer*",
+          "offset": "0x1C0",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "packetSender",
+          "cpp_type_hint": "class PacketSender*",
+          "offset": "0x1D0",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "inputHandler",
+          "cpp_type_hint": "class ClientInputHandler*",
+          "offset": "0x1E0",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "cursorPos",
+          "cpp_type_hint": "struct Vec2",
+          "offset": "0x588",
+          "status": "historical_unverified"
+        }
+      ],
+      "source": "src/mc/common/client/game/ClientInstance.h",
+      "virtual_methods": [
+        {
+          "name": "getRegion",
+          "vtable_slot": "0x1E",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "getLocalPlayer",
+          "vtable_slot": "0x1F",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "getSoundEngine",
+          "vtable_slot": "0x13C",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "getResourcePackManager",
+          "vtable_slot": "0x60",
+          "status": "historical_unverified"
+        }
+      ]
+    },
+    "GuiData": {
+      "members": [
+        {
+          "name": "screenSize",
+          "cpp_type_hint": "Vec2",
+          "offset": "0x40",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "guiSize",
+          "cpp_type_hint": "Vec2",
+          "offset": "0x50",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "guiScale",
+          "cpp_type_hint": "float",
+          "offset": "0x5C",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "guiScaleFrac",
+          "cpp_type_hint": "float",
+          "offset": "0x60",
+          "status": "historical_unverified"
+        },
+        {
+          "name": "messages",
+          "cpp_type_hint": "std::vector<GuiMessage>",
+          "offset": "0x150",
+          "status": "historical_unverified"
+        }
+      ],
+      "source": "src/mc/common/client/gui/GuiData.h"
+    },
+    "ClientInputHandler": {
+      "members": [
+        {
+          "name": "mappingFactory",
+          "cpp_type_hint": "ClientInputMappingFactory*",
+          "offset": "0x48",
+          "status": "historical_unverified"
+        }
+      ],
+      "source": "src/mc/common/client/input/ClientInputHandler.h"
+    },
+    "MinecraftGame": {
+      "members": [
+        {
+          "name": "gameRenderer",
+          "cpp_type_hint": "GameRenderer*",
+          "offset": "0x1440",
+          "status": "historical_unverified"
+        }
+      ],
+      "source": "src/mc/common/client/game/MinecraftGame.h"
+    }
+  }
+}

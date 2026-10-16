@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+build/
+*.pyc
+*.i64
+*.exe
+*.dll
+*.pdb
+*.msixvc
+*.part
+data/**/raw/
+third_party/bedrock-lens/
+third_party/latite-reference/
+
+# Locally acquired proprietary game binaries. Never commit or distribute.
+local-binaries/

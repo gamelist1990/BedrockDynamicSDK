@@ -1,0 +1,39 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify data and Python
+        run: |
+          uv sync --extra dev
+          uv run --extra dev pytest -q
+          uv run bedrock-symbols index data --output /tmp/manifest-generated.json
+          cmp data/manifest.json /tmp/manifest-generated.json
+      - name: Build and test C++ core
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j2
+          ctest --test-dir build --output-on-failure
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile single DLL and tests with MSVC
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release --parallel 2
+          ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BedrockSymbolProbe-windows-x64
+          path: build/Release/BedrockSymbolProbe.dll
+          if-no-files-found: error
