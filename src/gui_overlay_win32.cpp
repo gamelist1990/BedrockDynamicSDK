@@ -16,6 +16,7 @@
 #include <backends/imgui_impl_win32.h>
 #include "bedrock/gui.hpp"
 #include "bedrock/gui_overlay.hpp"
+#include "bedrock/gui_input_policy.hpp"
 #include "bedrock/client_instance_tracker.hpp"
 #include "bedrock/remote_catalog.hpp"
 #include "bedrock/resolver.hpp"
@@ -44,6 +45,7 @@ using Resize1Fn = HRESULT (STDMETHODCALLTYPE*)(
     IDXGISwapChain3*, UINT, UINT, UINT, DXGI_FORMAT, UINT,
     const UINT*, IUnknown* const*);
 using QueueFn = void (STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
+using MouseInputFn = bool (__fastcall*)(void*, void*, void*);
 
 std::recursive_mutex mutex;
 std::atomic<bool> installed{false};
@@ -51,6 +53,9 @@ std::atomic<bool> enabled{false};
 std::atomic<unsigned> toggleKey{0x79};
 std::atomic<bool> captureInput{true};
 std::atomic<bool> nativeCursorEnabled{false};
+std::atomic<bool> mouseBlockHookEnabled{false};
+std::atomic<MouseInputFn> originalGameMouseInput{nullptr};
+void* gameMouseInputAddress = nullptr;
 bool togglePreviouslyDown = false;
 std::array<bool,5> previousMouseButtons{};
 // Native Bedrock cursor methods, as used by Latite's ScreenManager.
@@ -166,6 +171,25 @@ void __fastcall onNativeRelease(void* self) {
     if (nativeClient.observe(self)) nativeCursorCaptured.store(true);
     if (auto original=nativeReleaseOriginal.load(std::memory_order_acquire)) original(self);
     if (nativeCursorEnabled.load() && enabled.load()) nativeCursorReleased.store(true);
+}
+
+// Latite hooks GameCore::handleMouseInput and removes cancelled actions
+// from MouseDevice::inputs. Our 1.26.52.3 MouseDevice vector layout/instance
+// is NOT verified, so intercept the known function BEFORE it processes input.
+// The render callback still receives physical mouse state through ImGui.
+bool suppressGameMouse() {
+    return shouldBlockGameMouse(installed.load(std::memory_order_acquire),
+                                enabled.load(std::memory_order_relaxed),
+                                captureInput.load(std::memory_order_relaxed),
+                                gameFocused(),
+                                backendInitialized);
+}
+bool __fastcall onGameCoreMouseInput(void* a1, void* a2, void* a3) {
+    if (suppressGameMouse())
+        return true; // Handled by overlay. Do not advance game mouse input.
+    if (const auto original=originalGameMouseInput.load(std::memory_order_acquire))
+        return original(a1,a2,a3);
+    return true;
 }
 
 void requestCursorChange(bool menuOpen) {
@@ -360,12 +384,34 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (key && (msg==WM_KEYDOWN || msg==WM_SYSKEYDOWN ||
                     msg==WM_KEYUP || msg==WM_SYSKEYUP) && wp==key)
             return 0;
-        if (enabled.load() && captureInput.load() && contextImGui) {
+        if (contextImGui && enabled.load() && captureInput.load()) {
             ImGui::SetCurrentContext(contextImGui);
-            const auto handled = ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
-            const auto& io = ImGui::GetIO();
-            if (handled || ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) && io.WantCaptureMouse) ||
-                ((msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && io.WantCaptureKeyboard))
+            // Native input may bypass WndProc; nevertheless messages reaching
+            // it MUST be forwarded to ImGui before being suppressed for game.
+            const auto handled=ImGui_ImplWin32_WndProcHandler(hwnd,msg,wp,lp);
+            const auto& io=ImGui::GetIO();
+            if (shouldBlockGameMouse(installed.load(),enabled.load(),
+                                     captureInput.load(),gameFocused(),
+                                     backendInitialized)) {
+                // Block click, move AND scroll even when WantCaptureMouse=false
+                // (e.g. empty dashboard background) to prevent hotbar scroll.
+                if ((msg>=WM_MOUSEFIRST && msg<=WM_MOUSELAST) ||
+                    msg==WM_MOUSEHWHEEL || msg==WM_MOUSEWHEEL)
+                    return 1;
+                if (msg==WM_INPUT) {
+                    RAWINPUTHEADER header{};
+                    UINT size=sizeof(header);
+                    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lp),
+                                        RID_HEADER,&header,&size,
+                                        sizeof(RAWINPUTHEADER)) != UINT(-1) &&
+                        header.dwType==RIM_TYPEMOUSE) {
+                        // Required for foreground WM_INPUT handle cleanup.
+                        return DefWindowProcW(hwnd,msg,wp,lp);
+                    }
+                }
+            }
+            if (handled || ((msg>=WM_KEYFIRST && msg<=WM_KEYLAST) &&
+                            io.WantCaptureKeyboard))
                 return 1;
         }
     }
@@ -690,6 +736,29 @@ bool Overlay::install(RenderCallback render, void* userdata,
                     nativeReleaseOriginal.store(fnRelease);
                     nativeCursorEnabled.store(true);
                     trace("BedrockGuiOverlay: native Latite-style cursor bridge armed\n");
+                    // Hook the same GameCore input boundary that Latite uses.
+                    // Its binary identity is separately checked by Resolver.
+                    if (options.captureInput) {
+                        const auto mouse=resolver.resolve("GameCore::handleMouseInput",true);
+                        if (mouse && mouse->exact_build && mouse->method=="exact-rva") {
+                            MouseInputFn oldMouse=nullptr;
+                            gameMouseInputAddress=reinterpret_cast<void*>(mouse->address);
+                            if (hookMethod(gameMouseInputAddress,
+                                           reinterpret_cast<void*>(&onGameCoreMouseInput),
+                                           reinterpret_cast<void**>(&oldMouse))) {
+                                originalGameMouseInput.store(oldMouse,
+                                    std::memory_order_release);
+                                mouseBlockHookEnabled.store(true);
+                                trace("BedrockGuiOverlay: native GameCore mouse blocker armed\n");
+                            } else {
+                                trace("BedrockGuiOverlay: game mouse hook unavailable, "
+                                      "WndProc-only input blocking\n");
+                            }
+                        } else {
+                            trace("BedrockGuiOverlay: no matched GameCore mouse input "
+                                  "symbol; WndProc-only blocking\n");
+                        }
+                    }
                 }
             }
         }
@@ -722,6 +791,9 @@ bool Overlay::install(RenderCallback render, void* userdata,
     renderCallback=nullptr;
     renderUserdata=nullptr;
     nativeCursorEnabled.store(false);
+    mouseBlockHookEnabled.store(false);
+    originalGameMouseInput.store(nullptr);
+    gameMouseInputAddress=nullptr;
     nativeGrabOriginal.store(nullptr);
     nativeReleaseOriginal.store(nullptr);
     nativeGrabAddress=nativeReleaseAddress=nullptr;
@@ -737,6 +809,9 @@ bool Overlay::visible() noexcept { return enabled.load(); }
 bool Overlay::running() noexcept { return installed.load(); }
 bool Overlay::nativeCursorReady() noexcept {
     return nativeCursorEnabled.load() && nativeClient.get()!=nullptr;
+}
+bool Overlay::gameMouseBlocked() noexcept {
+    return mouseBlockHookEnabled.load();
 }
 void Overlay::shutdown() noexcept {
     std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -761,6 +836,9 @@ void Overlay::shutdown() noexcept {
     if (minhookOwned) MH_Uninitialize();
     minhookOwned=false;
     nativeCursorEnabled.store(false);
+    mouseBlockHookEnabled.store(false);
+    originalGameMouseInput.store(nullptr);
+    gameMouseInputAddress=nullptr;
     nativeGrabOriginal.store(nullptr);
     nativeReleaseOriginal.store(nullptr);
     nativeClient.clear();

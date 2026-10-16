@@ -120,6 +120,21 @@ bedrock::gui::GuiHost::run(options, [] {
 
 ### Minecraft画面内へ直接描画する（DX11 / DX12）
 
+**ゲーム側のクリック・ホットバー操作抑止（Latiteと同じ入力境界）:**
+`OverlayOptions::captureInput` を有効化したGUIでは
+`GameCore::handleMouseInput` のバージョン照合済み関数候補をフックします。
+GUI表示中でMinecraftがフォーカスされているときにだけゲームへのマウス操作を遮断。
+GUIを閉じれば元のゲーム入力を通します。
+ImGuiにはWindowsから取得したマウス位置・クリックとWndProcのホイール入力を渡します。
+さらにWndProc側で `WM_LBUTTON` / `WM_RBUTTON` / `WM_MOUSEWHEEL` /
+`WM_INPUT`（マウス由来のみ）のゲームへの伝播を遮断します。
+`Overlay::gameMouseBlocked()` はネイティブ遮断フックの導入状態を返します。
+候補のABIが変化しているMinecraftバージョンでは実機での検証が必要です。
+
+Latiteは `MouseDevice::inputs` 配列からキャンセルされたイベントを削除しますが、
+現在の解析データでは `MouseDevice::_instance` の取得と配列レイアウトが未検証です。
+そのため、その不確かな構造に触らず、入力処理関数の呼出し前に遮断する形にしています。
+
 **GUIマウス操作のネイティブ経路（Latite方式）:**
 `OverlayOptions::nativeCursor=true` にすると、GitHubから正しい
 `windows-x64.json` を取得し実EXEのSHA-256を照合した後、

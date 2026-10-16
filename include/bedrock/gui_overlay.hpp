@@ -32,6 +32,9 @@ public:
     // True only after an actual Minecraft cursor method has supplied a
     // validated ClientInstance pointer. Before then native input is pending.
     static bool nativeCursorReady() noexcept;
+    // True when the version-matched native GameCore input interceptor is
+    // installed, preventing Minecraft clicks/hotbar changes while visible.
+    static bool gameMouseBlocked() noexcept;
     // Unhook before unloading a DLL that contains the callback.
     static void shutdown() noexcept;
 };
