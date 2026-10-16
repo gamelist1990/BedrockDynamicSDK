@@ -15,3 +15,5 @@ third_party/latite-reference/
 
 # Locally acquired proprietary game binaries. Never commit or distribute.
 local-binaries/
+
+third_party/minhook/

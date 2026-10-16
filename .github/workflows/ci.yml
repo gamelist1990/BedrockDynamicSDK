@@ -37,6 +37,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: BedrockSymbolProbe-windows-x64
-          path: build/Release/BedrockSymbolProbe.dll
+          name: BedrockDynamicSDK-windows-x64
+          path: |
+            build/Release/BedrockSymbolProbe.dll
+            build/Release/BedrockClientLocator.dll
           if-no-files-found: error

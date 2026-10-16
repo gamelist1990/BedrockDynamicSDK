@@ -13,6 +13,7 @@ Minecraft Bedrock **Windows x64** の関数を解析し、**LeviLamina / PreLoad
 - ディスク上のEXEが暗号化されるGDK/Proton環境向けに、ロード済み`.text`全体のSHA-256でも照合可能
 - Win32キーメッセージ観測用 `KeyboardObserver`（キーリピート・フォーカス喪失対応）
 - 検証用 `BedrockSymbolProbe.dll`（ゲームの関数を**呼ばず**、候補RVAの可読性を確認）
+- **`BedrockClientLocator.dll`**：実際の `ClientInstance::grabCursor/releaseCursor` 呼び出しから `this` を捕捉し、固定グローバルオフセットなしで `ClientInstance*` を返す。MinHook静的リンクで追加DLL不要
 - MSVC RTTI型名データ、旧Latite SDKレイアウトの*未検証*ヒント、GitHub用 `manifest.json`
 - Bedrock Lens SQLiteからの関数RVA取り込み、Python・C++自動テスト
 
@@ -42,11 +43,14 @@ BedrockDynamicSDK/
 │       └── layout-hints-unverified.json   # 旧SDK由来、未検証のオフセット
 ├── include/bedrock/
 │   ├── resolver.hpp
+│   ├── client_instance_tracker.hpp
+│   ├── client_locator.hpp
 │   ├── keyboard.hpp
 │   └── generated_symbols.hpp             # DLL埋め込み用の自動生成JSON
 ├── src/
 │   ├── resolver.cpp
 │   ├── windows.cpp
+│   ├── client_locator.cpp
 │   └── probe_dll.cpp
 ├── tools/bedrock_symbols/                # Python CLI
 └── tests/
@@ -105,7 +109,7 @@ ctest --test-dir build --output-on-failure
 uv run --extra dev pytest -q
 ```
 
-Windows x64 (MSVC)では追加で `BedrockSymbolProbe.dll` が作られ、登録済みの40関数を**読み取り専用で照合**します。関数を呼び出したりHookを設置することはありません。デバッグ出力を確認してください。Linuxでは静的Resolverとテストのみがビルドされます。
+Windows x64 (MSVC)では`BedrockSymbolProbe.dll`（read-only）と`BedrockClientLocator.dll`（Hookあり）が生成されます。後者はMinecraft Bedrock 1.26.52.3の関数先頭とSHA256を照合してから2個のHookを設置し、**ゲームが自然にカーソル取得/解放したタイミングで、引数の `this` をポインタとして動的に保持**します。最初のイベントが来るまでは `nullptr` です。Linuxでは静的Resolverとテストのみがビルドされます。
 
 ### C++ API
 
@@ -127,7 +131,8 @@ if (api.loadJson(bedrock::generated::kSymbolDatabase, error) &&
 
 ## 未実装・注意事項
 
-- **ClientInstanceのオブジェクトポインタ取得**（Latiteの古い `Platform_GameCore` アンカーは未発見）
+- **ClientInstanceへの即時アクセス**（現在は自然発生するカーソル取得/解放イベントを待って捕捉。古い `Platform_GameCore` グローバルアンカーは未発見）
+- 実機でのHook有効化・取得ポインタの妥当性確認は未実施（Windows CIのシミュレーションテストとは区別）
 - 過去SDKのオフセット・vtableの現在版でのABI実証と自動修正
 - Ghidra/BSimの完全な自動更新パイプライン（Lensへの取り込み機能は用意）
 - GitHub HTTPSの動的ダウンロードと署名付きmanifest検証
@@ -140,3 +145,37 @@ if (api.loadJson(bedrock::generated::kSymbolDatabase, error) &&
 [LeviLamina](https://github.com/LiteLDev/LeviLamina)
 
 詳しいデータ定義：[docs/data-format.md](docs/data-format.md)
+
+
+## ClientInstance* を動的に取得する
+
+`BedrockClientLocator.dll` は独立DLLで、PreLoader/LeviLaminaは不要です。
+Windows x64の `ClientInstance::grabCursor` / `releaseCursor` が
+`RCX=this` を取ることを対象バージョンの命令から確認し、
+この2関数の入口にMinHookを入れます。
+
+- `BedrockLocator_Start()`：バージョン検証後にHook有効化（ロード後自動実行も可能）
+- `BedrockLocator_GetStatus()`：0=未開始、1=起動中、2=イベント待ち、3=捕捉済み、4=非対応、5=Hook失敗、6=停止
+- `BedrockLocator_GetClientInstance()`：取得済みの場合のみ `void*`。DLL内部でメモリ/仮想関数テーブルの妥当性を再確認する
+- `BedrockLocator_CaptureCount()`：キャプチャ回数
+- `BedrockLocator_Stop()`：Hook解除してポインタをクリア
+
+```cpp
+#include <bedrock/client_locator.hpp>
+// DLL内で型安全性を確認してから使用すること。ポインタの寿命は保証されない。
+void* client = BedrockLocator_GetClientInstance();
+if (client) {
+    // ClientInstance* (opaque); 現在のゲーム版のオブジェクトと判断した候補。
+}
+```
+
+**留意点**：これは`ClientInstance` のグローバルインスタンスを瞬時に検索するのではなく、
+自然に呼ばれるメソッドの `this` を使う**イベント駆動の遅延取得**です。
+カーソル切替がない限り取得されません。ポインタは非所有で、
+ゲームがオブジェクトを破棄・再生成した瞬間の完全な安全性は保証できません。
+Hook稼働中のコード解放によるクラッシュを防ぐためDLLはプロセス終了までピン留めされます。
+停止時は `BedrockLocator_Stop()` でHookを外し、ポインタを破棄してください。
+現在のSDKレイアウト/仮想関数オフセットは引き続き未検証なので、
+取得ポインタに固定オフセットでアクセスする処理は含めていません。
+
+MinHookソースはBSD-2-Clauseライセンスで `third_party/minhook-vendor/` に必要部分のみ内蔵しています。
