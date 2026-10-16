@@ -2,16 +2,24 @@ cmake_minimum_required(VERSION 3.20)
 project(BedrockDynamicSDK LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Tiny optional header-only event API; it has ZERO runtime dependencies.
+add_library(bedrock_events INTERFACE)
+target_include_directories(bedrock_events INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(bedrock_events INTERFACE cxx_std_20)
+add_library(bedrock::events ALIAS bedrock_events)
+
 add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp)
 target_include_directories(bedrock_resolver PUBLIC include third_party)
 target_compile_features(bedrock_resolver PUBLIC cxx_std_20)
-add_library(bedrock::sdk ALIAS bedrock_resolver)
+add_library(bedrock::symbols ALIAS bedrock_resolver)
+add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
+
 
 # When consumed through FetchContent, only expose the reusable C++ SDK.
 # Tools, hooks and tests are for this repo's own CI, not plugin consumers.
 option(BEDROCK_SDK_BUILD_TOOLS "Build SDK diagnostic DLLs and tests" ${PROJECT_IS_TOP_LEVEL})
 if(WIN32)
-    target_sources(bedrock_resolver PRIVATE src/windows.cpp src/http_catalog.cpp src/client.cpp)
+    target_sources(bedrock_resolver PRIVATE src/windows.cpp src/http_catalog.cpp)
     target_link_libraries(bedrock_resolver PUBLIC bcrypt winhttp user32)
     # No external VC++ runtime redistributable necessary for the probe DLL.
     if(MSVC)
@@ -69,15 +77,14 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         target_compile_options(keyboard_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME keyboard_test COMMAND keyboard_test)
-    add_executable(client_api_test tests/client_api_test.cpp)
-    target_link_libraries(client_api_test PRIVATE bedrock_resolver)
+    add_executable(events_test tests/events_test.cpp)
+    target_link_libraries(events_test PRIVATE bedrock::events)
     if(MSVC)
-        target_compile_options(client_api_test PRIVATE /UNDEBUG)
+        target_compile_options(events_test PRIVATE /UNDEBUG)
     else()
-        target_compile_options(client_api_test PRIVATE -UNDEBUG)
+        target_compile_options(events_test PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME client_api_test COMMAND client_api_test)
-
+    add_test(NAME events_test COMMAND events_test)
     add_executable(text_hash_test tests/text_hash_test.cpp)
     target_link_libraries(text_hash_test PRIVATE bedrock_resolver)
     if(MSVC)

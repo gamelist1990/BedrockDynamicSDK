@@ -5,46 +5,48 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
 
-## かんたんクライアントAPI
+## 軽量なEvent API（推奨）
 
-SDKから `<bedrock/mod.hpp>` を1つincludeすれば、マクロでDLLのエントリポイントと
-20msの更新ループを作れます。manifestのネットワーク取得やゲームのバージョン一致判定、
-Resolver初期化・停止時の入力解放などの処理はSDK側が担当します。
-
-```cpp
-#include <bedrock/mod.hpp>
-
-BEDROCK_MOD([](bedrock::Client& client) {
-    client.input().autoSprint();
-});
-```
-
-ほかにも以下のように書けます。
+SDKにはクライアント固有のスプリント動作・DLLエントリポイント・
+更新ループを持たせません。型付きイベントを扱う**ヘッダーオンリー**
+`<bedrock/events.hpp>` のみを公開します。
 
 ```cpp
-#include <bedrock/mod.hpp>
+#include <bedrock/events.hpp>
+bedrock::ClientEvents events;
 
-BEDROCK_MOD([](bedrock::Client& mc) {
-    if (mc.inGame() && mc.input().down(bedrock::Key::Forward)) {
-        mc.input().sprint(true);
-    } else {
-        mc.input().sprint(false);
+events.on<bedrock::KeyEvent>([](const auto& event) {
+    if (event.virtualKey == 'W' && event.pressed) {
+        // クライアント固有の動作を書く
     }
 });
+
+// 入力を実際に受信するクライアント側やHookアダプターで発行
+events.emit(bedrock::KeyEvent{'W', true, false});
 ```
 
-主要API：
-- `client.version()` — 現在有効なデータのゲームバージョン
-- `client.inGame()` / `client.focused()` — ゲームのアクティブ状態
-- `client.input().down(bedrock::Key::Forward)` — 標準キー入力
-- `client.input().autoSprint()` / `client.input().sprint(bool)` — Sprint入力
-- `client.symbol("...", true)` — 高度な用途向け、**候補のみ**の関数アドレス取得（ABIは未検証）
+- `KeyEvent`：キーコード・押下/解放・リピート
+- `FocusEvent`：ウィンドウのフォーカス
+- `GameplayEvent`：ゲームプレイ中の入力可否
+- `UpdateEvent`：クライアント側の任意周期で発行する更新イベント
+- `EventBus<MyEvent>`：ユーザー独自イベントも追加可能
+- `on<T>(callback)`, `emit<T>(event)`, `off<T>(listenerId)`
 
-`BEDROCK_MOD` は各DLLのソースで1回のみ利用します。OS入力を補助する簡易SDKなので、
-Minecraftの全内部APIを隠蔽した完全なModローダーではありません。
-更新コールバックはMinecraftのゲームスレッドではなくSDKワーカースレッド上で実行されます。
+**`UpdateEvent` はMinecraft本体のtickをHookしたイベントではありません。**
+スレッド・イベント源はクライアント側が管理します。将来的な
+Minecraft-native Hookイベントは独立したAdapterで実装可能です。
+コールバックは発行元スレッドで実行されるので、異なるスレッドから
+イベントを発行する場合は自分のイベントキューへ集約してください。
 
-ビルド側はCMakeで `target_link_libraries(MyClient PRIVATE bedrock::sdk)` とするだけです。
+CMake：
+
+```cmake
+target_link_libraries(MyClient PRIVATE bedrock::events)
+```
+
+`bedrock::events` はINTERFACEターゲットで、シンボル解析・HTTP・
+WinHTTP・MinHookの依存を一切取り込みません。
+バージョン別シンボル解決が必要なときだけ `bedrock::symbols` を追加してください。
 
 ## サンプル: AutoSprint
 
@@ -128,7 +130,8 @@ Bedrock LensのSQLiteを利用する `lens-import`、既存シグネチャーを
 
 ## C++ライブラリ / DLL
 
-- `bedrock_resolver`：C++20静的ライブラリ。EXEの身元確認、RVA/AOB検査、GitHubからのHTTPSダウンロード・検証を含みます。
+- `bedrock::events`：ヘッダーオンリーのEvent API（依存なし）。
+- `bedrock::symbols` / `bedrock_resolver`：追加選択するC++20静的ライブラリ。EXEの身元確認、RVA/AOB検査、GitHubからのHTTPSダウンロード・検証を含みます。
 - `BedrockAutoSprint.dll`：別リポジトリでビルドするサンプル。SDKに実装を含めません。
 - `BedrockClientLocator.dll`：実機未検証のClientInstance捕捉用実験DLL。
 - `BedrockSymbolProbe.dll`：メモリ読み取り専用の関数アドレス検査。
