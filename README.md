@@ -5,6 +5,47 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
 
+## かんたんクライアントAPI
+
+SDKから `<bedrock/mod.hpp>` を1つincludeすれば、マクロでDLLのエントリポイントと
+20msの更新ループを作れます。manifestのネットワーク取得やゲームのバージョン一致判定、
+Resolver初期化・停止時の入力解放などの処理はSDK側が担当します。
+
+```cpp
+#include <bedrock/mod.hpp>
+
+BEDROCK_MOD([](bedrock::Client& client) {
+    client.input().autoSprint();
+});
+```
+
+ほかにも以下のように書けます。
+
+```cpp
+#include <bedrock/mod.hpp>
+
+BEDROCK_MOD([](bedrock::Client& mc) {
+    if (mc.inGame() && mc.input().down(bedrock::Key::Forward)) {
+        mc.input().sprint(true);
+    } else {
+        mc.input().sprint(false);
+    }
+});
+```
+
+主要API：
+- `client.version()` — 現在有効なデータのゲームバージョン
+- `client.inGame()` / `client.focused()` — ゲームのアクティブ状態
+- `client.input().down(bedrock::Key::Forward)` — 標準キー入力
+- `client.input().autoSprint()` / `client.input().sprint(bool)` — Sprint入力
+- `client.symbol("...", true)` — 高度な用途向け、**候補のみ**の関数アドレス取得（ABIは未検証）
+
+`BEDROCK_MOD` は各DLLのソースで1回のみ利用します。OS入力を補助する簡易SDKなので、
+Minecraftの全内部APIを隠蔽した完全なModローダーではありません。
+更新コールバックはMinecraftのゲームスレッドではなくSDKワーカースレッド上で実行されます。
+
+ビルド側はCMakeで `target_link_libraries(MyClient PRIVATE bedrock::sdk)` とするだけです。
+
 ## サンプル: AutoSprint
 
 AutoSprintは[独立リポジトリ BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)のサンプルModです。GUIやほかの機能はありません。
