@@ -104,10 +104,17 @@ bool makeDx11Dummy(HWND hwnd, void** present, void** resize) {
     ComPtr<IDXGISwapChain> chain;
     D3D_FEATURE_LEVEL feature{};
     const D3D_FEATURE_LEVEL requested[] = {D3D_FEATURE_LEVEL_11_0};
-    const HRESULT result = D3D11CreateDeviceAndSwapChain(
+    HRESULT result = D3D11CreateDeviceAndSwapChain(
         nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
         requested, 1, D3D11_SDK_VERSION, &desc,
         &chain, &device, &feature, &context);
+    if (FAILED(result)) {
+        // Headless/VM or hardware D3D11 unavailable: discover software vtable.
+        result = D3D11CreateDeviceAndSwapChain(
+            nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+            requested, 1, D3D11_SDK_VERSION, &desc,
+            &chain, &device, &feature, &context);
+    }
     if (FAILED(result)) return false;
     *present = method<void*>(chain.Get(), 8); // IDXGISwapChain::Present
     *resize = method<void*>(chain.Get(), 13); // IDXGISwapChain::ResizeBuffers
@@ -116,7 +123,15 @@ bool makeDx11Dummy(HWND hwnd, void** present, void** resize) {
 bool makeDx12Dummy(HWND hwnd, void** present, void** resize, void** resize1, void** execute) {
     ComPtr<ID3D12Device> dev;
     if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
-                                 IID_PPV_ARGS(&dev)))) return false;
+                                 IID_PPV_ARGS(&dev)))) {
+        // Software fallback for tests; actual game may use a hardware adapter.
+        ComPtr<IDXGIFactory4> warpFactory;
+        ComPtr<IDXGIAdapter> warp;
+        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&warpFactory))) ||
+            FAILED(warpFactory->EnumWarpAdapter(IID_PPV_ARGS(&warp))) ||
+            FAILED(D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0,
+                                     IID_PPV_ARGS(&dev)))) return false;
+    }
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     ComPtr<ID3D12CommandQueue> queue;
