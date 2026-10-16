@@ -41,5 +41,4 @@ jobs:
           path: |
             build/Release/BedrockSymbolProbe.dll
             build/Release/BedrockClientLocator.dll
-            build/Release/BedrockAutoSprint.dll
           if-no-files-found: error

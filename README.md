@@ -1,12 +1,17 @@
 # BedrockDynamicSDK
 
-Windows x64 Minecraft Bedrock向けに、バージョン別シンボル情報の生成・照合を行うツールと、PreLoader/LeviLaminaなしで動作する**単一DLLのサンプルクライアント**を提供します。
+Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLLへ静的リンクできるC++20 SDKライブラリを提供します。
+**サンプルクライアントはSDK本体から分離した独立プロジェクト**です。
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
 
 ## サンプル: AutoSprint
 
-Windows向けGitHub Actionsの成果物 `BedrockAutoSprint.dll` がサンプルModです。GUIやほかの機能はありません。
+AutoSprintは[独立リポジトリ BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)のサンプルModです。GUIやほかの機能はありません。
+ビルド時にCMake FetchContentで**GitHubのBedrockDynamicSDKを取得**し、
+SDKヘッダー(`include/`)と `bedrock_resolver` を静的リンクします。
+実行時はローカルのSDK本体・ヘッダーを必要とせず、**DLL 1個**だけで動作します。
+[exsample/AutoSprint](exsample/AutoSprint)は独立リポジトリを指すサブモジュールです。
 
 - ゲームのウィンドウがアクティブ、カーソル非表示（ゲームプレイ中）、前進キー `W` を押している場合、`左Ctrl` の通常入力を自動的に保持
 - 前進をやめる、ゲームが非アクティブになる、メニューを開く、Shiftを押すと自動的に解除
@@ -83,7 +88,7 @@ Bedrock LensのSQLiteを利用する `lens-import`、既存シグネチャーを
 ## C++ライブラリ / DLL
 
 - `bedrock_resolver`：C++20静的ライブラリ。EXEの身元確認、RVA/AOB検査、GitHubからのHTTPSダウンロード・検証を含みます。
-- `BedrockAutoSprint.dll`：自動切替対応の常時スプリントサンプル。
+- `BedrockAutoSprint.dll`：別リポジトリでビルドするサンプル。SDKに実装を含めません。
 - `BedrockClientLocator.dll`：実機未検証のClientInstance捕捉用実験DLL。
 - `BedrockSymbolProbe.dll`：メモリ読み取り専用の関数アドレス検査。
 - `include/bedrock/keyboard.hpp`：ウィンドウメッセージ用キーボード観測API。
@@ -95,7 +100,17 @@ ctest --test-dir build --output-on-failure
 uv run --extra dev pytest -q
 ```
 
-Windows/MSVCでDLLをビルドし、GitHub Actionsにビルド成果物を公開。LinuxでのC++テストとWindowsの模擬Hookテストも実行します。**Minecraft本体への実機Inject試験は未実施**です。
+SDK側のWindows/MSVC CIは `BedrockClientLocator.dll` と `BedrockSymbolProbe.dll` をビルドします。
+**`BedrockAutoSprint.dll` は独立したBedrockAutoSprintリポジトリのCIでビルド**します。
+LinuxでのC++テストとWindowsの模擬Hookテストも実行します。
+**Minecraft本体への実機Inject試験は未実施**です。
+
+### SDKをほかのModから使用する
+
+CMakeの `FetchContent` でGitHubからSDKを取り込み、`bedrock_resolver` にリンクします。
+SDKがサブプロジェクトとして読み込まれた場合は `BEDROCK_SDK_BUILD_TOOLS=OFF` が既定になり、
+診断DLL・テストを自動ビルドしません。
+CMakeサンプルは [BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint) を参照。
 
 ## 技術的な注意
 
