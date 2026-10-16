@@ -118,10 +118,50 @@ bedrock::gui::GuiHost::run(options, [] {
 `GuiHost::run` は呼び出したUIスレッドを使い、コンソール・ゲームの裏側で
 勝手にワーカースレッドを起動しません。DllMain内では呼ばないでください。
 
-**制約：** `GuiHost` が表示するのは別のWin32ウィンドウであり、
-Minecraftの画面内へ直接オーバーレイ描画するものではありません。
-Minecraft内部の描画には、対象バージョンで動作確認したSwapChain/レンダリング
-Adapterが別途必要です。この点は実装済みだと偽らないよう分けています。
+### Minecraft画面内へ直接描画する（DX11 / DX12）
+
+`bedrock::gui_overlay` をリンクすれば、**別ウィンドウを使わず**
+Minecraftの既存DXGI SwapChainの `Present` 内でGUIを描画できます。
+DX11では通常のImGui/DX11描画、DX12ではゲームのDirectコマンドキューを捕捉して
+`D3D11On12` でImGuiを合成します。
+リサイズ時のバックバッファ再作成、ゲームへの入力イベント転送、
+標準F10で表示切替にも対応するよう実装しています。
+
+```cpp
+#include <bedrock/gui.hpp>
+#include <bedrock/gui_overlay.hpp>
+
+void renderGui(void*) {
+    bedrock::gui::Window window("My Client");
+    if (window) {
+        static bool enabled = true;
+        bedrock::gui::toggle("Enabled", enabled);
+    }
+}
+
+void initialize() { // DLLロード完了後のワーカースレッド
+    std::string error;
+    bedrock::gui::Overlay::install(&renderGui, nullptr, error);
+}
+```
+
+```cmake
+set(BEDROCK_SDK_ENABLE_GUI ON CACHE BOOL "" FORCE)
+# FetchContent_MakeAvailable(bedrock_sdk) の後
+target_link_libraries(MyClient PRIVATE bedrock::gui_overlay)
+```
+
+`Overlay::install` はMinecraft.Windows.exeプロセスでのみ有効化し、
+独自の別ウィンドウを表示しません（フックの関数アドレス取得用の**不可視**
+Win32ウィンドウは初期化時だけ作成して即破棄します）。
+`renderGui` は**ゲームのPresentスレッド**で呼ばれるので、
+ゲーム内メモリの操作やスレッド同期には慎重に対応してください。
+Modの実装は単純なUIコールバックだけにできます。
+
+**注意：** 実際のMinecraft 1.26.52.3＋GDK Proton上での表示・マウス操作は
+まだ未検証。DXGI/D3D12実装の差異やマウスロックによっては調整が必要です。
+メモリ改変を伴う互換性未確認のゲーム関数は利用していません。
+別ウィンドウが必要なら従来の `bedrock::gui_host` も選択可能です。
 
 サンプル：<https://github.com/gamelist1990/BedrockGuiDemo>
 （ダッシュボード、設定画面、タブ、グラフ風描画、グラデーションなど）

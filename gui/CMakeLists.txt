@@ -47,3 +47,39 @@ if(WIN32)
             "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 endif()
+
+if(WIN32)
+    # In-game renderer: intentionally separate from the Win32 GuiHost.
+    # MinHook is statically linked only when this opt-in target is requested.
+    add_library(bedrock_overlay_hook STATIC
+        ${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src/buffer.c
+        ${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src/hook.c
+        ${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src/trampoline.c
+        ${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src/hde/hde64.c
+    )
+    target_include_directories(bedrock_overlay_hook PUBLIC
+        "${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/include")
+    target_include_directories(bedrock_overlay_hook PRIVATE
+        "${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src"
+        "${BEDROCK_GUI_SDK_ROOT}/third_party/minhook-vendor/src/hde")
+    if(MSVC)
+        set_property(TARGET bedrock_overlay_hook PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+    add_library(bedrock_gui_overlay STATIC
+        ${BEDROCK_GUI_SDK_ROOT}/src/gui_overlay_win32.cpp
+        ${bedrock_imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${bedrock_imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+    )
+    add_library(bedrock::gui_overlay ALIAS bedrock_gui_overlay)
+    target_link_libraries(bedrock_gui_overlay PUBLIC
+        bedrock_gui bedrock_overlay_hook d3d11 d3d12 dxgi user32)
+    target_include_directories(bedrock_gui_overlay PUBLIC
+        "${BEDROCK_GUI_SDK_ROOT}/include")
+    target_include_directories(bedrock_gui_overlay PRIVATE
+        "${bedrock_imgui_SOURCE_DIR}/backends")
+    if(MSVC)
+        set_property(TARGET bedrock_gui_overlay PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+endif()
