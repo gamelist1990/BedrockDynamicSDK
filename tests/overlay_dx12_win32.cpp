@@ -42,9 +42,9 @@ int main() {
             hr=D3D12CreateDevice(warp.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device));
     }
     if (FAILED(hr)) {
-        std::cout<<"SKIP: D3D12 device unavailable on this runner\n";
+        std::cerr<<"D3D12 device unavailable on this runner; cannot verify overlay\n";
         DestroyWindow(hwnd);
-        return 0;
+        return 12;
     }
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
