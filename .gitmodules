@@ -1,0 +1,4 @@
+[submodule "exsample/AutoSprint"]
+	path = exsample/AutoSprint
+	url = https://github.com/gamelist1990/BedrockAutoSprint.git
+	branch = main
