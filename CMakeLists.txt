@@ -79,6 +79,7 @@ if(BUILD_TESTING)
     if(WIN32)
         add_executable(windows_minhook_test tests/windows_minhook_test.cpp)
         target_link_libraries(windows_minhook_test PRIVATE minhook_static)
+        target_include_directories(windows_minhook_test PRIVATE include)
         if(MSVC)
             target_compile_options(windows_minhook_test PRIVATE /UNDEBUG)
             set_property(TARGET windows_minhook_test PROPERTY MSVC_RUNTIME_LIBRARY
