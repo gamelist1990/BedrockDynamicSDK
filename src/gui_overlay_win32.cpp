@@ -192,7 +192,7 @@ void applyNativeCursorChange() {
         if (auto method=nativeReleaseOriginal.load()) {
             method(self);
             nativeCursorReleased.store(true);
-            SetCursor(LoadCursorW(nullptr,IDC_ARROW)); // Latite's releaseMouse behavior
+            SetCursor(LoadCursorW(nullptr,MAKEINTRESOURCEW(32512))); // Latite's releaseMouse behavior
             trace("BedrockGuiOverlay: native ClientInstance::releaseCursor invoked\n");
         }
     } else if (requestNativeGrab.exchange(false)) {
@@ -351,7 +351,7 @@ LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (msg==WM_SETCURSOR && enabled.load() && captureInput.load() &&
             nativeCursorEnabled.load()) {
-            SetCursor(LoadCursorW(nullptr,IDC_ARROW));
+            SetCursor(LoadCursorW(nullptr,MAKEINTRESOURCEW(32512)));
             return TRUE;
         }
         const auto key = toggleKey.load();
