@@ -11,9 +11,11 @@ struct OverlayOptions {
     unsigned toggleVirtualKey = 0x79;
     bool initiallyVisible = true;
     bool captureInput = true;
-    // Release the game OS cursor and prevent re-centering while the UI is open.
-    // Uses process-local user32 interception; set false to opt out.
-    bool unlockMouse = true;
+    // Latite-style native ClientInstance::releaseCursor/grabCursor bridge.
+    // Active only for verified matching game builds; uses the downloaded
+    // version profile, not historical fixed offsets. Set false only for
+    // a custom input backend or for smoke testing outside Minecraft.
+    bool nativeCursor = true;
     // Fail closed if loaded outside a Minecraft.Windows.exe process.
     bool requireMinecraftProcess = true;
 };
@@ -27,6 +29,9 @@ public:
     static void show(bool visible) noexcept;
     static bool visible() noexcept;
     static bool running() noexcept;
+    // True only after an actual Minecraft cursor method has supplied a
+    // validated ClientInstance pointer. Before then native input is pending.
+    static bool nativeCursorReady() noexcept;
     // Unhook before unloading a DLL that contains the callback.
     static void shutdown() noexcept;
 };

@@ -16,6 +16,9 @@
 #include <backends/imgui_impl_win32.h>
 #include "bedrock/gui.hpp"
 #include "bedrock/gui_overlay.hpp"
+#include "bedrock/client_instance_tracker.hpp"
+#include "bedrock/remote_catalog.hpp"
+#include "bedrock/resolver.hpp"
 #include <atomic>
 #include <array>
 #include <cstdint>
@@ -23,6 +26,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <cstring>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -46,17 +50,25 @@ std::atomic<bool> installed{false};
 std::atomic<bool> enabled{false};
 std::atomic<unsigned> toggleKey{0x79};
 std::atomic<bool> captureInput{true};
-std::atomic<bool> unlockMouse{true};
+std::atomic<bool> nativeCursorEnabled{false};
 bool togglePreviouslyDown = false;
-bool cursorUnlocked = false;
-bool savedClipValid = false;
-RECT savedClip{};
-int cursorShowIncrements = 0;
 std::array<bool,5> previousMouseButtons{};
-using SetCursorFn = BOOL (WINAPI*)(int, int);
-using ClipCursorFn = BOOL (WINAPI*)(const RECT*);
-SetCursorFn originalSetCursorPos = nullptr;
-ClipCursorFn originalClipCursor = nullptr;
+// Native Bedrock cursor methods, as used by Latite's ScreenManager.
+using ClientCursorMethod = void (__fastcall*)(void*);
+std::atomic<ClientCursorMethod> nativeGrabOriginal{nullptr};
+std::atomic<ClientCursorMethod> nativeReleaseOriginal{nullptr};
+void* nativeGrabAddress = nullptr;
+void* nativeReleaseAddress = nullptr;
+std::atomic<bool> nativeCursorCaptured{false};
+std::atomic<bool> nativeCursorReleased{false};
+std::atomic<bool> requestNativeRelease{false};
+std::atomic<bool> requestNativeGrab{false};
+constexpr UINT kMouseCommand = WM_APP + 0x4BD;
+std::uintptr_t imageBegin = 0;
+std::uintptr_t imageEnd = 0;
+std::uintptr_t textBegin = 0;
+std::uintptr_t textEnd = 0;
+
 Overlay::RenderCallback renderCallback = nullptr;
 void* renderUserdata = nullptr;
 bool minhookOwned = false;
@@ -87,7 +99,6 @@ QueueFn execute12 = nullptr;
 
 void trace(const char* line) { OutputDebugStringA(line); }
 
-// Prefer the game's foreground window, never inject into other apps' input.
 bool gameFocused() {
     if (!gameWindow) return false;
     const HWND foreground = GetForegroundWindow();
@@ -97,77 +108,118 @@ bool gameFocused() {
     return owner == GetCurrentProcessId();
 }
 
-// Minecraft locks/warps its cursor during gameplay. The overlay needs an
-// independent, genuine OS cursor; prevent game warps/clips ONLY while its
-// GUI is visible, its window is focused, and the option is enabled.
-bool interceptCursor() {
-    return installed.load(std::memory_order_acquire) &&
-           enabled.load(std::memory_order_relaxed) &&
-           captureInput.load(std::memory_order_relaxed) &&
-           unlockMouse.load(std::memory_order_relaxed) &&
-           gameFocused();
+// The pointer is captured ONLY from actual ClientInstance member invocations.
+// Never dereference old hardcoded class offsets or invent a this pointer.
+bool validateClient(const void* self, void*) noexcept {
+    if (!self || !imageBegin) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(self,&mbi,sizeof(mbi)) || mbi.State!=MEM_COMMIT ||
+        (mbi.Protect&(PAGE_NOACCESS|PAGE_GUARD)) ||
+        !(mbi.Protect & (PAGE_READONLY|PAGE_READWRITE|PAGE_WRITECOPY|
+          PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)))
+        return false;
+    std::uintptr_t vtable=0;
+    __try { vtable=*reinterpret_cast<const std::uintptr_t*>(self); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if (vtable<imageBegin || vtable>=imageEnd) return false;
+    if (!VirtualQuery(reinterpret_cast<void*>(vtable),&mbi,sizeof(mbi)) ||
+        mbi.State!=MEM_COMMIT || (mbi.Protect&(PAGE_NOACCESS|PAGE_GUARD))) return false;
+    std::uintptr_t first=0;
+    __try { first=*reinterpret_cast<const std::uintptr_t*>(vtable); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return first>=textBegin && first<textEnd;
 }
-BOOL WINAPI hookedSetCursorPos(int x, int y) {
-    return interceptCursor() ? TRUE : (originalSetCursorPos ?
-           originalSetCursorPos(x,y) : FALSE);
-}
-BOOL WINAPI hookedClipCursor(const RECT* rect) {
-    return interceptCursor() && rect ? TRUE :
-           (originalClipCursor ? originalClipCursor(rect) : FALSE);
-}
+bedrock::ClientInstanceTracker nativeClient{&validateClient};
 
-void releaseGameCursor() {
-    if (cursorUnlocked || !gameWindow || !IsWindow(gameWindow)) return;
-    cursorUnlocked = true;
-    savedClipValid = GetClipCursor(&savedClip) != 0;
-    if (originalClipCursor) originalClipCursor(nullptr);
-    else ClipCursor(nullptr);
-    if (GetCapture() == gameWindow) ReleaseCapture();
-    cursorShowIncrements = 0;
-    // ShowCursor uses a display counter. Track each increment and undo it
-    // precisely on close instead of blindly corrupting the game counter.
-    for (int n=0; n<16; ++n) {
-        const int count = ShowCursor(TRUE);
-        ++cursorShowIncrements;
-        if (count >= 0) break;
-    }
-    RECT rect{};
-    if (GetClientRect(gameWindow,&rect)) {
-        POINT center{(rect.left+rect.right)/2,(rect.top+rect.bottom)/2};
-        if (ClientToScreen(gameWindow,&center)) {
-            if (originalSetCursorPos) originalSetCursorPos(center.x,center.y);
+bool discoverImageSections() {
+    auto* base=reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
+    if (!base) return false;
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic!=IMAGE_DOS_SIGNATURE || dos->e_lfanew<=0 ||
+        dos->e_lfanew>0x100000) return false;
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    if (nt->Signature!=IMAGE_NT_SIGNATURE ||
+        nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
+    imageBegin=reinterpret_cast<std::uintptr_t>(base);
+    imageEnd=imageBegin+nt->OptionalHeader.SizeOfImage;
+    const auto* sections=IMAGE_FIRST_SECTION(nt);
+    for (WORD i=0;i<nt->FileHeader.NumberOfSections;++i) {
+        if (std::memcmp(sections[i].Name,".text",5)==0) {
+            textBegin=imageBegin+sections[i].VirtualAddress;
+            textEnd=textBegin+sections[i].Misc.VirtualSize;
+            return textEnd<=imageEnd;
         }
     }
-    trace("BedrockGuiOverlay: OS cursor unlocked for interactive UI\n");
+    return false;
 }
-void restoreGameCursor() {
-    if (!cursorUnlocked) return;
-    cursorUnlocked = false;
-    if (originalClipCursor && savedClipValid) originalClipCursor(&savedClip);
-    if (originalClipCursor && !savedClipValid) originalClipCursor(nullptr);
-    for (int i=0; i<cursorShowIncrements; ++i) ShowCursor(FALSE);
-    cursorShowIncrements = 0;
-    previousMouseButtons.fill(false);
-}
-
-// Poll the physical key every Present; native Minecraft/Proton often consumes
-// F10 via its raw input path without producing an observable WM_KEYDOWN.
-// A single rising edge prevents repeated toggles while F10 is held.
-void updateToggleKey() {
-    const auto key = toggleKey.load();
-    const bool pressed = key && gameFocused() && (GetAsyncKeyState(key) & 0x8000);
-    if (pressed && !togglePreviouslyDown) {
-        enabled.store(!enabled.load());
-        trace(enabled.load() ? "BedrockGuiOverlay: F10 OPEN\n" :
-                               "BedrockGuiOverlay: F10 CLOSED\n");
+void __fastcall onNativeGrab(void* self) {
+    if (nativeClient.observe(self)) nativeCursorCaptured.store(true);
+    // Latite cancels grabCursor while a custom screen is active.
+    if (nativeCursorEnabled.load() && enabled.load() && gameFocused()) {
+        if (!nativeCursorReleased.load()) requestNativeRelease.store(true);
+        if (gameWindow) PostMessageW(gameWindow,kMouseCommand,0,0);
+        return;
     }
-    togglePreviouslyDown = pressed;
+    if (auto original=nativeGrabOriginal.load(std::memory_order_acquire)) original(self);
+}
+void __fastcall onNativeRelease(void* self) {
+    if (nativeClient.observe(self)) nativeCursorCaptured.store(true);
+    if (auto original=nativeReleaseOriginal.load(std::memory_order_acquire)) original(self);
+    if (nativeCursorEnabled.load() && enabled.load()) nativeCursorReleased.store(true);
 }
 
+void requestCursorChange(bool menuOpen) {
+    if (!nativeCursorEnabled.load()) return;
+    if (menuOpen) {
+        requestNativeGrab.store(false);
+        requestNativeRelease.store(true);
+    } else {
+        requestNativeRelease.store(false);
+        requestNativeGrab.store(true);
+    }
+    // Minecraft owns this HWND/UI thread. Dispatch the actual native cursor
+    // calls there, never from DXGI Present (which may be another thread).
+    if (gameWindow && IsWindow(gameWindow))
+        PostMessageW(gameWindow,kMouseCommand,0,0);
+}
+void applyNativeCursorChange() {
+    // Called on Minecraft's WndProc thread and only after a validated capture.
+    if (!nativeCursorEnabled.load()) return;
+    void* self=nativeClient.get();
+    if (!self) return;
+    if (requestNativeRelease.exchange(false)) {
+        requestNativeGrab.store(false);
+        if (auto method=nativeReleaseOriginal.load()) {
+            method(self);
+            nativeCursorReleased.store(true);
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW)); // Latite's releaseMouse behavior
+            trace("BedrockGuiOverlay: native ClientInstance::releaseCursor invoked\n");
+        }
+    } else if (requestNativeGrab.exchange(false)) {
+        if (nativeCursorReleased.exchange(false)) {
+            if (auto method=nativeGrabOriginal.load()) {
+                method(self);
+                trace("BedrockGuiOverlay: native ClientInstance::grabCursor invoked\n");
+            }
+        }
+    }
+}
+
+void updateToggleKey() {
+    const auto key=toggleKey.load();
+    const bool held=key && gameFocused() && (GetAsyncKeyState(key)&0x8000);
+    if (held && !togglePreviouslyDown) {
+        const bool show=!enabled.load();
+        enabled.store(show);
+        requestCursorChange(show);
+        trace(show?"BedrockGuiOverlay: F10 OPEN\n":"BedrockGuiOverlay: F10 CLOSED\n");
+    }
+    togglePreviouslyDown=held;
+}
 void pollMouse(ImGuiIO& io) {
     if (!gameWindow || !gameFocused()) {
         io.AddMousePosEvent(-FLT_MAX,-FLT_MAX);
-        for (int i=0; i<5; ++i) {
+        for (int i=0;i<5;++i) {
             if (previousMouseButtons[i]) io.AddMouseButtonEvent(i,false);
             previousMouseButtons[i]=false;
         }
@@ -175,14 +227,13 @@ void pollMouse(ImGuiIO& io) {
     }
     POINT point{};
     if (GetCursorPos(&point) && ScreenToClient(gameWindow,&point))
-        io.AddMousePosEvent(static_cast<float>(point.x),
-                            static_cast<float>(point.y));
-    const int virtualKeys[5]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_XBUTTON1,VK_XBUTTON2};
-    for (int i=0;i<5;++i) {
-        const bool down=(GetAsyncKeyState(virtualKeys[i])&0x8000)!=0;
-        if (down!=previousMouseButtons[i]) {
-            io.AddMouseButtonEvent(i,down);
-            previousMouseButtons[i]=down;
+        io.AddMousePosEvent((float)point.x,(float)point.y);
+    const int keys[5]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_XBUTTON1,VK_XBUTTON2};
+    for(int i=0;i<5;++i) {
+        const bool held=(GetAsyncKeyState(keys[i])&0x8000)!=0;
+        if (held!=previousMouseButtons[i]) {
+            io.AddMouseButtonEvent(i,held);
+            previousMouseButtons[i]=held;
         }
     }
 }
@@ -283,7 +334,6 @@ void cleanupRenderer() {
         contextImGui = nullptr;
     }
     backendInitialized = false;
-    restoreGameCursor();
     renderTarget.Reset();
     wrapped.clear();
     context11.Reset();
@@ -295,6 +345,15 @@ void cleanupRenderer() {
 LRESULT CALLBACK overlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (installed.load()) {
+        if (msg==kMouseCommand) {
+            applyNativeCursorChange();
+            return 0;
+        }
+        if (msg==WM_SETCURSOR && enabled.load() && captureInput.load() &&
+            nativeCursorEnabled.load()) {
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW));
+            return TRUE;
+        }
         const auto key = toggleKey.load();
         // Consume F10 even when the native game window receives it. Actual
         // toggle is handled once per Present via the physical key state.
@@ -417,6 +476,8 @@ bool initRenderer(IDXGISwapChain* chain) {
     const LONG_PTR previous = SetWindowLongPtrW(gameWindow, GWLP_WNDPROC,
                                                reinterpret_cast<LONG_PTR>(overlayWndProc));
     if (previous) oldWndProc = reinterpret_cast<WNDPROC>(previous);
+    if (enabled.load() && nativeCursorEnabled.load())
+        requestCursorChange(true);
     return true;
 }
 void drawImGui(IDXGISwapChain* chain) {
@@ -481,9 +542,12 @@ HRESULT STDMETHODCALLTYPE onPresent(IDXGISwapChain* chain, UINT sync, UINT flags
                 }
             }
             if (backendInitialized) {
+                // Reassert release when the normal gameplay grab path fires
+                // during the overlay. Native grab detour prevents re-capture.
                 if (enabled.load() && captureInput.load() &&
-                    unlockMouse.load() && gameFocused()) releaseGameCursor();
-                else restoreGameCursor();
+                    nativeCursorEnabled.load() && !nativeCursorReleased.load() &&
+                    nativeClient.get() && !requestNativeRelease.load())
+                    requestCursorChange(true);
                 if (enabled.load()) drawImGui(chain);
             }
         }
@@ -592,14 +656,43 @@ bool Overlay::install(RenderCallback render, void* userdata,
         if (okay) okay = hookMethod(d12Resize1,(void*)&onResize1,(void**)&resize12_1) &&
                          hookMethod(d12Execute,(void*)&onExecute,(void**)&execute12);
     }
-    if (okay && options.unlockMouse) {
-        // Intercept only the process-local user32 exports; outside the active
-        // GUI these trampoline calls preserve the game's original behavior.
-        const auto user32=GetModuleHandleW(L"user32.dll");
-        auto setpos=user32 ? (void*)GetProcAddress(user32,"SetCursorPos") : nullptr;
-        auto clip=user32 ? (void*)GetProcAddress(user32,"ClipCursor") : nullptr;
-        okay = hookMethod(setpos,(void*)&hookedSetCursorPos,(void**)&originalSetCursorPos) &&
-               hookMethod(clip,(void*)&hookedClipCursor,(void**)&originalClipCursor);
+    if (okay && options.nativeCursor && options.requireMinecraftProcess) {
+        std::string versionJson, resolveError;
+        bedrock::ProfileChoice chosen;
+        bedrock::Resolver resolver;
+        // Explicitly fail closed if the game binary differs from the known
+        // manifest: native member calls MUST NOT use stale RVAs.
+        if (!discoverImageSections() ||
+            !bedrock::fetchSupportedProfile(versionJson,chosen,resolveError) ||
+            !resolver.loadJson(versionJson,resolveError) ||
+            !resolver.attachWindowsMainModule(resolveError) ||
+            !resolver.exactBuild()) {
+            error="Native cursor requires a recognized Bedrock game build: "+resolveError;
+            okay=false;
+        } else {
+            const auto grab=resolver.resolve("ClientInstance::grabCursor",true);
+            const auto release=resolver.resolve("ClientInstance::releaseCursor",true);
+            if (!grab || !release || !grab->exact_build || !release->exact_build ||
+                grab->method!="exact-rva" || release->method!="exact-rva" ||
+                grab->address==release->address) {
+                error="Native ClientInstance grab/release anchors not available";
+                okay=false;
+            } else {
+                nativeGrabAddress=reinterpret_cast<void*>(grab->address);
+                nativeReleaseAddress=reinterpret_cast<void*>(release->address);
+                ClientCursorMethod fnGrab=nullptr,fnRelease=nullptr;
+                okay=hookMethod(nativeGrabAddress,(void*)&onNativeGrab,
+                                reinterpret_cast<void**>(&fnGrab)) &&
+                     hookMethod(nativeReleaseAddress,(void*)&onNativeRelease,
+                                reinterpret_cast<void**>(&fnRelease));
+                if (okay) {
+                    nativeGrabOriginal.store(fnGrab);
+                    nativeReleaseOriginal.store(fnRelease);
+                    nativeCursorEnabled.store(true);
+                    trace("BedrockGuiOverlay: native Latite-style cursor bridge armed\n");
+                }
+            }
+        }
     }
     if (okay) for (void* target : targets) {
         if (MH_QueueEnableHook(target) != MH_OK) { okay = false; break; }
@@ -610,7 +703,6 @@ bool Overlay::install(RenderCallback render, void* userdata,
     enabled.store(options.initiallyVisible);
     toggleKey.store(options.toggleVirtualKey);
     captureInput.store(options.captureInput);
-    unlockMouse.store(options.unlockMouse);
     togglePreviouslyDown=false;
     previousMouseButtons.fill(false);
     installed.store(okay);
@@ -629,16 +721,36 @@ bool Overlay::install(RenderCallback render, void* userdata,
     minhookOwned=false;
     renderCallback=nullptr;
     renderUserdata=nullptr;
-    error="Could not install/enable all DXGI hooks";
+    nativeCursorEnabled.store(false);
+    nativeGrabOriginal.store(nullptr);
+    nativeReleaseOriginal.store(nullptr);
+    nativeGrabAddress=nativeReleaseAddress=nullptr;
+    nativeClient.clear();
+    if (error.empty()) error="Could not install/enable all DXGI hooks";
     return false;
 }
-void Overlay::show(bool value) noexcept { enabled.store(value); }
+void Overlay::show(bool value) noexcept {
+    const bool changed=enabled.exchange(value)!=value;
+    if (changed) requestCursorChange(value);
+}
 bool Overlay::visible() noexcept { return enabled.load(); }
 bool Overlay::running() noexcept { return installed.load(); }
+bool Overlay::nativeCursorReady() noexcept {
+    return nativeCursorEnabled.load() && nativeClient.get()!=nullptr;
+}
 void Overlay::shutdown() noexcept {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    if (!installed.exchange(false)) return;
+    if (!installed.load()) return;
+    // Restore native cursor before disabling the game method hooks. The UI
+    // thread normally handles hide/ESC; explicit shutdown is a last resort.
+    // An attached GUI should call Overlay::show(false) before shutdown.
     enabled.store(false);
+    if (nativeCursorReleased.exchange(false)) {
+        if (auto method=nativeGrabOriginal.load()) {
+            if (auto self=nativeClient.get()) method(self);
+        }
+    }
+    installed.store(false);
     // Keep the callback & code resident until MinHook no longer redirects execution.
     for (void* target : targets) MH_DisableHook(target);
     for (void* target : targets) MH_RemoveHook(target);
@@ -648,6 +760,12 @@ void Overlay::shutdown() noexcept {
     capturedQueue.Reset();
     if (minhookOwned) MH_Uninitialize();
     minhookOwned=false;
+    nativeCursorEnabled.store(false);
+    nativeGrabOriginal.store(nullptr);
+    nativeReleaseOriginal.store(nullptr);
+    nativeClient.clear();
+    nativeCursorCaptured.store(false);
+    nativeCursorReleased.store(false);
     renderCallback=nullptr;
     renderUserdata=nullptr;
 }

@@ -120,6 +120,24 @@ bedrock::gui::GuiHost::run(options, [] {
 
 ### Minecraft画面内へ直接描画する（DX11 / DX12）
 
+**GUIマウス操作のネイティブ経路（Latite方式）:**
+`OverlayOptions::nativeCursor=true` にすると、GitHubから正しい
+`windows-x64.json` を取得し実EXEのSHA-256を照合した後、
+`ClientInstance::grabCursor/releaseCursor` にHookを掛けます。
+通常のカーソルイベントが発生した際の `this` を捕捉し、
+F10を開いたら `releaseCursor()`、閉じたら `grabCursor()` を呼び、
+GUI表示中の自動 `grabCursor` を抑制します。
+これはLatiteのScreenManagerと同じ考え方で、
+以前の `user32!ClipCursor/SetCursorPos` だけの対処は廃止しました。
+
+`Overlay::nativeCursorReady()` で捕捉の可否を確認できます。
+まだMinecraftが自然な `grabCursor/releaseCursor` を呼んでいないときは
+ポインタを取得できず、ゲーム内の画面を1度切り替える等のイベントが必要です。
+`data` にない未対応ビルドではフックを有効にせず終了します。
+なお対応データの候補シンボルはすべてのMinecraft実機でABI確認されたものではなく、
+プロファイルとシグネチャを照合したバージョンでのみ試験的に使用します。
+
+
 `bedrock::gui_overlay` をリンクすれば、**別ウィンドウを使わず**
 Minecraftの既存DXGI SwapChainの `Present` 内でGUIを描画できます。
 DX11では通常のImGui/DX11描画、DX12ではゲームのDirectコマンドキューを捕捉して

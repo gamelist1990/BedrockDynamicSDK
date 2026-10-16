@@ -73,7 +73,7 @@ if(WIN32)
     )
     add_library(bedrock::gui_overlay ALIAS bedrock_gui_overlay)
     target_link_libraries(bedrock_gui_overlay PUBLIC
-        bedrock_gui bedrock_overlay_hook d3d11 d3d12 dxgi user32)
+        bedrock_gui bedrock_overlay_hook bedrock::symbols d3d11 d3d12 dxgi user32)
     target_include_directories(bedrock_gui_overlay PUBLIC
         "${BEDROCK_GUI_SDK_ROOT}/include")
     target_include_directories(bedrock_gui_overlay PRIVATE
