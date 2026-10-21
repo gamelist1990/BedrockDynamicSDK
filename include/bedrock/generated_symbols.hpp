@@ -214,6 +214,22 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "abi_verified": true,
       "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)"
     },
+    "Keyboard::feed": {
+      "rva": "0x2D18D0",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D3 89 CE",
+      "entry_check": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ??",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "Minecraft.Windows.exe 1.26.52.3 native key-event callback and KeyboardManager callsite",
+      "function_boundary": true,
+      "signature_length": 27,
+      "category": "input",
+      "origin_key": "Keyboard_feed",
+      "reference_commit": null,
+      "confidence": "unique-masked-AOB-pdata-boundary-and-native-callsites",
+      "abi_verified": true,
+      "abi": "bool __fastcall(int inputKey, bool down)"
+    },
     "GameCore::handleMouseInput": {
       "rva": "0x8A880",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 BD 80 02 00 00 44 0F 29 B5 70 02 00 00 44 0F 29 AD 60 02 00 00 44 0F 29 A5 50 02 00 00 44 0F 29 9D 40 02 00 00 44 0F 29 95 30 02 00 00 44 0F 29 8D 20 02 00 00 44 0F 29 85 10 02 00 00 0F 29 BD 00 02 00 00 0F 29 B5 F0 01 00 00 48 C7 85 E8 01 00 00 FE FF FF FF 48 89 CE",
