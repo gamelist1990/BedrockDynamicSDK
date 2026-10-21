@@ -29,6 +29,22 @@
       "confidence": "unique-AOB-and-pdata-boundary",
       "abi_verified": false
     },
+    "LevelRendererPlayer::getFov": {
+      "rva": "0x46BD250",
+      "signature": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1",
+      "entry_check": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ??",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "Minecraft.Windows.exe 1.26.52.3 FOV callsites and return-value flow",
+      "function_boundary": true,
+      "signature_length": 29,
+      "category": "render",
+      "origin_key": "LevelRendererPlayer_getFov",
+      "reference_commit": null,
+      "confidence": "unique-masked-AOB-pdata-boundary-and-native-callsite",
+      "abi_verified": true,
+      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)"
+    },
     "MainWindow::_windowProcCallback": {
       "rva": "0x7D8B0",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 B0 00 00 00 FE FF FF FF 89 D6",
