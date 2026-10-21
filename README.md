@@ -5,6 +5,13 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
 
+公開サンプル：
+
+- [BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)
+- [BedrockGuiDemo](https://github.com/gamelist1990/BedrockGuiDemo)
+- [BedrockZoom](https://github.com/gamelist1990/BedrockZoom)
+- [BedrockTabList](https://github.com/gamelist1990/BedrockTabList) — Tabキー中のシンプルなプレイヤー一覧
+
 ## Console / Logger API（必要なModだけ使用）
 
 コンソールとデバッグ出力APIは**ヘッダーオンリー・独立モジュール**です。
