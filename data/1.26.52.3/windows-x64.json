@@ -227,20 +227,20 @@
       "abi_verified": false
     },
     "GameCore::handleKeyboardInput": {
-      "rva": "0x996A0",
-      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 30 FE FF FF FF 4C 89 C3 48 89 D6",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ??",
+      "rva": "0x98FA0",
+      "signature": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 41 8B 58 10",
+      "entry_check": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6",
       "cross_version_signature_available": true,
       "status": "verified",
-      "source": "Minecraft.Windows.exe 1.26.52.3 native RAWKEYBOARD handler and callsite",
+      "source": "Minecraft.Windows.exe 1.26.52.3 native key-event callback and callsites",
       "function_boundary": true,
-      "signature_length": 41,
+      "signature_length": 32,
       "category": "input",
       "origin_key": "GameCore_handleKeyboardInput",
       "reference_commit": null,
       "confidence": "unique-masked-AOB-pdata-boundary-and-native-callsite",
       "abi_verified": true,
-      "abi": "void* __fastcall(void* context, void* result, RAWINPUT const* input)"
+      "abi": "void* __fastcall(void* context, void* result, MinecraftKeyEvent const* input)"
     },
     "ScreenView::setupAndRender": {
       "rva": "0x4839060",
