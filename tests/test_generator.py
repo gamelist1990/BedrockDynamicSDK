@@ -168,7 +168,7 @@ def test_historical_latite_parser_and_category(tmp_path):
     assert feature_for(rows[0]["key"]) in {"core", "input"}
 
 
-def test_real_profile_is_candidate_only():
+def test_real_profile_marks_only_disassembled_abi_verified():
     here = Path(__file__).resolve().parents[1]
     path = here / "data/1.26.52.3/windows-x64.json"
     if not path.exists():
@@ -179,7 +179,11 @@ def test_real_profile_is_candidate_only():
     assert "GuiData::displayClientMessage" in data["symbols"]
     assert len(data["symbols"]) >= 30
     for name, symbol in data["symbols"].items():
-        assert symbol["status"] == "candidate", name
+        if name == "MouseDevice::feed":
+            assert symbol["status"] == "verified"
+            assert symbol["abi_verified"] is True
+        else:
+            assert symbol["status"] == "candidate", name
+            assert symbol["abi_verified"] is False
         assert symbol["function_boundary"]
-        assert symbol["abi_verified"] is False
         assert symbol["signature"]

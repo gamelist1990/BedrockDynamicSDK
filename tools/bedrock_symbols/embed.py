@@ -5,10 +5,14 @@ import json
 
 
 def make_header(source: Path, destination: Path) -> None:
-    data = source.read_text(encoding="utf-8")
-    value = json.loads(data)
+    value = json.loads(source.read_text(encoding="utf-8"))
     if value.get("schema") != 1 or "symbols" not in value:
         raise ValueError("expected a Bedrock symbol database schema 1")
+    # Runtime resolution only needs target identity and symbols. The unified
+    # profile's RTTI and historical analysis can be many megabytes and belongs
+    # in the downloadable evidence file, not every consumer DLL.
+    value.pop("analysis", None)
+    data = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
     marker = "BDK_SYM_V1"  # <= 16 chars by the C++ standard
     if f"){marker}\"" in data:
         raise ValueError("raw string marker collision")
