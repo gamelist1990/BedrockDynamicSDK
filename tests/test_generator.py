@@ -24,6 +24,20 @@ def test_masked_signature_unique_and_ambiguous():
     assert pattern_string(*parse_pattern(signature)) == signature
 
 
+def test_unique_signature_masks_rsp_relative_stack_offsets():
+    # Frame size and RSP-relative argument positions move between builds.
+    code = bytes.fromhex(
+        "48 83 EC 48 0F B7 84 24 C0 00 00 00 "
+        "0F B7 8C 24 B8 00 00 00 C3")
+    payload = b"\xCC" * 40 + code + b"\xCC" * 40
+    result = generate_unique_signature(code, payload, 40)
+    assert result
+    signature, _ = result
+    assert signature.startswith("48 83 EC ??")
+    assert "0F B7 84 24 ?? ?? ?? ??" in signature
+    assert "0F B7 8C 24 ?? ?? ?? ??" in signature
+
+
 def test_pattern_validation():
     for invalid in ("", "12 GG", "12 123", "? AB B"):
         with pytest.raises(ValueError):

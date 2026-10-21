@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import capstone
-from capstone.x86 import X86_REG_RIP
+from capstone.x86 import X86_REG_RIP, X86_REG_RSP
 
 def parse_pattern(pattern: str) -> tuple[bytes, bytes]:
     toks = pattern.strip().split()
@@ -99,6 +99,14 @@ def generate_unique_signature(code: bytes, binary_text: bytes, expected_offset: 
                     inst.reg_name(src.mem.base) == "rsp"):
                 for n in range(inst.disp_offset, inst.disp_offset + inst.disp_size):
                     insn_mask[n] = 0
+        # RSP-relative offsets identify arguments and locals whose positions
+        # move when the compiler changes the frame size or saved registers.
+        stack_mem = any(op.type == capstone.x86.X86_OP_MEM and
+                        op.mem.base == X86_REG_RSP
+                        for op in inst.operands)
+        if stack_mem and inst.disp_size:
+            for n in range(inst.disp_offset, inst.disp_offset + inst.disp_size):
+                insn_mask[n] = 0
         # RIP-relative memory references and relocatable displacements.
         rip_mem = any(op.type == capstone.x86.X86_OP_MEM and op.mem.base == X86_REG_RIP
                       for op in inst.operands)
