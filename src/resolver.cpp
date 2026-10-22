@@ -211,4 +211,15 @@ std::optional<Resolution> Resolver::resolveVerifiedRvaForSharedHook(
     return Resolution{reinterpret_cast<std::uintptr_t>(image_ + it->second.rva),
                       "shared-hook-exact-rva", true, true};
 }
+
+std::optional<Resolution> Resolver::resolveRvaForSharedHook(
+    std::string_view name) const {
+    if (!image_ || !exactBuild_) return std::nullopt;
+    const auto it = entries_.find(std::string{name});
+    if (it == entries_.end() || it->second.rva >= imageSize_ ||
+        it->second.entryCheck.bytes.size() > imageSize_ - it->second.rva)
+        return std::nullopt;
+    return Resolution{reinterpret_cast<std::uintptr_t>(image_ + it->second.rva),
+                      "shared-hook-exact-rva", true, it->second.verified};
+}
 } // namespace bedrock

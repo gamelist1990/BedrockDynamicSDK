@@ -41,6 +41,12 @@ public:
     // SDK runtime—not an unknown third-party patch—owns this exact address.
     std::optional<Resolution> resolveVerifiedRvaForSharedHook(
         std::string_view name) const;
+    // Returns a symbol's recorded RVA for a target already owned by this
+    // process' hook broker. The caller must verify broker ownership before
+    // using it. Unlike the verified-only variant, this also supports exact-
+    // build candidate entries whose live prologue is already patched.
+    std::optional<Resolution> resolveRvaForSharedHook(
+        std::string_view name) const;
     [[nodiscard]] std::size_t count() const noexcept { return entries_.size(); }
     [[nodiscard]] bool exactBuild() const noexcept { return exactBuild_; }
 #ifdef _WIN32

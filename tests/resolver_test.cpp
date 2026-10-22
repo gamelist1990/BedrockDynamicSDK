@@ -1,4 +1,5 @@
 #include "bedrock/resolver.hpp"
+#include "bedrock/hook_runtime.h"
 #include <array>
 #include <cassert>
 #include <iostream>
@@ -29,6 +30,7 @@ int main() {
     assert(sdk.exactBuild());
     auto a = sdk.resolve("testFunction");
     assert(a && a->exact_build && a->verified && a->method=="exact-rva");
+    assert(bedrock::isUsableSharedHookResolution(*a));
     assert(a->address==reinterpret_cast<std::uintptr_t>(memory.data()+0x110));
     memory[0x110] = std::byte{0xCC}; // simulate a prologue replaced by our broker
     assert(!sdk.resolve("testFunction"));
@@ -36,7 +38,25 @@ int main() {
     assert(brokerOwned && brokerOwned->verified && brokerOwned->exact_build &&
            brokerOwned->method == "shared-hook-exact-rva");
     memory[0x110] = static_cast<std::byte>(sig[0]);
+    for (std::size_t i = 0; i < 6; ++i) memory[0x120 + i] = std::byte{0x90};
     assert(!sdk.resolve("secondFunction"));
+    const auto guardedCandidate = sdk.resolve("secondFunction", true);
+    assert(guardedCandidate && guardedCandidate->exact_build &&
+           !guardedCandidate->verified && guardedCandidate->method == "exact-rva");
+    auto sharedCandidate = *guardedCandidate;
+    sharedCandidate.method = "guarded-exact-rva";
+    assert(bedrock::isUsableSharedHookResolution(sharedCandidate));
+    sharedCandidate.method = "aob-candidate";
+    assert(!bedrock::isUsableSharedHookResolution(sharedCandidate));
+    const auto candidateBrokerTarget = sdk.resolveRvaForSharedHook("secondFunction");
+    assert(candidateBrokerTarget && candidateBrokerTarget->exact_build &&
+           !candidateBrokerTarget->verified &&
+           candidateBrokerTarget->method == "shared-hook-exact-rva" &&
+           candidateBrokerTarget->address == reinterpret_cast<std::uintptr_t>(memory.data() + 0x120));
+    memory[0x120] = std::byte{0xCC}; // an unowned patched/mismatched candidate is not a guarded hit
+    const auto unguardedCandidate = sdk.resolve("secondFunction", true);
+    assert(!unguardedCandidate || unguardedCandidate->method != "exact-rva");
+    memory[0x120] = std::byte{0x90};
     assert(!sdk.resolve("unknown"));
     // Changed game hash => fail closed; explicit candidate lookup only.
     assert(sdk.attachImage(memory.data(), memory.size(), std::string(64,'b'), 0x100, 0x100, error));

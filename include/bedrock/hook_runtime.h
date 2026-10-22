@@ -74,10 +74,26 @@ namespace bedrock {
 inline std::optional<Resolution> resolveSharedHook(
     const Resolver& resolver, std::string_view symbol, BDS_HookPoint point) {
     if (auto resolved = resolver.resolve(symbol)) return resolved;
-    auto candidate = resolver.resolveVerifiedRvaForSharedHook(symbol);
+    // Exact-build candidate entries can be used only when their recorded RVA
+    // still passes the profile's entry guard. Never promote an AOB-only hit
+    // to a hook target: it may be a different function with a similar body.
+    if (auto guarded = resolver.resolve(symbol, true);
+        guarded && guarded->exact_build && guarded->method == "exact-rva") {
+        guarded->method = "guarded-exact-rva";
+        return guarded;
+    }
+    // Another embedded SDK copy may already have patched the prologue. Reuse
+    // that exact profile RVA only when our broker owns the target and point.
+    auto candidate = resolver.resolveRvaForSharedHook(symbol);
     if (candidate && BDS_HookOwnsTarget(
             point, reinterpret_cast<void*>(candidate->address))) return candidate;
     return std::nullopt;
+}
+
+inline bool isUsableSharedHookResolution(const Resolution& resolution) noexcept {
+    return resolution.exact_build &&
+        (resolution.verified || resolution.method == "guarded-exact-rva" ||
+         resolution.method == "shared-hook-exact-rva");
 }
 } // namespace bedrock
 #endif
