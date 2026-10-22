@@ -28,15 +28,18 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "key_up_vtable_slot": 2,
     "hardware_origin": 1
   },
-  "virtual_methods": {
-    "Level::getRuntimeActorList": {
-      "slot": 326,
-      "status": "candidate",
-      "source": "LeviLamina v1.26.50 Level.h/ILevel.h; virtual ordinal 327",
-      "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)"
-    }
-  },
   "symbols": {
+    "Level::getRuntimeActorList": {
+      "rva": "0x0",
+      "signature": "48 89 ?? ?? ?? 55 56 57 48 83 EC ?? 48 8B ?? 48 89 ?? ?? ?? 33 D2",
+      "entry_check": "48 89 ?? ?? ?? 55 56 57 48 83 EC ??",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "Solstice 1.21.111 Level_getRuntimeActorList signature; exact-build unique scan required",
+      "function_boundary": false,
+      "category": "world",
+      "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)"
+    },
     "LevelRenderer::renderLevel": {
       "rva": "0x47F8570",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 AD B0 01 00 00 44 0F 29 A5 A0 01 00 00 44 0F 29 9D 90 01 00 00 44 0F 29 95 80 01 00 00 44 0F 29 8D 70 01 00 00 44 0F 29 85 60 01 00 00 0F 29 BD 50 01 00 00 0F 29 B5 40 01 00 00 48 C7 85 38 01 00 00 FE FF FF FF 4D 89 C6",

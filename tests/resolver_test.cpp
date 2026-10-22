@@ -16,6 +16,9 @@ int main() {
         "Level::getRuntimeActorList":{"slot":326,"status":"candidate"}
       },
       "symbols": {
+        "runtimeActorList":{"rva":"0x0",
+         "signature":"48 89 ?? ?? ?? 55 56 57 48 83 EC ?? 48 8B ?? 48 89 ?? ?? ?? 33 D2",
+         "entry_check":"48 89 ?? ?? ?? 55 56 57 48 83 EC ??","status":"candidate"},
         "testFunction": {"rva":"0x110","signature":"55 48 89 E5 48 83 EC ?? 90 90 90 90",
          "entry_check":"55 48 89 E5","status":"verified"},
         "secondFunction":{"rva":"0x120","signature":"90 90 90 90 90 90",
@@ -25,7 +28,7 @@ int main() {
     bedrock::Resolver sdk;
     std::string error;
     assert(sdk.loadJson(payload, error));
-    assert(sdk.count() == 2);
+    assert(sdk.count() == 3);
     std::vector<std::byte> memory(512, std::byte{0xCC});
     const std::array<unsigned char,12> sig={0x55,0x48,0x89,0xE5,0x48,0x83,0xEC,0x28,0x90,0x90,0x90,0x90};
     for (std::size_t i=0;i<sig.size();++i) memory[0x110+i]=static_cast<std::byte>(sig[i]);
@@ -33,6 +36,15 @@ int main() {
     assert(sdk.exactBuild());
     assert(!sdk.resolveVirtualSlot("Level::getRuntimeActorList"));
     assert(sdk.resolveVirtualSlot("Level::getRuntimeActorList", true) == 326);
+    const std::array<unsigned char,22> actorListSig={
+        0x48,0x89,0xC1,0x10,0x20,0x55,0x56,0x57,0x48,0x83,0xEC,0x28,
+        0x48,0x8B,0xC1,0x48,0x89,0xD2,0x10,0x20,0x33,0xD2};
+    for (std::size_t i=0;i<actorListSig.size();++i)
+        memory[0x180+i]=static_cast<std::byte>(actorListSig[i]);
+    const auto actorList = sdk.resolve("runtimeActorList", true);
+    assert(actorList && actorList->exact_build && !actorList->verified &&
+           actorList->method == "aob-candidate" &&
+           actorList->address == reinterpret_cast<std::uintptr_t>(memory.data()+0x180));
     auto a = sdk.resolve("testFunction");
     assert(a && a->exact_build && a->verified && a->method=="exact-rva");
     assert(bedrock::isUsableSharedHookResolution(*a));
