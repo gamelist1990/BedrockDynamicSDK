@@ -205,6 +205,7 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         add_library(windows_hook_runtime_client_b SHARED tests/windows_hook_runtime_client.cpp)
         target_link_libraries(windows_hook_runtime_client_b PRIVATE bedrock::hook_runtime)
         add_executable(windows_hook_runtime_test tests/windows_hook_runtime_test.cpp)
+        target_include_directories(windows_hook_runtime_test PRIVATE include)
         add_dependencies(windows_hook_runtime_test
             windows_hook_runtime_client_a windows_hook_runtime_client_b)
         if(MSVC)
