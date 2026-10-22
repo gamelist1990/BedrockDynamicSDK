@@ -28,7 +28,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_GRAB_CURSOR = 3,
     BDS_HOOK_RELEASE_CURSOR = 4,
     BDS_HOOK_GET_FOV = 5,
-    BDS_HOOK_LEVEL_SUB_TICK = 6
+    BDS_HOOK_LEVEL_SUB_TICK = 6,
+    BDS_HOOK_ACTOR_GET_NAME_TAG = 7
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -39,6 +40,7 @@ typedef struct BDS_MouseArgs {
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
+typedef struct BDS_ActorNameTagArgs { void* actor; const void* name_tag; } BDS_ActorNameTagArgs;
 
 typedef uintptr_t (BDS_HOOK_CALL *BDS_HookNext)(void* frame, void* args);
 typedef void (BDS_HOOK_CALL *BDS_HookCallback)(void* user, void* args,

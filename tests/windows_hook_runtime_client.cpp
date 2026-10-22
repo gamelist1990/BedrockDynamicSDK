@@ -8,6 +8,14 @@ extern "C" __declspec(dllexport) int ClientB_Subscribe(void* target,
     BDS_HookCallback callback, BDS_HookToken* token) {
     return BDS_HookSubscribe(BDS_HOOK_KEYBOARD_FEED, target, callback, nullptr, token);
 }
+extern "C" __declspec(dllexport) int ClientA_SubscribeActorTag(void* target,
+    BDS_HookCallback callback, BDS_HookToken* token) {
+    return BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG, target, callback, nullptr, token);
+}
+extern "C" __declspec(dllexport) int ClientB_SubscribeActorTag(void* target,
+    BDS_HookCallback callback, BDS_HookToken* token) {
+    return BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG, target, callback, nullptr, token);
+}
 extern "C" __declspec(dllexport) int ClientB_Owns(void* target) {
     return BDS_HookOwnsTarget(BDS_HOOK_KEYBOARD_FEED, target);
 }

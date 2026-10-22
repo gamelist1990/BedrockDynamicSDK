@@ -3,10 +3,14 @@
 // No Minecraft binary offsets, Win32 headers, hooks, JSON, downloads, or threads.
 // The event source belongs to the client (or an independently validated adapter).
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -18,15 +22,49 @@ struct UpdateEvent {
     std::uint64_t sequence{};
 };
 struct KeyEvent {
-    // Virtual-key code; the client decides the input source.
+    // Kept as `virtualKey` for source compatibility. On Minecraft hooks this
+    // is Minecraft's InputKey value, not a promise that it is a Win32 VK.
     unsigned virtualKey{};
     bool pressed{};
     bool repeat{};
+    KeyEvent() = default;
+    KeyEvent(unsigned key, bool isPressed, bool isRepeat = false) noexcept
+        : virtualKey(key), pressed(isPressed), repeat(isRepeat) {}
+    [[nodiscard]] unsigned inputKey() const noexcept { return virtualKey; }
+    void cancel() const noexcept { cancelled_ = true; }
+    [[nodiscard]] bool cancelled() const noexcept { return cancelled_; }
+private:
+    mutable bool cancelled_{};
+};
+struct MouseEvent {
+    std::int8_t action{}, state{}; // native Minecraft MouseDevice::feed values
+    int x{}, y{}, deltaX{}, deltaY{};
+    int forceMotionlessPointer{};
+    MouseEvent() = default;
+    MouseEvent(std::int8_t nativeAction, std::int8_t nativeState,
+               int cursorX = 0, int cursorY = 0, int dx = 0, int dy = 0,
+               int force = 0) noexcept
+        : action(nativeAction), state(nativeState), x(cursorX), y(cursorY),
+          deltaX(dx), deltaY(dy), forceMotionlessPointer(force) {}
+    void cancel() const noexcept { cancelled_ = true; }
+    [[nodiscard]] bool cancelled() const noexcept { return cancelled_; }
+private:
+    mutable bool cancelled_{};
 };
 struct FocusEvent { bool focused{}; };
 // Emitted by a platform adapter when Minecraft is actively accepting gameplay
 // input (e.g. its window is focused and the gameplay cursor is captured).
 struct GameplayEvent { bool active{}; };
+enum class NameTagSource : std::uint8_t { ActorGetter, View };
+struct ActorNameTagEvent {
+    void* actor{};
+    std::string_view nameTag; // valid only for the duration of dispatch
+    NameTagSource source{NameTagSource::ActorGetter};
+};
+struct ViewNameTagEvent {
+    void* actor{};
+    std::string_view nameTag; // valid only for the duration of dispatch
+};
 
 template <class Event>
 class EventChannel {
@@ -36,71 +74,62 @@ public:
 
     ListenerId subscribe(Callback callback) {
         if (!callback) throw std::invalid_argument("event handler must be callable");
+        std::lock_guard lock(mutex_);
         const ListenerId id = nextId_++;
-        auto slot = Slot{id, std::move(callback), true};
-        if (dispatchDepth_) pending_.push_back(std::move(slot));
-        else slots_.push_back(std::move(slot));
+        auto slot = std::make_shared<Slot>(id, std::move(callback));
+        slots_.push_back(std::move(slot));
         return id;
     }
 
+    ListenerId then(Callback callback) { return subscribe(std::move(callback)); }
+
     bool unsubscribe(ListenerId id) {
-        for (auto& slot : slots_) {
-            if (slot.id == id && slot.active) {
-                slot.active = false;
-                if (!dispatchDepth_) compact();
-                return true;
-            }
-        }
-        for (auto& slot : pending_) {
-            if (slot.id == id && slot.active) {
-                slot.active = false;
-                return true;
-            }
-        }
-        return false;
+        std::lock_guard lock(mutex_);
+        const auto it = std::find_if(slots_.begin(), slots_.end(),
+            [id](const auto& slot) { return slot->id == id; });
+        if (it == slots_.end() || !(*it)->active.exchange(false, std::memory_order_acq_rel))
+            return false;
+        slots_.erase(it);
+        return true;
     }
+    bool off(ListenerId id) { return unsubscribe(id); }
 
     void emit(const Event& event) {
-        // Registration/removal during a callback is deferred, avoiding iterators
-        // and callback ownership invalidation; nested emits are supported.
-        struct DispatchGuard {
-            EventChannel& channel;
-            explicit DispatchGuard(EventChannel& c) : channel(c) { ++channel.dispatchDepth_; }
-            ~DispatchGuard() {
-                if (!--channel.dispatchDepth_) channel.compact();
-            }
-        } guard(*this);
-        for (auto& slot : slots_)
-            if (slot.active) slot.callback(event);
+        // Take a stable snapshot under lock, then invoke user code lock-free.
+        // This supports nested emits and registration/removal from callbacks.
+        std::vector<std::shared_ptr<Slot>> snapshot;
+        {
+            std::lock_guard lock(mutex_);
+            snapshot = slots_;
+        }
+        for (const auto& slot : snapshot)
+            if (slot->active.load(std::memory_order_acquire)) slot->callback(event);
     }
 
-    [[nodiscard]] std::size_t listeners() const noexcept {
+    [[nodiscard]] std::size_t listeners() const {
+        std::lock_guard lock(mutex_);
         std::size_t count = 0;
-        for (const auto& slot : slots_) if (slot.active) ++count;
-        for (const auto& slot : pending_) if (slot.active) ++count;
+        for (const auto& slot : slots_)
+            if (slot->active.load(std::memory_order_acquire)) ++count;
         return count;
     }
 private:
     struct Slot {
         ListenerId id{};
         Callback callback;
-        bool active{};
+        std::atomic<bool> active{true};
+        Slot(ListenerId listenerId, Callback listener)
+            : id(listenerId), callback(std::move(listener)) {}
     };
-    void compact() {
-        std::erase_if(slots_, [](const Slot& s) { return !s.active; });
-        for (auto& slot : pending_)
-            if (slot.active) slots_.push_back(std::move(slot));
-        pending_.clear();
-    }
-    std::vector<Slot> slots_;
-    std::vector<Slot> pending_;
+    mutable std::mutex mutex_;
+    std::vector<std::shared_ptr<Slot>> slots_;
     ListenerId nextId_ = 1;
-    unsigned dispatchDepth_ = 0;
 };
 
 // Compile-time event types = no runtime RTTI, string-name lookup or global state.
-// Subscribe and dispatch on ONE owner thread. Any cross-thread event source should
-// marshal events to the owner thread; there are no hidden worker threads.
+// Registration and removal are thread-safe. Callbacks execute synchronously on
+// the thread which emits the event; adapters that need UI/game-thread affinity
+// must explicitly marshal their callbacks. The dispatcher creates no workers.
 template <class... EventTypes>
 class EventBus : private EventChannel<EventTypes>... {
 public:
@@ -123,6 +152,7 @@ public:
     }
 };
 
-using ClientEvents = EventBus<UpdateEvent, KeyEvent, FocusEvent, GameplayEvent>;
+using ClientEvents = EventBus<UpdateEvent, KeyEvent, MouseEvent, FocusEvent,
+                               GameplayEvent, ActorNameTagEvent, ViewNameTagEvent>;
 
 } // namespace bedrock

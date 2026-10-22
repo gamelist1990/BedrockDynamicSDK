@@ -21,6 +21,8 @@ int main() {
 #endif
     using bedrock::LogLevel;
     using bedrock::Logger;
+    Logger defaults;
+    assert(defaults.level() == LogLevel::Info);
     Logger log("AutoSprint", LogLevel::Info);
     Captured capture;
     log.setSink(&sink, &capture);

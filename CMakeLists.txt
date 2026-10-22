@@ -8,6 +8,14 @@ target_include_directories(bedrock_events INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_features(bedrock_events INTERFACE cxx_std_20)
 add_library(bedrock::events ALIAS bedrock_events)
 
+# Bukkit-inspired, data-source-independent actor/player facade. A game adapter
+# supplies only version-validated accessors; the API itself has no game offsets.
+add_library(bedrock_game_api INTERFACE)
+target_include_directories(bedrock_game_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(bedrock_game_api INTERFACE cxx_std_20)
+target_link_libraries(bedrock_game_api INTERFACE bedrock::events)
+add_library(bedrock::game_api ALIAS bedrock_game_api)
+
 # Independent opt-in console/logger API: header only; nothing is initialized
 # until a mod explicitly logs or opens a console.
 add_library(bedrock_logging INTERFACE)
@@ -28,6 +36,7 @@ if(NOT PROJECT_IS_TOP_LEVEL)
 endif()
 target_include_directories(bedrock_resolver PUBLIC include third_party)
 target_compile_features(bedrock_resolver PUBLIC cxx_std_20)
+target_link_libraries(bedrock_resolver PUBLIC bedrock::game_api)
 add_library(bedrock::symbols ALIAS bedrock_resolver)
 add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
 
@@ -72,6 +81,12 @@ if(WIN32)
         endif()
         target_link_libraries(${consumer_target} PRIVATE bedrock::hook_runtime)
     endfunction()
+    add_library(bedrock_game_hooks INTERFACE)
+    target_include_directories(bedrock_game_hooks INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_features(bedrock_game_hooks INTERFACE cxx_std_20)
+    target_link_libraries(bedrock_game_hooks INTERFACE
+        bedrock::game_api bedrock::symbols bedrock::hook_runtime)
+    add_library(bedrock::game_hooks ALIAS bedrock_game_hooks)
     if(BEDROCK_SDK_BUILD_TOOLS)
     add_library(BedrockClientLocator SHARED src/client_locator.cpp)
     target_include_directories(BedrockClientLocator PRIVATE include third_party)
@@ -126,6 +141,14 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         target_compile_options(events_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME events_test COMMAND events_test)
+    add_executable(game_api_test tests/game_api_test.cpp)
+    target_link_libraries(game_api_test PRIVATE bedrock::game_api)
+    if(MSVC)
+        target_compile_options(game_api_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(game_api_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME game_api_test COMMAND game_api_test)
     add_executable(gui_input_policy_test tests/gui_input_policy_test.cpp)
     target_link_libraries(gui_input_policy_test PRIVATE bedrock::events)
     if(MSVC)

@@ -32,6 +32,7 @@ using MouseFn = void(__fastcall*)(void*, std::int8_t, std::int8_t,
 using CursorFn = void(__fastcall*)(void*);
 using FovFn = float(__fastcall*)(void*, float, void*, void*);
 using LevelFn = void(__fastcall*)(void*);
+using ActorNameTagFn = const std::string&(__fastcall*)(void*);
 
 struct Entry {
     BDS_HookToken token{};
@@ -54,7 +55,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 7> states{};
+std::array<State, 8> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -223,6 +224,13 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
         if (original) static_cast<LevelFn>(original)(a.level);
         return 0;
     }
+    case BDS_HOOK_ACTOR_GET_NAME_TAG: {
+        auto& a = *static_cast<BDS_ActorNameTagArgs*>(args);
+        if (!original) return 0;
+        const auto& value = static_cast<ActorNameTagFn>(original)(a.actor);
+        a.name_tag = &value;
+        return reinterpret_cast<uintptr_t>(&value);
+    }
     default: return 0;
     }
 }
@@ -269,6 +277,12 @@ float __fastcall fovDetour(void* self, float fov, void* a3, void* a4) {
 void __fastcall levelDetour(void* level) {
     BDS_LevelArgs args{level}; invoke(BDS_HOOK_LEVEL_SUB_TICK, &args);
 }
+const std::string& __fastcall actorNameTagDetour(void* actor) {
+    static const std::string empty;
+    BDS_ActorNameTagArgs args{actor, nullptr};
+    invoke(BDS_HOOK_ACTOR_GET_NAME_TAG, &args);
+    return args.name_tag ? *static_cast<const std::string*>(args.name_tag) : empty;
+}
 
 void* detourFor(BDS_HookPoint point) {
     switch (point) {
@@ -278,11 +292,12 @@ void* detourFor(BDS_HookPoint point) {
     case BDS_HOOK_RELEASE_CURSOR: return reinterpret_cast<void*>(&releaseDetour);
     case BDS_HOOK_GET_FOV: return reinterpret_cast<void*>(&fovDetour);
     case BDS_HOOK_LEVEL_SUB_TICK: return reinterpret_cast<void*>(&levelDetour);
+    case BDS_HOOK_ACTOR_GET_NAME_TAG: return reinterpret_cast<void*>(&actorNameTagDetour);
     default: return nullptr;
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_LEVEL_SUB_TICK;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_ACTOR_GET_NAME_TAG;
 }
 } // namespace
 
@@ -326,8 +341,12 @@ int BDS_HOOK_CALL leaderOwns(BDS_HookPoint point, void* target) {
 uintptr_t BDS_HOOK_CALL leaderDispatch(BDS_HookPoint point, void* args) {
     if (!validPoint(point) || !args) return 0;
     invoke(point, args);
-    return point == BDS_HOOK_KEYBOARD_FEED
-        ? static_cast<uintptr_t>(static_cast<BDS_KeyboardArgs*>(args)->result) : 0;
+    if (point == BDS_HOOK_KEYBOARD_FEED)
+        return static_cast<uintptr_t>(static_cast<BDS_KeyboardArgs*>(args)->result);
+    if (point == BDS_HOOK_ACTOR_GET_NAME_TAG)
+        return reinterpret_cast<uintptr_t>(
+            static_cast<BDS_ActorNameTagArgs*>(args)->name_tag);
+    return 0;
 }
 uintptr_t BDS_HOOK_CALL leaderOriginal(BDS_HookPoint point, void* args) {
     if (!validPoint(point) || !args) return 0;
@@ -339,7 +358,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_LEVEL_SUB_TICK; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_ACTOR_GET_NAME_TAG; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -357,7 +376,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "2.0.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "2.1.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {

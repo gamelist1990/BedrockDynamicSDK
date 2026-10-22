@@ -43,7 +43,7 @@ public:
     // When set, the caller owns its lifetime. The sink replaces default output.
     using Sink = void (*)(LogLevel, std::string_view line, void* userdata);
 
-    explicit Logger(std::string tag = "Bedrock", LogLevel minimum = LogLevel::Debug)
+    explicit Logger(std::string tag = "Bedrock", LogLevel minimum = LogLevel::Info)
         : tag_(std::move(tag)), minimum_(minimum) {}
 
     void setLevel(LogLevel level) noexcept { minimum_.store(level, std::memory_order_relaxed); }
