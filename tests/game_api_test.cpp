@@ -11,6 +11,8 @@ struct FakeGame final : bedrock::GameAccess {
     std::unordered_map<void*, std::string> tags{
         {local, "\xC2\xA7" "a[VIP] Alex\xC2\xA7" "7 Level 12"},
         {reinterpret_cast<void*>(0x30), "\xC2\xA7" "pOtherPlayer"}};
+    std::unordered_map<void*, bedrock::HeldItemInfo> heldItems{
+        {local, {"minecraft:bow", "Bow", 1}}};
     bool keyState{};
     unsigned sentKey{};
     unsigned mouseClicks{};
@@ -24,6 +26,11 @@ struct FakeGame final : bedrock::GameAccess {
     std::optional<std::string> nameTag(void* actor) const override {
         const auto it = tags.find(actor);
         return it == tags.end() ? std::nullopt : std::optional<std::string>{it->second};
+    }
+    std::optional<bedrock::HeldItemInfo> heldItem(void* actor) const override {
+        const auto it = heldItems.find(actor);
+        return it == heldItems.end() ? std::nullopt
+                                     : std::optional<bedrock::HeldItemInfo>{it->second};
     }
     std::vector<std::string> playerListNames(void*) const override {
         return {"Alex", "OtherPlayer"};
@@ -61,6 +68,9 @@ int main() {
     api.observeActorNameTag(game.local, game.tags.at(game.local));
     assert(self.getName() == "Alex");
     assert(self.isPlayer());
+    const auto heldItem = self.getHeldItem();
+    assert(heldItem && heldItem->identifier == "minecraft:bow" && heldItem->count == 1);
+    assert(!api.actor(reinterpret_cast<void*>(0x30)).getHeldItem());
     assert(self.getWorld().isValid());
     assert(api.world(game.worldHandle).getPlayerNames().size() == 2);
     const auto server = self.server();

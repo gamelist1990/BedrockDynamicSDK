@@ -35,6 +35,19 @@ struct ServerAddress {
     }
 };
 
+// Stable value snapshot of the selected hotbar item. Adapters populate the
+// identifier with a canonical item id when available and displayName with
+// the game's localized name. No ItemStack pointer escapes the adapter.
+struct HeldItemInfo {
+    std::string identifier;
+    std::string displayName;
+    unsigned count{};
+
+    [[nodiscard]] bool valid() const noexcept {
+        return !identifier.empty() || !displayName.empty();
+    }
+};
+
 // Values match Minecraft's MouseDevice::feed InputKey values.
 enum class MouseButton : unsigned { Left = 1, Right = 2, Middle = 3, X1 = 4, X2 = 5 };
 
@@ -47,6 +60,10 @@ public:
     [[nodiscard]] virtual void* localPlayer() const noexcept = 0;
     [[nodiscard]] virtual void* worldOf(void* actor) const noexcept = 0;
     [[nodiscard]] virtual std::optional<std::string> nameTag(void* actor) const = 0;
+    [[nodiscard]] virtual std::optional<HeldItemInfo> heldItem(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
     [[nodiscard]] virtual std::vector<std::string> playerListNames(void* world) const = 0;
     [[nodiscard]] virtual std::optional<ServerAddress> serverAddress(void* localPlayer) const = 0;
 
@@ -119,6 +136,7 @@ public:
     [[nodiscard]] void* handle() const noexcept { return isValid() ? handle_ : nullptr; }
     [[nodiscard]] std::string getNameTag() const;
     [[nodiscard]] std::string getName() const;
+    [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] bool isPlayer() const;
     [[nodiscard]] World getWorld() const;
     [[nodiscard]] bool sameActor(const Actor& other) const noexcept {
@@ -585,6 +603,12 @@ inline std::string Actor::getName() const {
     std::string playerName;
     if (isValid() && api_->playerMatch(handle_, plain, &playerName)) return playerName;
     return plain;
+}
+inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
+    if (!isValid()) return std::nullopt;
+    auto item = api_->access_->heldItem(handle_);
+    if (!item || !item->valid()) return std::nullopt;
+    return item;
 }
 inline bool Actor::isPlayer() const {
     if (!isValid()) return false;

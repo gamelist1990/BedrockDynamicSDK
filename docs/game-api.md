@@ -39,6 +39,10 @@ chosen to avoid a shorter account name winning over a longer one.
 `GameApi::world(nativeWorld).getPlayerNames()` exposes the current world's
 PlayerList names through the adapter, so consumers do not need a second native
 PlayerList parser.
+`Actor::getHeldItem()` returns an optional `HeldItemInfo` value snapshot for
+the selected hotbar slot. The game adapter owns native inventory access; the
+API never exposes an `ItemStack*`, and adapters without validated item access
+return `std::nullopt`.
 
 ## Observations and events
 
