@@ -7,6 +7,10 @@ Per version there is **exactly one JSON file**: `data/<version>/windows-x64.json
   `text_sha256`, `image_base`, `size_of_image`, `text_rva`, `text_size`.
 - `symbols`: function names to `rva`, `entry_check`, `signature`, `status`,
   `source`, `function_boundary`, `category`, `abi_verified`.
+- `virtual_methods`: virtual method names to `slot`, `status`, `source`, and optional
+  `abi`. The resolver returns slots only after an exact executable hash match; callers
+  must still validate the instance vtable and use candidate slots only when explicitly
+  allowed. A slot is not an AOB signature and must be refreshed for each affected build.
 - `native_keyboard`: verified callback-context offsets, processor virtual slots,
   and InputOrigin for the native gameplay keyboard route. See
   [native keyboard input](native-keyboard-input.md).

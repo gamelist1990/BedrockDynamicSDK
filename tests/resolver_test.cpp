@@ -12,6 +12,9 @@ int main() {
       "schema": 1,
       "target": {"platform":"windows","arch":"x64","sha256":")" + hash + R"(",
         "size_of_image": 512,"text_rva":"0x100"},
+      "virtual_methods": {
+        "Level::getRuntimeActorList":{"slot":326,"status":"candidate"}
+      },
       "symbols": {
         "testFunction": {"rva":"0x110","signature":"55 48 89 E5 48 83 EC ?? 90 90 90 90",
          "entry_check":"55 48 89 E5","status":"verified"},
@@ -28,6 +31,8 @@ int main() {
     for (std::size_t i=0;i<sig.size();++i) memory[0x110+i]=static_cast<std::byte>(sig[i]);
     assert(sdk.attachImage(memory.data(), memory.size(), hash, 0x100, 0x100, error));
     assert(sdk.exactBuild());
+    assert(!sdk.resolveVirtualSlot("Level::getRuntimeActorList"));
+    assert(sdk.resolveVirtualSlot("Level::getRuntimeActorList", true) == 326);
     auto a = sdk.resolve("testFunction");
     assert(a && a->exact_build && a->verified && a->method=="exact-rva");
     assert(bedrock::isUsableSharedHookResolution(*a));
@@ -61,6 +66,7 @@ int main() {
     // Changed game hash => fail closed; explicit candidate lookup only.
     assert(sdk.attachImage(memory.data(), memory.size(), std::string(64,'b'), 0x100, 0x100, error));
     assert(!sdk.exactBuild());
+    assert(!sdk.resolveVirtualSlot("Level::getRuntimeActorList", true));
     assert(!sdk.resolve("testFunction"));
     auto candidate = sdk.resolve("testFunction", true);
     assert(candidate && candidate->method=="aob-candidate" && !candidate->verified);

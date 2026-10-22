@@ -36,6 +36,10 @@ public:
                                std::size_t textSize, std::string& error);
     std::optional<Resolution> resolve(std::string_view name,
                                       bool allowCandidates = false) const;
+    // Returns an exact-build virtual method slot recorded in the versioned profile.
+    // Candidate slots are never returned unless explicitly allowed by the caller.
+    std::optional<std::size_t> resolveVirtualSlot(
+        std::string_view name, bool allowCandidates = false) const;
     // Returns only an exact-build, verified RVA without checking the current
     // prologue. Use solely after BDS_HookOwnsTarget confirms that the shared
     // SDK runtime—not an unknown third-party patch—owns this exact address.
@@ -68,7 +72,12 @@ private:
         BytePattern signature;
         BytePattern entryCheck;
     };
+    struct VirtualMethod {
+        std::size_t slot{};
+        bool verified{};
+    };
     std::unordered_map<std::string, Entry> entries_;
+    std::unordered_map<std::string, VirtualMethod> virtualMethods_;
     std::string expectedHash_;
     std::string expectedTextHash_;
     std::size_t targetTextSize_{};

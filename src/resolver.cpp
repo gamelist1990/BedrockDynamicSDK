@@ -99,7 +99,7 @@ std::optional<std::size_t> Resolver::findUnique(std::span<const std::byte> hayst
 }
 
 bool Resolver::loadJson(std::string_view source, std::string& error) {
-    entries_.clear(); expectedHash_.clear(); expectedTextHash_.clear(); image_ = nullptr; exactBuild_ = false;
+    entries_.clear(); virtualMethods_.clear(); expectedHash_.clear(); expectedTextHash_.clear(); image_ = nullptr; exactBuild_ = false;
     try {
         auto doc = nlohmann::json::parse(source.begin(), source.end());
         if (doc.at("schema").get<int>() != 1) throw std::invalid_argument("unsupported schema");
@@ -130,13 +130,39 @@ bool Resolver::loadJson(std::string_view source, std::string& error) {
                 throw std::invalid_argument("empty pattern requires explicit RVA-only flag: "+it.key());
             entries_.emplace(it.key(), std::move(e));
         }
+        if (doc.contains("virtual_methods")) {
+            const auto& methods = doc.at("virtual_methods");
+            if (!methods.is_object() || methods.size() > 4096)
+                throw std::invalid_argument("invalid virtual method map size");
+            for (auto it = methods.begin(); it != methods.end(); ++it) {
+                const auto& value = it.value();
+                const std::uint64_t slot = value.at("slot").is_string()
+                    ? std::stoull(value.at("slot").get<std::string>(), nullptr, 0)
+                    : value.at("slot").get<std::uint64_t>();
+                if (slot > 0x10000)
+                    throw std::invalid_argument("virtual method slot exceeds limit: " + it.key());
+                virtualMethods_.emplace(it.key(), VirtualMethod{
+                    static_cast<std::size_t>(slot),
+                    value.value("status", "candidate") == "verified"});
+            }
+        }
         error.clear();
         return true;
     } catch (const std::exception& exc) {
         entries_.clear();
+        virtualMethods_.clear();
         error = exc.what();
         return false;
     }
+}
+
+std::optional<std::size_t> Resolver::resolveVirtualSlot(
+    std::string_view name, bool allowCandidates) const {
+    if (!image_ || !exactBuild_) return std::nullopt;
+    const auto it = virtualMethods_.find(std::string{name});
+    if (it == virtualMethods_.end() || (!it->second.verified && !allowCandidates))
+        return std::nullopt;
+    return it->second.slot;
 }
 
 bool Resolver::attachImage(const std::byte* moduleBase, std::size_t mappedSize,

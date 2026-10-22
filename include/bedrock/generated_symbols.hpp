@@ -28,6 +28,14 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "key_up_vtable_slot": 2,
     "hardware_origin": 1
   },
+  "virtual_methods": {
+    "Level::getRuntimeActorList": {
+      "slot": 326,
+      "status": "candidate",
+      "source": "LeviLamina v1.26.50 Level.h/ILevel.h; virtual ordinal 327",
+      "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)"
+    }
+  },
   "symbols": {
     "LevelRenderer::renderLevel": {
       "rva": "0x47F8570",
