@@ -35,9 +35,9 @@ struct ServerAddress {
     }
 };
 
-// Stable value snapshot of the selected hotbar item. Adapters populate the
-// identifier with a canonical item id when available and displayName with
-// the game's localized name. No ItemStack pointer escapes the adapter.
+// Stable value snapshot of an Actor's currently held hand item. Adapters
+// populate the identifier with a canonical item id when available and
+// displayName with the game's localized name. No ItemStack pointer escapes.
 struct HeldItemInfo {
     std::string identifier;
     std::string displayName;
@@ -60,6 +60,9 @@ public:
     [[nodiscard]] virtual void* localPlayer() const noexcept = 0;
     [[nodiscard]] virtual void* worldOf(void* actor) const noexcept = 0;
     [[nodiscard]] virtual std::optional<std::string> nameTag(void* actor) const = 0;
+    // Return only this Actor's currently held hand item. Do not enumerate or
+    // expose the Actor's full inventory; local-player inventory access is a
+    // separate API with a different lifetime and access path.
     [[nodiscard]] virtual std::optional<HeldItemInfo> heldItem(void* actor) const {
         (void)actor;
         return std::nullopt;

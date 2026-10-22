@@ -40,9 +40,11 @@ chosen to avoid a shorter account name winning over a longer one.
 PlayerList names through the adapter, so consumers do not need a second native
 PlayerList parser.
 `Actor::getHeldItem()` returns an optional `HeldItemInfo` value snapshot for
-the selected hotbar slot. The game adapter owns native inventory access; the
-API never exposes an `ItemStack*`, and adapters without validated item access
-return `std::nullopt`.
+that Actor's currently held hand item. It is not a full-inventory API: adapters
+must read only the hand/equipment slot and must not enumerate inventory slots.
+Local-player inventory access is a separate API and must not be used to inspect
+remote Actors. The API never exposes an `ItemStack*`, and adapters without
+validated hand-item access return `std::nullopt`.
 
 ## Observations and events
 
