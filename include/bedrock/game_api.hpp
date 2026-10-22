@@ -4,8 +4,11 @@
 // deliberately isolated behind GameAccess: wrappers never guess offsets or
 // call an unverified game method themselves.
 #include <bedrock/events.hpp>
+#include <bedrock/hook_runtime.h>
+#include <bedrock/native_keyboard.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <mutex>
@@ -31,7 +34,8 @@ struct ServerAddress {
     }
 };
 
-enum class MouseButton : unsigned { Left = 0, Right = 1, Middle = 2, X1 = 3, X2 = 4 };
+// Values match Minecraft's MouseDevice::feed InputKey values.
+enum class MouseButton : unsigned { Left = 1, Right = 2, Middle = 3, X1 = 4, X2 = 5 };
 
 // Implemented by the game-specific adapter after it has validated the live
 // pointers/layout for the exact executable. All returned pointers are borrowed.
@@ -63,14 +67,38 @@ public:
     }
 };
 
+// Useful for input-only examples that do not need to provide version-specific
+// Actor/world access. The hook-backed keyboard and mouse APIs still work.
+class EmptyGameAccess final : public GameAccess {
+public:
+    [[nodiscard]] bool isActorValid(void*) const noexcept override { return false; }
+    [[nodiscard]] void* localPlayer() const noexcept override { return nullptr; }
+    [[nodiscard]] void* worldOf(void*) const noexcept override { return nullptr; }
+    [[nodiscard]] std::optional<std::string> nameTag(void*) const override {
+        return std::nullopt;
+    }
+    [[nodiscard]] std::vector<std::string> playerListNames(void*) const override {
+        return {};
+    }
+    [[nodiscard]] std::optional<ServerAddress> serverAddress(void*) const override {
+        return std::nullopt;
+    }
+};
+inline EmptyGameAccess& emptyGameAccess() {
+    static EmptyGameAccess access;
+    return access;
+}
+
 struct GameEventRegistry {
     struct EnumType {
         EventChannel<KeyEvent> Keyboard;
+        EventChannel<NativeKeyEvent> NativeKeyboard;
         EventChannel<MouseEvent> Mouse;
         EventChannel<ActorNameTagEvent> ActorNameTag;
         EventChannel<ViewNameTagEvent> ViewNameTag;
         EventChannel<UpdateEvent> Update;
         EventChannel<GameplayEvent> Gameplay;
+        EventChannel<FovEvent> Fov;
     } Enum;
 };
 
@@ -121,33 +149,28 @@ private:
 class Keyboard {
 public:
     Keyboard() = default;
-    explicit Keyboard(GameAccess* access) noexcept : access_(access) {}
-    [[nodiscard]] bool isDown(unsigned key) const noexcept {
-        return access_ && access_->keyDown(key);
-    }
-    bool press(unsigned key) const noexcept { return access_ && access_->sendKey(key, true); }
-    bool release(unsigned key) const noexcept { return access_ && access_->sendKey(key, false); }
+    explicit Keyboard(GameApi* api) noexcept : api_(api) {}
+    [[nodiscard]] bool isDown(unsigned key) const noexcept;
+    bool press(unsigned key) const noexcept;
+    bool release(unsigned key) const noexcept;
     bool tap(unsigned key) const noexcept {
         if (!press(key)) return false;
         return release(key);
     }
 private:
-    GameAccess* access_{};
+    GameApi* api_{};
 };
 
 class Mouse {
 public:
     Mouse() = default;
-    explicit Mouse(GameAccess* access) noexcept : access_(access) {}
-    [[nodiscard]] bool isDown(MouseButton button) const noexcept {
-        return access_ && access_->mouseDown(button);
-    }
-    bool click(MouseButton button) const noexcept { return access_ && access_->click(button); }
-    bool move(int deltaX, int deltaY) const noexcept {
-        return access_ && access_->moveMouse(deltaX, deltaY);
-    }
+    explicit Mouse(GameApi* api) noexcept : api_(api) {}
+    [[nodiscard]] bool isDown(MouseButton button) const noexcept;
+    bool setDown(MouseButton button, bool down) const noexcept;
+    bool click(MouseButton button) const noexcept;
+    bool move(int deltaX, int deltaY) const noexcept;
 private:
-    GameAccess* access_{};
+    GameApi* api_{};
 };
 
 class Server {
@@ -179,6 +202,7 @@ public:
 
 class GameApi {
 public:
+    GameApi() noexcept : access_(&emptyGameAccess()) {}
     explicit GameApi(GameAccess& access) noexcept : access_(&access) {}
     GameApi(const GameApi&) = delete;
     GameApi& operator=(const GameApi&) = delete;
@@ -239,7 +263,66 @@ public:
         try { Event.Enum.Update.emit(event); } catch (...) {}
     }
     void dispatchGameplay(const GameplayEvent& event) noexcept {
+        gameplayActive_.store(event.active, std::memory_order_release);
         try { Event.Enum.Gameplay.emit(event); } catch (...) {}
+    }
+    void dispatchFov(FovEvent& event) noexcept {
+        try { Event.Enum.Fov.emit(event); } catch (...) {}
+    }
+    [[nodiscard]] bool gameplayActive() const noexcept {
+        return gameplayActive_.load(std::memory_order_acquire);
+    }
+    void dispatchNativeKeyboard(const NativeKeyboardEvent& captured) noexcept {
+        {
+            std::lock_guard lock(inputMutex_);
+            nativeKeyboard_ = captured.input;
+        }
+        try { Event.Enum.NativeKeyboard.emit(
+            NativeKeyEvent{static_cast<unsigned>(captured.key), captured.down}); }
+        catch (...) {}
+    }
+    void clearNativeKeyboard() noexcept {
+        std::lock_guard lock(inputMutex_);
+        nativeKeyboard_.reset();
+    }
+    [[nodiscard]] bool sendNativeKey(unsigned key, bool pressed) noexcept {
+        std::optional<NativeKeyboardInput> route;
+        {
+            std::lock_guard lock(inputMutex_);
+            route = nativeKeyboard_;
+        }
+        return route && route->send(static_cast<int>(key), pressed);
+    }
+    void observeMouseDevice(const BDS_MouseArgs& args) noexcept {
+        std::lock_guard lock(inputMutex_);
+        mouseDevice_ = args.self;
+        lastMouseArgs_ = args;
+    }
+    [[nodiscard]] bool sendMouseInput(unsigned action, bool pressed) noexcept {
+#ifdef _WIN32
+        BDS_MouseArgs args{};
+        {
+            std::lock_guard lock(inputMutex_);
+            if (!mouseDevice_) return false;
+            args = lastMouseArgs_;
+        }
+        args.action = static_cast<std::int8_t>(action);
+        args.state = pressed ? 1 : 0;
+        args.force_motionless_pointer =
+            (args.force_motionless_pointer & BDS_MOUSE_FLAG_FORCE_MOTIONLESS) |
+            BDS_MOUSE_FLAG_SYNTHETIC;
+        const auto* previousSyntheticApi = syntheticMouseApi_;
+        syntheticMouseApi_ = this;
+        BDS_HookDispatch(BDS_HOOK_MOUSE_FEED, &args);
+        syntheticMouseApi_ = previousSyntheticApi;
+        return true;
+#else
+        (void)action; (void)pressed;
+        return false;
+#endif
+    }
+    [[nodiscard]] bool isSyntheticMouseDispatch() const noexcept {
+        return syntheticMouseApi_ == this;
     }
 
     [[nodiscard]] std::vector<Actor> actors(void* world = nullptr) {
@@ -284,6 +367,12 @@ private:
                                    std::string* matched = nullptr) const;
 
     GameAccess* access_{};
+    mutable std::mutex inputMutex_;
+    std::optional<NativeKeyboardInput> nativeKeyboard_;
+    void* mouseDevice_{};
+    BDS_MouseArgs lastMouseArgs_{};
+    std::atomic<bool> gameplayActive_{false};
+    inline static thread_local const GameApi* syntheticMouseApi_{};
     mutable std::mutex mutex_;
     std::unordered_map<void*, std::string> nameTags_;
     std::unordered_map<void*, std::string> viewNameTags_;
@@ -384,10 +473,10 @@ inline std::optional<LocalPlayer> LocalPlayer::forActor(const Actor& actor) noex
     return LocalPlayer{*actor.api_};
 }
 inline Keyboard LocalPlayer::getKeyboard() const noexcept {
-    return Keyboard{api_ ? api_->access_ : nullptr};
+    return Keyboard{api_};
 }
 inline Mouse LocalPlayer::getMouse() const noexcept {
-    return Mouse{api_ ? api_->access_ : nullptr};
+    return Mouse{api_};
 }
 inline std::optional<Server> LocalPlayer::getServer() const {
     if (!isValid()) return std::nullopt;
@@ -397,6 +486,33 @@ inline std::optional<Server> LocalPlayer::getServer() const {
 }
 inline bool LocalPlayer::turn(float yawDelta, float pitchDelta) const noexcept {
     return isValid() && api_->access_->turn(yawDelta, pitchDelta);
+}
+
+inline bool Keyboard::isDown(unsigned key) const noexcept {
+    return api_ && api_->access().keyDown(key);
+}
+inline bool Keyboard::press(unsigned key) const noexcept {
+    return api_ && (api_->sendNativeKey(key, true) ||
+                    api_->access().sendKey(key, true));
+}
+inline bool Keyboard::release(unsigned key) const noexcept {
+    return api_ && (api_->sendNativeKey(key, false) ||
+                    api_->access().sendKey(key, false));
+}
+inline bool Mouse::isDown(MouseButton button) const noexcept {
+    return api_ && api_->access().mouseDown(button);
+}
+inline bool Mouse::setDown(MouseButton button, bool down) const noexcept {
+    return api_ && api_->sendMouseInput(static_cast<unsigned>(button), down);
+}
+inline bool Mouse::click(MouseButton button) const noexcept {
+    if (!api_) return false;
+    if (api_->sendMouseInput(static_cast<unsigned>(button), true))
+        return api_->sendMouseInput(static_cast<unsigned>(button), false);
+    return api_->access().click(button);
+}
+inline bool Mouse::move(int deltaX, int deltaY) const noexcept {
+    return api_ && api_->access().moveMouse(deltaX, deltaY);
 }
 
 } // namespace bedrock

@@ -36,16 +36,25 @@ struct KeyEvent {
 private:
     mutable bool cancelled_{};
 };
+// A post-dispatch key transition captured from Minecraft's native HID route.
+// Unlike KeyEvent (which is cancellable before Keyboard::feed), this event has
+// a usable native send route attached to GameApi for synchronous callbacks.
+struct NativeKeyEvent {
+    unsigned inputKey{};
+    bool pressed{};
+};
 struct MouseEvent {
     std::int8_t action{}, state{}; // native Minecraft MouseDevice::feed values
     int x{}, y{}, deltaX{}, deltaY{};
     int forceMotionlessPointer{};
+    bool synthetic{};
     MouseEvent() = default;
     MouseEvent(std::int8_t nativeAction, std::int8_t nativeState,
                int cursorX = 0, int cursorY = 0, int dx = 0, int dy = 0,
-               int force = 0) noexcept
+               int force = 0, bool isSynthetic = false) noexcept
         : action(nativeAction), state(nativeState), x(cursorX), y(cursorY),
-          deltaX(dx), deltaY(dy), forceMotionlessPointer(force) {}
+          deltaX(dx), deltaY(dy), forceMotionlessPointer(force),
+          synthetic(isSynthetic) {}
     void cancel() const noexcept { cancelled_ = true; }
     [[nodiscard]] bool cancelled() const noexcept { return cancelled_; }
 private:
@@ -55,6 +64,15 @@ struct FocusEvent { bool focused{}; };
 // Emitted by a platform adapter when Minecraft is actively accepting gameplay
 // input (e.g. its window is focused and the gameplay cursor is captured).
 struct GameplayEvent { bool active{}; };
+// Emitted after Minecraft calculates the baseline FOV. Listeners may adjust
+// the final value with setResultFov(); the shared hook runtime returns it to
+// the game after all listeners have run.
+struct FovEvent {
+    void* renderer{};
+    float inputFov{};
+    mutable float resultFov{};
+    void setResultFov(float value) const noexcept { resultFov = value; }
+};
 enum class NameTagSource : std::uint8_t { ActorGetter, View };
 struct ActorNameTagEvent {
     void* actor{};
@@ -152,7 +170,8 @@ public:
     }
 };
 
-using ClientEvents = EventBus<UpdateEvent, KeyEvent, MouseEvent, FocusEvent,
-                               GameplayEvent, ActorNameTagEvent, ViewNameTagEvent>;
+using ClientEvents = EventBus<UpdateEvent, KeyEvent, NativeKeyEvent, MouseEvent,
+                               FocusEvent, GameplayEvent, FovEvent,
+                               ActorNameTagEvent, ViewNameTagEvent>;
 
 } // namespace bedrock

@@ -41,12 +41,6 @@ std::optional<NativeKeyboardLayout> parseNativeKeyboardLayout(
         return std::nullopt;
     }
 }
-bool NativeKeyboardInput::send(int key, bool down) const {
-    if (!processor || !keyDown || !keyUp || key < 0 || key >= 256) return false;
-    if (down) keyDown(processor, key, hardwareOrigin);
-    else keyUp(processor, key);
-    return true;
-}
 std::optional<NativeKeyboardEvent> captureNativeKeyboardEvent(
     const void* context, const NativeKeyboardLayout& layout) {
     if (!context) return std::nullopt;

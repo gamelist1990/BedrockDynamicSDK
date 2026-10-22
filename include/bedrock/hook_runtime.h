@@ -29,7 +29,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_RELEASE_CURSOR = 4,
     BDS_HOOK_GET_FOV = 5,
     BDS_HOOK_LEVEL_SUB_TICK = 6,
-    BDS_HOOK_ACTOR_GET_NAME_TAG = 7
+    BDS_HOOK_ACTOR_GET_NAME_TAG = 7,
+    BDS_HOOK_GAMECORE_KEYBOARD_EVENT = 8
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -37,10 +38,15 @@ typedef struct BDS_MouseArgs {
     void* self; int8_t action; int8_t state; int16_t x; int16_t y;
     int16_t dx; int16_t dy; int force_motionless_pointer;
 } BDS_MouseArgs;
+#define BDS_MOUSE_FLAG_FORCE_MOTIONLESS 0x1
+#define BDS_MOUSE_FLAG_SYNTHETIC 0x40000000
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
 typedef struct BDS_ActorNameTagArgs { void* actor; const void* name_tag; } BDS_ActorNameTagArgs;
+typedef struct BDS_GameCoreKeyboardEventArgs {
+    void* self; void* output; void* context; void* result;
+} BDS_GameCoreKeyboardEventArgs;
 
 typedef uintptr_t (BDS_HOOK_CALL *BDS_HookNext)(void* frame, void* args);
 typedef void (BDS_HOOK_CALL *BDS_HookCallback)(void* user, void* args,

@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <bedrock/game_api.hpp>
 #include <bedrock/hook_runtime.h>
+#include <bedrock/native_keyboard.hpp>
 #include <bedrock/resolver.hpp>
 
 #include <array>
@@ -76,10 +77,61 @@ public:
         return true;
     }
 
+    bool installFov(Resolver& resolver, std::string& error) {
+        if (!api_) { error = "GameApi is unavailable"; return false; }
+        if (tokens_[3]) { error.clear(); return true; }
+        const auto fov = resolveSharedHook(resolver, "LevelRendererPlayer::getFov",
+                                           BDS_HOOK_GET_FOV);
+        if (!fov || !subscribe(BDS_HOOK_GET_FOV, fov->address, &onFov, &tokens_[3])) {
+            error = "shared FOV hook registration failed";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    bool installGameplay(Resolver& resolver, std::string& error) {
+        if (!api_) { error = "GameApi is unavailable"; return false; }
+        if (tokens_[4] && tokens_[5]) { error.clear(); return true; }
+        const auto grab = resolveSharedHook(resolver, "ClientInstance::grabCursor",
+                                            BDS_HOOK_GRAB_CURSOR);
+        const auto release = resolveSharedHook(resolver, "ClientInstance::releaseCursor",
+                                               BDS_HOOK_RELEASE_CURSOR);
+        if (!grab || !release ||
+            !subscribe(BDS_HOOK_GRAB_CURSOR, grab->address, &onGrab, &tokens_[4]) ||
+            !subscribe(BDS_HOOK_RELEASE_CURSOR, release->address, &onRelease, &tokens_[5])) {
+            error = "shared gameplay cursor hook registration failed";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    bool installNativeKeyboard(Resolver& resolver, std::string_view profile,
+                               std::string& error) {
+        if (!api_) { error = "GameApi is unavailable"; return false; }
+        if (tokens_[6]) { error.clear(); return true; }
+        const auto layout = parseNativeKeyboardLayout(profile, error);
+        if (!layout) return false;
+        const auto target = resolveSharedHook(resolver, "GameCore::keyboardEvent",
+                                              BDS_HOOK_GAMECORE_KEYBOARD_EVENT);
+        keyboardLayout_ = *layout;
+        if (!target || !isUsableSharedHookResolution(*target) ||
+            !BDS_HookSubscribe(BDS_HOOK_GAMECORE_KEYBOARD_EVENT,
+                reinterpret_cast<void*>(target->address), &onNativeKeyboard,
+                this, &tokens_[6])) {
+            error = "shared native KeyboardEvent hook registration failed";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
     void stop() noexcept {
         for (auto& token : tokens_) {
             if (token) BDS_HookUnsubscribe(std::exchange(token, nullptr));
         }
+        if (api_) api_->clearNativeKeyboard();
     }
     [[nodiscard]] bool active() const noexcept {
         return tokens_[0] && tokens_[1] && tokens_[2];
@@ -109,12 +161,44 @@ private:
         auto& args = *static_cast<BDS_MouseArgs*>(raw);
         auto& api = *static_cast<GameApi*>(user);
         try {
+            api.observeMouseDevice(args);
             MouseEvent event{args.action, args.state, args.x, args.y,
-                             args.dx, args.dy, args.force_motionless_pointer};
+                             args.dx, args.dy, args.force_motionless_pointer,
+                             api.isSyntheticMouseDispatch()};
             if (api.dispatchMouse(event)) next(frame, &args);
         } catch (...) {
             next(frame, &args);
         }
+    }
+
+    static void BDS_HOOK_CALL onFov(void* user, void* raw,
+                                   BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_FovArgs*>(raw);
+        next(frame, &args);
+        auto& api = *static_cast<GameApi*>(user);
+        FovEvent event{args.self, args.result, args.result};
+        api.dispatchFov(event);
+        args.result = event.resultFov;
+    }
+    static void BDS_HOOK_CALL onGrab(void* user, void* raw,
+                                     BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_CursorArgs*>(raw);
+        next(frame, &args);
+        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{true});
+    }
+    static void BDS_HOOK_CALL onRelease(void* user, void* raw,
+                                        BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_CursorArgs*>(raw);
+        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{false});
+        next(frame, &args);
+    }
+    static void BDS_HOOK_CALL onNativeKeyboard(void* user, void* raw,
+                                               BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_GameCoreKeyboardEventArgs*>(raw);
+        next(frame, &args);
+        auto& hooks = *static_cast<GameHooks*>(user);
+        const auto input = captureNativeKeyboardEvent(args.context, hooks.keyboardLayout_);
+        if (input) hooks.api_->dispatchNativeKeyboard(*input);
     }
     static void BDS_HOOK_CALL onNameTag(void* user, void* raw,
                                         BDS_HookNext next, void* frame) noexcept {
@@ -130,7 +214,8 @@ private:
     }
 
     GameApi* api_{};
-    std::array<BDS_HookToken, 3> tokens_{};
+    NativeKeyboardLayout keyboardLayout_{};
+    std::array<BDS_HookToken, 7> tokens_{};
 };
 
 } // namespace bedrock

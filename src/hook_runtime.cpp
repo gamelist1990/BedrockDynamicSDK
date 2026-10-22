@@ -33,6 +33,7 @@ using CursorFn = void(__fastcall*)(void*);
 using FovFn = float(__fastcall*)(void*, float, void*, void*);
 using LevelFn = void(__fastcall*)(void*);
 using ActorNameTagFn = const std::string&(__fastcall*)(void*);
+using GameCoreKeyboardEventFn = void*(__fastcall*)(void*, void*, void*);
 
 struct Entry {
     BDS_HookToken token{};
@@ -55,7 +56,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 8> states{};
+std::array<State, 9> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -204,7 +205,8 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
     case BDS_HOOK_MOUSE_FEED: {
         auto& a = *static_cast<BDS_MouseArgs*>(args);
         if (original) static_cast<MouseFn>(original)(a.self, a.action, a.state,
-            a.x, a.y, a.dx, a.dy, a.force_motionless_pointer != 0);
+            a.x, a.y, a.dx, a.dy,
+            (a.force_motionless_pointer & BDS_MOUSE_FLAG_FORCE_MOTIONLESS) != 0);
         return 0;
     }
     case BDS_HOOK_GRAB_CURSOR:
@@ -230,6 +232,12 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
         const auto& value = static_cast<ActorNameTagFn>(original)(a.actor);
         a.name_tag = &value;
         return reinterpret_cast<uintptr_t>(&value);
+    }
+    case BDS_HOOK_GAMECORE_KEYBOARD_EVENT: {
+        auto& a = *static_cast<BDS_GameCoreKeyboardEventArgs*>(args);
+        a.result = original ? static_cast<GameCoreKeyboardEventFn>(original)(
+            a.self, a.output, a.context) : a.output;
+        return reinterpret_cast<uintptr_t>(a.result);
     }
     default: return 0;
     }
@@ -283,6 +291,11 @@ const std::string& __fastcall actorNameTagDetour(void* actor) {
     invoke(BDS_HOOK_ACTOR_GET_NAME_TAG, &args);
     return args.name_tag ? *static_cast<const std::string*>(args.name_tag) : empty;
 }
+void* __fastcall gameCoreKeyboardEventDetour(void* self, void* output, void* context) {
+    BDS_GameCoreKeyboardEventArgs args{self, output, context, output};
+    invoke(BDS_HOOK_GAMECORE_KEYBOARD_EVENT, &args);
+    return args.result;
+}
 
 void* detourFor(BDS_HookPoint point) {
     switch (point) {
@@ -293,11 +306,13 @@ void* detourFor(BDS_HookPoint point) {
     case BDS_HOOK_GET_FOV: return reinterpret_cast<void*>(&fovDetour);
     case BDS_HOOK_LEVEL_SUB_TICK: return reinterpret_cast<void*>(&levelDetour);
     case BDS_HOOK_ACTOR_GET_NAME_TAG: return reinterpret_cast<void*>(&actorNameTagDetour);
+    case BDS_HOOK_GAMECORE_KEYBOARD_EVENT:
+        return reinterpret_cast<void*>(&gameCoreKeyboardEventDetour);
     default: return nullptr;
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_ACTOR_GET_NAME_TAG;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_GAMECORE_KEYBOARD_EVENT;
 }
 } // namespace
 
@@ -346,6 +361,9 @@ uintptr_t BDS_HOOK_CALL leaderDispatch(BDS_HookPoint point, void* args) {
     if (point == BDS_HOOK_ACTOR_GET_NAME_TAG)
         return reinterpret_cast<uintptr_t>(
             static_cast<BDS_ActorNameTagArgs*>(args)->name_tag);
+    if (point == BDS_HOOK_GAMECORE_KEYBOARD_EVENT)
+        return reinterpret_cast<uintptr_t>(
+            static_cast<BDS_GameCoreKeyboardEventArgs*>(args)->result);
     return 0;
 }
 uintptr_t BDS_HOOK_CALL leaderOriginal(BDS_HookPoint point, void* args) {
@@ -358,7 +376,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_ACTOR_GET_NAME_TAG; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_GAMECORE_KEYBOARD_EVENT; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -376,7 +394,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "2.1.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "2.2.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {

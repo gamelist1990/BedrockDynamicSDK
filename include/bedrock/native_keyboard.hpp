@@ -29,7 +29,12 @@ struct NativeKeyboardInput {
     KeyDown keyDown{};
     KeyUp keyUp{};
     int hardwareOrigin{};
-    bool send(int key, bool down) const;
+    bool send(int key, bool down) const {
+        if (!processor || !keyDown || !keyUp || key < 0 || key >= 256) return false;
+        if (down) keyDown(processor, key, hardwareOrigin);
+        else keyUp(processor, key);
+        return true;
+    }
 };
 struct NativeKeyboardEvent {
     NativeKeyboardInput input;
