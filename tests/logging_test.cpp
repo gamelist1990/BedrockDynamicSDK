@@ -79,7 +79,10 @@ int main() {
 #endif
     assert(savedText.find("previous run history") == std::string::npos);
     assert(savedText.find("current run only") != std::string::npos);
-    std::filesystem::remove(logPath);
+    saved.close();
+    std::error_code removeError;
+    std::filesystem::remove(logPath, removeError);
+    assert(!removeError);
 #ifdef _WIN32
     std::fprintf(stderr, "logging-test: done\n");
 #endif
