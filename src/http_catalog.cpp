@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "winhttp.lib")
@@ -148,7 +149,8 @@ void writeCache(const std::filesystem::path& path, std::string_view contents) {
     std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) return;
     auto temporary = path;
-    temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetCurrentThreadId()) + L".tmp";
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
         if (!stream) return;
@@ -168,12 +170,6 @@ bool loadCandidate(std::string_view candidate, const GameIdentity& identity,
         const auto version = document.at("target").at("version").get<std::string>();
         ProfileChoice selected{version, std::string(profileSourceName(source)), {}, source};
         if (!validateDownloadedProfile(candidate, selected, identity, error)) return false;
-        Resolver resolver;
-        if (!resolver.loadJson(candidate, error) ||
-            !resolver.attachWindowsMainModule(error) || !resolver.exactBuild()) {
-            error = "profile did not resolve against the loaded game";
-            return false;
-        }
         choice = std::move(selected);
         profileJson.assign(candidate);
         error.clear();
@@ -183,71 +179,96 @@ bool loadCandidate(std::string_view candidate, const GameIdentity& identity,
         return false;
     }
 }
+
+bool fetchRemoteProfile(const GameIdentity& identity,
+                        const std::filesystem::path& cache,
+                        std::string& profileJson, ProfileChoice& choice,
+                        std::string& error) {
+    std::string manifest;
+    if (!httpsGet(kManifest, kManifestLimit, manifest, error)) return false;
+    auto selected = chooseProfile(manifest, identity, error);
+    if (!selected) return false;
+    std::wstring resource = L"/gamelist1990/BedrockDynamicSDK/main/";
+    for (char c : selected->path) resource.push_back(static_cast<wchar_t>(c));
+    std::string downloaded;
+    if (!httpsGet(resource, kProfileLimit, downloaded, error)) return false;
+    std::string downloadedHash;
+    if (!sha256(downloaded, downloadedHash) ||
+        downloadedHash != selected->contentSha256) {
+        error = "profile checksum mismatch";
+        return false;
+    }
+    if (!validateDownloadedProfile(downloaded, *selected, identity, error)) return false;
+    Resolver resolver;
+    if (!resolver.loadJson(downloaded, error) ||
+        !resolver.attachWindowsMainModule(error) || !resolver.exactBuild()) {
+        error = "profile did not resolve against the loaded game";
+        return false;
+    }
+    selected->source = ProfileSource::Remote;
+    writeCache(cache, downloaded);
+    profileJson = std::move(downloaded);
+    choice = std::move(*selected);
+    error.clear();
+    return true;
+}
+
+void refreshRemoteProfile(GameIdentity identity, std::filesystem::path cache) {
+    try {
+        std::string ignoredProfile;
+        ProfileChoice ignoredChoice;
+        std::string ignoredError;
+        fetchRemoteProfile(identity, cache, ignoredProfile, ignoredChoice, ignoredError);
+    } catch (...) {
+        // A background refresh must never affect the active client.
+    }
+}
+
+void startRemoteRefresh(const GameIdentity& identity,
+                        const std::filesystem::path& cache) noexcept {
+    try {
+        std::thread(refreshRemoteProfile, identity, cache).detach();
+    } catch (...) {
+        // The already validated local profile remains usable.
+    }
+}
 } // namespace
 
 bool fetchSupportedProfile(std::string& profileJson,
-                           ProfileChoice& choice, std::string& error) {
+                           ProfileChoice& choice, std::string& error,
+                           ProfileProgressCallback progress) {
     profileJson.clear();
+    if (progress) progress("inspect game");
     GameIdentity identity;
     if (!inspectLoadedGame(identity,error))
         return false;
+    if (progress) progress("check cache");
     const auto cachedPath = cachePath(identity);
     std::string cached;
     bool cacheFresh = false;
     const bool hasCache = readCache(cachedPath, cached, cacheFresh);
     std::string cacheError;
-    if (hasCache && cacheFresh && loadCandidate(cached, identity,
-            ProfileSource::Cache, profileJson, choice, cacheError))
-        return true;
-
-    std::string manifest;
-    std::string remoteError;
-    if (httpsGet(kManifest,kManifestLimit,manifest,remoteError)) {
-        auto selected = chooseProfile(manifest,identity,remoteError);
-        if (selected) {
-            // The choice.path passed strict version and filename validation.
-            std::wstring path = L"/gamelist1990/BedrockDynamicSDK/main/";
-            for (char c:selected->path) path.push_back(static_cast<wchar_t>(c));
-            std::string downloaded;
-            if (httpsGet(path,kProfileLimit,downloaded,remoteError)) {
-                std::string downloadedHash;
-                if (!sha256(downloaded,downloadedHash) ||
-                    downloadedHash != selected->contentSha256) {
-                    remoteError = "downloaded version data SHA-256 does not match manifest";
-                } else if (validateDownloadedProfile(downloaded,*selected,identity,remoteError)) {
-                    Resolver resolver;
-                    if (resolver.loadJson(downloaded,remoteError) &&
-                        resolver.attachWindowsMainModule(remoteError) && resolver.exactBuild()) {
-                        selected->source = ProfileSource::Remote;
-                        choice = *selected;
-                        profileJson = std::move(downloaded);
-                        writeCache(cachedPath, profileJson);
-                        error.clear();
-                        return true;
-                    }
-                    remoteError = "profile did not resolve against the loaded game";
-                }
-            }
-        }
-    }
-
-    // A stale cache remains a safe exact-build fallback when GitHub is down.
-    if (hasCache && loadCandidate(cached, identity, ProfileSource::Cache,
-                                  profileJson, choice, cacheError)) {
-        error.clear();
+    if (hasCache && loadCandidate(cached, identity,
+            ProfileSource::Cache, profileJson, choice, cacheError)) {
+        if (progress) progress(cacheFresh ? "cache ready" : "stale cache ready");
+        if (!cacheFresh) startRemoteRefresh(identity, cachedPath);
         return true;
     }
 
-    // The generated database makes the SDK's build version work on first run,
-    // even when raw.githubusercontent.com is blocked or rate-limited.
+    // Prefer a bundled exact-build profile for immediate startup. The network
+    // refresh updates the cache for the next launch without blocking this one.
     if (loadCandidate(generated::kSymbolDatabase, identity, ProfileSource::Embedded,
                       profileJson, choice, cacheError)) {
         writeCache(cachedPath, profileJson);
+        if (progress) progress("embedded profile ready");
+        startRemoteRefresh(identity, cachedPath);
         error.clear();
         return true;
     }
-    error = remoteError.empty() ? cacheError : remoteError;
-    return false;
+
+    // A newer game build has no usable local profile, so GitHub is required.
+    if (progress) progress("GitHub profile required");
+    return fetchRemoteProfile(identity, cachedPath, profileJson, choice, error);
 }
 } // namespace bedrock
 #endif

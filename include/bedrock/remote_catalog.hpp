@@ -49,8 +49,10 @@ bool validateDownloadedProfile(std::string_view profile,
                                std::string& error);
 
 #ifdef _WIN32
+using ProfileProgressCallback = void (*)(std::string_view stage);
 bool inspectLoadedGame(GameIdentity& identity, std::string& error);
 bool fetchSupportedProfile(std::string& profileJson,
-                           ProfileChoice& choice, std::string& error);
+                           ProfileChoice& choice, std::string& error,
+                           ProfileProgressCallback progress = nullptr);
 #endif
 } // namespace bedrock
