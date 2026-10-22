@@ -15,6 +15,16 @@
 #include <string>
 #include <vector>
 
+int BDS_HOOK_CALL leaderSubscribe(BDS_HookPoint, void*, BDS_HookCallback,
+    void*, BDS_HookToken*);
+void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken);
+int BDS_HOOK_CALL leaderOwns(BDS_HookPoint, void*);
+uintptr_t BDS_HOOK_CALL leaderDispatch(BDS_HookPoint, void*);
+uintptr_t BDS_HOOK_CALL leaderOriginal(BDS_HookPoint, void*);
+const char* BDS_HOOK_CALL leaderVersion();
+int BDS_HOOK_CALL leaderDirectInstall(void*, void*, void**, BDS_HookToken*);
+int BDS_HOOK_CALL leaderDirectRemove(BDS_HookToken);
+
 namespace {
 using KeyboardFn = bool(__fastcall*)(int, bool);
 using MouseFn = void(__fastcall*)(void*, std::int8_t, std::int8_t,
@@ -84,16 +94,6 @@ constexpr DWORD kSharedAbiVersion = 2;
 HANDLE sharedMapping{};
 SharedApi* sharedApi{};
 std::mutex sharedApiMutex;
-
-int BDS_HOOK_CALL leaderSubscribe(BDS_HookPoint, void*, BDS_HookCallback,
-    void*, BDS_HookToken*);
-void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken);
-int BDS_HOOK_CALL leaderOwns(BDS_HookPoint, void*);
-uintptr_t BDS_HOOK_CALL leaderDispatch(BDS_HookPoint, void*);
-uintptr_t BDS_HOOK_CALL leaderOriginal(BDS_HookPoint, void*);
-const char* BDS_HOOK_CALL leaderVersion();
-int BDS_HOOK_CALL leaderDirectInstall(void*, void*, void**, BDS_HookToken*);
-int BDS_HOOK_CALL leaderDirectRemove(BDS_HookToken);
 
 SharedApi* getSharedApi() {
     std::lock_guard lock(sharedApiMutex);
