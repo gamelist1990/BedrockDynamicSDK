@@ -166,5 +166,40 @@ bool Resolver::attachWindowsMainModule(std::string& error) {
     return attachImageByTextHash(base, nt->OptionalHeader.SizeOfImage,
                                  textDigest, textRva, textSize, error);
 }
+
+bool Resolver::attachWindowsMainModule(const GameIdentity& identity,
+                                       std::string& error) {
+    HMODULE module = GetModuleHandleW(nullptr);
+    if (!module) { error = "GetModuleHandleW failed"; return false; }
+    auto* base = reinterpret_cast<const std::byte*>(module);
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE ||
+        dos->e_lfanew <= 0 || dos->e_lfanew > 0x100000) {
+        error = "invalid DOS header"; return false;
+    }
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        error = "not a Windows x64 PE"; return false;
+    }
+    std::uint32_t textRva = 0, textSize = 0;
+    auto* sections = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::string(reinterpret_cast<const char*>(sections[i].Name), 5) == ".text") {
+            textRva = sections[i].VirtualAddress;
+            textSize = sections[i].SizeOfRawData;
+            break;
+        }
+    }
+    if (identity.textSha256.size() != 64 || !identity.imageSize ||
+        !identity.textSize || nt->OptionalHeader.SizeOfImage != identity.imageSize ||
+        textRva != identity.textRva || textSize != identity.textSize) {
+        error = "loaded module changed since profile selection";
+        return false;
+    }
+    return attachImageByTextHash(base, identity.imageSize, identity.textSha256,
+                                 identity.textRva, identity.textSize, error);
+}
 } // namespace bedrock
 #endif

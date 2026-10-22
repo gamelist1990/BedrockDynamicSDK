@@ -843,7 +843,7 @@ bool Overlay::install(RenderCallback render, void* userdata,
         if (!discoverImageSections() ||
             !bedrock::fetchSupportedProfile(versionJson,chosen,resolveError) ||
             !resolver.loadJson(versionJson,resolveError) ||
-            !resolver.attachWindowsMainModule(resolveError) ||
+            !resolver.attachWindowsMainModule(chosen.identity, resolveError) ||
             !resolver.exactBuild()) {
             trace("BedrockGuiOverlay: native mouse unavailable; overlay renderer remains active\n");
             okay=false;

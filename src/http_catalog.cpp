@@ -170,6 +170,7 @@ bool loadCandidate(std::string_view candidate, const GameIdentity& identity,
         const auto document = nlohmann::json::parse(candidate.begin(), candidate.end());
         const auto version = document.at("target").at("version").get<std::string>();
         ProfileChoice selected{version, std::string(profileSourceName(source)), {}, source};
+        selected.identity = identity;
         if (!validateDownloadedProfile(candidate, selected, identity, error)) return false;
         choice = std::move(selected);
         profileJson.assign(candidate);
@@ -189,6 +190,7 @@ bool fetchRemoteProfile(const GameIdentity& identity,
     if (!httpsGet(kManifest, kManifestLimit, manifest, error)) return false;
     auto selected = chooseProfile(manifest, identity, error);
     if (!selected) return false;
+    selected->identity = identity;
     std::wstring resource = L"/gamelist1990/BedrockDynamicSDK/main/";
     for (char c : selected->path) resource.push_back(static_cast<wchar_t>(c));
     std::string downloaded;
@@ -202,8 +204,8 @@ bool fetchRemoteProfile(const GameIdentity& identity,
     if (!validateDownloadedProfile(downloaded, *selected, identity, error)) return false;
     Resolver resolver;
     if (!resolver.loadJson(downloaded, error) ||
-        !resolver.attachWindowsMainModule(error) || !resolver.exactBuild()) {
-        error = "profile did not resolve against the loaded game";
+        !resolver.attachWindowsMainModule(identity, error) || !resolver.exactBuild()) {
+        error = "profile did not resolve against the loaded game: " + error;
         return false;
     }
     selected->source = ProfileSource::Remote;

@@ -10,6 +10,8 @@
 
 namespace bedrock {
 
+struct GameIdentity;
+
 struct Resolution {
     std::uintptr_t address = 0;
     std::string method;
@@ -39,6 +41,9 @@ public:
 #ifdef _WIN32
     // Uses Windows system APIs only; no PreLoader dependency.
     bool attachWindowsMainModule(std::string& error);
+    // Reuses the live-module fingerprint produced by inspectLoadedGame.
+    bool attachWindowsMainModule(const GameIdentity& identity,
+                                 std::string& error);
 #endif
 
 private:

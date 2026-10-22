@@ -26,6 +26,9 @@ struct ProfileChoice {
     std::string path;
     std::string contentSha256;
     ProfileSource source{ProfileSource::Remote};
+    // Fingerprint was already computed while selecting the profile. Reuse it
+    // to avoid hashing the executable a second time during resolver attach.
+    GameIdentity identity;
 };
 
 constexpr std::string_view profileSourceName(ProfileSource source) noexcept {
