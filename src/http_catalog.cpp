@@ -263,6 +263,54 @@ bool markRefreshAttempt(const std::filesystem::path& cache) noexcept {
     return true;
 }
 
+bool fetchRemoteProfileSingleFlight(const GameIdentity& identity,
+                                    const std::filesystem::path& cache,
+                                    std::string& profileJson,
+                                    ProfileChoice& choice,
+                                    std::string& error) {
+    if (cache.empty())
+        return fetchRemoteProfile(identity, cache, profileJson, choice, error);
+    std::wstring key = cache.stem().wstring();
+    std::wstring mutexName = L"Local\\BedrockDynamicSDKProfileRefresh_" + key;
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+    if (!mutex) return fetchRemoteProfile(identity, cache, profileJson, choice, error);
+    const DWORD wait = WaitForSingleObject(mutex, INFINITE);
+    if (wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED) {
+        CloseHandle(mutex);
+        error = "profile refresh lock unavailable";
+        return false;
+    }
+    const auto release = [&] {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+    };
+
+    std::string cached;
+    bool ignoredFreshness = false;
+    if (readCache(cache, cached, ignoredFreshness) &&
+        loadCandidate(cached, identity, ProfileSource::Cache,
+                      profileJson, choice, error)) {
+        release();
+        return true;
+    }
+    auto stamp = cache;
+    stamp += L".refresh";
+    std::error_code ec;
+    const auto attempted = std::filesystem::last_write_time(stamp, ec);
+    if (!ec && std::filesystem::file_time_type::clock::now() - attempted <
+                   kRefreshInterval) {
+        release();
+        error = "profile refresh is limited to once per 24 hours; no matching cached profile";
+        return false;
+    }
+    writeCache(stamp, "refresh-attempt");
+    // Keep the mutex while fetching so other DLLs wait for the one shared
+    // download and then consume its cache instead of issuing duplicate GETs.
+    const bool fetched = fetchRemoteProfile(identity, cache, profileJson, choice, error);
+    release();
+    return fetched;
+}
+
 void startRemoteRefresh(const GameIdentity& identity,
                         const std::filesystem::path& cache) noexcept {
     if (!markRefreshAttempt(cache)) return;
@@ -308,11 +356,8 @@ bool fetchSupportedProfile(std::string& profileJson,
 
     // A newer game build has no usable local profile, so GitHub is required.
     if (progress) progress("GitHub profile required");
-    if (!markRefreshAttempt(cachedPath)) {
-        error = "profile refresh is limited to once per 24 hours; no matching cached profile";
-        return false;
-    }
-    return fetchRemoteProfile(identity, cachedPath, profileJson, choice, error);
+    return fetchRemoteProfileSingleFlight(identity, cachedPath, profileJson,
+                                          choice, error);
 }
 } // namespace bedrock
 #endif
