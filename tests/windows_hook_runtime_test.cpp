@@ -6,7 +6,7 @@
 namespace {
 int firstCalls{};
 int secondCalls{};
-bool __fastcall target(int key, bool down) {
+__declspec(noinline) bool __fastcall target(int key, bool down) {
     volatile int preservePatchRoom = key + (down ? 3 : 4);
     return preservePatchRoom > 0;
 }

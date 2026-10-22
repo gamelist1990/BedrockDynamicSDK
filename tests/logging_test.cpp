@@ -16,6 +16,9 @@ static void sink(bedrock::LogLevel level, std::string_view line, void* ctx) {
     static_cast<Captured*>(ctx)->lines.emplace_back(level, std::string(line));
 }
 int main() {
+#ifdef _WIN32
+    std::fprintf(stderr, "logging-test: start\n");
+#endif
     using bedrock::LogLevel;
     using bedrock::Logger;
     Logger log("AutoSprint", LogLevel::Info);
@@ -51,16 +54,35 @@ int main() {
     log.setLevel(LogLevel::Info);
     {
         bedrock::FileLogSink fileSink;
+#ifdef _WIN32
+        std::fprintf(stderr, "logging-test: before open\n");
+#endif
         assert(fileSink.open(logPath)); // The default mode clears previous runs.
+#ifdef _WIN32
+        std::fprintf(stderr, "logging-test: opened\n");
+#endif
         fileSink.attach(log);
         log.info("current run only");
+#ifdef _WIN32
+        std::fprintf(stderr, "logging-test: wrote\n");
+#endif
+        log.setSink(nullptr);
         fileSink.close();
+#ifdef _WIN32
+        std::fprintf(stderr, "logging-test: closed\n");
+#endif
     }
     std::ifstream saved(logPath, std::ios::binary);
     const std::string savedText{std::istreambuf_iterator<char>(saved), {}};
+#ifdef _WIN32
+    std::fprintf(stderr, "logging-test: read %zu bytes\n", savedText.size());
+#endif
     assert(savedText.find("previous run history") == std::string::npos);
     assert(savedText.find("current run only") != std::string::npos);
     std::filesystem::remove(logPath);
+#ifdef _WIN32
+    std::fprintf(stderr, "logging-test: done\n");
+#endif
 
 #ifndef _WIN32
     assert(!bedrock::Console::isOpen());
