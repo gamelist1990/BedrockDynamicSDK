@@ -16,6 +16,18 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "text_rva": "0x1000",
     "text_size": 240802816
   },
+  "native_keyboard": {
+    "schema": 1,
+    "pointer_size": 8,
+    "callback_symbol": "GameCore::keyboardEvent",
+    "owner_offset": 0,
+    "processor_offset": 64,
+    "message_offset": 16,
+    "key_offset": 24,
+    "key_down_vtable_slot": 1,
+    "key_up_vtable_slot": 2,
+    "hardware_origin": 1
+  },
   "symbols": {
     "LevelRenderer::renderLevel": {
       "rva": "0x47F8570",
@@ -213,6 +225,21 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "confidence": "unique-masked-AOB-pdata-boundary-and-native-callsite",
       "abi_verified": true,
       "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)"
+    },
+    "GameCore::keyboardEvent": {
+      "rva": "0x98FA0",
+      "signature": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 41 8B 58 10",
+      "entry_check": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "Minecraft.Windows.exe 1.26.52.3 native keyboard callback: prefilter at 0x98FD2, HIDController key-down/key-up at 0x99017/0x99030",
+      "function_boundary": true,
+      "signature_length": 32,
+      "category": "input",
+      "origin_key": "GameCore_keyboardEvent",
+      "confidence": "unique-masked-AOB-pdata-boundary-and-native-input-flow",
+      "abi_verified": true,
+      "abi": "void* __fastcall(void* callback, void* result, void* context)"
     },
     "Keyboard::feed": {
       "rva": "0x2D18D0",

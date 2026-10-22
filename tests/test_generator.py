@@ -193,7 +193,7 @@ def test_real_profile_marks_only_disassembled_abi_verified():
     assert "GuiData::displayClientMessage" in data["symbols"]
     assert len(data["symbols"]) >= 30
     for name, symbol in data["symbols"].items():
-        if name in {"MouseDevice::feed", "Keyboard::feed",
+        if name in {"MouseDevice::feed", "Keyboard::feed", "GameCore::keyboardEvent",
                     "GameCore::handleKeyboardInput",
                     "LevelRendererPlayer::getFov"}:
             assert symbol["status"] == "verified"

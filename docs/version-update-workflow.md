@@ -271,6 +271,7 @@ ABIを確認した関数だけ、根拠とprototypeを明記して次のよう�
 | シンボル | 使用箇所 | 必要状態 |
 |---|---|---|
 | `Keyboard::feed` | Zoom、TabList | `verified` + ABI確認 |
+| `GameCore::keyboardEvent` | AutoSprint | `verified` + `native_keyboard`の配置・ABI確認 |
 | `MouseDevice::feed` | Zoom、MouseChatter | `verified` + ABI確認 |
 | `LevelRendererPlayer::getFov` | Zoom | `verified` + ABI確認 |
 | `ClientInstance::grabCursor` | Zoom、TabList、MouseChatter、GUI | exact RVA候補以上 |

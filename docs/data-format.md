@@ -7,6 +7,9 @@ Per version there is **exactly one JSON file**: `data/<version>/windows-x64.json
   `text_sha256`, `image_base`, `size_of_image`, `text_rva`, `text_size`.
 - `symbols`: function names to `rva`, `entry_check`, `signature`, `status`,
   `source`, `function_boundary`, `category`, `abi_verified`.
+- `native_keyboard`: verified callback-context offsets, processor virtual slots,
+  and InputOrigin for the native gameplay keyboard route. See
+  [native keyboard input](native-keyboard-input.md).
 - `analysis.rtti`: compiler-emitted decorated TypeDescriptor names; **not** field layouts.
 - `analysis.latite_compatibility`: historic 54-pattern comparison for forensic review.
 - `analysis.layout_hints`: unverified historical offsets and virtual slots, **never used
@@ -23,9 +26,9 @@ or mapped code SHA-256 **plus the exact PE layout**. The path must be
 its own target, and the live PE identity. Unrecognized/invalid metadata are skipped.
 
 AOB matches, RTTI and historic SDK offsets do **not** establish runtime ABI safety.
-The AutoSprint sample hooks the ABI-verified `Keyboard::feed` entry for key state and
-uses that same Minecraft API for its Ctrl transition; it does not call the unverified
-`ClientInputUpdateSystemInternal::tickUpdateClientInput` candidate or read game fields.
+AutoSprint observes the complete `GameCore::keyboardEvent` callback and sends Ctrl
+through the actual HIDController key-down/key-up APIs using the profile's verified
+`native_keyboard` layout. `Keyboard::feed` is a prefilter, not a gameplay input sender.
 
 ## Modular runtime APIs
 

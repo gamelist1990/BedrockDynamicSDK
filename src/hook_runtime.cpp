@@ -371,10 +371,18 @@ int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     auto entry = std::make_shared<DirectEntry>();
     entry->target = target; entry->detour = detour; entry->token = entry.get();
     if (MH_CreateHook(target, detour, &entry->original) != MH_OK) return 0;
-    if (MH_EnableHook(target) != MH_OK) { MH_RemoveHook(target); return 0; }
-    directEntries.push_back(entry);
+    // A native thread can enter the detour as soon as EnableHook resumes it.
+    // Publish its continuation before the target becomes callable.
     *originalOut = entry->original;
     *tokenOut = entry->token;
+    MemoryBarrier();
+    if (MH_EnableHook(target) != MH_OK) {
+        *originalOut = nullptr;
+        *tokenOut = nullptr;
+        MH_RemoveHook(target);
+        return 0;
+    }
+    directEntries.push_back(entry);
     return 1;
 }
 
