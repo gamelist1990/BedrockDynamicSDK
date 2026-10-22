@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -200,6 +201,12 @@ public:
     bool turn(float yawDelta, float pitchDelta) const noexcept;
 };
 
+struct CachedActorNameTag {
+    void* actor{};
+    std::string nameTag;
+    NameTagSource source{NameTagSource::ActorGetter};
+};
+
 class GameApi {
 public:
     GameApi() noexcept : access_(&emptyGameAccess()) {}
@@ -220,13 +227,16 @@ public:
     void observeViewActor(void* actor) {
         if (!validActor(actor)) return;
         std::lock_guard lock(mutex_);
-        viewActors_.insert(actor);
+        if (viewActors_.insert(actor).second) invalidateActorSnapshots();
     }
     void clearObservedActors() {
         std::lock_guard lock(mutex_);
         nameTags_.clear();
+        actorGetterTags_.clear();
         viewNameTags_.clear();
         viewActors_.clear();
+        actorGetterHandles_.clear();
+        invalidateActorSnapshots();
     }
     void observeActorNameTag(void* actor, std::string_view nameTag) {
         if (!validActor(actor) || nameTag.empty()) return;
@@ -243,8 +253,9 @@ public:
             const auto it = viewNameTags_.find(actor);
             viewChanged = it == viewNameTags_.end() || it->second != nameTag;
             viewNameTags_.insert_or_assign(actor, std::string(nameTag));
+            if (viewActors_.insert(actor).second || viewChanged) invalidateActorSnapshots();
         }
-        const bool actorChanged = rememberActor(actor, nameTag);
+        const bool actorChanged = rememberActor(actor, nameTag, NameTagSource::View);
         if (viewChanged) Event.Enum.ViewNameTag.emit(ViewNameTagEvent{actor, nameTag});
         if (actorChanged) Event.Enum.ActorNameTag.emit(ActorNameTagEvent{
             actor, nameTag, NameTagSource::View});
@@ -325,13 +336,96 @@ public:
         return syntheticMouseApi_ == this;
     }
 
-    [[nodiscard]] std::vector<Actor> actors(void* world = nullptr) {
-        std::unordered_set<void*> handles;
-        {
-            std::lock_guard lock(mutex_);
-            handles = viewActors_;
-            for (const auto& [actor, _] : nameTags_) handles.insert(actor);
+    // Immutable per-source snapshots let render consumers reuse the cache
+    // without rewalking or copying all observed Actor handles each frame.
+    [[nodiscard]] std::shared_ptr<const std::vector<CachedActorNameTag>>
+    cachedActorNameTags(NameTagSource source) const {
+        std::lock_guard lock(mutex_);
+        auto& cached = source == NameTagSource::View
+            ? cachedViewNameTags_ : cachedActorNameTags_;
+        if (!cached) {
+            auto result = std::make_shared<std::vector<CachedActorNameTag>>();
+            const auto& tags = source == NameTagSource::View ? viewNameTags_ : actorGetterTags_;
+            result->reserve(tags.size());
+            for (const auto& [actor, tag] : tags)
+                result->push_back({actor, tag, source});
+            cached = std::move(result);
         }
+        return cached;
+    }
+
+    [[nodiscard]] std::shared_ptr<const std::vector<Actor>>
+    cachedActors(NameTagSource source) const {
+        std::lock_guard lock(mutex_);
+        auto& cached = source == NameTagSource::View
+            ? cachedViewActors_ : cachedNameTagActors_;
+        if (!cached) {
+            auto result = std::make_shared<std::vector<Actor>>();
+            const auto& handles = source == NameTagSource::View
+                ? viewActors_ : actorGetterHandles_;
+            result->reserve(handles.size());
+            for (auto* handle : handles)
+                if (validActor(handle)) result->emplace_back(*const_cast<GameApi*>(this), handle);
+            cached = std::move(result);
+        }
+        return cached;
+    }
+
+    // Refresh a bounded batch of already observed Actors through the
+    // version-specific GameAccess adapter. Call from a game update/tick, not
+    // from a render callback. New Actors are discovered by the View/getter
+    // observation paths; this method keeps their names/colors live when their
+    // tags are not currently being rendered.
+    std::size_t refreshCachedActorNameTags(std::size_t maximumActors = 64) noexcept {
+        if (!access_ || maximumActors == 0) return 0;
+        try {
+            const auto view = cachedActors(NameTagSource::View);
+            const auto getter = cachedActors(NameTagSource::ActorGetter);
+            std::vector<std::pair<void*, NameTagSource>> candidates;
+            candidates.reserve(view->size() + getter->size() + 1);
+            std::unordered_set<void*> seen;
+            seen.reserve(candidates.capacity());
+            const auto append = [&](const auto& actors, NameTagSource source) {
+                for (const auto& actor : actors) {
+                    auto* handle = actor.handle_;
+                    if (handle && seen.insert(handle).second)
+                        candidates.emplace_back(handle, source);
+                }
+            };
+            // Prefer View for dual-source Actors: its independently captured
+            // rendering state is more directly associated with the visible tag.
+            append(*view, NameTagSource::View);
+            append(*getter, NameTagSource::ActorGetter);
+            auto* local = access_->localPlayer();
+            if (validActor(local) && seen.insert(local).second)
+                candidates.emplace_back(local, NameTagSource::ActorGetter);
+            if (candidates.empty()) return 0;
+            const auto start = refreshCursor_.fetch_add(maximumActors,
+                std::memory_order_relaxed) % candidates.size();
+            const auto count = std::min(maximumActors, candidates.size());
+            std::size_t refreshed = 0;
+            for (std::size_t i = 0; i < count; ++i) {
+                const auto& [handle, source] = candidates[(start + i) % candidates.size()];
+                if (!validActor(handle)) continue;
+                auto tag = access_->nameTag(handle);
+                if (!tag || tag->empty()) continue;
+                if (source == NameTagSource::View) observeViewNameTag(handle, *tag);
+                else observeActorNameTag(handle, *tag);
+                ++refreshed;
+            }
+            return refreshed;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    [[nodiscard]] std::vector<Actor> actors(void* world = nullptr) {
+        const auto view = cachedActors(NameTagSource::View);
+        const auto named = cachedActors(NameTagSource::ActorGetter);
+        std::unordered_set<void*> handles;
+        handles.reserve(view->size() + named->size() + 1);
+        for (const auto& actor : *view) handles.insert(actor.handle_);
+        for (const auto& actor : *named) handles.insert(actor.handle_);
         // The local player is useful even before a render/name-tag callback has
         // observed it, and is itself a member of the active world.
         if (auto* local = access_ ? access_->localPlayer() : nullptr)
@@ -347,12 +441,30 @@ public:
     }
 
 private:
-    bool rememberActor(void* actor, std::string_view tag) {
+    void invalidateActorSnapshots() const {
+        cachedViewNameTags_.reset();
+        cachedActorNameTags_.reset();
+        cachedViewActors_.reset();
+        cachedNameTagActors_.reset();
+    }
+    bool rememberActor(void* actor, std::string_view tag,
+                       NameTagSource source = NameTagSource::ActorGetter) {
         std::lock_guard lock(mutex_);
         const auto it = nameTags_.find(actor);
         const bool changed = it == nameTags_.end() || it->second != tag;
         nameTags_.insert_or_assign(actor, std::string(tag));
-        return changed;
+        bool sourceChanged = false;
+        if (source == NameTagSource::ActorGetter) {
+            const auto sourceIt = actorGetterTags_.find(actor);
+            sourceChanged = sourceIt == actorGetterTags_.end() || sourceIt->second != tag;
+            actorGetterTags_.insert_or_assign(actor, std::string(tag));
+            actorGetterHandles_.insert(actor);
+        }
+        if (source == NameTagSource::View) {
+            sourceChanged = viewActors_.insert(actor).second;
+        }
+        if (changed || sourceChanged) invalidateActorSnapshots();
+        return changed || sourceChanged;
     }
     [[nodiscard]] bool validActor(void* actor) const noexcept {
         return access_ && actor && access_->isActorValid(actor);
@@ -372,11 +484,18 @@ private:
     void* mouseDevice_{};
     BDS_MouseArgs lastMouseArgs_{};
     std::atomic<bool> gameplayActive_{false};
+    std::atomic<std::size_t> refreshCursor_{0};
     inline static thread_local const GameApi* syntheticMouseApi_{};
     mutable std::mutex mutex_;
     std::unordered_map<void*, std::string> nameTags_;
+    std::unordered_map<void*, std::string> actorGetterTags_;
     std::unordered_map<void*, std::string> viewNameTags_;
     std::unordered_set<void*> viewActors_;
+    std::unordered_set<void*> actorGetterHandles_;
+    mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedActorNameTags_;
+    mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedViewNameTags_;
+    mutable std::shared_ptr<const std::vector<Actor>> cachedNameTagActors_;
+    mutable std::shared_ptr<const std::vector<Actor>> cachedViewActors_;
     friend class Actor;
     friend class LocalPlayer;
     friend class World;

@@ -59,8 +59,15 @@ enumerate the game's View/Actor list automatically. The old runtime-actor-list
 candidate caused invalid-handle SEH failures in the tested build, so it is not
 called here. Until a version-verified View adapter is supplied, automatic
 collection comes from the `Actor::getNameTag` hook and direct adapter calls.
-Callbacks are synchronous on the emitting game/render/input thread; keep them
-short and marshal expensive work yourself.
+Use `cachedActors(NameTagSource::View/ActorGetter)` and
+`cachedActorNameTags(NameTagSource::View/ActorGetter)` for immutable,
+source-separated snapshots. They are rebuilt only after observations change,
+so render code can retain a snapshot without re-enumerating Actors. A client
+may call `refreshCachedActorNameTags(64)` from its game update (for example,
+once every 20 ticks) to refresh a rotating, bounded batch of already observed
+tags, including the local player when its `GameAccess` adapter supplies one.
+It does not discover new Actors; new handles still come from View/getter observations. Callbacks remain
+synchronous on the emitting game/render/input thread; keep them short.
 
 ## Native input
 

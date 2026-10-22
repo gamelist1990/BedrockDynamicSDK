@@ -71,15 +71,27 @@ int main() {
     const auto other = reinterpret_cast<void*>(0x30);
     api.observeViewNameTag(other, game.tags.at(other));
     assert(actorEvents == 2 && viewEvents == 1);
+    const auto viewTags = api.cachedActorNameTags(bedrock::NameTagSource::View);
+    const auto getterTags = api.cachedActorNameTags(bedrock::NameTagSource::ActorGetter);
+    assert(viewTags->size() == 1 && viewTags->front().actor == other);
+    assert(getterTags->size() == 1 && getterTags->front().actor == game.local);
+    const auto cachedViewActors = api.cachedActors(bedrock::NameTagSource::View);
+    const auto cachedGetterActors = api.cachedActors(bedrock::NameTagSource::ActorGetter);
+    assert(cachedViewActors->size() == 1 && cachedGetterActors->size() == 1);
     const auto actors = self.getWorld().getActors();
     assert(actors.size() == 2);
     assert(api.actor(other).getName() == "OtherPlayer");
+    assert(actorEvents == 3);
+    assert(api.cachedActorNameTags(bedrock::NameTagSource::ActorGetter)->size() == 2);
 
     // Explicit reads prefer the live adapter and replace cached color/name
     // data so PlayerList consumers do not get stuck on an old nametag.
     game.tags[other] = "\xC2\xA7" "cOtherPlayer";
+    assert(api.refreshCachedActorNameTags(16) > 0);
     assert(api.actor(other).getNameTag() == "\xC2\xA7" "cOtherPlayer");
-    assert(actorEvents == 3);
+    assert(actorEvents == 5);
+    assert(api.cachedActorNameTags(bedrock::NameTagSource::View)->front().nameTag ==
+           "\xC2\xA7" "cOtherPlayer");
 
     auto keyboard = self.getKeyboard();
     assert(keyboard.press(87) && keyboard.isDown(87));
