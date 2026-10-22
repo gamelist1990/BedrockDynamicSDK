@@ -39,12 +39,30 @@ chosen to avoid a shorter account name winning over a longer one.
 `GameApi::world(nativeWorld).getPlayerNames()` exposes the current world's
 PlayerList names through the adapter, so consumers do not need a second native
 PlayerList parser.
-`Actor::getHeldItem()` returns an optional `HeldItemInfo` value snapshot for
-that Actor's currently held hand item. It is not a full-inventory API: adapters
-must read only the hand/equipment slot and must not enumerate inventory slots.
-Local-player inventory access is a separate API and must not be used to inspect
-remote Actors. The API never exposes an `ItemStack*`, and adapters without
-validated hand-item access return `std::nullopt`.
+`Actor::getMainHand()`, `getOffhand()`, and `getArmor(EquipmentSlot)` return
+optional `ItemStack` snapshots. `getHeldItem()` remains as a compatibility alias
+for `getMainHand()`. These Actor APIs read equipment only; they do not enumerate
+remote inventory slots. `LocalPlayer` additionally exposes `getInventory()`,
+`getHotbar()`, and `getSelectedHotbarSlot()`. Each operation verifies that its
+handle still equals the current local player. The SDK never exposes an
+`ItemStack*`.
+
+An `ItemStack` contains a canonical identifier and count, plus optional
+`displayName`, `customName`, and `translationKey` values. `getName()` prefers a
+custom name, then a localized display name, then the identifier. Native item
+offsets, component IDs, slots, and vtable indices live in the exact-build
+`native_items` profile section. The name-returning native function remains off
+until its ABI is verified; a candidate `std::string` ABI can corrupt the game
+even when memory reads are guarded.
+
+```cpp
+auto main = actor.getMainHand();
+auto offhand = actor.getOffhand();
+auto helmet = actor.getArmor(bedrock::EquipmentSlot::Head);
+auto self = game.localPlayer();
+auto hotbar = self.getHotbar(); // nine optional item snapshots
+auto inventory = self.getInventory();
+```
 
 ## Observations and events
 
@@ -104,7 +122,9 @@ synchronously; do not block or perform long-running work there.
 ## Profile and log maintenance
 
 The exact-build profile at `data/<version>/windows-x64.json` contains only the
-symbols/layout data needed by the SDK and shipped examples. The generated
+symbols/layout data needed by the SDK and shipped examples. Keep
+`native_items` offsets and ABI status version-specific; do not carry them to a
+new build without validation. The generated
 `include/bedrock/generated_symbols.hpp` and `data/manifest.json` must be
 regenerated with the repository's `bedrock_symbols` CLI after profile edits.
 Keep signatures, entry checks, ABI status, and provenance alongside each symbol.

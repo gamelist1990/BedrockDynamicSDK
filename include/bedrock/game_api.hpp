@@ -35,18 +35,29 @@ struct ServerAddress {
     }
 };
 
-// Stable value snapshot of an Actor's currently held hand item. Adapters
-// populate the identifier with a canonical item id when available and
-// displayName with the game's localized name. No ItemStack pointer escapes.
-struct HeldItemInfo {
+enum class EquipmentSlot : std::uint8_t { MainHand, Offhand, Head, Chest, Legs, Feet };
+
+// Stable value snapshot. The native ItemStack pointer never escapes the adapter.
+// displayName/customName are optional: many servers replace item IDs without
+// supplying a localized name, so callers should always retain identifier.
+struct ItemStack {
     std::string identifier;
     std::string displayName;
     unsigned count{};
+    std::string customName;
+    std::string translationKey;
 
     [[nodiscard]] bool valid() const noexcept {
-        return !identifier.empty() || !displayName.empty();
+        return count != 0 && (!identifier.empty() || !displayName.empty() ||
+                              !customName.empty());
+    }
+    [[nodiscard]] std::string getName() const {
+        if (!customName.empty()) return customName;
+        if (!displayName.empty()) return displayName;
+        return identifier;
     }
 };
+using HeldItemInfo = ItemStack; // source-compatible name for older examples
 
 // Values match Minecraft's MouseDevice::feed InputKey values.
 enum class MouseButton : unsigned { Left = 1, Right = 2, Middle = 3, X1 = 4, X2 = 5 };
@@ -66,6 +77,24 @@ public:
     [[nodiscard]] virtual std::optional<HeldItemInfo> heldItem(void* actor) const {
         (void)actor;
         return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<ItemStack> equipmentItem(
+        void* actor, EquipmentSlot slot) const {
+        return slot == EquipmentSlot::MainHand ? heldItem(actor) : std::nullopt;
+    }
+    // Inventory access is exposed only through LocalPlayer. Implementations
+    // must validate the supplied handle against the live local player before
+    // reading any inventory pointer.
+    [[nodiscard]] virtual std::size_t localInventorySize(void* localPlayer) const {
+        (void)localPlayer; return 0;
+    }
+    [[nodiscard]] virtual std::optional<ItemStack> localInventoryItem(
+        void* localPlayer, std::size_t slot) const {
+        (void)localPlayer; (void)slot; return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<std::size_t> selectedHotbarSlot(
+        void* localPlayer) const {
+        (void)localPlayer; return std::nullopt;
     }
     [[nodiscard]] virtual std::vector<std::string> playerListNames(void* world) const = 0;
     [[nodiscard]] virtual std::optional<ServerAddress> serverAddress(void* localPlayer) const = 0;
@@ -140,6 +169,14 @@ public:
     [[nodiscard]] std::string getNameTag() const;
     [[nodiscard]] std::string getName() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
+    [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
+    [[nodiscard]] std::optional<ItemStack> getMainHand() const {
+        return getEquipment(EquipmentSlot::MainHand);
+    }
+    [[nodiscard]] std::optional<ItemStack> getOffhand() const {
+        return getEquipment(EquipmentSlot::Offhand);
+    }
+    [[nodiscard]] std::optional<ItemStack> getArmor(EquipmentSlot slot) const;
     [[nodiscard]] bool isPlayer() const;
     [[nodiscard]] World getWorld() const;
     [[nodiscard]] bool sameActor(const Actor& other) const noexcept {
@@ -219,6 +256,9 @@ public:
     [[nodiscard]] Mouse getMouse() const noexcept;
     [[nodiscard]] std::optional<Server> getServer() const;
     [[nodiscard]] std::optional<Server> server() const { return getServer(); }
+    [[nodiscard]] std::vector<std::optional<ItemStack>> getInventory() const;
+    [[nodiscard]] std::vector<std::optional<ItemStack>> getHotbar() const;
+    [[nodiscard]] std::optional<std::size_t> getSelectedHotbarSlot() const;
     bool turn(float yawDelta, float pitchDelta) const noexcept;
 };
 
@@ -608,10 +648,19 @@ inline std::string Actor::getName() const {
     return plain;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
+    return getMainHand();
+}
+inline std::optional<ItemStack> Actor::getEquipment(EquipmentSlot slot) const {
     if (!isValid()) return std::nullopt;
-    auto item = api_->access_->heldItem(handle_);
+    auto item = api_->access_->equipmentItem(handle_, slot);
     if (!item || !item->valid()) return std::nullopt;
     return item;
+}
+inline std::optional<ItemStack> Actor::getArmor(EquipmentSlot slot) const {
+    if (slot != EquipmentSlot::Head && slot != EquipmentSlot::Chest &&
+        slot != EquipmentSlot::Legs && slot != EquipmentSlot::Feet)
+        return std::nullopt;
+    return getEquipment(slot);
 }
 inline bool Actor::isPlayer() const {
     if (!isValid()) return false;
@@ -644,6 +693,36 @@ inline std::optional<Server> LocalPlayer::getServer() const {
     auto endpoint = api_->access_->serverAddress(handle_);
     if (!endpoint || !endpoint->valid()) return std::nullopt;
     return Server{std::move(*endpoint)};
+}
+inline std::vector<std::optional<ItemStack>> LocalPlayer::getInventory() const {
+    std::vector<std::optional<ItemStack>> result;
+    if (!isValid() || api_->access_->localPlayer() != handle_) return result;
+    const auto size = api_->access_->localInventorySize(handle_);
+    if (size > 256) return result;
+    result.reserve(size);
+    for (std::size_t slot = 0; slot < size; ++slot) {
+        auto item = api_->access_->localInventoryItem(handle_, slot);
+        if (item && !item->valid()) item.reset();
+        result.push_back(std::move(item));
+    }
+    return result;
+}
+inline std::vector<std::optional<ItemStack>> LocalPlayer::getHotbar() const {
+    std::vector<std::optional<ItemStack>> result;
+    if (!isValid() || api_->access_->localPlayer() != handle_) return result;
+    result.reserve(9);
+    for (std::size_t slot = 0; slot < 9; ++slot) {
+        auto item = api_->access_->localInventoryItem(handle_, slot);
+        if (item && !item->valid()) item.reset();
+        result.push_back(std::move(item));
+    }
+    return result;
+}
+inline std::optional<std::size_t> LocalPlayer::getSelectedHotbarSlot() const {
+    if (!isValid() || api_->access_->localPlayer() != handle_) return std::nullopt;
+    auto slot = api_->access_->selectedHotbarSlot(handle_);
+    if (slot && *slot > 8) return std::nullopt;
+    return slot;
 }
 inline bool LocalPlayer::turn(float yawDelta, float pitchDelta) const noexcept {
     return isValid() && api_->access_->turn(yawDelta, pitchDelta);

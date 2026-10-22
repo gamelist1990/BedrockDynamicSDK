@@ -28,6 +28,52 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "key_up_vtable_slot": 2,
     "hardware_origin": 1
   },
+  "native_items": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "evidence": "LatiteClient/Latite@9f74635 Actor EntityContext and ActorEquipmentComponent declarations; inventory virtual slot; independently verify per Minecraft build",
+    "actor_context": {
+      "actor_offset": "0x8",
+      "registry_offset": "0x8",
+      "registry_storage_offset": "0x8",
+      "entity_id_offset": "0x10"
+    },
+    "equipment": {
+      "component_hash": "0xB06141A9",
+      "hand_container_offset": "0x0",
+      "armor_container_offset": "0x8",
+      "slots": {
+        "main_hand": 0,
+        "offhand": 1,
+        "head": 0,
+        "chest": 1,
+        "legs": 2,
+        "feet": 3
+      }
+    },
+    "inventory": {
+      "get_item_vtable_slot": 7,
+      "local_slot_count": 36,
+      "hotbar_slot_count": 9
+    },
+    "local_player": {
+      "get_local_player_vtable_slot": 31,
+      "supplies_offset": "0x5B8",
+      "selected_slot_offset": "0x10",
+      "inventory_offset": "0xB8"
+    },
+    "item_stack": {
+      "item_reference_offset": "0x8",
+      "count_offset": "0x22",
+      "namespaced_id_string_offset": "0x128",
+      "translation_key_string_offset": "0xB0",
+      "string_size_offset": "0x10",
+      "string_capacity_offset": "0x18",
+      "max_string_bytes": 256,
+      "hover_name_abi_verified": false
+    }
+  },
   "symbols": {
     "LevelRendererPlayer::getFov": {
       "rva": "0x46BD250",

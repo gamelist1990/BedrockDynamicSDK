@@ -109,6 +109,11 @@ def port_database(old: dict, exe: Executable, version: str) -> dict:
                               targets=targets, include_exports=False,
                               max_entries=len(targets))
     generated["generation"]["warnings"].extend(warnings)
+    if old.get("native_items"):
+        generated["generation"]["warnings"].append(
+            "native_items layout was not copied: revalidate Actor equipment, local inventory, "
+            "component IDs, slot indices, string fields, and native name ABI for this executable"
+        )
     return generated
 
 
