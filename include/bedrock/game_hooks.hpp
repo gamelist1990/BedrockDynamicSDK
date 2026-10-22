@@ -59,7 +59,7 @@ public:
             error = "Actor::getNameTag is unavailable for this exact build";
             return false;
         }
-        const auto* target = reinterpret_cast<void*>(nameTag->address);
+        auto* target = reinterpret_cast<void*>(nameTag->address);
         const bool alreadyOwned =
             BDS_HookOwnsTarget(BDS_HOOK_ACTOR_GET_NAME_TAG, target) != 0;
         if (!subscribe(BDS_HOOK_ACTOR_GET_NAME_TAG, nameTag->address,
