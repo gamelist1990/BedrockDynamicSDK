@@ -30,14 +30,17 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
   },
   "symbols": {
     "Level::getRuntimeActorList": {
-      "rva": "0x0",
-      "signature": "48 89 ?? ?? ?? 55 56 57 48 83 EC ?? 48 8B ?? 48 89 ?? ?? ?? 33 D2",
-      "entry_check": "48 89 ?? ?? ?? 55 56 57 48 83 EC ??",
-      "cross_version_signature_available": true,
+      "rva": "0xE440F30",
+      "signature": "40 53 48 83 EC 30 48 81 C1 E8 02 00 00 48 8B DA E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 30 5B C3",
+      "entry_check": "40 53 48 83 EC 30 48 81 C1 E8 02 00 00 48 8B DA",
+      "cross_version_signature_available": false,
       "status": "candidate",
-      "source": "Solstice 1.21.111 Level_getRuntimeActorList signature; exact-build unique scan required",
-      "function_boundary": false,
+      "source": "Minecraft.Windows.exe 1.26.52.3 exact .text hit; Flarial Level::getRuntimeActorList candidate pattern, first result; pdata-bounded",
+      "function_boundary": true,
+      "signature_length": 30,
       "category": "world",
+      "confidence": "unique-exact-build-hit-and-pdata-boundary; ABI candidate",
+      "abi_verified": false,
       "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)"
     },
     "LevelRenderer::renderLevel": {
