@@ -341,7 +341,72 @@ Zoom、TabList、MouseChatter、AutoSprintは起動時にGitHub `main` のmanife
 開始しません。定義JSONだけで直せるRVA/signatureの更新と、ABI変更によりDLL修正が要るケースを
 区別してください。
 
-## 13. 公開時のチェックリスト
+## 13. 実例: `Level::getRuntimeActorList` の特定
+
+この節は1.26.52.3での調査記録です。次のバージョンにも同じRVAやsignatureが使えるという意味では
+ありません。新しいEXEごとに同じ検証をやり直してください。
+
+### EXEを取り違えない
+
+プロファイルのバージョン名だけでEXEを選ばず、必ず対象プロセスと同じ配布物かをfile SHA-256で
+確認します。この調査で使ったSDK内EXEは次の値でした。
+
+```text
+version:    1.26.52.3
+file SHA:   4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4
+```
+
+同じバージョン番号でも別配布物のEXEは異なることがあります。manifestのfile/text hashと一致しない
+実行ファイルで見つけたRVAやAOBを、そのまま本番プロファイルへ転記しないでください。
+
+### 失敗した推測を捨てる
+
+- 旧Solsticeソースから持ってきたsignatureは、このEXEでは0件でした。旧版由来のAOBを新バージョンで
+  無理に使わず、0件という結果を記録して次の調査に進みます。
+- 以前試したvtable slot `326` は実行時に `Level::getRuntimeActorList call failed` となりました。
+  slot番号を別の型やバージョンから推測して呼び出すのではなく、失敗した呼び出し経路を外し、対象EXEの
+  関数を直接解決する方針に切り替えます。
+- Flarialの公開チュートリアルにある短いprefix
+  `40 53 48 83 EC 30 48 81` は対象EXEの `.text` に2件ヒットしました。これだけでは一意ではありません。
+  参照元は[シグネチャ取得チュートリアル](https://github.com/flarialmc/dll-oss/blob/main/src/Utils/Memory/Game/Tutorial/HowToGetSigsAndOffsets.md)です。
+
+この例では、候補関数の命令列と `+0x2E8` のフィールド参照を確認してpatternを延長し、次のAOBに
+絞りました。
+
+```text
+40 53 48 83 EC 30 48 81 C1 E8 02 00 00 48 8B DA E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 30 5B C3
+```
+
+対象EXEの `.text` では1件だけ一致し、RVAは `0xE440F30`、`.pdata` の関数終端は `0xE440F4E` でした。
+現在の定義は[data/1.26.52.3/windows-x64.json](../data/1.26.52.3/windows-x64.json)にあります。
+これらは対象EXE内で位置が一意で関数境界内にある根拠であり、関数の意味やABIが正しい証明ではありません。
+
+### ABIと実機動作は別に検証する
+
+逆アセンブル上では `RCX`（Level）に `0x2E8` を加算し、`RDX` を保持したままhelperを呼び出す形が見えたため、
+`void(__fastcall*)(Level*, std::vector<Actor*>*)` をABI候補として記録しています。しかし、候補patternが一意でも、
+このprototype、vectorの型/寿命、返されるActorの範囲はまだ確定しません。そのため現行JSONは意図的に
+`status: candidate`、`abi_verified: false`、`cross_version_signature_available: false` です。
+
+実機確認では、少なくとも以下を順番に記録します。
+
+1. 対象EXEのfile hashと選択されたプロファイルのhashが一致する。
+2. resolverがsignatureを一意に解決し、呼び出し先RVAが `0xE440F30` になる。
+3. ゲームスレッド上など、関数の所有権・スレッド要件に沿った安全なタイミングで呼ぶ。
+4. 複数回の呼び出しで例外、フリーズ、破損がなく、返却vectorの構築/破棄が正しい。
+5. ワールド内Actor数と取得数、NameTag読み取り数をログで比較し、TabListの色対応まで実際に確認する。
+
+`world Actor list ready` はresolver準備完了のログにすぎず、Actor一覧取得成功を意味しません。成功ログには実際の
+取得件数を含め、失敗時には例外/失敗状態を区別してください。実機でABIと意味を確認するまでは `verified` に
+昇格せず、別バージョンへpatternを流用しないでください。
+
+この調査を再現するときは、まず `bedrock-symbols inspect "$NEW_EXE"` でhash/PE情報を保存し、次に
+`bedrock-symbols` の既存port/scan機能で旧AOBと候補AOBを対象 `.text` に照合します。ヒット数、RVA、entry bytes、
+`.pdata`境界を別々に記録します。候補が0件なら再解析、複数件なら固定バイトを追加して再scanし、1件になっただけで
+ABI検証を省略しないでください。調査の再現にGhidra/Lensを使った場合は、使用したEXE hash、Ghidra分析結果、
+callsite/逆アセンブル根拠も更新記録へ残します。
+
+## 14. 公開時のチェックリスト
 
 - [ ] Minecraft EXEをコミットしていない
 - [ ] 新EXEのfile SHA-256と `.text` SHA-256を記録した
