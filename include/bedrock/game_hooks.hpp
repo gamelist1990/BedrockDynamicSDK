@@ -59,9 +59,17 @@ public:
             error = "Actor::getNameTag is unavailable for this exact build";
             return false;
         }
+        const auto* target = reinterpret_cast<void*>(nameTag->address);
+        const bool alreadyOwned =
+            BDS_HookOwnsTarget(BDS_HOOK_ACTOR_GET_NAME_TAG, target) != 0;
         if (!subscribe(BDS_HOOK_ACTOR_GET_NAME_TAG, nameTag->address,
                        &onNameTag, &tokens_[2])) {
-            error = "shared Actor::getNameTag hook registration failed";
+            error = alreadyOwned
+                ? "shared runtime already owns Actor::getNameTag but rejected the subscriber"
+                : "Actor::getNameTag target is not owned by the shared hook broker; "
+                  "a legacy direct/third-party detour or conflicting hookpoint may be "
+                  "installed. Fully restart Minecraft to clear stale in-process hooks, "
+                  "then inject only one current TabList DLL";
             return false;
         }
         error.clear();
