@@ -48,8 +48,8 @@ struct ItemStack {
     std::string translationKey;
 
     [[nodiscard]] bool valid() const noexcept {
-        return count != 0 && (!identifier.empty() || !displayName.empty() ||
-                              !customName.empty());
+        return !identifier.empty() || !displayName.empty() ||
+               !customName.empty() || !translationKey.empty();
     }
     [[nodiscard]] std::string getName() const {
         if (!customName.empty()) return customName;

@@ -19,8 +19,8 @@ std::size_t number(const nlohmann::json& parent, const char* key) {
 }
 
 bool NativeItemLayout::valid() const noexcept {
-    return actorEntityContextOffset <= 0x10000 && contextRegistryOffset <= 0x10000 &&
-           contextRegistryStorageOffset <= 0x10000 && contextEntityIdOffset <= 0x10000 &&
+    return actorEntityContextOffset <= 0x10000 && contextEnttRegistryOffset <= 0x10000 &&
+           contextEntityIdOffset <= 0x10000 &&
            equipmentComponentHash != 0 && handContainerOffset <= 0x10000 &&
            armorContainerOffset <= 0x10000 && inventoryGetItemVtableSlot <= 0x1000 &&
            localPlayerVtableSlot <= 0x1000 && localPlayerSuppliesOffset <= 0x10000 &&
@@ -46,8 +46,7 @@ bool parseNativeItemLayout(std::string_view source, NativeItemLayout& output,
         NativeItemLayout value;
         const auto& actor = data.at("actor_context");
         value.actorEntityContextOffset = number(actor, "actor_offset");
-        value.contextRegistryOffset = number(actor, "registry_offset");
-        value.contextRegistryStorageOffset = number(actor, "registry_storage_offset");
+        value.contextEnttRegistryOffset = number(actor, "entt_registry_offset");
         value.contextEntityIdOffset = number(actor, "entity_id_offset");
         const auto& equipment = data.at("equipment");
         value.equipmentComponentHash = static_cast<std::uint32_t>(number(equipment, "component_hash"));

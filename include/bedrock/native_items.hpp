@@ -12,8 +12,7 @@ namespace bedrock {
 // until independently tested on that exact build.
 struct NativeItemLayout {
     std::size_t actorEntityContextOffset{};
-    std::size_t contextRegistryOffset{};
-    std::size_t contextRegistryStorageOffset{};
+    std::size_t contextEnttRegistryOffset{};
     std::size_t contextEntityIdOffset{};
     std::uint32_t equipmentComponentHash{};
     std::size_t handContainerOffset{};

@@ -35,8 +35,7 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "evidence": "LatiteClient/Latite@9f74635 Actor EntityContext and ActorEquipmentComponent declarations; inventory virtual slot; independently verify per Minecraft build",
     "actor_context": {
       "actor_offset": "0x8",
-      "registry_offset": "0x8",
-      "registry_storage_offset": "0x8",
+      "entt_registry_offset": "0x8",
       "entity_id_offset": "0x10"
     },
     "equipment": {
