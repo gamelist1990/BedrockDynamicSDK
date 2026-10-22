@@ -327,14 +327,18 @@ JSONを変更した後は、必ずmanifestを再生成してください。
 - MouseChatter: Minecraftの `MouseDevice::feed` 経路で倍率が反映される
 - メニュー、ワールド離脱、再参加、ゲーム終了で入力状態が残らない
 
-現在のZoom、TabList、MouseChatterは起動時にGitHub `main` のmanifestとバージョン別JSONを
-取得します。関数ABIと固定レイアウトが互換なら、DLLを再ビルドせずデータ更新だけで
-新バージョンへ対応できます。取得成功後は `%LOCALAPPDATA%\PEXData\BedrockDynamicSDK\profile-cache`
-へEXE単位で保存され、TabList、Zoom、MouseChatter、AutoSprintで共有されます。キャッシュが
-ある場合は24時間そのまま使用し、期限後のGitHub確認は共有ロックと永続マーカーで最大1日1回、
-バックグラウンドで行います。失敗しても期限切れキャッシュを使い続けます。初回起動では
-DLL内蔵のビルド時プロファイルを検証して即時使用し、GitHub確認はバックグラウンドで行います。
-内蔵プロファイルが一致しない新しいゲーム版だけは、初回取得が終わるまで起動を保留します。
+Zoom、TabList、MouseChatter、AutoSprintは起動時にGitHub `main` のmanifestと
+バージョン別JSONを取得します。関数ABIと固定レイアウトが互換なら、DLLを再ビルドせず
+データ更新だけで新バージョンへ対応できます。取得成功後は
+`%LOCALAPPDATA%\PEXData\BedrockDynamicSDK\profile-cache` へEXE単位で保存され、全サンプルで
+共有されます。通常のキャッシュ再確認は共有ロックと永続マーカーで最大1日1回です。
+
+サンプルが必須シンボルをキャッシュ定義から解決できない場合は、GitHub `main` を改めて確認し、
+その実行ファイルのSHA-256または `.text` SHA-256とPE構造に完全一致する最新プロファイルを取得して
+再解決します。この更新確認もEXE単位で最大1日1回に制限します。別バージョンのRVAをそのまま
+流用することはなく、最新の完全一致プロファイルでも必須シンボルが見つからない場合はフックを
+開始しません。定義JSONだけで直せるRVA/signatureの更新と、ABI変更によりDLL修正が要るケースを
+区別してください。
 
 ## 13. 公開時のチェックリスト
 

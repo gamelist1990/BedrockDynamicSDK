@@ -29,6 +29,7 @@ constexpr std::size_t kManifestLimit = 256 * 1024;
 constexpr std::size_t kProfileLimit = 4 * 1024 * 1024;
 constexpr auto kCacheFreshness = std::chrono::hours(24);
 constexpr auto kRefreshInterval = std::chrono::hours(24);
+constexpr auto kMissingSymbolRefreshInterval = std::chrono::hours(24);
 
 class HttpHandle {
 public:
@@ -313,6 +314,55 @@ bool fetchRemoteProfileSingleFlight(const GameIdentity& identity,
     return fetched;
 }
 
+bool refreshProfileAfterMissingSymbols(const GameIdentity& identity,
+                                       const std::filesystem::path& cache,
+                                       std::string& profileJson,
+                                       ProfileChoice& choice,
+                                       std::string& error) {
+    if (cache.empty())
+        return fetchRemoteProfile(identity, cache, profileJson, choice, error);
+
+    const std::wstring key = cache.stem().wstring();
+    const std::wstring mutexName = L"Local\\BedrockDynamicSDKProfileRefresh_" + key;
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+    if (!mutex) return fetchRemoteProfile(identity, cache, profileJson, choice, error);
+    const DWORD wait = WaitForSingleObject(mutex, INFINITE);
+    if (wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED) {
+        CloseHandle(mutex);
+        error = "profile refresh lock unavailable";
+        return false;
+    }
+    const auto release = [&] {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+    };
+
+    auto stamp = cache;
+    stamp += L".missing-symbol-refresh";
+    std::error_code ec;
+    const auto attempted = std::filesystem::last_write_time(stamp, ec);
+    if (!ec && std::filesystem::file_time_type::clock::now() - attempted <
+                   kMissingSymbolRefreshInterval) {
+        std::string cached;
+        bool ignoredFreshness = false;
+        const bool loaded = readCache(cache, cached, ignoredFreshness) &&
+            loadCandidate(cached, identity, ProfileSource::Cache,
+                          profileJson, choice, error);
+        release();
+        if (!loaded)
+            error = "GitHub refresh is limited to once per 24 hours and no matching cache is available";
+        return loaded;
+    }
+
+    // Unlike normal background refresh, a feature-resolution failure forces
+    // an immediate exact-identity manifest/profile check. This marker prevents
+    // multiple samples from multiplying GitHub requests, including failures.
+    writeCache(stamp, "missing-symbol-refresh");
+    const bool fetched = fetchRemoteProfile(identity, cache, profileJson, choice, error);
+    release();
+    return fetched;
+}
+
 void startRemoteRefresh(const GameIdentity& identity,
                         const std::filesystem::path& cache) noexcept {
     if (!markRefreshAttempt(cache)) return;
@@ -360,6 +410,16 @@ bool fetchSupportedProfile(std::string& profileJson,
     if (progress) progress("GitHub profile required");
     return fetchRemoteProfileSingleFlight(identity, cachedPath, profileJson,
                                           choice, error);
+}
+
+bool refreshSupportedProfile(const GameIdentity& identity,
+                             std::string& profileJson,
+                             ProfileChoice& choice, std::string& error,
+                             ProfileProgressCallback progress) {
+    profileJson.clear();
+    if (progress) progress("force-check latest exact-build GitHub definition");
+    return refreshProfileAfterMissingSymbols(identity, cachePath(identity),
+                                             profileJson, choice, error);
 }
 } // namespace bedrock
 #endif

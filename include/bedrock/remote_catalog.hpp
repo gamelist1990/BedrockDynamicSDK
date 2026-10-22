@@ -57,5 +57,12 @@ bool inspectLoadedGame(GameIdentity& identity, std::string& error);
 bool fetchSupportedProfile(std::string& profileJson,
                            ProfileChoice& choice, std::string& error,
                            ProfileProgressCallback progress = nullptr);
+// Force-check GitHub after a cached profile fails to resolve a feature's
+// required symbols. The download is still restricted to the exact loaded-game
+// identity and is single-flight/throttled per executable.
+bool refreshSupportedProfile(const GameIdentity& identity,
+                             std::string& profileJson,
+                             ProfileChoice& choice, std::string& error,
+                             ProfileProgressCallback progress = nullptr);
 #endif
 } // namespace bedrock

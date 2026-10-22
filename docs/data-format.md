@@ -23,8 +23,9 @@ or mapped code SHA-256 **plus the exact PE layout**. The path must be
 its own target, and the live PE identity. Unrecognized/invalid metadata are skipped.
 
 AOB matches, RTTI and historic SDK offsets do **not** establish runtime ABI safety.
-The sample AutoSprint uses OS keyboard input and does not invoke unknown C++ ABI
-or read unverified game object fields.
+The AutoSprint sample hooks the ABI-verified `Keyboard::feed` entry for key state and
+uses that same Minecraft API for its Ctrl transition; it does not call the unverified
+`ClientInputUpdateSystemInternal::tickUpdateClientInput` candidate or read game fields.
 
 ## Modular runtime APIs
 
