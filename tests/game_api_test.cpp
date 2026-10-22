@@ -1,5 +1,6 @@
 #include <bedrock/game_api.hpp>
 
+#include <algorithm>
 #include <cassert>
 #include <unordered_map>
 
@@ -89,9 +90,11 @@ int main() {
     game.tags[other] = "\xC2\xA7" "cOtherPlayer";
     assert(api.refreshCachedActorNameTags(16) > 0);
     assert(api.actor(other).getNameTag() == "\xC2\xA7" "cOtherPlayer");
-    assert(actorEvents == 5);
-    assert(api.cachedActorNameTags(bedrock::NameTagSource::View)->front().nameTag ==
-           "\xC2\xA7" "cOtherPlayer");
+    assert(actorEvents == 4);
+    const auto latestGetterTags = api.cachedActorNameTags(bedrock::NameTagSource::ActorGetter);
+    assert(std::any_of(latestGetterTags->begin(), latestGetterTags->end(), [other](const auto& item) {
+        return item.actor == other && item.nameTag == "\xC2\xA7" "cOtherPlayer";
+    }));
 
     auto keyboard = self.getKeyboard();
     assert(keyboard.press(87) && keyboard.isDown(87));

@@ -205,6 +205,7 @@ struct CachedActorNameTag {
     void* actor{};
     std::string nameTag;
     NameTagSource source{NameTagSource::ActorGetter};
+    std::uint64_t sequence{};
 };
 
 class GameApi {
@@ -234,6 +235,8 @@ public:
         nameTags_.clear();
         actorGetterTags_.clear();
         viewNameTags_.clear();
+        actorGetterSequences_.clear();
+        viewSequences_.clear();
         viewActors_.clear();
         actorGetterHandles_.clear();
         invalidateActorSnapshots();
@@ -255,7 +258,8 @@ public:
             viewNameTags_.insert_or_assign(actor, std::string(nameTag));
             if (viewActors_.insert(actor).second || viewChanged) invalidateActorSnapshots();
         }
-        const bool actorChanged = rememberActor(actor, nameTag, NameTagSource::View);
+        const bool actorChanged = rememberActor(actor, nameTag, NameTagSource::View,
+                                                viewChanged);
         if (viewChanged) Event.Enum.ViewNameTag.emit(ViewNameTagEvent{actor, nameTag});
         if (actorChanged) Event.Enum.ActorNameTag.emit(ActorNameTagEvent{
             actor, nameTag, NameTagSource::View});
@@ -346,9 +350,12 @@ public:
         if (!cached) {
             auto result = std::make_shared<std::vector<CachedActorNameTag>>();
             const auto& tags = source == NameTagSource::View ? viewNameTags_ : actorGetterTags_;
+            const auto& sequences = source == NameTagSource::View
+                ? viewSequences_ : actorGetterSequences_;
             result->reserve(tags.size());
             for (const auto& [actor, tag] : tags)
-                result->push_back({actor, tag, source});
+                result->push_back({actor, tag, source,
+                    sequences.contains(actor) ? sequences.at(actor) : 0});
             cached = std::move(result);
         }
         return cached;
@@ -392,10 +399,10 @@ public:
                         candidates.emplace_back(handle, source);
                 }
             };
-            // Prefer View for dual-source Actors: its independently captured
-            // rendering state is more directly associated with the visible tag.
-            append(*view, NameTagSource::View);
+            // Prefer the Actor getter for dual-source Actors; it is the
+            // canonical live nameTag method and can refresh hidden labels too.
             append(*getter, NameTagSource::ActorGetter);
+            append(*view, NameTagSource::View);
             auto* local = access_->localPlayer();
             if (validActor(local) && seen.insert(local).second)
                 candidates.emplace_back(local, NameTagSource::ActorGetter);
@@ -448,7 +455,8 @@ private:
         cachedNameTagActors_.reset();
     }
     bool rememberActor(void* actor, std::string_view tag,
-                       NameTagSource source = NameTagSource::ActorGetter) {
+                       NameTagSource source = NameTagSource::ActorGetter,
+                       bool sourceObservationChanged = false) {
         std::lock_guard lock(mutex_);
         const auto it = nameTags_.find(actor);
         const bool changed = it == nameTags_.end() || it->second != tag;
@@ -458,10 +466,14 @@ private:
             const auto sourceIt = actorGetterTags_.find(actor);
             sourceChanged = sourceIt == actorGetterTags_.end() || sourceIt->second != tag;
             actorGetterTags_.insert_or_assign(actor, std::string(tag));
+            if (sourceChanged || changed)
+                actorGetterSequences_.insert_or_assign(actor, ++observationSequence_);
             actorGetterHandles_.insert(actor);
         }
         if (source == NameTagSource::View) {
-            sourceChanged = viewActors_.insert(actor).second;
+            sourceChanged = viewActors_.insert(actor).second || sourceObservationChanged;
+            if (sourceChanged || changed)
+                viewSequences_.insert_or_assign(actor, ++observationSequence_);
         }
         if (changed || sourceChanged) invalidateActorSnapshots();
         return changed || sourceChanged;
@@ -490,6 +502,9 @@ private:
     std::unordered_map<void*, std::string> nameTags_;
     std::unordered_map<void*, std::string> actorGetterTags_;
     std::unordered_map<void*, std::string> viewNameTags_;
+    std::unordered_map<void*, std::uint64_t> actorGetterSequences_;
+    std::unordered_map<void*, std::uint64_t> viewSequences_;
+    std::uint64_t observationSequence_{};
     std::unordered_set<void*> viewActors_;
     std::unordered_set<void*> actorGetterHandles_;
     mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedActorNameTags_;
