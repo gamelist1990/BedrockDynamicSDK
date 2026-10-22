@@ -272,7 +272,7 @@ ABIを確認した関数だけ、根拠とprototypeを明記して次のよう�
 |---|---|---|
 | `Keyboard::feed` | Zoom、TabList | `verified` + ABI確認 |
 | `MouseDevice::feed` | Zoom、MouseChatter | `verified` + ABI確認 |
-| `LevelRendererPlayer::getFov` | Zoom、TabList | `verified` + ABI確認 |
+| `LevelRendererPlayer::getFov` | Zoom | `verified` + ABI確認 |
 | `ClientInstance::grabCursor` | Zoom、TabList、MouseChatter、GUI | exact RVA候補以上 |
 | `ClientInstance::releaseCursor` | Zoom、TabList、MouseChatter、GUI | exact RVA候補以上 |
 | `GameCore::handleMouseInput` | MouseChatter、GUI | exact RVA候補以上 |
