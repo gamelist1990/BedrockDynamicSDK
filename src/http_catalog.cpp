@@ -256,7 +256,7 @@ bool markRefreshAttempt(const std::filesystem::path& cache) noexcept {
                   kRefreshInterval) {
         ReleaseMutex(mutex);
         CloseHandle(mutex);
-        return ec; // If storage is unavailable, permit one uncached attempt.
+        return static_cast<bool>(ec); // Permit one attempt if storage is unavailable.
     }
     ReleaseMutex(mutex);
     CloseHandle(mutex);
