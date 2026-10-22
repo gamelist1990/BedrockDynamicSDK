@@ -27,7 +27,8 @@ constexpr wchar_t kManifest[] =
     L"/gamelist1990/BedrockDynamicSDK/main/data/manifest.json";
 constexpr std::size_t kManifestLimit = 256 * 1024;
 constexpr std::size_t kProfileLimit = 4 * 1024 * 1024;
-constexpr auto kCacheFreshness = std::chrono::minutes(30);
+constexpr auto kCacheFreshness = std::chrono::hours(24);
+constexpr auto kRefreshInterval = std::chrono::hours(24);
 
 class HttpHandle {
 public:
@@ -224,12 +225,51 @@ void refreshRemoteProfile(GameIdentity identity, std::filesystem::path cache) {
     }
 }
 
+bool markRefreshAttempt(const std::filesystem::path& cache) noexcept {
+    if (cache.empty()) return true;
+    std::wstring key = cache.stem().wstring();
+    if (key.empty()) return true;
+    std::wstring mutexName = L"Local\\BedrockDynamicSDKProfileRefresh_" + key;
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+    if (!mutex) return true;
+    const DWORD wait = WaitForSingleObject(mutex, 0);
+    if (wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED) {
+        CloseHandle(mutex);
+        return false;
+    }
+
+    auto stamp = cache;
+    stamp += L".refresh";
+    std::error_code ec;
+    const auto attempted = std::filesystem::last_write_time(stamp, ec);
+    if (!ec && std::filesystem::file_time_type::clock::now() - attempted <
+                   kRefreshInterval) {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+        return false;
+    }
+    // Persist the attempt before launching the thread. This throttles failures
+    // too, so offline startup cannot retry GitHub on every DLL load.
+    writeCache(stamp, "refresh-attempt");
+    const auto marked = std::filesystem::last_write_time(stamp, ec);
+    if (ec || std::filesystem::file_time_type::clock::now() - marked >=
+                  kRefreshInterval) {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+        return ec; // If storage is unavailable, permit one uncached attempt.
+    }
+    ReleaseMutex(mutex);
+    CloseHandle(mutex);
+    return true;
+}
+
 void startRemoteRefresh(const GameIdentity& identity,
                         const std::filesystem::path& cache) noexcept {
+    if (!markRefreshAttempt(cache)) return;
     try {
         std::thread(refreshRemoteProfile, identity, cache).detach();
     } catch (...) {
-        // The already validated local profile remains usable.
+        // The durable attempt marker prevents repeated launch retries.
     }
 }
 } // namespace
@@ -268,6 +308,10 @@ bool fetchSupportedProfile(std::string& profileJson,
 
     // A newer game build has no usable local profile, so GitHub is required.
     if (progress) progress("GitHub profile required");
+    if (!markRefreshAttempt(cachedPath)) {
+        error = "profile refresh is limited to once per 24 hours; no matching cached profile";
+        return false;
+    }
     return fetchRemoteProfile(identity, cachedPath, profileJson, choice, error);
 }
 } // namespace bedrock
