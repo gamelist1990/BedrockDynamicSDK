@@ -505,7 +505,13 @@ bool initRenderer(IDXGISwapChain* chain) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
-    io.MouseDrawCursor = true; // visible when Minecraft normally hides cursor
+    // A render-only overlay must never reveal or reshape Minecraft's cursor.
+    // ImGui's Win32 backend updates the OS cursor during NewFrame even when no
+    // mouse messages are forwarded, so disabling only WndProc input capture is
+    // insufficient for passive HUDs such as TabList.
+    const bool interactive = captureInput.load(std::memory_order_relaxed);
+    io.MouseDrawCursor = interactive;
+    if (!interactive) io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     // A high-resolution TrueType font avoids the jagged 13px bitmap look
     // seen in the original screenshot. Prefer installed OS fonts, not bundled
     // proprietary font files; fallback to ImGui's embedded *vector* font.

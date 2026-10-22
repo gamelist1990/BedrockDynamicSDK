@@ -10,6 +10,8 @@ struct OverlayOptions {
     // F10 by default; 0 disables the built-in toggle key.
     unsigned toggleVirtualKey = 0x79;
     bool initiallyVisible = true;
+    // When false, the overlay is render-only: it neither captures input nor
+    // draws/changes the mouse cursor.
     bool captureInput = true;
     // Latite-style native ClientInstance::releaseCursor/grabCursor bridge.
     // Active only for verified matching game builds; uses the downloaded
