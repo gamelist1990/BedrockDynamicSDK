@@ -26,7 +26,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile single DLL and tests with MSVC
+      - name: Compile embedded hook runtime and tests with MSVC
         shell: pwsh
         run: |
           cmake -S . -B build -A x64

@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <sstream>
@@ -131,6 +133,66 @@ private:
     std::atomic<LogLevel> minimum_;
     std::atomic<Sink> sink_{nullptr};
     std::atomic<void*> sinkUserdata_{nullptr};
+};
+
+// Optional SDK-owned file sink. Opening a log clears the previous run by
+// default; callers must explicitly request Append to preserve history.
+class FileLogSink final {
+public:
+    enum class OpenMode { ClearOnOpen, Append };
+
+    FileLogSink() = default;
+    ~FileLogSink() { close(); }
+    FileLogSink(const FileLogSink&) = delete;
+    FileLogSink& operator=(const FileLogSink&) = delete;
+
+    bool open(const std::filesystem::path& path,
+              OpenMode mode = OpenMode::ClearOnOpen) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (file_.is_open()) file_.close();
+        std::error_code error;
+        const auto parent = path.parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, error);
+            if (error) return false;
+        }
+        const auto flags = std::ios::binary |
+            (mode == OpenMode::Append ? std::ios::app : std::ios::trunc);
+        file_.open(path, flags);
+        return static_cast<bool>(file_);
+    }
+
+    void attach(Logger& logger) noexcept { logger.setSink(&writeLine, this); }
+
+    void close() noexcept {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (file_.is_open()) file_.close();
+    }
+
+    [[nodiscard]] bool isOpen() const noexcept {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return file_.is_open() && static_cast<bool>(file_);
+    }
+
+private:
+    static void writeLine(LogLevel, std::string_view line, void* context) {
+        auto& self = *static_cast<FileLogSink*>(context);
+        std::lock_guard<std::mutex> lock(self.mutex_);
+#ifdef _WIN32
+        const std::string terminated(line);
+        OutputDebugStringA(terminated.c_str());
+#else
+        std::fwrite(line.data(), 1, line.size(), stderr);
+        std::fflush(stderr);
+#endif
+        if (self.file_) {
+            self.file_.write(line.data(), static_cast<std::streamsize>(line.size()));
+            self.file_.flush();
+        }
+    }
+
+    mutable std::mutex mutex_;
+    std::ofstream file_;
 };
 
 } // namespace bedrock

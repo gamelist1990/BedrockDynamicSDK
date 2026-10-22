@@ -1,8 +1,12 @@
 #include <bedrock/console.hpp>
 #include <bedrock/logger.hpp>
 #include <cassert>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
+#include <chrono>
 #include <vector>
 
 struct Captured {
@@ -36,6 +40,27 @@ int main() {
     log.setLevel(LogLevel::Off);
     log.error("must be filtered");
     assert(capture.lines.size() == 4);
+
+    const auto logPath = std::filesystem::temp_directory_path() /
+        ("bedrock-sdk-log-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    {
+        std::ofstream previous(logPath, std::ios::binary | std::ios::trunc);
+        previous << "previous run history\n";
+    }
+    log.setLevel(LogLevel::Info);
+    {
+        bedrock::FileLogSink fileSink;
+        assert(fileSink.open(logPath)); // The default mode clears previous runs.
+        fileSink.attach(log);
+        log.info("current run only");
+        fileSink.close();
+    }
+    std::ifstream saved(logPath, std::ios::binary);
+    const std::string savedText{std::istreambuf_iterator<char>(saved), {}};
+    assert(savedText.find("previous run history") == std::string::npos);
+    assert(savedText.find("current run only") != std::string::npos);
+    std::filesystem::remove(logPath);
 
 #ifndef _WIN32
     assert(!bedrock::Console::isOpen());

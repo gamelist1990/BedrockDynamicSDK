@@ -1,6 +1,6 @@
 # BedrockDynamicSDK
 
-Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLLへ静的リンクできるC++20 SDKライブラリを提供します。
+Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLLへ静的リンクできるC++20 SDKを提供します。
 **サンプルクライアントはSDK本体から分離した独立プロジェクト**です。
 
 現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
@@ -20,6 +20,7 @@ JSON取得、MinHook、シンボルResolver、イベントループには依存�
 ```cpp
 #include <bedrock/console.hpp>
 #include <bedrock/logger.hpp>
+#include <bedrock/file_log_sink.hpp>
 
 void initializeDebug() { // DllMainではなく、初期化用ワーカースレッドから実行
     bedrock::Console::open(L"Bedrock Debug"); // 明示的に開いたときだけ表示
@@ -34,20 +35,29 @@ void initializeDebug() { // DllMainではなく、初期化用ワーカースレ
     // DEBUGとINFOはフィルタされ、WARNとERRORのみ出力。
     // Console::close() はこのDLLが作成したコンソールだけを閉じる。
 }
+
+// Optional persistent log. ClearOnOpen is the default; use Append explicitly
+// only when preserving prior runs is intended.
+bedrock::Logger fileLogger{"MyClient"};
+bedrock::FileLogSink fileSink;
+void initializeFileLog() {
+    if (fileSink.open(L"MyClient.log")) fileSink.attach(fileLogger);
+}
 ```
 
 - `bedrock::Console::open(L"タイトル")` / `isOpen()` / `close()`
 - `bedrock::Logger logger{"ModName"}`、`debug/info/warn/error`
 - `logger.setLevel(bedrock::LogLevel::Info)` などで出力レベルを変更
 - `logger.setSink(callback, context)` による外部ログ出力への差し替えも可能
+- `bedrock::FileLogSink` は起動時に前回履歴を消すのが標準。追記したい場合だけ `OpenMode::Append` を指定
 - Win32では `OutputDebugStringA` に常時出力し、コンソールがある場合だけそこにも出力
 - Linuxではデフォルトでstderrへ出力し、Consoleオープンは非対応（false）
 
 **ゲームのstdin/stdout/stderrを付け替えません。** `CONOUT$` に直接書き込み、
 別のモジュールが既に開いているコンソールを勝手に閉じることもありません。
 多スレッドログは出力を直列化します。ログの文字列生成は該当レベルが
-有効なときだけ行われます。ロガー自身に自動スレッド・ファイル書込・
-ネットワーク処理はありません。
+有効なときだけ行われます。ロガー自身は自動スレッドやネットワーク処理を開始しません。
+ファイル出力は `FileLogSink` を明示的に開いてLoggerへ接続します。
 
 CMakeは `bedrock::logging` のみをリンクすればOK。これはINTERFACEターゲットのため
 静的ライブラリのビルドも不要です。
@@ -354,6 +364,7 @@ Ghidra、Bedrock Lens、AOB移植、ABI確認、manifest公開までを通した
 ## C++ライブラリ / DLL
 
 - `bedrock::events`：ヘッダーオンリーのEvent API（依存なし）。
+- `bedrock::hook_runtime`：MinHookとランタイム実装を各Mod DLLへ静的同封し、プロセス内の共有API窓口でHook所有権を一本化します。配布物は単一DLLで、複数Modを同時ロードできます。詳細は [`docs/shared-hook-runtime.md`](docs/shared-hook-runtime.md)。
 - `bedrock::gui`：オプションのDear ImGui GUI（通常はビルドしない）。
 - `bedrock::gui_host`：GUIが有効なWindowsのみの別ウィンドウ描画ホスト。
 - `bedrock::symbols` / `bedrock_resolver`：追加選択するC++20静的ライブラリ。EXEの身元確認、RVA/AOB検査、GitHubからのHTTPSダウンロード・検証を含みます。
@@ -369,7 +380,7 @@ ctest --test-dir build --output-on-failure
 uv run --extra dev pytest -q
 ```
 
-SDK側のWindows/MSVC CIは `BedrockClientLocator.dll` と `BedrockSymbolProbe.dll` をビルドします。
+SDK側のWindows/MSVC CIは独立DLLに埋め込まれるHook runtimeを複数クライアント間で検証し、`BedrockClientLocator.dll` と `BedrockSymbolProbe.dll` をビルドします。
 **`BedrockAutoSprint.dll` は独立したBedrockAutoSprintリポジトリのCIでビルド**します。
 LinuxでのC++テストとWindowsの模擬Hookテストも実行します。
 **Minecraft本体への実機Inject試験は未実施**です。

@@ -43,23 +43,39 @@ if(WIN32)
         set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         set_property(TARGET bedrock_resolver PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
-    if(BEDROCK_SDK_BUILD_TOOLS)
-    add_library(minhook_static STATIC
+    # The runtime is embedded into each client DLL. The first copy loaded in a
+    # process becomes MinHook owner; later copies delegate through a named,
+    # per-process C ABI table, so only one copy patches Minecraft methods.
+    add_library(bedrock_hook_minhook STATIC
         third_party/minhook-vendor/src/buffer.c
         third_party/minhook-vendor/src/hook.c
         third_party/minhook-vendor/src/trampoline.c
-        third_party/minhook-vendor/src/hde/hde64.c
-    )
-    target_include_directories(minhook_static PUBLIC third_party/minhook-vendor/include)
-    target_include_directories(minhook_static PRIVATE
+        third_party/minhook-vendor/src/hde/hde64.c)
+    target_include_directories(bedrock_hook_minhook PUBLIC
+        third_party/minhook-vendor/include)
+    target_include_directories(bedrock_hook_minhook PRIVATE
         third_party/minhook-vendor/src third_party/minhook-vendor/src/hde)
+    add_library(bedrock_hook_runtime STATIC src/hook_runtime.cpp)
+    target_include_directories(bedrock_hook_runtime PUBLIC include)
+    target_link_libraries(bedrock_hook_runtime PRIVATE bedrock_hook_minhook)
+    target_compile_features(bedrock_hook_runtime PUBLIC cxx_std_20)
     if(MSVC)
-        set_property(TARGET minhook_static PROPERTY MSVC_RUNTIME_LIBRARY
-            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        foreach(target bedrock_hook_minhook bedrock_hook_runtime)
+            set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        endforeach()
     endif()
+    add_library(bedrock::hook_runtime ALIAS bedrock_hook_runtime)
+    function(bedrock_enable_hook_runtime consumer_target)
+        if(NOT TARGET ${consumer_target})
+            message(FATAL_ERROR "Unknown hook-runtime consumer: ${consumer_target}")
+        endif()
+        target_link_libraries(${consumer_target} PRIVATE bedrock::hook_runtime)
+    endfunction()
+    if(BEDROCK_SDK_BUILD_TOOLS)
     add_library(BedrockClientLocator SHARED src/client_locator.cpp)
     target_include_directories(BedrockClientLocator PRIVATE include third_party)
-    target_link_libraries(BedrockClientLocator PRIVATE bedrock_resolver minhook_static)
+    target_link_libraries(BedrockClientLocator PRIVATE bedrock_resolver bedrock_hook_minhook)
     if(MSVC)
         set_property(TARGET BedrockClientLocator PROPERTY MSVC_RUNTIME_LIBRARY
             "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -176,7 +192,7 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     add_test(NAME client_instance_tracker_test COMMAND client_instance_tracker_test)
     if(WIN32)
         add_executable(windows_minhook_test tests/windows_minhook_test.cpp)
-        target_link_libraries(windows_minhook_test PRIVATE minhook_static)
+        target_link_libraries(windows_minhook_test PRIVATE bedrock_hook_minhook)
         target_include_directories(windows_minhook_test PRIVATE include)
         if(MSVC)
             target_compile_options(windows_minhook_test PRIVATE /UNDEBUG)
@@ -184,5 +200,18 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
                 "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         endif()
         add_test(NAME windows_minhook_test COMMAND windows_minhook_test)
+        add_library(windows_hook_runtime_client_a SHARED tests/windows_hook_runtime_client.cpp)
+        target_link_libraries(windows_hook_runtime_client_a PRIVATE bedrock::hook_runtime)
+        add_library(windows_hook_runtime_client_b SHARED tests/windows_hook_runtime_client.cpp)
+        target_link_libraries(windows_hook_runtime_client_b PRIVATE bedrock::hook_runtime)
+        add_executable(windows_hook_runtime_test tests/windows_hook_runtime_test.cpp)
+        add_dependencies(windows_hook_runtime_test
+            windows_hook_runtime_client_a windows_hook_runtime_client_b)
+        if(MSVC)
+            target_compile_options(windows_hook_runtime_test PRIVATE /UNDEBUG)
+            set_property(TARGET windows_hook_runtime_test PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        endif()
+        add_test(NAME windows_hook_runtime_test COMMAND windows_hook_runtime_test)
     endif()
 endif()

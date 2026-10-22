@@ -36,6 +36,11 @@ public:
                                std::size_t textSize, std::string& error);
     std::optional<Resolution> resolve(std::string_view name,
                                       bool allowCandidates = false) const;
+    // Returns only an exact-build, verified RVA without checking the current
+    // prologue. Use solely after BDS_HookOwnsTarget confirms that the shared
+    // SDK runtime—not an unknown third-party patch—owns this exact address.
+    std::optional<Resolution> resolveVerifiedRvaForSharedHook(
+        std::string_view name) const;
     [[nodiscard]] std::size_t count() const noexcept { return entries_.size(); }
     [[nodiscard]] bool exactBuild() const noexcept { return exactBuild_; }
 #ifdef _WIN32

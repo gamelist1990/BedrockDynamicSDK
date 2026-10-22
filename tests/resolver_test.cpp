@@ -30,6 +30,12 @@ int main() {
     auto a = sdk.resolve("testFunction");
     assert(a && a->exact_build && a->verified && a->method=="exact-rva");
     assert(a->address==reinterpret_cast<std::uintptr_t>(memory.data()+0x110));
+    memory[0x110] = std::byte{0xCC}; // simulate a prologue replaced by our broker
+    assert(!sdk.resolve("testFunction"));
+    auto brokerOwned = sdk.resolveVerifiedRvaForSharedHook("testFunction");
+    assert(brokerOwned && brokerOwned->verified && brokerOwned->exact_build &&
+           brokerOwned->method == "shared-hook-exact-rva");
+    memory[0x110] = static_cast<std::byte>(sig[0]);
     assert(!sdk.resolve("secondFunction"));
     assert(!sdk.resolve("unknown"));
     // Changed game hash => fail closed; explicit candidate lookup only.

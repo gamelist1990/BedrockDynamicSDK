@@ -32,3 +32,5 @@ uses that same Minecraft API for its Ctrl transition; it does not call the unver
 `bedrock::events` and `bedrock::logging` are independent header-only CMake
 INTERFACE targets. Neither downloads symbol JSON, creates background threads,
 installs hooks, or changes Minecraft memory. `bedrock::symbols` is optional.
+For persistent logs, opt in to `bedrock::FileLogSink`; it truncates the prior
+run by default. Append mode must be explicitly requested.
