@@ -201,6 +201,7 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         "Keyboard::feed",
         "GameCore::handleMouseInput",
         "Actor::getNameTag",
+        "ItemStackBase::getHoverName",
     }
     assert set(data["symbols"]) == expected
     verified = {
