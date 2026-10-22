@@ -75,6 +75,9 @@ if(WIN32)
         endforeach()
     endif()
     add_library(bedrock::hook_runtime ALIAS bedrock_hook_runtime)
+    # GameApi's optional native mouse sender dispatches through the shared
+    # broker, so Win32 consumers of the facade must link its implementation.
+    target_link_libraries(bedrock_game_api INTERFACE bedrock::hook_runtime)
     function(bedrock_enable_hook_runtime consumer_target)
         if(NOT TARGET ${consumer_target})
             message(FATAL_ERROR "Unknown hook-runtime consumer: ${consumer_target}")
