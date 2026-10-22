@@ -344,6 +344,9 @@ uv run bedrock-symbols index data --output data/manifest.json
 
 Bedrock LensのSQLiteを利用する `lens-import`、既存シグネチャーを別ビルドで探す `port` なども利用できます。詳細は `tools/bedrock_symbols/cli.py` を参照。
 
+Ghidra、Bedrock Lens、AOB移植、ABI確認、manifest公開までを通した実運用手順は
+[`docs/version-update-workflow.md`](docs/version-update-workflow.md) にまとめています。
+
 ## C++ライブラリ / DLL
 
 - `bedrock::events`：ヘッダーオンリーのEvent API（依存なし）。

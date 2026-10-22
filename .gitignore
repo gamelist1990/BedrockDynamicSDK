@@ -15,6 +15,10 @@ third_party/latite-reference/
 
 # Locally acquired proprietary game binaries. Never commit or distribute.
 local-binaries/
+version-update-work/
+lens-data/
+ghidra-projects/
+bsim/
 
 third_party/minhook/
 
