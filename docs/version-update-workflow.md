@@ -329,7 +329,10 @@ JSONを変更した後は、必ずmanifestを再生成してください。
 
 現在のZoom、TabList、MouseChatterは起動時にGitHub `main` のmanifestとバージョン別JSONを
 取得します。関数ABIと固定レイアウトが互換なら、DLLを再ビルドせずデータ更新だけで
-新バージョンへ対応できます。
+新バージョンへ対応できます。取得成功後は `%LOCALAPPDATA%\PEXData\BedrockDynamicSDK\profile-cache`
+へEXE単位で保存され、30分以内はキャッシュから即時起動します。期限後の更新確認が失敗した
+場合も検証済みキャッシュを使用し、キャッシュがない初回オフライン起動ではDLL内蔵の
+ビルド時プロファイルを検証して使用します。
 
 ## 13. 公開時のチェックリスト
 

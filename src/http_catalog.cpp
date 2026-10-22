@@ -4,9 +4,14 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
+#include "bedrock/generated_symbols.hpp"
 #include "bedrock/remote_catalog.hpp"
 #include "bedrock/resolver.hpp"
+#include <nlohmann/json.hpp>
 #include <array>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -21,6 +26,7 @@ constexpr wchar_t kManifest[] =
     L"/gamelist1990/BedrockDynamicSDK/main/data/manifest.json";
 constexpr std::size_t kManifestLimit = 256 * 1024;
 constexpr std::size_t kProfileLimit = 4 * 1024 * 1024;
+constexpr auto kCacheFreshness = std::chrono::minutes(30);
 
 class HttpHandle {
 public:
@@ -103,6 +109,80 @@ end:
     BCryptCloseAlgorithmProvider(alg,0);
     return success;
 }
+
+std::filesystem::path cachePath(const GameIdentity& identity) {
+    std::wstring localAppData(32768, L'\0');
+    const DWORD length = GetEnvironmentVariableW(
+        L"LOCALAPPDATA", localAppData.data(), static_cast<DWORD>(localAppData.size()));
+    if (!length || length >= localAppData.size()) return {};
+    localAppData.resize(length);
+    const std::string& key = identity.textSha256.size() == 64
+        ? identity.textSha256 : identity.fileSha256;
+    if (key.size() != 64) return {};
+    return std::filesystem::path(localAppData) / L"PEXData" /
+        L"BedrockDynamicSDK" / L"profile-cache" /
+        (std::wstring(key.begin(), key.end()) + L".json");
+}
+
+bool readCache(const std::filesystem::path& path, std::string& contents,
+               bool& fresh) {
+    contents.clear();
+    fresh = false;
+    if (path.empty()) return false;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size == 0 || size > kProfileLimit) return false;
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return false;
+    contents.assign(std::istreambuf_iterator<char>(stream), {});
+    if (contents.size() != size) return false;
+    const auto written = std::filesystem::last_write_time(path, ec);
+    if (!ec) fresh = std::filesystem::file_time_type::clock::now() - written <=
+                     kCacheFreshness;
+    return true;
+}
+
+void writeCache(const std::filesystem::path& path, std::string_view contents) {
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) return;
+    auto temporary = path;
+    temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) return;
+        stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        if (!stream) return;
+    }
+    if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        DeleteFileW(temporary.c_str());
+}
+
+bool loadCandidate(std::string_view candidate, const GameIdentity& identity,
+                   ProfileSource source, std::string& profileJson,
+                   ProfileChoice& choice, std::string& error) {
+    try {
+        const auto document = nlohmann::json::parse(candidate.begin(), candidate.end());
+        const auto version = document.at("target").at("version").get<std::string>();
+        ProfileChoice selected{version, std::string(profileSourceName(source)), {}, source};
+        if (!validateDownloadedProfile(candidate, selected, identity, error)) return false;
+        Resolver resolver;
+        if (!resolver.loadJson(candidate, error) ||
+            !resolver.attachWindowsMainModule(error) || !resolver.exactBuild()) {
+            error = "profile did not resolve against the loaded game";
+            return false;
+        }
+        choice = std::move(selected);
+        profileJson.assign(candidate);
+        error.clear();
+        return true;
+    } catch (const std::exception& exception) {
+        error = std::string("invalid local profile: ") + exception.what();
+        return false;
+    }
+}
 } // namespace
 
 bool fetchSupportedProfile(std::string& profileJson,
@@ -111,34 +191,63 @@ bool fetchSupportedProfile(std::string& profileJson,
     GameIdentity identity;
     if (!inspectLoadedGame(identity,error))
         return false;
+    const auto cachedPath = cachePath(identity);
+    std::string cached;
+    bool cacheFresh = false;
+    const bool hasCache = readCache(cachedPath, cached, cacheFresh);
+    std::string cacheError;
+    if (hasCache && cacheFresh && loadCandidate(cached, identity,
+            ProfileSource::Cache, profileJson, choice, cacheError))
+        return true;
+
     std::string manifest;
-    if (!httpsGet(kManifest,kManifestLimit,manifest,error))
-        return false;
-    auto selected = chooseProfile(manifest,identity,error);
-    if (!selected) return false; // unsupported => no modifications
-    // The choice.path must have passed strict version and filename validation.
-    std::wstring path = L"/gamelist1990/BedrockDynamicSDK/main/";
-    for (char c:selected->path) path.push_back(static_cast<wchar_t>(c));
-    std::string downloaded;
-    if (!httpsGet(path,kProfileLimit,downloaded,error)) return false;
-    std::string downloadedHash;
-    if (!sha256(downloaded,downloadedHash) ||
-        downloadedHash != selected->contentSha256) {
-        error = "downloaded version data SHA-256 does not match manifest";
-        return false;
+    std::string remoteError;
+    if (httpsGet(kManifest,kManifestLimit,manifest,remoteError)) {
+        auto selected = chooseProfile(manifest,identity,remoteError);
+        if (selected) {
+            // The choice.path passed strict version and filename validation.
+            std::wstring path = L"/gamelist1990/BedrockDynamicSDK/main/";
+            for (char c:selected->path) path.push_back(static_cast<wchar_t>(c));
+            std::string downloaded;
+            if (httpsGet(path,kProfileLimit,downloaded,remoteError)) {
+                std::string downloadedHash;
+                if (!sha256(downloaded,downloadedHash) ||
+                    downloadedHash != selected->contentSha256) {
+                    remoteError = "downloaded version data SHA-256 does not match manifest";
+                } else if (validateDownloadedProfile(downloaded,*selected,identity,remoteError)) {
+                    Resolver resolver;
+                    if (resolver.loadJson(downloaded,remoteError) &&
+                        resolver.attachWindowsMainModule(remoteError) && resolver.exactBuild()) {
+                        selected->source = ProfileSource::Remote;
+                        choice = *selected;
+                        profileJson = std::move(downloaded);
+                        writeCache(cachedPath, profileJson);
+                        error.clear();
+                        return true;
+                    }
+                    remoteError = "profile did not resolve against the loaded game";
+                }
+            }
+        }
     }
-    if (!validateDownloadedProfile(downloaded,*selected,identity,error))
-        return false;
-    bedrock::Resolver resolver;
-    if (!resolver.loadJson(downloaded,error) ||
-        !resolver.attachWindowsMainModule(error) || !resolver.exactBuild()) {
-        error = "profile did not resolve against the loaded game";
-        return false;
+
+    // A stale cache remains a safe exact-build fallback when GitHub is down.
+    if (hasCache && loadCandidate(cached, identity, ProfileSource::Cache,
+                                  profileJson, choice, cacheError)) {
+        error.clear();
+        return true;
     }
-    choice = *selected;
-    profileJson = std::move(downloaded);
-    error.clear();
-    return true;
+
+    // The generated database makes the SDK's build version work on first run,
+    // even when raw.githubusercontent.com is blocked or rate-limited.
+    if (loadCandidate(generated::kSymbolDatabase, identity, ProfileSource::Embedded,
+                      profileJson, choice, cacheError)) {
+        writeCache(cachedPath, profileJson);
+        error.clear();
+        return true;
+    }
+    error = remoteError.empty() ? cacheError : remoteError;
+    return false;
 }
 } // namespace bedrock
 #endif

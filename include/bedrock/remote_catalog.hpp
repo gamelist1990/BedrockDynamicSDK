@@ -15,11 +15,27 @@ struct GameIdentity {
     std::uint32_t textSize{};
 };
 
+enum class ProfileSource : std::uint8_t {
+    Remote,
+    Cache,
+    Embedded,
+};
+
 struct ProfileChoice {
     std::string version;
     std::string path;
     std::string contentSha256;
+    ProfileSource source{ProfileSource::Remote};
 };
+
+constexpr std::string_view profileSourceName(ProfileSource source) noexcept {
+    switch (source) {
+    case ProfileSource::Remote: return "remote";
+    case ProfileSource::Cache: return "cache";
+    case ProfileSource::Embedded: return "embedded";
+    }
+    return "unknown";
+}
 
 std::optional<ProfileChoice> chooseProfile(
     std::string_view manifest, const GameIdentity& identity,

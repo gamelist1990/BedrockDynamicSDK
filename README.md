@@ -284,6 +284,8 @@ BedrockAutoSprint.dll が起動
     ↓
 現在の Minecraft.Windows.exe のファイル/.text SHA256・PE構造を計測
     ↓
+30分以内の検証済みローカルキャッシュを確認
+    ↓（なければ／期限切れなら）
 HTTPS: data/manifest.json を取得
     ↓
 対応するバージョンを完全一致で特定
@@ -299,7 +301,8 @@ data/<version>/windows-x64.json を取得
 - DLLのバイナリは**そのまま**で、GitHub上に対応するバージョンのJSONを追加するだけで、同じ入力処理の仕組みを使える新バージョンを認識できます。
 - サンプルはWindowsの通常キー入力API（`SendInput`）を使うため、Minecraft内部のフィールドや不確かな関数ABIを実行しません。今後のMinecraftバージョンで仕様が変わった場合はDLL修正が必要になる可能性があります。
 - HTTPSとmanifest記載のSHA256でデータの整合性を検査します。GitHubリポジトリの権限を持つ管理者がデータを更新する仕組みであり、独立した公開鍵署名はまだ未実装です。
-- オフラインでは自動有効化せず、入力の状態を変更しません。
+- 検証済みJSONは `%LOCALAPPDATA%\PEXData\BedrockDynamicSDK\profile-cache` にEXEの `.text` SHA256別で保存します。30分後にはGitHubを再確認し、通信失敗時は期限切れキャッシュへ安全にフォールバックします。
+- 同梱したビルド用JSONも最終フォールバックになるため、初回起動時にGitHubへ接続できなくても、そのDLLのビルド対象バージョンは起動できます。キャッシュ／同梱データも現在のEXEハッシュとPE構造が完全一致しなければ拒否します。
 
 注：`BedrockAutoSprint.dll` は通常のWindows x64 DLLです。**これ自体に注入機能はありません**。すでに利用している正規のDLLローダーなどでロードする構成です。ロード後、API `AutoSprint_GetStatus()` で状態を確認できます。ゲームを終了するまでDLLはメモリからアンロードされません。
 
