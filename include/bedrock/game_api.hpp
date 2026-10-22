@@ -155,6 +155,15 @@ struct GameEventRegistry {
 class GameApi;
 class World;
 
+// One consistent identity snapshot avoids calling the native name-tag getter
+// and walking PlayerList twice when a feature needs both the display name and
+// player classification.
+struct ActorIdentity {
+    std::string nameTag;
+    std::string name;
+    bool isPlayer{};
+};
+
 class Actor {
 public:
     Actor() = default;
@@ -168,6 +177,7 @@ public:
     [[nodiscard]] void* handle() const noexcept { return isValid() ? handle_ : nullptr; }
     [[nodiscard]] std::string getNameTag() const;
     [[nodiscard]] std::string getName() const;
+    [[nodiscard]] ActorIdentity getIdentity() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
     [[nodiscard]] std::optional<ItemStack> getMainHand() const {
@@ -641,11 +651,19 @@ inline std::string Actor::getNameTag() const {
     return {};
 }
 inline std::string Actor::getName() const {
-    const auto tag = getNameTag();
-    const auto plain = detail::stripFormatting(tag);
+    return getIdentity().name;
+}
+inline ActorIdentity Actor::getIdentity() const {
+    ActorIdentity identity;
+    if (!isValid()) return identity;
+    identity.nameTag = getNameTag();
+    identity.name = detail::stripFormatting(identity.nameTag);
     std::string playerName;
-    if (isValid() && api_->playerMatch(handle_, plain, &playerName)) return playerName;
-    return plain;
+    if (api_->playerMatch(handle_, identity.name, &playerName)) {
+        identity.name = std::move(playerName);
+        identity.isPlayer = true;
+    }
+    return identity;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
     return getMainHand();
@@ -663,8 +681,7 @@ inline std::optional<ItemStack> Actor::getArmor(EquipmentSlot slot) const {
     return getEquipment(slot);
 }
 inline bool Actor::isPlayer() const {
-    if (!isValid()) return false;
-    return api_->playerMatch(handle_, detail::stripFormatting(getNameTag()));
+    return getIdentity().isPlayer;
 }
 inline World Actor::getWorld() const {
     return isValid() ? World{*api_, api_->access_->worldOf(handle_)} : World{};
