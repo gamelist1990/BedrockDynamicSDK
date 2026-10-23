@@ -202,11 +202,13 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         "GameCore::handleMouseInput",
         "Actor::getNameTag",
         "ItemStackBase::getHoverName",
+        "Level::getRuntimeActorList",
     }
     assert set(data["symbols"]) == expected
     verified = {
         "MouseDevice::feed", "Keyboard::feed", "GameCore::keyboardEvent",
         "Actor::getNameTag", "LevelRendererPlayer::getFov",
+        "Level::getRuntimeActorList",
     }
     for name, symbol in data["symbols"].items():
         if name in verified:
