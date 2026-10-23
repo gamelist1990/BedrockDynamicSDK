@@ -106,6 +106,10 @@ public:
         (void)actor;
         return std::nullopt;
     }
+    [[nodiscard]] virtual std::optional<std::uint32_t> actorEntityId(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
     // Return only this Actor's currently held hand item. Do not enumerate or
     // expose the Actor's full inventory; local-player inventory access is a
     // separate API with a different lifetime and access path.
@@ -217,6 +221,7 @@ public:
     [[nodiscard]] std::optional<ActorBounds> getBounds() const;
     [[nodiscard]] std::optional<Vec3> getPosition() const;
     [[nodiscard]] std::optional<ActorRotation> getRotation() const;
+    [[nodiscard]] std::optional<std::uint32_t> getEntityId() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
     [[nodiscard]] std::optional<ItemStack> getMainHand() const {
@@ -729,6 +734,9 @@ inline std::optional<Vec3> Actor::getPosition() const {
 }
 inline std::optional<ActorRotation> Actor::getRotation() const {
     return isValid() ? api_->access_->actorRotation(handle_) : std::nullopt;
+}
+inline std::optional<std::uint32_t> Actor::getEntityId() const {
+    return isValid() ? api_->access_->actorEntityId(handle_) : std::nullopt;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
     return getMainHand();

@@ -67,6 +67,7 @@ using Clock = std::chrono::steady_clock;
 
 struct Config {
     bool enabled = true;
+    bool debug = false;
     bool retainLastPosition = false;
     unsigned retentionMinutes = 10;
     float nearbyDistance = 32.0f;
@@ -96,6 +97,8 @@ std::atomic<float> currentFov{70.0f};
 std::mutex logMutex;
 std::ofstream logFile;
 std::unordered_map<std::uintptr_t, BoxRecord> records;
+std::unordered_set<std::uint32_t> loggedActorIds;
+std::unordered_map<std::uint32_t, std::uint64_t> pendingActorNameLogs;
 std::atomic<void*> currentWorld{};
 
 template<class... Args>
@@ -124,6 +127,7 @@ nlohmann::json configJson(const Config& config) {
         return std::string{text.data()};
     };
     return nlohmann::json{{"enabled", config.enabled},
+        {"debug", config.debug},
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
         {"retention_minutes", config.retentionMinutes},
@@ -135,6 +139,7 @@ nlohmann::json configJson(const Config& config) {
 Config parseConfig(const nlohmann::json& root) {
     Config config;
     config.enabled = root.value("enabled", config.enabled);
+    config.debug = root.value("debug", config.debug);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
     config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1u, 60u);
@@ -252,6 +257,13 @@ public:
         bedrock::ActorRotation result{};
         return readActorRotation(actor, actorLayout_, &result)
             ? std::optional<bedrock::ActorRotation>{result} : std::nullopt;
+    }
+    std::optional<std::uint32_t> actorEntityId(void* actor) const override {
+        std::uint32_t entityId = 0;
+        const auto offset = actorLayout_.actorEntityContextOffset +
+                            actorLayout_.contextEntityIdOffset;
+        return isActorValid(actor) && safeRead(actor, offset, entityId)
+            ? std::optional<std::uint32_t>{entityId} : std::nullopt;
     }
 
 private:
@@ -372,6 +384,8 @@ void refreshFrameSnapshot() {
         snapshotWorld = world;
         access.setWorld(world);
         records.clear();
+        loggedActorIds.clear();
+        pendingActorNameLogs.clear();
         gameApi.clearObservedActors();
         renderSnapshot.store(std::make_shared<const RenderSnapshot>(),
                              std::memory_order_release);
@@ -403,6 +417,26 @@ void refreshFrameSnapshot() {
         if (!key) continue;
         seen.insert(key);
         records.insert_or_assign(key, BoxRecord{key, *bounds, now});
+        if (config->debug) {
+            const auto entityId = actor.getEntityId();
+            if (entityId && !loggedActorIds.contains(*entityId)) {
+                const auto name = actor.getName();
+                if (!name.empty()) {
+                    log("debug Actor detected: entity_id=", *entityId, " name=", name);
+                    loggedActorIds.insert(*entityId);
+                    pendingActorNameLogs.erase(*entityId);
+                } else {
+                    const auto [pending, inserted] = pendingActorNameLogs.emplace(
+                        *entityId, frameSequence);
+                    if (!inserted && frameSequence - pending->second >= 60) {
+                        log("debug Actor detected: entity_id=", *entityId,
+                            " name=<unavailable>");
+                        loggedActorIds.insert(*entityId);
+                        pendingActorNameLogs.erase(pending);
+                    }
+                }
+            }
+        }
     }
     if (!loggedActorCount && (!actors.empty() || frameSequence > 120)) {
         loggedActorCount = true;

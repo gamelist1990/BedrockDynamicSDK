@@ -98,7 +98,9 @@ version-specific native registry source. `GameApi::actors(world)` merges and
 deduplicates those live handles with observed View/name-tag handles.
 `Actor::getBounds()`, `getPosition()`, and `getRotation()` return value
 snapshots; their native component hashes and offsets belong in the matching
-profile, not in client feature code. `GameHooks::installLevelTick()` publishes
+profile, not in client feature code. `Actor::getEntityId()` exposes the
+adapter's registry entity ID when available (it is not necessarily Minecraft's
+long-lived ActorUniqueID). `GameHooks::installLevelTick()` publishes
 `Event.Enum.LevelTick` after the original Level update, allowing a client to
 track the active world. Features that need render-rate updates can then refresh
 their actor snapshot from their render callback and draw only copied values.

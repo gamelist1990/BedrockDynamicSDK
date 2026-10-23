@@ -18,6 +18,7 @@ C:\Users\<ユーザー名>\Documents\PEXData\HitBox\config.json
 ```json
 {
   "enabled": true,
+  "debug": false,
   "nearby_distance": 32.0,
   "retain_last_position": false,
   "retention_minutes": 10,
@@ -26,6 +27,10 @@ C:\Users\<ユーザー名>\Documents\PEXData\HitBox\config.json
   "retained_color": "#FFAE42D2"
 }
 ```
+
+`debug` を `true` にすると、近距離で初回検知したActorについて `HitBox.log` に
+`entity_id` と取得できた名前を一度だけ記録します。名前タグがまだキャッシュされていない場合は
+最大60描画フレーム待ち、それでも得られない場合は `name=<unavailable>` と一度だけ記録します。
 
 プレイヤーだけに絞る設定は設けず、すべての取得可能なActorを対象にします。`retain_last_position` をtrueにすると、
 近距離で最後に確認したAABBを最大 `retention_minutes` 分その位置に残し、再検出時は位置と期限を更新します。
