@@ -100,7 +100,8 @@ deduplicates those live handles with observed View/name-tag handles.
 snapshots; their native component hashes and offsets belong in the matching
 profile, not in client feature code. `GameHooks::installLevelTick()` publishes
 `Event.Enum.LevelTick` after the original Level update, allowing a client to
-refresh actor data on the game thread and render an immutable cache later.
+track the active world. Features that need render-rate updates can then refresh
+their actor snapshot from their render callback and draw only copied values.
 
 ## Native input
 

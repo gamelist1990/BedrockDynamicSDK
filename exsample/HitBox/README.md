@@ -4,7 +4,7 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 
 - プレイヤーに限定せず、SDKの `World::getActors()` が返すネイティブActorのAABBを描画
 - Actorの取得・位置・AABB・向きは `GameApi` / `Actor` APIを使用
-- SDKの `LevelTick` から一定間隔でActor情報を更新し、描画コールバックではキャッシュだけを参照
+- 描画フレームごとにActor一覧・位置・AABBを更新し、そのフレーム用の不変スナップショットを描画
 - 一時的に取得できなくなったActorの最終AABBを保持する機能はconfigで切替可能
 - 最終位置の保持期限は既定10分。ワールドを移動した場合はキャッシュを破棄
 - Actorポインタやコンポーネント読み取りで例外が発生した対象はスキップ
@@ -21,7 +21,6 @@ C:\Users\<ユーザー名>\Documents\PEXData\HitBox\config.json
   "nearby_distance": 32.0,
   "retain_last_position": false,
   "retention_minutes": 10,
-  "scan_interval_ticks": 5,
   "line_thickness": 1.5,
   "live_color": "#4CE684E6",
   "retained_color": "#FFAE42D2"
@@ -30,7 +29,8 @@ C:\Users\<ユーザー名>\Documents\PEXData\HitBox\config.json
 
 プレイヤーだけに絞る設定は設けず、すべての取得可能なActorを対象にします。`retain_last_position` をtrueにすると、
 近距離で最後に確認したAABBを最大 `retention_minutes` 分その位置に残し、再検出時は位置と期限を更新します。
-描画中にネイティブActorやEnTTへアクセスせず、ゲームtickで作った不変スナップショットのみを使います。
+Level更新時はワールド参照だけを更新し、Actor列挙は描画フレームごとに行います。Actor/EnTTへアクセスするのは
+フレーム取得処理だけで、ライン描画はその処理が作る不変スナップショットを使います。
 表示座標への投影はローカルActorの位置・視点角度・FOVから計算するため、実機で投影方向やAABB位置の差が
 見つかった場合は調整が必要です。
 

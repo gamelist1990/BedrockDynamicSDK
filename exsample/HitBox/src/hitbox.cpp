@@ -69,7 +69,6 @@ struct Config {
     bool enabled = true;
     bool retainLastPosition = false;
     unsigned retentionMinutes = 10;
-    unsigned scanIntervalTicks = 5;
     float nearbyDistance = 32.0f;
     float lineThickness = 1.5f;
     ImU32 liveColor = IM_COL32(76, 230, 132, 230);
@@ -97,7 +96,7 @@ std::atomic<float> currentFov{70.0f};
 std::mutex logMutex;
 std::ofstream logFile;
 std::unordered_map<std::uintptr_t, BoxRecord> records;
-void* currentWorld{};
+std::atomic<void*> currentWorld{};
 
 template<class... Args>
 void log(Args&&... args) {
@@ -128,7 +127,6 @@ nlohmann::json configJson(const Config& config) {
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
         {"retention_minutes", config.retentionMinutes},
-        {"scan_interval_ticks", config.scanIntervalTicks},
         {"line_thickness", config.lineThickness},
         {"live_color", colorString(config.liveColor)},
         {"retained_color", colorString(config.retainedColor)}};
@@ -140,7 +138,6 @@ Config parseConfig(const nlohmann::json& root) {
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
     config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1u, 60u);
-    config.scanIntervalTicks = std::clamp(root.value("scan_interval_ticks", config.scanIntervalTicks), 1u, 40u);
     config.lineThickness = std::clamp(root.value("line_thickness", config.lineThickness), 0.5f, 5.0f);
     const auto parseColor = [&](const char* key, ImU32 fallback) {
         const auto it = root.find(key);
@@ -357,19 +354,29 @@ float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) {
     return x*x + y*y + z*z;
 }
 
-void scanWorld(const bedrock::LevelTickEvent& event) {
+void observeWorld(const bedrock::LevelTickEvent& event) {
+    if (event.level) currentWorld.store(event.level, std::memory_order_release);
+}
+
+void refreshFrameSnapshot() {
     static bool loggedActorCount = false;
     static bool loggedCameraFailure = false;
+    static std::uint64_t frameSequence = 0;
+    static void* snapshotWorld = nullptr;
+    ++frameSequence;
     auto config = liveConfig.load(std::memory_order_acquire);
-    if (!config->enabled || !event.level) return;
-    if (currentWorld != event.level) {
-        currentWorld = event.level;
-        access.setWorld(event.level);
+    if (!config->enabled) return;
+    auto* world = currentWorld.load(std::memory_order_acquire);
+    if (!world) return;
+    if (snapshotWorld != world) {
+        snapshotWorld = world;
+        access.setWorld(world);
         records.clear();
         gameApi.clearObservedActors();
+        renderSnapshot.store(std::make_shared<const RenderSnapshot>(),
+                             std::memory_order_release);
         log("world actor source ready; retained hitboxes cleared for new world");
     }
-    if (event.sequence % config->scanIntervalTicks != 0) return;
 
     auto local = gameApi.localPlayer();
     const auto cameraPosition = local.getPosition();
@@ -384,7 +391,7 @@ void scanWorld(const bedrock::LevelTickEvent& event) {
 
     const float range2 = config->nearbyDistance * config->nearbyDistance;
     std::unordered_set<std::uintptr_t> seen;
-    auto actors = gameApi.actors(event.level);
+    auto actors = gameApi.actors(world);
     seen.reserve(actors.size());
     const auto now = Clock::now();
     for (const auto& actor : actors) {
@@ -397,7 +404,7 @@ void scanWorld(const bedrock::LevelTickEvent& event) {
         seen.insert(key);
         records.insert_or_assign(key, BoxRecord{key, *bounds, now});
     }
-    if (!loggedActorCount) {
+    if (!loggedActorCount && (!actors.empty() || frameSequence > 120)) {
         loggedActorCount = true;
         log("native Actor snapshot: actor_count=", actors.size(),
             " nearby_hitboxes=", seen.size());
@@ -444,6 +451,13 @@ std::optional<ImVec2> project(const bedrock::Vec3& point, const RenderSnapshot& 
 void drawBoxes(void*) {
     const auto config = liveConfig.load(std::memory_order_acquire);
     if (!config->enabled) return;
+    try {
+        refreshFrameSnapshot();
+    } catch (...) {
+        static std::atomic<bool> loggedFailure{false};
+        if (!loggedFailure.exchange(true, std::memory_order_relaxed))
+            log("frame Actor refresh failed; retaining previous render snapshot");
+    }
     const auto snapshot = renderSnapshot.load(std::memory_order_acquire);
     if (!snapshot || snapshot->boxes.empty()) return;
     const ImVec2 viewport = ImGui::GetIO().DisplaySize;
@@ -529,7 +543,7 @@ DWORD WINAPI startClient(void*) {
     gameApi.Event.Enum.Fov.then([](const bedrock::FovEvent& event) {
         currentFov.store(event.inputFov, std::memory_order_release);
     });
-    gameApi.Event.Enum.LevelTick.then(&scanWorld);
+    gameApi.Event.Enum.LevelTick.then(&observeWorld);
     if (!gameHooks->installActorNameTag(resolver, error) ||
         !gameHooks->installGameplay(resolver, error) ||
         !gameHooks->installFov(resolver, error) ||
