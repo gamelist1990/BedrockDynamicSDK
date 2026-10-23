@@ -512,9 +512,8 @@ bool initRenderer(IDXGISwapChain* chain) {
     const bool interactive = captureInput.load(std::memory_order_relaxed);
     io.MouseDrawCursor = interactive;
     if (!interactive) io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    // A high-resolution TrueType font avoids the jagged 13px bitmap look
-    // seen in the original screenshot. Prefer installed OS fonts, not bundled
-    // proprietary font files; fallback to ImGui's embedded *vector* font.
+    // Prefer installed OS fonts, not bundled proprietary font files. Merge a
+    // Japanese system font into the Latin font so CJK labels do not become boxes.
     const char* fonts[] = {
         "C:\\Windows\\Fonts\\segoeui.ttf",
         "C:\\Windows\\Fonts\\tahoma.ttf",
@@ -532,6 +531,18 @@ bool initRenderer(IDXGISwapChain* chain) {
     }
     if (!font) font = io.Fonts->AddFontDefaultVector(&cfg);
     if (font) io.FontDefault=font;
+    const char* japaneseFonts[] = {
+        "C:\\Windows\\Fonts\\YuGothM.ttc",
+        "C:\\Windows\\Fonts\\meiryo.ttc",
+        "C:\\Windows\\Fonts\\msgothic.ttc"
+    };
+    ImFontConfig japaneseCfg = cfg;
+    japaneseCfg.MergeMode = true;
+    for (const char* filename : japaneseFonts) {
+        if (io.Fonts->AddFontFromFileTTF(filename, 18.0f, &japaneseCfg,
+                                         io.Fonts->GetGlyphRangesJapanese()))
+            break;
+    }
     Theme::dark();
     auto& style=ImGui::GetStyle();
     style.AntiAliasedLines=true;
