@@ -96,9 +96,9 @@ RenderDragon material was not decoded in this investigation.
 
 - Only the exact attached executable profile is accepted. All seven function
   entry guards (24 bytes) must still match loaded memory before installing.
-- Five-tick sweep target: ceil(population/5) rows per tick, maximum 32, with the
+- One-tick sweep target: population rows per tick, maximum 32, with the
   existing cooperative 250us loop budget. Slower sweeps continue instead of
-  restarting; the upper bound and budget can extend a sweep beyond five ticks.
+  restarting; the upper bound and budget can extend a sweep beyond one tick.
 - Linear interpolation uses copied old/new bounds each render frame. New samples
   start at the current interpolated position. Teleports beyond eight blocks,
   sample gaps over two seconds, and world epochs reset interpolation. No motion
@@ -111,7 +111,7 @@ RenderDragon material was not decoded in this investigation.
 - Active native tessellation is skipped. Read/write guards and SEH reduce the
   risk of invalid accesses but cannot make an incorrect native ABI or corrupted
   engine state safe. A guarded draw fault disables further HitBox drawing.
-- Local tests validate coordinate conversion, interpolation/teleport resets, five-tick scheduling, retention/world epochs, and profile
+- Local tests validate coordinate conversion, interpolation/teleport resets, one-tick scheduling, retention/world epochs, and profile
   rejection. Cross-compilation/Windows CI establish compilation, not in-game
   visuals, third-person correctness, or a measured FPS improvement. Those remain
   runtime acceptance checks on this exact build.
@@ -123,8 +123,18 @@ RenderDragon material was not decoded in this investigation.
 entries lacking ActorType. The former ActorType-presence filter and 64-block AABB
 extent cutoff were removed; owner/entity generation, finite coordinates and
 positive-volume bounds remain required. Native pool size sanity checking remains
-16384 entries. Each worker's bounded cache holds up to 16384 records to accommodate
-that entire population even if RuntimeIDs map to one shard. Confirmed stationary Player records now use a separate map and are not evicted with the live cache; they expire after the configured time (stationary semantics below).
+16384 entries as a corruption guard, not as the tracking limit. Tracking admission
+is a shared 1000-RuntimeID budget across both workers. Live and retained copies
+use the same slot. A skewed shard can consume all slots; there is no fixed 500
+quota per worker. At capacity, new IDs are rejected while existing observations
+continue. Expired/out-of-range live records release a slot only if no saved marker
+remains; expired/disabled saved markers release it only if no live record remains.
+World epochs reset admission and prevent old-epoch releases from freeing current
+slots. Admission locks run on processing workers only. Render snapshot aggregation
+also caps the combined frame to 1000 boxes during asynchronous handovers.
+With the 32-row limit a 1000-entry pool needs at least 32 callbacks; the one-tick
+target does not guarantee every Actor is refreshed each tick.
+
 
 Rendering splits all snapshot boxes into 512-box mesh submissions for each color,
 instead of selecting only the first 512. The two worker inputs are fixed eight-slot
@@ -132,7 +142,7 @@ FIFOs. A capture waits in game-thread-owned copied storage until both shards acc
 it; capture is postponed under backpressure without blocking the game thread.
 Already accepted shards are not sent duplicates. World epochs discard old-world
 queued work. These policies preserve captured rows, though sustained overload can
-extend the five-tick target and freshness expiry still applies.
+extend the one-tick target and freshness expiry still applies.
 
 `players_only=true` classifies Actors by ActorTypeComponent, not NameTag or display
 names. Latite's ActorTypeComponent is one uint32 at offset zero; Actor::isPlayer
@@ -168,7 +178,7 @@ Confirmed boxes disable interpolation and use an explicit retained flag for colo
 selection. Render-time freshness checks also reject stale live snapshots when
 native capture fails and workers cannot publish an updated view.
 
-The saved map is separate from the 16384-entry live cache. retention_minutes
+The saved map shares the 1000-Actor tracking budget with the live cache. retention_minutes
 is active again: default 10, clamped to 1..60 minutes. Expiry is measured from the
 last confirmed stop, including for markers outside display range. Both workers
 and rendering reject expired saved boxes, even if native capture stalls. A live
@@ -185,6 +195,6 @@ filtering. Only loaded Actors with valid captures are available.
 Portable tests cover the two-second boundary, live movement/interpolation after
 confirmation, replacement by the next stop, live/saved deduplication, ten-minute
 expiry and refresh, expiry outside range, the 100-block boundary, live-cache
-eviction, observation gaps, slow movement, position jitter, non-Players, feature
+capacity rejection and slot reuse across workers, observation gaps, slow movement, position jitter, non-Players, feature
 toggles, world epochs, and render-time stale-live/expired-saved rejection.
 These establish copied-data behavior, not live Minecraft verification.

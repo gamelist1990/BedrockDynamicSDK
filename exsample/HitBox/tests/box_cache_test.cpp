@@ -58,22 +58,21 @@ int main() {
     assert(opaque[0]==238/255.f && opaque[1]==170/255.f && opaque[2]==68/255.f && opaque[3]==1.f);
     assert(hitbox::opaqueColor(0x0144aaee)==hitbox::opaqueColor(0xff44aaee));
     hitbox::CaptureSchedule schedule;
-    static_assert(hitbox::CaptureSchedule::periodTicks==5);
+    static_assert(hitbox::CaptureSchedule::periodTicks==1);
     std::size_t visited=0;
-    for(int tick=0;tick<5;++tick) {
+    for(int tick=0;tick<3;++tick) {
         const auto quota=schedule.beginTick(94);
-        assert(quota<=19); visited+=quota; schedule.visited(quota);
+        assert(quota==(tick<2 ? 32u : 30u)); visited+=quota; schedule.visited(quota);
     }
-    assert(visited==94 && schedule.beginTick(94)==19);
+    assert(visited==94 && schedule.beginTick(94)==32);
     schedule.reset();
     for(int tick=0;tick<5;++tick) {
         const auto quota=schedule.beginTick(2);
-        assert(quota==(tick<2 ? 1u : 0u)); schedule.visited(quota);
+        assert(quota==2); schedule.visited(quota);
     }
-    assert(schedule.beginTick(2)==1);
     schedule.reset();
     for(int tick=0;tick<12;++tick) {
-        const auto quota=schedule.beginTick(94); assert(quota==19);
+        const auto quota=schedule.beginTick(94); assert(quota==32);
         schedule.visited(1); // A tight time budget preserves pending work across cycles.
     }
     schedule.reset(); assert(schedule.beginTick(0)==0);
@@ -131,18 +130,59 @@ int main() {
             actor.bounds={{1000+static_cast<float>(id),0,0},{1001+static_cast<float>(id),2,1}};
             all.observe(actor,camera,32,false,true);
         }
-        assert(all.visible(now,camera,32,false,1500ms,true).size()==1025);
+        assert(all.visible(now,camera,32,false,1500ms,true).size()==1000);
         const auto players=all.visible(now,camera,32,false,1500ms,true,true);
-        assert(players.size()==513);
+        assert(players.size()==500);
         for(const auto& player:players) assert(player.isPlayer && player.runtimeId%2==1);
-        assert(all.visible(now,camera,32,false,1500ms,true,false).size()==1025);
+        assert(all.visible(now,camera,32,false,1500ms,true,false).size()==1000);
         assert(all.visible(now,camera,32,false,1500ms,false).empty()); // Optional distance filter.
-        assert(all.visible(now,camera,32,false,1500ms,true).size()==1025); // Not evicted by view filter.
+        assert(all.visible(now,camera,32,false,1500ms,true).size()==1000); // Not evicted by view filter.
     }
     // Shortened native batches must not flicker out at the old 750ms expiry.
     assert(cache.visible(now+1000ms,camera,32,false,1500ms).size()==1);
     assert(cache.visible(now+1600ms,camera,32,false,1500ms).empty());
 
+    {
+        const auto budget=std::make_shared<hitbox::TrackingBudget>();
+        hitbox::BoxCache first{budget},second{budget};
+        assert(first.beginWorld(1) && second.beginWorld(1));
+        // A skewed RuntimeID distribution can use all 1000 slots on one worker.
+        for(std::uint64_t id=1;id<=1000;++id) {
+            auto actor=sample; actor.runtimeId=id*2;
+            first.observe(actor,camera,100,false);
+        }
+        auto other=sample; other.runtimeId=9999;
+        second.observe(other,camera,100,false);
+        assert(first.size()==1000 && second.size()==0 && budget->size()==1000);
+        first.visible(now+2s,camera,100,false,1500ms);
+        second.observe(other,camera,100,false);
+        assert(budget->size()==1 && second.size()==1);
+        // Old epoch releases cannot consume or free the new world's slots.
+        assert(first.beginWorld(2));
+        other.seenAt=now+3s; first.observe(other,camera,100,false);
+        assert(budget->size()==1);
+        second.visible(now+5s,camera,100,false,1500ms);
+        assert(budget->size()==1 && !second.beginWorld(1));
+        assert(second.beginWorld(2));
+    }
+    {
+        const auto budget=std::make_shared<hitbox::TrackingBudget>();
+        hitbox::BoxCache saved{budget}; saved.beginWorld(1);
+        auto player=sample; player.isPlayer=true;
+        for(int i=0;i<=8;++i) {
+            player.seenAt=now+250ms*i; saved.observe(player,camera,100,true);
+        }
+        assert(saved.size()==1 && saved.retainedSize()==1 && budget->size()==1);
+        saved.visible(now+4s,camera,100,true,1500ms);
+        assert(saved.size()==0 && saved.retainedSize()==1 && budget->size()==1);
+        saved.visible(now+5s,camera,100,false,1500ms);
+        assert(budget->size()==0); // Disabling a saved-only record returns its slot.
+        for(int i=0;i<=8;++i) {
+            player.seenAt=now+6s+250ms*i; saved.observe(player,camera,100,true);
+        }
+        saved.visible(now+10min+8s,camera,100,true,1500ms);
+        assert(budget->size()==0 && saved.retainedSize()==0);
+    }
     {
         hitbox::BoxCache stopped;
         stopped.beginWorld(1);
@@ -279,13 +319,14 @@ int main() {
     cache.observe(sample,camera,32,false);
     assert(cache.size()==0);
     sample.bounds={{0,0,0},{1,2,1}};
-    // Retention memory remains bounded even across a long series of unique IDs.
+    // At capacity new IDs are rejected; existing tracking is not churned.
     for (std::size_t i=0;i<=hitbox::BoxCache::maximumRecords;++i) {
         sample.runtimeId=i+1;
         sample.seenAt=now+std::chrono::milliseconds(i);
         cache.observe(sample,camera,32,true);
     }
     assert(cache.size()==hitbox::BoxCache::maximumRecords);
-    rows=cache.visible(now+10s,camera,32,true,1500ms);
-    for (const auto& row:rows) assert(row.runtimeId!=1);
+    rows=cache.visible(now+1000ms,camera,32,true,1500ms);
+    assert(rows.size()==hitbox::BoxCache::maximumRecords);
+    for (const auto& row:rows) assert(row.runtimeId!=hitbox::BoxCache::maximumRecords+1);
 }

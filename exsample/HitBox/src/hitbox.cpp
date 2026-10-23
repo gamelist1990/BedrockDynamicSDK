@@ -116,6 +116,7 @@ struct ProcessingWorker {
     std::shared_ptr<const RenderSnapshot> snapshot;
 };
 std::array<ProcessingWorker, workerCount> processingWorkers;
+const auto trackingBudget=std::make_shared<hitbox::TrackingBudget>();
 std::atomic<std::uint64_t> worldEpoch{};
 std::atomic<std::int64_t> gameHeartbeatMs{};
 std::atomic<Status> status{Status::NotStarted};
@@ -574,7 +575,7 @@ std::unique_ptr<bedrock::GameHooks> gameHooks;
 void processingLoop(std::size_t shard) noexcept {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     auto& worker = processingWorkers[shard];
-    hitbox::BoxCache cache;
+    hitbox::BoxCache cache{trackingBudget};
     std::uint64_t loggedEpoch = 0;
     Clock::time_point nextLog{};
     // Retain replaced snapshots until no callback holds them. Their vectors
@@ -617,7 +618,7 @@ void processingLoop(std::size_t shard) noexcept {
             if (config.debug && Clock::now() >= nextLog) {
                 nextLog = Clock::now() + std::chrono::seconds(10);
                 log("HitBox worker ", shard, ": native_pool=", batch->population,
-                    " copied=", batch->count, " cached=", cache.size(), " stationary_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " [RuntimeID partition]");
+                    " copied=", batch->count, " cached=", cache.size(), " stationary_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " tracked_total=", trackingBudget->size(), " tracking_limit=", hitbox::TrackingBudget::maximumActors, " [RuntimeID partition]");
             }
         } catch (...) {}
     }
@@ -711,7 +712,7 @@ void refreshGameTickSnapshot() {
     if (batch.count && !loggedNativeReady) {
         loggedNativeReady = true;
         log("native incremental capture active: pool=", batch.population,
-            " [RuntimeID + AABB copies; 5-tick sweep target; maximum 32 rows/tick; 250us budget]");
+            " [RuntimeID + AABB copies; 1-tick sweep target; maximum 32 rows/tick; 250us budget]");
     }
     // Keep live records across a full incremental pass, even if the time budget
     // reduced the number of rows captured on a busy callback.
@@ -731,7 +732,7 @@ void refreshGameTickSnapshot() {
             " actors=", us(positionReadyAt, actorsReadyAt),
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
-            " [5-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
+            " [1-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
     }
 }
 void observeWorld(const bedrock::LevelTickEvent& event) {
@@ -900,7 +901,11 @@ void drawWorldBoxes(void* renderer, void* screen) {
     for (std::size_t i=0;i<workerCount;++i) {
         snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
         if (!snapshots[i] || snapshots[i]->epoch!=epoch) continue;
-        input.ranges[i]={snapshots[i]->boxes.data(),snapshots[i]->boxes.size(),snapshots[i]->liveLifetime};
+        // Old and new worker snapshots can overlap during slot handover.
+        // Bound the combined frame even during that asynchronous transition.
+        input.ranges[i]={snapshots[i]->boxes.data(),
+            std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
+            snapshots[i]->liveLifetime};
         count+=input.ranges[i].count;
     }
     if (!count || worldEpoch.load(std::memory_order_acquire)!=epoch) return;

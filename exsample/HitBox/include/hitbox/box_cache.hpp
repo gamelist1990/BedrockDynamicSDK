@@ -5,6 +5,9 @@
 #include <chrono>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
+#include <memory>
+#include <mutex>
 #include <vector>
 #include <utility>
 
@@ -36,11 +39,11 @@ inline std::array<bedrock::Vec3, 8> corners(const bedrock::ActorBounds& b) noexc
         {b.minimum.x,b.maximum.y,b.minimum.z}, {b.maximum.x,b.maximum.y,b.minimum.z},
         {b.maximum.x,b.maximum.y,b.maximum.z}, {b.minimum.x,b.maximum.y,b.maximum.z}}};
 }
-// A five-tick sweep is spread across callbacks; slow callbacks keep the cursor
+// A one-tick target sweep is spread across callbacks; slow callbacks keep the cursor
 // and finish the pending sweep rather than restarting and starving later rows.
 class CaptureSchedule {
 public:
-    static constexpr std::uint64_t periodTicks=5;
+    static constexpr std::uint64_t periodTicks=1;
     static constexpr std::size_t maximumBatch=32;
     void reset() noexcept { tick_=nextSweep_=0; remaining_=population_=0; }
     std::size_t beginTick(std::size_t population) noexcept {
@@ -99,15 +102,49 @@ inline bool visibleInFrame(const BoxRecord& box, Clock::time_point now,
     if (box.retained) return retain && box.isPlayer && now-box.seenAt<retainedLifetime;
     return now-box.seenAt<=lifetime;
 }
+// Shared admission only; native capture/render threads never take this mutex.
+// Both live and saved copies of a RuntimeID consume one slot across all workers.
+class TrackingBudget {
+public:
+    static constexpr std::size_t maximumActors=1000;
+    bool beginWorld(std::uint64_t epoch) {
+        std::lock_guard lock(mutex_);
+        if(epoch<epoch_) return false;
+        if(epoch!=epoch_) { ids_.clear(); epoch_=epoch; }
+        return true;
+    }
+    bool acquire(std::uint64_t id,std::uint64_t epoch) {
+        std::lock_guard lock(mutex_);
+        if(epoch!=epoch_) return false;
+        if(ids_.contains(id)) return true;
+        if(ids_.size()>=maximumActors) return false;
+        ids_.insert(id); return true;
+    }
+    void release(std::uint64_t id,std::uint64_t epoch) {
+        std::lock_guard lock(mutex_);
+        if(epoch==epoch_) ids_.erase(id);
+    }
+    std::size_t size() const {
+        std::lock_guard lock(mutex_); return ids_.size();
+    }
+private:
+    mutable std::mutex mutex_;
+    std::uint64_t epoch_{};
+    std::unordered_set<std::uint64_t> ids_;
+};
 // Worker-owned state. No native handles, component pointers or game calls.
 class BoxCache {
 public:
-    static constexpr std::size_t maximumRecords = 16384; // Live records only.
+    static constexpr std::size_t maximumRecords = TrackingBudget::maximumActors;
+    explicit BoxCache(std::shared_ptr<TrackingBudget> budget=std::make_shared<TrackingBudget>())
+        : budget_(std::move(budget)) {}
+    BoxCache(const BoxCache&)=delete;
+    BoxCache& operator=(const BoxCache&)=delete;
     static constexpr auto stationaryDelay = std::chrono::seconds(2);
     static constexpr auto maximumObservationGap = std::chrono::seconds(1);
     static constexpr float stationaryToleranceSquared = 0.05f*0.05f;
     bool beginWorld(std::uint64_t epoch) {
-        if (epoch < epoch_) return false;
+        if (epoch < epoch_ || !budget_->beginWorld(epoch)) return false;
         if (epoch != epoch_) { records_.clear(); retained_.clear(); retaining_=false; epoch_=epoch; }
         return true;
     }
@@ -120,15 +157,12 @@ public:
         if (!sample.runtimeId || !sample.bounds.valid()) return;
         if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
             records_.erase(sample.runtimeId); // Out-of-range reads cannot confirm a stop.
+            if(!retained_.contains(sample.runtimeId)) budget_->release(sample.runtimeId,epoch_);
             return;
         }
         const auto old=records_.find(sample.runtimeId);
         if (old!=records_.end() && old->second.box.seenAt>=sample.seenAt) return;
-        if (old==records_.end() && records_.size()>=maximumRecords) {
-            const auto oldest=std::min_element(records_.begin(),records_.end(),
-                [](const auto& a,const auto& b){return a.second.box.seenAt<b.second.box.seenAt;});
-            records_.erase(oldest);
-        }
+        if(old==records_.end() && !budget_->acquire(sample.runtimeId,epoch_)) return;
         Entry entry;
         auto& box=entry.box;
         static_cast<Sample&>(box)=sample;
@@ -181,6 +215,7 @@ public:
                     live->second.stationarySince=now;
                     live->second.stationaryAnchor=live->second.box.bounds;
                 }
+                if(live==records_.end()) budget_->release(it->first,epoch_);
                 it=retained_.erase(it);
             } else ++it;
         }
@@ -191,7 +226,10 @@ public:
                    (allActors || distanceSquared(center(box.bounds),camera)<=range*range);
         };
         for (auto it=records_.begin();it!=records_.end();) {
-            if (now-it->second.box.seenAt>liveLifetime) it=records_.erase(it);
+            if (now-it->second.box.seenAt>liveLifetime) {
+                if(!retained_.contains(it->first)) budget_->release(it->first,epoch_);
+                it=records_.erase(it);
+            }
             else {
                 if (permitted(it->second.box)) result.push_back(it->second.box);
                 ++it;
@@ -218,9 +256,12 @@ private:
     void configureRetention(bool retain) {
         if (retaining_==retain) return;
         retaining_=retain;
+        for(const auto& [id,box]:retained_)
+            if(!records_.contains(id)) budget_->release(id,epoch_);
         retained_.clear();
         for (auto& [id,entry]:records_) { entry.tracking=false; entry.committed=false; }
     }
+    std::shared_ptr<TrackingBudget> budget_;
     bool retaining_{};
     std::uint64_t epoch_{};
     std::unordered_map<std::uint64_t,Entry> records_;
