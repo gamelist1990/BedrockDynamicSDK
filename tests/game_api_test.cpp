@@ -1,6 +1,7 @@
 #include <bedrock/game_api.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <unordered_map>
 
@@ -54,6 +55,8 @@ int main() {
     bedrock::GameApi api{game};
     unsigned actorEvents = 0;
     unsigned viewEvents = 0;
+    unsigned renderViewEvents = 0;
+    std::uint64_t lastRenderFrame = 0;
     api.Event.Enum.ActorNameTag.then([&](const auto& event) {
         assert(event.actor != nullptr && !event.nameTag.empty());
         ++actorEvents;
@@ -61,6 +64,11 @@ int main() {
     api.Event.Enum.ViewNameTag.then([&](const auto& event) {
         assert(event.actor != nullptr && !event.nameTag.empty());
         ++viewEvents;
+    });
+    api.Event.Enum.RenderViewActor.then([&](const auto& event) {
+        assert(event.viewObject != nullptr && event.actor != nullptr);
+        lastRenderFrame = event.frame;
+        ++renderViewEvents;
     });
 
     auto self = api.localPlayer();
@@ -94,6 +102,22 @@ int main() {
     assert(api.actor(other).getName() == "OtherPlayer");
     assert(actorEvents == 3);
     assert(api.cachedActorNameTags(bedrock::NameTagSource::ActorGetter)->size() == 2);
+
+    // Render-view candidates are a distinct per-frame snapshot, deduplicated
+    // and replaced on the next pass; they are not merged into world actors.
+    std::array<void*, 3> visibleActors{game.local, other, other};
+    const int viewObjectToken = 1;
+    api.publishRenderViewActors(&viewObjectToken, 7, visibleActors);
+    const auto visible = api.cachedRenderViewActors();
+    assert(visible.viewObject == &viewObjectToken && visible.frame == 7);
+    assert(visible.actors && visible.actors->size() == 2);
+    assert(renderViewEvents == 2);
+    std::array<void*, 1> nextVisible{other};
+    api.publishRenderViewActors(&viewObjectToken, 8, nextVisible);
+    const auto nextFrame = api.cachedRenderViewActors();
+    assert(nextFrame.frame == 8 && nextFrame.actors->size() == 1);
+    assert(renderViewEvents == 3 && lastRenderFrame == 8);
+    assert(api.actors().size() == 2); // no source conflation
 
     // Explicit reads prefer the live adapter and replace cached color/name
     // data so PlayerList consumers do not get stuck on an old nametag.

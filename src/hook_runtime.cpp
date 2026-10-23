@@ -199,12 +199,12 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
     switch (point) {
     case BDS_HOOK_KEYBOARD_FEED: {
         auto& a = *static_cast<BDS_KeyboardArgs*>(args);
-        a.result = original ? static_cast<KeyboardFn>(original)(a.key, a.down != 0) : 0;
+        a.result = original ? reinterpret_cast<KeyboardFn>(original)(a.key, a.down != 0) : 0;
         return static_cast<uintptr_t>(a.result);
     }
     case BDS_HOOK_MOUSE_FEED: {
         auto& a = *static_cast<BDS_MouseArgs*>(args);
-        if (original) static_cast<MouseFn>(original)(a.self, a.action, a.state,
+        if (original) reinterpret_cast<MouseFn>(original)(a.self, a.action, a.state,
             a.x, a.y, a.dx, a.dy,
             (a.force_motionless_pointer & BDS_MOUSE_FLAG_FORCE_MOTIONLESS) != 0);
         return 0;
@@ -212,30 +212,30 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
     case BDS_HOOK_GRAB_CURSOR:
     case BDS_HOOK_RELEASE_CURSOR: {
         auto& a = *static_cast<BDS_CursorArgs*>(args);
-        if (original) static_cast<CursorFn>(original)(a.self);
+        if (original) reinterpret_cast<CursorFn>(original)(a.self);
         return 0;
     }
     case BDS_HOOK_GET_FOV: {
         auto& a = *static_cast<BDS_FovArgs*>(args);
-        a.result = original ? static_cast<FovFn>(original)(a.self, a.input_fov, a.a3, a.a4)
+        a.result = original ? reinterpret_cast<FovFn>(original)(a.self, a.input_fov, a.a3, a.a4)
                             : a.input_fov;
         return 0;
     }
     case BDS_HOOK_LEVEL_SUB_TICK: {
         auto& a = *static_cast<BDS_LevelArgs*>(args);
-        if (original) static_cast<LevelFn>(original)(a.level);
+        if (original) reinterpret_cast<LevelFn>(original)(a.level);
         return 0;
     }
     case BDS_HOOK_ACTOR_GET_NAME_TAG: {
         auto& a = *static_cast<BDS_ActorNameTagArgs*>(args);
         if (!original) return 0;
-        const auto& value = static_cast<ActorNameTagFn>(original)(a.actor);
+        const auto& value = reinterpret_cast<ActorNameTagFn>(original)(a.actor);
         a.name_tag = &value;
         return reinterpret_cast<uintptr_t>(&value);
     }
     case BDS_HOOK_GAMECORE_KEYBOARD_EVENT: {
         auto& a = *static_cast<BDS_GameCoreKeyboardEventArgs*>(args);
-        a.result = original ? static_cast<GameCoreKeyboardEventFn>(original)(
+        a.result = original ? reinterpret_cast<GameCoreKeyboardEventFn>(original)(
             a.self, a.output, a.context) : a.output;
         return reinterpret_cast<uintptr_t>(a.result);
     }

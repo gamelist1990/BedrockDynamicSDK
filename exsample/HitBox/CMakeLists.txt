@@ -23,6 +23,8 @@ if(WIN32)
         GIT_PROGRESS TRUE)
     FetchContent_MakeAvailable(entt)
     add_library(BedrockHitBox SHARED src/hitbox.cpp)
+    # Keep the artifact name identical under MSVC and MinGW/LLVM toolchains.
+    set_target_properties(BedrockHitBox PROPERTIES PREFIX "")
     target_include_directories(BedrockHitBox PRIVATE include)
     target_link_libraries(BedrockHitBox PRIVATE bedrock::symbols bedrock::logging
         bedrock::gui_overlay bedrock::hook_runtime EnTT::EnTT shell32 ole32)
@@ -30,6 +32,16 @@ if(WIN32)
     bedrock_enable_hook_runtime(BedrockHitBox)
     if(MSVC)
         set_property(TARGET BedrockHitBox PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
+    # Small, target-restricted local test loader. It refuses every process
+    # except Minecraft.Windows.exe and validates the DLL's PE architecture.
+    add_executable(BedrockHitBoxLoader src/loader.cpp)
+    target_compile_features(BedrockHitBoxLoader PRIVATE cxx_std_20)
+    target_link_libraries(BedrockHitBoxLoader PRIVATE kernel32)
+    if(MSVC)
+        set_property(TARGET BedrockHitBoxLoader PROPERTY MSVC_RUNTIME_LIBRARY
             "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 endif()

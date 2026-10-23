@@ -88,10 +88,25 @@ struct RenderSnapshot {
     float fovDegrees = 70.0f;
 };
 
+struct NativeActorViewStats {
+    bool requiredStorageAvailable{};
+    std::size_t ownerStorage{};
+    std::size_t actorTypeStorage{};
+    bool actorTypeAvailable{};
+    std::size_t runtimeIdStorage{};
+    std::size_t aabbStorage{};
+    std::size_t iterated{};
+    std::size_t liveEntities{};
+    std::size_t viewMatches{};
+    std::size_t validActorPointers{};
+};
+
 std::atomic<Status> status{Status::NotStarted};
 std::atomic<bool> stopRequested{false};
-std::atomic<std::shared_ptr<const Config>> liveConfig{std::make_shared<const Config>()};
-std::atomic<std::shared_ptr<const RenderSnapshot>> renderSnapshot{
+// Use the shared_ptr atomic free functions for cross-standard-library
+// compatibility. Some C++20 libraries do not yet implement atomic<shared_ptr>.
+std::shared_ptr<const Config> liveConfig{std::make_shared<const Config>()};
+std::shared_ptr<const RenderSnapshot> renderSnapshot{
     std::make_shared<const RenderSnapshot>()};
 std::atomic<float> currentFov{70.0f};
 std::mutex logMutex;
@@ -192,7 +207,8 @@ void loadConfigFile(const std::filesystem::path& path) {
     if (!input) return;
     try {
         const auto json = nlohmann::json::parse(input);
-        liveConfig.store(std::make_shared<const Config>(parseConfig(json)), std::memory_order_release);
+        std::atomic_store_explicit(&liveConfig,
+            std::make_shared<const Config>(parseConfig(json)), std::memory_order_release);
     } catch (const std::exception& error) {
         log("config ignored: ", error.what());
     }
@@ -264,7 +280,24 @@ public:
         auto* local = localPlayer();
         void* registry = registryFor(local);
         if (!registry) return result;
-        if (!enumerateOwnerStorage(registry, actorLayout_, world, this, &result)) result.clear();
+        NativeActorViewStats stats{};
+        const bool enumerated = enumerateActorView(registry, actorLayout_, this,
+                                                   &result, &stats);
+        if (!nativeViewStatsLogged_.exchange(true, std::memory_order_relaxed)) {
+            log("native Actor EnTT view: owner=", stats.ownerStorage,
+                " actor_type=", stats.actorTypeStorage,
+                stats.actorTypeAvailable ? "" : " [ActorType storage missing; using validated 3-component fallback]",
+                " runtime_id=", stats.runtimeIdStorage,
+                " aabb=", stats.aabbStorage,
+                " iterated=", stats.iterated,
+                " live=", stats.liveEntities,
+                " view_matches=", stats.viewMatches,
+                " valid_actor_ptrs=", stats.validActorPointers,
+                " result=", result.size(),
+                enumerated ? " [ok]" : stats.requiredStorageAvailable
+                    ? " [view rejected by validation]" : " [required storage missing]");
+        }
+        if (!enumerated) result.clear();
         return result;
     }
     std::optional<bedrock::ActorBounds> actorBounds(void* actor) const override {
@@ -306,19 +339,60 @@ private:
         if (!isActorValid(actor) || !safeRead(actor, offset, registry)) return nullptr;
         return registry;
     }
-    static bool enumerateOwnerStorage(void* registry, const bedrock::NativeActorLayout& layout,
-        void* world, const HitBoxAccess* access, std::vector<void*>* output) noexcept {
+    static bool enumerateActorView(void* registry, const bedrock::NativeActorLayout& layout,
+        const HitBoxAccess* access, std::vector<void*>* output,
+        NativeActorViewStats* stats) noexcept {
+        if (!registry || !access || !output || !stats) return false;
         __try {
             using Registry = entt::basic_registry<hitbox_native::EntityId>;
             auto* typed = static_cast<Registry*>(registry);
-            auto* storage = typed->storage(layout.actorOwnerComponentHash);
-            if (!storage) storage = typed->storage(layout.actorOwnerComponentHashAlternate);
-            if (!storage) return false;
-            for (const auto entity : *storage) {
-                void* owner = storage->value(entity);
+            auto* owner = typed->storage(layout.actorOwnerComponentHash);
+            auto* actorType = typed->storage(layout.actorTypeComponentHash);
+            auto* runtimeId = typed->storage(layout.runtimeIdComponentHash);
+            auto* aabb = typed->storage(layout.aabbShapeComponentHash);
+            stats->requiredStorageAvailable = owner && runtimeId && aabb;
+            if (!owner || !runtimeId || !aabb) return false;
+
+            stats->ownerStorage = owner->size();
+            stats->actorTypeAvailable = actorType != nullptr;
+            stats->actorTypeStorage = actorType ? actorType->size() : 0;
+            stats->runtimeIdStorage = runtimeId->size();
+            stats->aabbStorage = aabb->size();
+
+            // This is the runtime equivalent of
+            // view<ActorOwner, ActorType, RuntimeID, AABBShape>().each().
+            // Iterate the smallest pool and test membership in the other
+            // three pools, avoiding a temporary EnTT view and reducing work.
+            auto* candidate = owner;
+            if (actorType && actorType->size() < candidate->size()) candidate = actorType;
+            if (runtimeId->size() < candidate->size()) candidate = runtimeId;
+            if (aabb->size() < candidate->size()) candidate = aabb;
+
+            for (const auto entity : *candidate) {
+                ++stats->iterated;
+                if (!typed->valid(entity)) continue;
+                ++stats->liveEntities;
+                if (!owner->contains(entity) || (actorType && !actorType->contains(entity)) ||
+                    !runtimeId->contains(entity) || !aabb->contains(entity)) continue;
+                ++stats->viewMatches;
+
+                void* ownerComponent = owner->value(entity);
                 void* actor = nullptr;
-                if (!owner || !safeRead(owner, layout.actorOwnerPointerOffset, actor) ||
-                    !access->isActorValid(actor) || access->worldOf(actor) != world) continue;
+                if (!ownerComponent ||
+                    !safeRead(ownerComponent, layout.actorOwnerPointerOffset, actor) ||
+                    !access->isActorValid(actor)) continue;
+
+                // The owner row must resolve back to this exact registry
+                // entity. This rejects stale owner pointers and coincidental
+                // component membership without dereferencing actor inventory.
+                void* actorRegistry = nullptr;
+                std::uint32_t actorEntity = 0;
+                const auto context = layout.actorEntityContextOffset;
+                if (!safeRead(actor, context + layout.contextRegistryOffset, actorRegistry) ||
+                    actorRegistry != registry ||
+                    !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
+                    actorEntity != static_cast<std::uint32_t>(entity)) continue;
+                ++stats->validActorPointers;
                 output->push_back(actor);
             }
             return true;
@@ -380,6 +454,7 @@ private:
     bedrock::NativeActorLayout actorLayout_{};
     std::atomic<void*> client_{};
     std::atomic<void*> world_{};
+    mutable std::atomic<bool> nativeViewStatsLogged_{};
 };
 
 HitBoxAccess access;
@@ -400,8 +475,11 @@ void refreshFrameSnapshot() {
     static bool loggedCameraFailure = false;
     static std::uint64_t frameSequence = 0;
     static void* snapshotWorld = nullptr;
+    static std::vector<bedrock::Actor> actorRoster;
+    static Clock::time_point actorRosterUpdated{};
+    static bool actorRosterInitialized = false;
     ++frameSequence;
-    auto config = liveConfig.load(std::memory_order_acquire);
+    auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
     if (!config->enabled) return;
     auto* world = currentWorld.load(std::memory_order_acquire);
     if (!world) return;
@@ -409,11 +487,14 @@ void refreshFrameSnapshot() {
         snapshotWorld = world;
         access.setWorld(world);
         records.clear();
+        actorRoster.clear();
+        actorRosterUpdated = {};
+        actorRosterInitialized = false;
         loggedActorIds.clear();
         pendingActorNameLogs.clear();
         gameApi.clearObservedActors();
-        renderSnapshot.store(std::make_shared<const RenderSnapshot>(),
-                             std::memory_order_release);
+        std::atomic_store_explicit(&renderSnapshot,
+            std::make_shared<const RenderSnapshot>(), std::memory_order_release);
         log("world actor source ready; retained hitboxes cleared for new world");
     }
 
@@ -428,11 +509,21 @@ void refreshFrameSnapshot() {
         return;
     }
 
+    // Present/Execute can run many times per game tick. Full native EnTT
+    // enumeration belongs on a bounded cadence, not on every GPU frame.
+    // Positions and bounds are still sampled each frame from this handle cache
+    // so the visible boxes remain smooth.
+    const auto now = Clock::now();
+    if (!actorRosterInitialized || now - actorRosterUpdated >= std::chrono::milliseconds(250)) {
+        actorRoster = gameApi.actors(world);
+        actorRosterUpdated = now;
+        actorRosterInitialized = true;
+    }
+
     const float range2 = config->nearbyDistance * config->nearbyDistance;
     std::unordered_set<std::uintptr_t> seen;
-    auto actors = gameApi.actors(world);
+    const auto& actors = actorRoster;
     seen.reserve(actors.size());
-    const auto now = Clock::now();
     for (const auto& actor : actors) {
         const auto position = actor.getPosition();
         if (!position || distanceSquared(*position, *cameraPosition) > range2) continue;
@@ -482,7 +573,9 @@ void refreshFrameSnapshot() {
     snapshot->cameraPosition = *cameraPosition;
     snapshot->cameraRotation = *cameraRotation;
     snapshot->fovDegrees = currentFov.load(std::memory_order_acquire);
-    renderSnapshot.store(std::move(snapshot), std::memory_order_release);
+    std::shared_ptr<const RenderSnapshot> immutableSnapshot = std::move(snapshot);
+    std::atomic_store_explicit(&renderSnapshot, std::move(immutableSnapshot),
+                               std::memory_order_release);
 }
 
 std::optional<ImVec2> project(const bedrock::Vec3& point, const RenderSnapshot& view,
@@ -508,7 +601,7 @@ std::optional<ImVec2> project(const bedrock::Vec3& point, const RenderSnapshot& 
 }
 
 void drawBoxes(void*) {
-    const auto config = liveConfig.load(std::memory_order_acquire);
+    const auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
     if (!config->enabled) return;
     try {
         refreshFrameSnapshot();
@@ -517,7 +610,7 @@ void drawBoxes(void*) {
         if (!loggedFailure.exchange(true, std::memory_order_relaxed))
             log("frame Actor refresh failed; retaining previous render snapshot");
     }
-    const auto snapshot = renderSnapshot.load(std::memory_order_acquire);
+    const auto snapshot = std::atomic_load_explicit(&renderSnapshot, std::memory_order_acquire);
     if (!snapshot || snapshot->boxes.empty()) return;
     const ImVec2 viewport = ImGui::GetIO().DisplaySize;
     auto* draw = ImGui::GetBackgroundDrawList();

@@ -74,7 +74,7 @@
     "schema": 1,
     "pointer_size": 8,
     "status": "candidate",
-    "evidence": "ActorOwnerComponent, AABBShapeComponent, StateVectorComponent and ActorRotationComponent layouts cross-referenced against the attached Solstice 1.21.111 SDK declarations; hashes include bare-name and MSVC struct/class-name variants; current-build runtime validation remains required",
+    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Registry/storage ABI and actor-owner pointer mapping remain runtime candidates.",
     "actor_context": {
       "actor_offset": "0x8",
       "registry_offset": "0x8",
@@ -82,23 +82,29 @@
     },
     "actor_owner": {
       "component_hash": "0x85B93800",
-      "component_hash_alternate": "0x132A5818",
+      "component_hash_alternate": "0x0",
       "actor_pointer_offset": "0x0"
+    },
+    "actor_type": {
+      "component_hash": "0x4F6BA419"
+    },
+    "runtime_id": {
+      "component_hash": "0xFC0DBBB5"
     },
     "aabb_shape": {
       "component_hash": "0xBAC1B3CF",
-      "component_hash_alternate": "0x1B10C9F2",
+      "component_hash_alternate": "0x0",
       "minimum_offset": "0x0",
       "maximum_offset": "0xC"
     },
     "state_vector": {
       "component_hash": "0x1B5D5238",
-      "component_hash_alternate": "0x0EC93C91",
+      "component_hash_alternate": "0x0",
       "position_offset": "0x0"
     },
     "actor_rotation": {
       "component_hash": "0x75DF36B7",
-      "component_hash_alternate": "0xDC1E21CE",
+      "component_hash_alternate": "0x0",
       "pitch_offset": "0x0",
       "yaw_offset": "0x4"
     }

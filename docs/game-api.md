@@ -93,6 +93,18 @@ tags, including the local player when its `GameAccess` adapter supplies one.
 It does not discover new Actors; new handles still come from View/getter observations. Callbacks remain
 synchronous on the emitting game/render/input thread; keep them short.
 
+For a validated `LevelRendererCamera::render` adapter, call
+`publishRenderViewActors(viewRenderObject, frame, actorHandles)` once after it
+has resolved the Actor handles for that render pass. `cachedRenderViewActors()`
+returns an immutable snapshot replaced on every pass, and
+`Event.Enum.RenderViewActor.then()` receives each unique candidate. This is a
+separate visible-render/culling source; it is intentionally not merged into
+`GameApi::actors()` and must not be presented as a complete world roster. The
+SDK does not yet install this native hook automatically: the 1.26.52.3
+`LevelRendererCamera::render` entry point and the mapping from its
+`ViewRenderObject` data to live Actor pointers still need exact-build
+verification. Never pass render-object addresses as Actor handles.
+
 An adapter may additionally provide `GameAccess::actorHandles(world)` from a
 version-specific native registry source. `GameApi::actors(world)` merges and
 deduplicates those live handles with observed View/name-tag handles.

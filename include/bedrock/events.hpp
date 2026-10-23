@@ -90,6 +90,13 @@ struct ViewNameTagEvent {
     void* actor{};
     std::string_view nameTag; // valid only for the duration of dispatch
 };
+// An Actor observed in the current LevelRendererCamera render/culling pass.
+// This is a visible-render candidate, not a complete world Actor list.
+struct RenderViewActorEvent {
+    const void* viewObject{}; // borrowed; valid only during dispatch
+    void* actor{};            // borrowed; validate before retaining
+    std::uint64_t frame{};
+};
 
 template <class Event>
 class EventChannel {

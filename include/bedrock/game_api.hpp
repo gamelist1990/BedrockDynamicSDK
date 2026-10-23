@@ -15,6 +15,7 @@
 #include <mutex>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -185,6 +186,7 @@ struct GameEventRegistry {
         EventChannel<MouseEvent> Mouse;
         EventChannel<ActorNameTagEvent> ActorNameTag;
         EventChannel<ViewNameTagEvent> ViewNameTag;
+        EventChannel<RenderViewActorEvent> RenderViewActor;
         EventChannel<UpdateEvent> Update;
         EventChannel<LevelTickEvent> LevelTick;
         EventChannel<GameplayEvent> Gameplay;
@@ -323,6 +325,15 @@ struct CachedActorNameTag {
     std::uint64_t sequence{};
 };
 
+// Immutable snapshot of the Actors submitted by one render/culling pass.
+// The handles are borrowed from Minecraft; consumers should copy values they
+// need beyond the current frame and re-check Actor::isValid() before access.
+struct RenderViewSnapshot {
+    const void* viewObject{};
+    std::uint64_t frame{};
+    std::shared_ptr<const std::vector<Actor>> actors;
+};
+
 class GameApi {
 public:
     GameApi() noexcept : access_(&emptyGameAccess()) {}
@@ -354,6 +365,9 @@ public:
         viewSequences_.clear();
         viewActors_.clear();
         actorGetterHandles_.clear();
+        renderViewObject_ = nullptr;
+        renderViewFrame_ = 0;
+        cachedRenderViewActors_.reset();
         invalidateActorSnapshots();
     }
     void observeActorNameTag(void* actor, std::string_view nameTag) {
@@ -378,6 +392,39 @@ public:
         if (viewChanged) Event.Enum.ViewNameTag.emit(ViewNameTagEvent{actor, nameTag});
         if (actorChanged) Event.Enum.ActorNameTag.emit(ActorNameTagEvent{
             actor, nameTag, NameTagSource::View});
+    }
+    // Called by a build-specific LevelRendererCamera/ViewRenderObject adapter
+    // after it has safely resolved the actual Actor handles for this render
+    // pass. Replaces (rather than accumulates) the previous frame's list, so
+    // this source stays bounded and means "render-visible candidates only".
+    // ViewRenderObject is opaque here on purpose: its layout and actor-pointer
+    // relationship must be verified by the version-specific adapter.
+    void publishRenderViewActors(const void* viewObject, std::uint64_t frame,
+                                 std::span<void* const> actors) {
+        if (!viewObject) return;
+        auto snapshot = std::make_shared<std::vector<Actor>>();
+        snapshot->reserve(actors.size());
+        std::unordered_set<void*> seen;
+        seen.reserve(actors.size());
+        for (auto* handle : actors) {
+            if (validActor(handle) && seen.insert(handle).second)
+                snapshot->emplace_back(*this, handle);
+        }
+        {
+            std::lock_guard lock(mutex_);
+            renderViewObject_ = viewObject;
+            renderViewFrame_ = frame;
+            cachedRenderViewActors_ = snapshot;
+        }
+        for (const auto& actor : *snapshot) {
+            try { Event.Enum.RenderViewActor.emit(
+                RenderViewActorEvent{viewObject, actor.handle_, frame}); }
+            catch (...) { /* a feature callback must not unwind into Minecraft */ }
+        }
+    }
+    [[nodiscard]] RenderViewSnapshot cachedRenderViewActors() const {
+        std::lock_guard lock(mutex_);
+        return {renderViewObject_, renderViewFrame_, cachedRenderViewActors_};
     }
     [[nodiscard]] bool dispatchKey(KeyEvent& event) noexcept {
         try { Event.Enum.Keyboard.emit(event); }
@@ -637,6 +684,9 @@ private:
     std::uint64_t observationSequence_{};
     std::unordered_set<void*> viewActors_;
     std::unordered_set<void*> actorGetterHandles_;
+    const void* renderViewObject_{};
+    std::uint64_t renderViewFrame_{};
+    std::shared_ptr<const std::vector<Actor>> cachedRenderViewActors_;
     mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedActorNameTags_;
     mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedViewNameTags_;
     mutable std::shared_ptr<const std::vector<Actor>> cachedNameTagActors_;

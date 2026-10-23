@@ -22,7 +22,8 @@ std::size_t number(const nlohmann::json& parent, const char* key) {
 bool NativeActorLayout::valid() const noexcept {
     return actorEntityContextOffset <= 0x10000 && contextRegistryOffset <= 0x10000 &&
            contextEntityIdOffset <= 0x10000 && actorOwnerComponentHash != 0 &&
-           actorOwnerPointerOffset <= 0x10000 && aabbShapeComponentHash != 0 &&
+           actorOwnerPointerOffset <= 0x10000 && actorTypeComponentHash != 0 &&
+           runtimeIdComponentHash != 0 && aabbShapeComponentHash != 0 &&
            aabbMinimumOffset <= 0x10000 && aabbMaximumOffset <= 0x10000 &&
            stateVectorComponentHash != 0 && statePositionOffset <= 0x10000 &&
            actorRotationComponentHash != 0 && rotationPitchOffset <= 0x10000 &&
@@ -49,6 +50,11 @@ bool parseNativeActorLayout(std::string_view source, NativeActorLayout& output,
         value.actorOwnerComponentHashAlternate = static_cast<std::uint32_t>(
             number(owner, "component_hash_alternate"));
         value.actorOwnerPointerOffset = number(owner, "actor_pointer_offset");
+
+        value.actorTypeComponentHash = static_cast<std::uint32_t>(
+            number(data.at("actor_type"), "component_hash"));
+        value.runtimeIdComponentHash = static_cast<std::uint32_t>(
+            number(data.at("runtime_id"), "component_hash"));
 
         const auto& aabb = data.at("aabb_shape");
         value.aabbShapeComponentHash = static_cast<std::uint32_t>(number(aabb, "component_hash"));
