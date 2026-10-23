@@ -118,14 +118,13 @@ RenderDragon material was not decoded in this investigation.
 
 ## Complete Actor coverage and optional Player filter
 
-The default `show_all_actors=true` removes the old 32-block distance exclusion.
+`show_all_actors=true` removes distance exclusion; the default now limits it to 100 blocks.
 `players_only=false` keeps all valid ActorOwner/RuntimeID/AABB entries, including
 entries lacking ActorType. The former ActorType-presence filter and 64-block AABB
 extent cutoff were removed; owner/entity generation, finite coordinates and
 positive-volume bounds remain required. Native pool size sanity checking remains
 16384 entries. Each worker's bounded cache holds up to 16384 records to accommodate
-that entire population even if RuntimeIDs map to one shard. Confirmed stationary Player records now use a separate map and are not expired
-or evicted with the live cache (stationary semantics below).
+that entire population even if RuntimeIDs map to one shard. Confirmed stationary Player records now use a separate map and are not evicted with the live cache; they expire after the configured time (stationary semantics below).
 
 Rendering splits all snapshot boxes into 512-box mesh submissions for each color,
 instead of selecting only the first 512. The two worker inputs are fixed eight-slot
@@ -158,7 +157,7 @@ With retain_last_position enabled, fresh Player observations must stay within
 seconds. The maximum gap between observations is one second. Time passing without
 another sample cannot confirm a stop. Moving, missing observations, changing
 Player classification or enabling retention restarts confirmation. Non-Players
-never enter the permanent map.
+never enter the retained map.
 
 Live records retain their existing interpolation and adaptive freshness. A fresh
 live record takes visual precedence over the saved marker for the same RuntimeID,
@@ -169,15 +168,23 @@ Confirmed boxes disable interpolation and use an explicit retained flag for colo
 selection. Render-time freshness checks also reject stale live snapshots when
 native capture fails and workers cannot publish an updated view.
 
-The saved map has no time expiry and is separate from the 16384-entry live cache.
-retention_minutes is a legacy ignored setting. World epochs clear both maps, and
-the capture side also detects replacement of the local Actor registry when the
-Level address stays the same. Turning retention off clears confirmed markers and
-candidate timers. One record per RuntimeID avoids a movement trail, but the saved
-map grows with distinct confirmed Player RuntimeIDs until reset.
+The saved map is separate from the 16384-entry live cache. retention_minutes
+is active again: default 10, clamped to 1..60 minutes. Expiry is measured from the
+last confirmed stop, including for markers outside display range. Both workers
+and rendering reject expired saved boxes, even if native capture stalls. A live
+Player whose saved marker expires needs another two seconds of observed rest to
+be saved again. World epochs clear both maps; replacement of the local Actor
+registry also resets them when the Level address stays the same. Disabling
+retention clears markers and candidate timers.
+
+The default range is now 100 blocks (show_all_actors=false); nearby_distance
+accepts 4..128. Explicit existing configuration is honored, including older
+32-block ranges and one-minute retention. show_all_actors=true bypasses distance
+filtering. Only loaded Actors with valid captures are available.
 
 Portable tests cover the two-second boundary, live movement/interpolation after
-confirmation, replacement by the next stop, live/saved deduplication, 24-hour
-survival, live-cache eviction, observation gaps, slow movement, position jitter,
-non-Players, feature toggles, world epochs, and render-time stale-live rejection.
+confirmation, replacement by the next stop, live/saved deduplication, ten-minute
+expiry and refresh, expiry outside range, the 100-block boundary, live-cache
+eviction, observation gaps, slow movement, position jitter, non-Players, feature
+toggles, world epochs, and render-time stale-live/expired-saved rejection.
 These establish copied-data behavior, not live Minecraft verification.

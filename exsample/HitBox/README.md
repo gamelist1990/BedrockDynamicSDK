@@ -2,7 +2,7 @@
 
 BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は `BedrockHitBox.dll` 単体です。
 
-- 既定では取得できた全Actorを表示。PlayerもNameTag表示や距離に依存せずRuntimeIDで追跡
+- 既定では100ブロック以内の取得できたActorを表示。NameTagに依存せずRuntimeIDで追跡
 - `players_only=true` でPlayerのみに切替可能。ActorOwner / RuntimeID / AABBShapeを照合してAABBを取得
 - SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
 - Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
@@ -11,7 +11,7 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 - 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
 - ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
 - ワーカーにはRuntimeID・AABB・視点などのコピーだけを渡し、ActorやEnTTのポインタを参照させない
-- `retain_last_position=true` で、2秒静止を確認したPlayerの最後の位置をワールド変更まで保存
+- `retain_last_position=true` で、2秒静止を確認したPlayerの最後の位置を既定10分保存。ワールド変更時は全リセット
 - Native読み取りの例外や不正値を検知した対象はスキップ
 
 設定ファイル:
@@ -28,10 +28,11 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 {
   "enabled": true,
   "debug": false,
-  "show_all_actors": true,
+  "show_all_actors": false,
   "players_only": false,
-  "nearby_distance": 32.0,
+  "nearby_distance": 100.0,
   "retain_last_position": false,
+  "retention_minutes": 10,
   "line_thickness": 1.5,
   "live_color": "#4CE684FF",
   "retained_color": "#FFAE42FF"
@@ -42,9 +43,10 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 32bit値が対象版のPlayer ID（319）と一致するかで判定します。NameTagが非表示でも名前の取得は不要です。
 Playerのみの場合は、Playerと分類できないActorを除外し、そのActorのRuntimeID/AABB読み取りも省きます。
 
-`show_all_actors=true`（既定）では、読み取れたActorを32ブロックなどの距離で除外しません。
+既定は `show_all_actors=false`、`nearby_distance=100.0` で100ブロック以内を表示します。
+距離は4〜128ブロックで設定できます。`show_all_actors=true` では距離制限を解除します。
 このモードでは距離計算用のローカル位置コンポーネントも読みません。
-既存configにこれらのキーがなくても既定値が適用されます。距離で絞りたい場合のみ
+既存configの値は維持します。以前の32ブロック設定を広げる場合は
 `show_all_actors=false` にし、`nearby_distance` を使います。ゲームに未ロードのActorや、RuntimeID・
 所有者照合・有効な正の体積のAABBを取得できないActorは描画できません。全表示で距離や512枠による
 打切りは行いませんが、表示対象が増えれば描画量も増えます。
@@ -67,7 +69,7 @@ Actorが160件を超える場合や読み取りが遅い場合は1周が5tickよ
 保持し、次のNative取得を延期します。受け渡し済みワーカーへの重複送信と未処理データの上書きを防ぎます。距離判定・期限切れライブ情報の削除・静止確認・8頂点の生成・描画用の
 スナップショット作成・古い大きなスナップショットの破棄をワーカーで処理します。
 ワールドの世代が異なる入力・描画結果は拒否します。ライブ情報は各ワーカー最大16384件で、上限到達時は
-最も古いものを削除します。確定した静止記録は別のマップに保存し、このライブ上限や時間では削除しません。
+最も古いものを削除します。確定した静止記録は別のマップに保存し、このライブ上限では削除しませんが保存期限で削除します。
 距離制限をOFFにしている場合は、保存枠も距離で除外しません。
 
 読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
@@ -83,10 +85,13 @@ AABBの最小・最大座標が最初の観測位置からそれぞれ5cm以内�
 そのPlayerを取得できなくなった場合は、ライブ枠の有効期間が終わると、最後に確定した静止位置だけを保存色で表示します。
 未確定のPlayerやPlayer以外のActorは、取得が止まっても保存枠に変換しません。
 
-確定記録はワールド（LevelまたはローカルActorのregistry）が変わるまで維持します。旧設定の
-`retention_minutes` は読み込まず、`1` が残っていても1分では消しません。`retain_last_position=false` へ切り替えると
-記録と静止確認を消します。記録は各RuntimeIDに1件で、同一ワールド中に確認したPlayerが増えると保存件数も増えます。
-ライブ枠の鮮度と保存枠は明確に分け、描画時も期限切れのライブ枠を除外します。
+確定記録は最後の静止確認から `retention_minutes` 分で削除します（既定10分、1〜60分）。
+次の場所で2秒静止すると上書きと同時に期限を更新します。期限後も観測できているPlayerは、
+新たに2秒の静止確認を経て再保存します。距離外の保存位置も期限で削除します。
+ワールド（LevelまたはローカルActorのregistry）が変わった場合は、期限を待たず全記録をリセットします。
+`retain_last_position=false` への切り替えも記録と静止確認を消します。
+旧configの `retention_minutes: 1` は1分として有効なので、10分にするには `10` に変更してください。
+ライブ枠と保存枠の双方を描画時にも期限確認し、取得停止中も期限切れの枠を出しません。
 
 描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
 ゲームのLineListへ渡します。全対象を生存／保持色にまとめ、1回のmesh submissionを最大512枠に分割します。512枠を超えても続きを描画します。

@@ -93,9 +93,10 @@ inline std::array<bedrock::Vec3, 24> worldLineVertices(
     return result;
 }
 inline bool visibleInFrame(const BoxRecord& box, Clock::time_point now,
-    std::chrono::milliseconds lifetime, bool retain, bool playersOnly) noexcept {
+    std::chrono::milliseconds lifetime, bool retain, bool playersOnly,
+    std::chrono::milliseconds retainedLifetime=std::chrono::minutes(10)) noexcept {
     if (playersOnly && !box.isPlayer) return false;
-    if (box.retained) return retain && box.isPlayer;
+    if (box.retained) return retain && box.isPlayer && now-box.seenAt<retainedLifetime;
     return now-box.seenAt<=lifetime;
 }
 // Worker-owned state. No native handles, component pointers or game calls.
@@ -160,15 +161,29 @@ public:
             frozen.retained=true;
             frozen.blendFrom=frozen.bounds;
             frozen.blendDuration=std::chrono::milliseconds(0);
-            // One last confirmed stop per RuntimeID; no trail and no time expiry.
+            // One last confirmed stop per RuntimeID; each new stop restarts its expiry.
             retained_.insert_or_assign(sample.runtimeId,std::move(frozen));
             entry.committed=true;
         }
         records_.insert_or_assign(sample.runtimeId,std::move(entry));
     }
     std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,
-        float range, bool retain, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false) {
+        float range, bool retain, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false,
+        std::chrono::milliseconds retainedLifetime=std::chrono::minutes(10)) {
         configureRetention(retain);
+        for (auto it=retained_.begin();it!=retained_.end();) {
+            if (now-it->second.seenAt>=retainedLifetime) {
+                const auto live=records_.find(it->first);
+                if (live!=records_.end()) {
+                    // Require another two seconds of actual observations before
+                    // saving a still-present Player again after expiry.
+                    live->second.committed=false;
+                    live->second.stationarySince=now;
+                    live->second.stationaryAnchor=live->second.box.bounds;
+                }
+                it=retained_.erase(it);
+            } else ++it;
+        }
         std::vector<BoxRecord> result;
         result.reserve(records_.size()+retained_.size());
         const auto permitted=[&](const BoxRecord& box) {

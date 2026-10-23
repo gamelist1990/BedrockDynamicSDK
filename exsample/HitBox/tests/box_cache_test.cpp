@@ -167,7 +167,8 @@ int main() {
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].blendDuration.count()==0);
         const auto frozen=boxes[0];
         assert(!hitbox::visibleInFrame(live,now+4s,1500ms,true,true));
-        assert(hitbox::visibleInFrame(frozen,now+24h,1500ms,true,true));
+        assert(hitbox::visibleInFrame(frozen,now+10min,1500ms,true,true));
+        assert(!hitbox::visibleInFrame(frozen,now+2s+10min,1500ms,true,true));
         assert(!hitbox::visibleInFrame(frozen,now+24h,1500ms,false,true));
         // Reacquire and move: current display updates immediately, no old trail.
         player.bounds={{5,0,0},{6,2,1}}; player.seenAt=now+5s;
@@ -180,17 +181,60 @@ int main() {
             player.seenAt=now+5s+250ms*i; stopped.observe(player,camera,32,true);
         }
         assert(stopped.retainedSize()==1);
-        // Live cache pressure must never evict a confirmed world-lifetime marker.
+        // Live cache pressure must never evict a confirmed marker before expiry.
         for(std::uint64_t id=1;id<=hitbox::BoxCache::maximumRecords+1;++id) {
             auto mob=sample; mob.runtimeId=id; mob.seenAt=now+10s+std::chrono::milliseconds(id);
             stopped.observe(mob,camera,32,true);
         }
         assert(stopped.retainedSize()==1);
-        boxes=stopped.visible(now+24h,camera,32,true,1500ms);
+        boxes=stopped.visible(now+10min,camera,32,true,1500ms);
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==5);
         assert(stopped.beginWorld(1) && stopped.retainedSize()==1);
+        assert(stopped.visible(now+7s+10min,camera,32,true,1500ms).empty());
+        assert(stopped.retainedSize()==0);
+        // Reconfirm for a world reset before the next expiry.
+        for(int i=0;i<=8;++i) {
+            player.seenAt=now+11min+250ms*i; stopped.observe(player,camera,32,true);
+        }
+        assert(stopped.retainedSize()==1);
         assert(!stopped.beginWorld(0) && stopped.retainedSize()==1);
         assert(stopped.beginWorld(2) && stopped.retainedSize()==0 && stopped.size()==0);
+    }
+    {
+        hitbox::BoxCache ranged;
+        ranged.beginWorld(1);
+        auto edge=sample; edge.isPlayer=true;
+        edge.bounds={{99.5f,-0.5f,-0.5f},{100.5f,0.5f,0.5f}};
+        for(int i=0;i<=8;++i) {
+            edge.seenAt=now+250ms*i; ranged.observe(edge,camera,100,true);
+        }
+        assert(ranged.visible(now+2s,camera,100,true,1500ms).size()==1);
+        assert(ranged.visible(now+4s,camera,100,true,1500ms).size()==1);
+        assert(ranged.visible(now+4s,camera,99,true,1500ms).empty());
+        // Expire saved markers even while outside the display range.
+        assert(ranged.visible(now+2s+10min,camera,99,true,1500ms).empty());
+        assert(ranged.retainedSize()==0);
+        edge.bounds={{100,-0.5f,-0.5f},{101,0.5f,0.5f}}; edge.seenAt=now+11min;
+        ranged.observe(edge,camera,100,true);
+        assert(ranged.size()==0);
+    }
+    {
+        hitbox::BoxCache renewed;
+        renewed.beginWorld(1);
+        auto player=sample; player.isPlayer=true;
+        // Short configured lifetime exercises re-confirmation while still live.
+        for(int i=0;i<=12;++i) {
+            player.seenAt=now+250ms*i;
+            renewed.observe(player,camera,100,true);
+            renewed.visible(player.seenAt,camera,100,true,1500ms,false,true,1s);
+        }
+        assert(renewed.retainedSize()==0); // First stop expired at t=3s.
+        for(int i=13;i<20;++i) {
+            player.seenAt=now+250ms*i; renewed.observe(player,camera,100,true);
+            assert(renewed.retainedSize()==0);
+        }
+        player.seenAt=now+5s; renewed.observe(player,camera,100,true);
+        assert(renewed.retainedSize()==1);
     }
     {
         hitbox::BoxCache missing, moving, npc, jitter;

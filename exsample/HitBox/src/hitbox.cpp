@@ -77,10 +77,11 @@ constexpr std::uint32_t packColor(unsigned r,unsigned g,unsigned b,unsigned a) {
 struct Config {
     bool enabled = true;
     bool debug = false;
-    bool showAllActors = true;
+    bool showAllActors = false;
     bool playersOnly = false;
     bool retainLastPosition = false;
-    float nearbyDistance = 32.0f;
+    float nearbyDistance = 100.0f;
+    int retentionMinutes = 10;
     float lineThickness = 1.5f;
     std::uint32_t liveColor = packColor(76, 230, 132, 255);
     std::uint32_t retainedColor = packColor(255, 174, 66, 255);
@@ -214,6 +215,7 @@ nlohmann::json configJson(const Config& config) {
         {"players_only", config.playersOnly},
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
+        {"retention_minutes", config.retentionMinutes},
         {"line_thickness", config.lineThickness},
         {"live_color", colorString(config.liveColor)},
         {"retained_color", colorString(config.retainedColor)}};
@@ -227,6 +229,7 @@ Config parseConfig(const nlohmann::json& root) {
     config.playersOnly = root.value("players_only", config.playersOnly);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
+    config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1, 60);
     config.lineThickness = std::clamp(root.value("line_thickness", config.lineThickness), 0.5f, 5.0f);
     const auto parseColor = [&](const char* key, std::uint32_t fallback) {
         const auto it = root.find(key);
@@ -604,7 +607,8 @@ void processingLoop(std::size_t shard) noexcept {
             snapshot->liveLifetime = batch->liveLifetime;
             snapshot->boxes = cache.visible(Clock::now(), batch->camera.cameraPosition,
                 config.nearbyDistance, config.retainLastPosition,
-                batch->liveLifetime, config.showAllActors, config.playersOnly);
+                batch->liveLifetime, config.showAllActors, config.playersOnly,
+                std::chrono::minutes(config.retentionMinutes));
             if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
             const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
             if (previous) retired.push_back(previous);
@@ -840,7 +844,8 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     if(!hitbox::visibleInFrame(range.boxes[i],input->now,range.liveLifetime,
-                        input->config.retainLastPosition,input->config.playersOnly)) continue;
+                        input->config.retainLastPosition,input->config.playersOnly,
+                        std::chrono::minutes(input->config.retentionMinutes))) continue;
                     const bool retained=range.boxes[i].retained;
                     if (retained==(pass==1)) ++count;
                 }
@@ -854,7 +859,8 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     const auto& box=range.boxes[i];
                     if(!hitbox::visibleInFrame(box,input->now,range.liveLifetime,
-                        input->config.retainLastPosition,input->config.playersOnly)) continue;
+                        input->config.retainLastPosition,input->config.playersOnly,
+                        std::chrono::minutes(input->config.retentionMinutes))) continue;
                     const bool retained=box.retained;
                     if (retained!=(pass==1)) continue;
                     if(!inMesh) {
