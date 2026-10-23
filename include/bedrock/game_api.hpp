@@ -8,8 +8,11 @@
 #include <bedrock/native_keyboard.hpp>
 
 #include <algorithm>
+#include <any>
+#include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -353,8 +356,13 @@ public:
     // observeActorNameTag. Both sources feed Actor::forActor and World::getActors.
     void observeViewActor(void* actor) {
         if (!validActor(actor)) return;
-        std::lock_guard lock(mutex_);
-        if (viewActors_.insert(actor).second) invalidateActorSnapshots();
+        bool inserted = false;
+        {
+            std::lock_guard lock(mutex_);
+            inserted = viewActors_.insert(actor).second;
+            if (inserted) invalidateActorSnapshots();
+        }
+        if (inserted) invalidateWorldActorLists();
     }
     void clearObservedActors() {
         std::lock_guard lock(mutex_);
@@ -369,10 +377,14 @@ public:
         renderViewFrame_ = 0;
         cachedRenderViewActors_.reset();
         invalidateActorSnapshots();
+        invalidateActorReadCaches();
     }
     void observeActorNameTag(void* actor, std::string_view nameTag) {
         if (!validActor(actor) || nameTag.empty()) return;
+        storeActorRead(actor, ActorReadSlot::NameTag,
+                       std::optional<std::string>{nameTag});
         if (!rememberActor(actor, nameTag)) return;
+        invalidateWorldActorLists();
         Event.Enum.ActorNameTag.emit(ActorNameTagEvent{actor, nameTag,
                                                        NameTagSource::ActorGetter});
     }
@@ -389,6 +401,7 @@ public:
         }
         const bool actorChanged = rememberActor(actor, nameTag, NameTagSource::View,
                                                 viewChanged);
+        if (actorChanged) invalidateWorldActorLists();
         if (viewChanged) Event.Enum.ViewNameTag.emit(ViewNameTagEvent{actor, nameTag});
         if (actorChanged) Event.Enum.ActorNameTag.emit(ActorNameTagEvent{
             actor, nameTag, NameTagSource::View});
@@ -432,6 +445,7 @@ public:
         return !event.cancelled();
     }
     void dispatchLevelTick(void* level, std::uint64_t sequence) noexcept {
+        invalidateActorReadCaches();
         try { Event.Enum.LevelTick.emit(LevelTickEvent{level, sequence}); }
         catch (...) { }
     }
@@ -593,6 +607,20 @@ public:
     }
 
     [[nodiscard]] std::vector<Actor> actors(void* world = nullptr) {
+        if (!world && access_) {
+            if (auto* local = access_->localPlayer())
+                world = cachedActorRead<void*>(local, ActorReadSlot::World,
+                    [&] { return access_->worldOf(local); });
+        }
+        if (world) {
+            return cachedWorldRead<std::vector<Actor>>(world, WorldReadSlot::Actors,
+                [&] { return actorsUncached(world); });
+        }
+        return actorsUncached(nullptr);
+    }
+
+private:
+    [[nodiscard]] std::vector<Actor> actorsUncached(void* world) {
         const auto view = cachedActors(NameTagSource::View);
         const auto named = cachedActors(NameTagSource::ActorGetter);
         std::unordered_set<void*> handles;
@@ -623,8 +651,141 @@ public:
         }
         return result;
     }
+    enum class ActorReadSlot : std::size_t {
+        Valid, World, NameTag, Bounds, Position, Rotation, EntityId,
+        MainHand, Offhand, Head, Chest, Legs, Feet, Count
+    };
+    enum class WorldReadSlot : std::size_t { Actors, PlayerNames, Count };
+    template <std::size_t N>
+    struct ReadCacheEntry {
+        std::uint64_t epoch{};
+        std::chrono::steady_clock::time_point expires{};
+        std::array<std::any, N> values{};
+        std::array<bool, N> loaded{};
+    };
 
-private:
+    template <class T, class Reader>
+    T cachedActorRead(void* actor, ActorReadSlot slot, Reader&& reader) const {
+        constexpr auto ttl = std::chrono::milliseconds(16);
+        const auto index = static_cast<std::size_t>(slot);
+        const auto epoch = actorReadEpoch_.load(std::memory_order_acquire);
+        const auto now = std::chrono::steady_clock::now();
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            const auto it = actorReadCache_.find(actor);
+            if (it != actorReadCache_.end() && it->second.epoch == epoch &&
+                now < it->second.expires && it->second.loaded[index])
+                return std::any_cast<T>(it->second.values[index]);
+        } catch (...) {
+            // Cache failures must not prevent a direct adapter read.
+        }
+
+        T value = std::forward<Reader>(reader)();
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            if (actorReadEpoch_.load(std::memory_order_acquire) == epoch) {
+                if (actorReadCache_.size() >= 4096 && !actorReadCache_.contains(actor))
+                    actorReadCache_.clear();
+                auto& entry = actorReadCache_[actor];
+                const auto storedAt = std::chrono::steady_clock::now();
+                if (entry.epoch != epoch || storedAt >= entry.expires) {
+                    entry = {};
+                    entry.epoch = epoch;
+                    entry.expires = storedAt + ttl;
+                }
+                entry.values[index] = value;
+                entry.loaded[index] = true;
+            }
+        } catch (...) {
+            // The returned native snapshot remains usable if caching fails.
+        }
+        return value;
+    }
+
+    template <class T>
+    void storeActorRead(void* actor, ActorReadSlot slot, T value) const {
+        constexpr auto ttl = std::chrono::milliseconds(16);
+        if (!actor) return;
+        const auto epoch = actorReadEpoch_.load(std::memory_order_acquire);
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            if (actorReadEpoch_.load(std::memory_order_acquire) != epoch) return;
+            if (actorReadCache_.size() >= 4096 && !actorReadCache_.contains(actor))
+                actorReadCache_.clear();
+            auto& entry = actorReadCache_[actor];
+            const auto storedAt = std::chrono::steady_clock::now();
+            if (entry.epoch != epoch || storedAt >= entry.expires) {
+                entry = {};
+                entry.epoch = epoch;
+                entry.expires = storedAt + ttl;
+            }
+            const auto index = static_cast<std::size_t>(slot);
+            entry.values[index] = std::move(value);
+            entry.loaded[index] = true;
+        } catch (...) {
+            // Observation should remain successful when the cache is unavailable.
+        }
+    }
+
+    template <class T, class Reader>
+    T cachedWorldRead(void* world, WorldReadSlot slot, Reader&& reader) const {
+        constexpr auto ttl = std::chrono::milliseconds(16);
+        const auto index = static_cast<std::size_t>(slot);
+        const auto epoch = actorReadEpoch_.load(std::memory_order_acquire);
+        const auto now = std::chrono::steady_clock::now();
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            const auto it = worldReadCache_.find(world);
+            if (it != worldReadCache_.end() && it->second.epoch == epoch &&
+                now < it->second.expires && it->second.loaded[index])
+                return std::any_cast<T>(it->second.values[index]);
+        } catch (...) {
+            // Cache failures must not prevent a direct adapter read.
+        }
+
+        T value = std::forward<Reader>(reader)();
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            if (actorReadEpoch_.load(std::memory_order_acquire) == epoch) {
+                if (worldReadCache_.size() >= 256 && !worldReadCache_.contains(world))
+                    worldReadCache_.clear();
+                auto& entry = worldReadCache_[world];
+                const auto storedAt = std::chrono::steady_clock::now();
+                if (entry.epoch != epoch || storedAt >= entry.expires) {
+                    entry = {};
+                    entry.epoch = epoch;
+                    entry.expires = storedAt + ttl;
+                }
+                entry.values[index] = value;
+                entry.loaded[index] = true;
+            }
+        } catch (...) {
+            // The returned native snapshot remains usable if caching fails.
+        }
+        return value;
+    }
+
+    void invalidateActorReadCaches() const noexcept {
+        actorReadEpoch_.fetch_add(1, std::memory_order_acq_rel);
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            actorReadCache_.clear();
+            worldReadCache_.clear();
+        } catch (...) { }
+    }
+
+    void invalidateWorldActorLists() const noexcept {
+        try {
+            std::lock_guard lock(actorReadCacheMutex_);
+            constexpr auto index = static_cast<std::size_t>(WorldReadSlot::Actors);
+            for (auto& [world, entry] : worldReadCache_) {
+                (void)world;
+                entry.values[index].reset();
+                entry.loaded[index] = false;
+            }
+        } catch (...) { }
+    }
+
     void invalidateActorSnapshots() const {
         cachedViewNameTags_.reset();
         cachedActorNameTags_.reset();
@@ -656,7 +817,13 @@ private:
         return changed || sourceChanged;
     }
     [[nodiscard]] bool validActor(void* actor) const noexcept {
-        return access_ && actor && access_->isActorValid(actor);
+        if (!access_ || !actor) return false;
+        try {
+            return cachedActorRead<bool>(actor, ActorReadSlot::Valid,
+                [&] { return access_->isActorValid(actor); });
+        } catch (...) {
+            return access_->isActorValid(actor);
+        }
     }
     [[nodiscard]] std::optional<std::string> cachedNameTag(void* actor) const {
         std::lock_guard lock(mutex_);
@@ -691,6 +858,12 @@ private:
     mutable std::shared_ptr<const std::vector<CachedActorNameTag>> cachedViewNameTags_;
     mutable std::shared_ptr<const std::vector<Actor>> cachedNameTagActors_;
     mutable std::shared_ptr<const std::vector<Actor>> cachedViewActors_;
+    mutable std::mutex actorReadCacheMutex_;
+    mutable std::unordered_map<void*, ReadCacheEntry<
+        static_cast<std::size_t>(ActorReadSlot::Count)>> actorReadCache_;
+    mutable std::unordered_map<void*, ReadCacheEntry<
+        static_cast<std::size_t>(WorldReadSlot::Count)>> worldReadCache_;
+    mutable std::atomic<std::uint64_t> actorReadEpoch_{0};
     friend class Actor;
     friend class LocalPlayer;
     friend class World;
@@ -731,9 +904,12 @@ inline bool containsIgnoreCase(std::string_view haystack, std::string_view needl
 inline bool GameApi::playerMatch(void* actor, std::string_view plainTag,
                                  std::string* matched) const {
     if (!actor || plainTag.empty()) return false;
-    auto* world = access_->worldOf(actor);
+    auto* world = cachedActorRead<void*>(actor, ActorReadSlot::World,
+        [&] { return access_->worldOf(actor); });
     if (!world) return false;
-    const auto names = access_->playerListNames(world);
+    const auto names = cachedWorldRead<std::vector<std::string>>(
+        world, WorldReadSlot::PlayerNames,
+        [&] { return access_->playerListNames(world); });
     std::string best;
     for (const auto& rawName : names) {
         const auto name = detail::stripFormatting(rawName);
@@ -750,9 +926,10 @@ inline bool Actor::isValid() const noexcept {
 }
 inline std::string Actor::getNameTag() const {
     if (!isValid()) return {};
-    // Prefer live data so callers see a name/color change immediately; the
-    // cache is a fallback for adapters that only observe the getter hook.
-    if (auto tag = api_->access_->nameTag(handle_); tag && !tag->empty()) {
+    auto tag = api_->cachedActorRead<std::optional<std::string>>(
+        handle_, GameApi::ActorReadSlot::NameTag,
+        [&] { return api_->access_->nameTag(handle_); });
+    if (tag && !tag->empty()) {
         api_->observeActorNameTag(handle_, *tag);
         return *tag;
     }
@@ -776,24 +953,45 @@ inline ActorIdentity Actor::getIdentity() const {
 }
 inline std::optional<ActorBounds> Actor::getBounds() const {
     if (!isValid()) return std::nullopt;
-    auto bounds = api_->access_->actorBounds(handle_);
+    auto bounds = api_->cachedActorRead<std::optional<ActorBounds>>(
+        handle_, GameApi::ActorReadSlot::Bounds,
+        [&] { return api_->access_->actorBounds(handle_); });
     return bounds && bounds->valid() ? bounds : std::nullopt;
 }
 inline std::optional<Vec3> Actor::getPosition() const {
-    return isValid() ? api_->access_->actorPosition(handle_) : std::nullopt;
+    return isValid() ? api_->cachedActorRead<std::optional<Vec3>>(
+        handle_, GameApi::ActorReadSlot::Position,
+        [&] { return api_->access_->actorPosition(handle_); }) : std::nullopt;
 }
 inline std::optional<ActorRotation> Actor::getRotation() const {
-    return isValid() ? api_->access_->actorRotation(handle_) : std::nullopt;
+    return isValid() ? api_->cachedActorRead<std::optional<ActorRotation>>(
+        handle_, GameApi::ActorReadSlot::Rotation,
+        [&] { return api_->access_->actorRotation(handle_); }) : std::nullopt;
 }
 inline std::optional<std::uint32_t> Actor::getEntityId() const {
-    return isValid() ? api_->access_->actorEntityId(handle_) : std::nullopt;
+    return isValid() ? api_->cachedActorRead<std::optional<std::uint32_t>>(
+        handle_, GameApi::ActorReadSlot::EntityId,
+        [&] { return api_->access_->actorEntityId(handle_); }) : std::nullopt;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
     return getMainHand();
 }
 inline std::optional<ItemStack> Actor::getEquipment(EquipmentSlot slot) const {
     if (!isValid()) return std::nullopt;
-    auto item = api_->access_->equipmentItem(handle_, slot);
+    const auto cacheSlot = [&] {
+        switch (slot) {
+        case EquipmentSlot::MainHand: return GameApi::ActorReadSlot::MainHand;
+        case EquipmentSlot::Offhand: return GameApi::ActorReadSlot::Offhand;
+        case EquipmentSlot::Head: return GameApi::ActorReadSlot::Head;
+        case EquipmentSlot::Chest: return GameApi::ActorReadSlot::Chest;
+        case EquipmentSlot::Legs: return GameApi::ActorReadSlot::Legs;
+        case EquipmentSlot::Feet: return GameApi::ActorReadSlot::Feet;
+        }
+        return GameApi::ActorReadSlot::MainHand;
+    }();
+    auto item = api_->cachedActorRead<std::optional<ItemStack>>(
+        handle_, cacheSlot,
+        [&] { return api_->access_->equipmentItem(handle_, slot); });
     if (!item || !item->valid()) return std::nullopt;
     return item;
 }
@@ -807,13 +1005,17 @@ inline bool Actor::isPlayer() const {
     return getIdentity().isPlayer;
 }
 inline World Actor::getWorld() const {
-    return isValid() ? World{*api_, api_->access_->worldOf(handle_)} : World{};
+    return isValid() ? World{*api_, api_->cachedActorRead<void*>(
+        handle_, GameApi::ActorReadSlot::World,
+        [&] { return api_->access_->worldOf(handle_); })} : World{};
 }
 inline std::vector<Actor> World::getActors() const {
     return isValid() ? api_->actors(handle_) : std::vector<Actor>{};
 }
 inline std::vector<std::string> World::getPlayerNames() const {
-    return isValid() ? api_->access_->playerListNames(handle_) : std::vector<std::string>{};
+    return isValid() ? api_->cachedWorldRead<std::vector<std::string>>(
+        handle_, GameApi::WorldReadSlot::PlayerNames,
+        [&] { return api_->access_->playerListNames(handle_); }) : std::vector<std::string>{};
 }
 inline LocalPlayer::LocalPlayer(GameApi& api) noexcept
     : Actor{api, api.access_->localPlayer()} {}

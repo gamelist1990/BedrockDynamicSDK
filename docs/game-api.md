@@ -120,6 +120,23 @@ long-lived ActorUniqueID). `GameHooks::installLevelTick()` publishes
 track the active world. Features that need render-rate updates can then refresh
 their actor snapshot from their render callback and draw only copied values.
 
+## Actor read caching
+
+Actor validity, name tag, world, bounds, position, rotation, entity ID, and
+equipment reads are cached by native Actor handle and API slot. World actor
+lists and PlayerList names are cached by World. Repeated calls reuse those
+value snapshots for the current Level tick; `dispatchLevelTick()` invalidates
+them after the next update. When a consumer does not install a LevelTick hook,
+entries expire after 16 ms as a short fallback. `clearObservedActors()` also
+clears these snapshots when a world/session is torn down. NameTag observations
+replace the cached tag immediately.
+
+These are short-lived value snapshots, so equipment and movement data may be
+one update old when read repeatedly during a tick. The cache reduces repeated
+native crossings; it does not make Minecraft's native Actor or World pointers
+safe to read from a worker thread. Adapters should keep native reads on the
+thread required by the game and pass copied values to background work.
+
 ## Native input
 
 `GameHooks::installInput()` subscribes to the shared `Keyboard::feed` and

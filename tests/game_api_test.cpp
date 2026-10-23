@@ -17,6 +17,9 @@ struct FakeGame final : bedrock::GameAccess {
     bool keyState{};
     unsigned sentKey{};
     unsigned mouseClicks{};
+    mutable unsigned heldItemReads{};
+    mutable unsigned nameTagReads{};
+    mutable unsigned playerNameReads{};
     float yaw{}, pitch{};
 
     bool isActorValid(void* actor) const noexcept override { return tags.contains(actor); }
@@ -25,15 +28,18 @@ struct FakeGame final : bedrock::GameAccess {
         return isActorValid(actor) ? worldHandle : nullptr;
     }
     std::optional<std::string> nameTag(void* actor) const override {
+        ++nameTagReads;
         const auto it = tags.find(actor);
         return it == tags.end() ? std::nullopt : std::optional<std::string>{it->second};
     }
     std::optional<bedrock::HeldItemInfo> heldItem(void* actor) const override {
+        ++heldItemReads;
         const auto it = heldItems.find(actor);
         return it == heldItems.end() ? std::nullopt
                                      : std::optional<bedrock::HeldItemInfo>{it->second};
     }
     std::vector<std::string> playerListNames(void*) const override {
+        ++playerNameReads;
         return {"Alex", "OtherPlayer"};
     }
     std::optional<bedrock::ServerAddress> serverAddress(void*) const override {
@@ -73,14 +79,27 @@ int main() {
 
     auto self = api.localPlayer();
     assert(self.isValid());
+    assert(self.getWorld().getActors().size() == 1);
     api.observeActorNameTag(game.local, game.tags.at(game.local));
     assert(self.getName() == "Alex");
+    const auto initialNameReads = game.nameTagReads;
     assert(self.isPlayer());
+    assert(game.nameTagReads == initialNameReads); // repeated getter uses actor cache
     const auto heldItem = self.getHeldItem();
     assert(heldItem && heldItem->identifier == "minecraft:bow" && heldItem->count == 1);
+    const auto repeatedHeldItem = self.getHeldItem();
+    assert(repeatedHeldItem && repeatedHeldItem->identifier == heldItem->identifier);
+    assert(game.heldItemReads == 1);
+    api.dispatchLevelTick(game.worldHandle, 1);
+    const auto refreshedHeldItem = self.getHeldItem();
+    assert(refreshedHeldItem && refreshedHeldItem->identifier == heldItem->identifier);
+    assert(game.heldItemReads == 2); // tick invalidates cached native snapshots
     assert(!api.actor(reinterpret_cast<void*>(0x30)).getHeldItem());
     assert(self.getWorld().isValid());
     assert(api.world(game.worldHandle).getPlayerNames().size() == 2);
+    const auto playerNameReads = game.playerNameReads;
+    (void)api.world(game.worldHandle).getPlayerNames();
+    assert(game.playerNameReads == playerNameReads);
     const auto server = self.server();
     assert(server && server->ip() == "play.example.net");
     assert(server->port() == 19132 && server->address() == "play.example.net:19132");
