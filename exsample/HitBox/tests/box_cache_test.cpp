@@ -1,8 +1,30 @@
 #include "hitbox/box_cache.hpp"
+#include "hitbox/world_render_profile.hpp"
+#include <bedrock/generated_symbols.hpp>
 #include <cassert>
 #include <limits>
 
 int main() {
+    hitbox::WorldRenderProfile profile;
+    std::string error;
+    assert(hitbox::parseWorldRenderProfile(bedrock::generated::kSymbolDatabase,profile,error));
+    assert(profile.functions[0].rva==0x47f8570 && profile.functions[0].guard.size()==24);
+    assert(profile.material==0x10f0 && profile.origin==0x660 && profile.tess==0xb8);
+    const auto original=nlohmann::json::parse(bedrock::generated::kSymbolDatabase);
+    for (const char* key : {"level_renderer_player","render_origin","selection_material",
+        "screen_tessellator","screen_shader_color","tess_translation","tess_building",
+        "tess_special_mode","shader_color_dirty"}) {
+        auto invalid=original; invalid["native_world_render"]["offsets"].erase(key);
+        assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    }
+    auto invalid=original; invalid.erase("native_world_render");
+    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    invalid=original; invalid["native_world_render"]["functions"]["begin"]["rva"]="0xffffffff";
+    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    invalid=original; invalid["native_world_render"]["functions"]["color"]["entry_check"]="?? ??";
+    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    invalid=original; invalid["native_world_render"]["pointer_size"]=4;
+    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
     using namespace std::chrono_literals;
     const auto now=hitbox::Clock::now();
     const bedrock::Vec3 camera{};
@@ -12,6 +34,13 @@ int main() {
     cache.observe(sample,camera,32,false);
     auto rows=cache.visible(now,camera,32,false,10,1500ms);
     assert(rows.size()==1 && rows[0].runtimeId==sample.runtimeId);
+    const auto vertices = hitbox::worldLineVertices(rows[0], {100, 200, 300});
+    assert(vertices.size() == 24);
+    assert(vertices[0].x == -100 && vertices[0].y == -200 && vertices[0].z == -300);
+    assert(vertices[1].x == -99 && vertices[1].y == -200 && vertices[1].z == -300);
+    // Last line joins the upper/lower fourth corner in the same coordinate system.
+    assert(vertices[22].x == -100 && vertices[22].y == -200 && vertices[22].z == -299);
+    assert(vertices[23].x == -100 && vertices[23].y == -198 && vertices[23].z == -299);
     // Shortened native batches must not flicker out at the old 750ms expiry.
     assert(cache.visible(now+1000ms,camera,32,false,10,1500ms).size()==1);
     assert(cache.visible(now+1600ms,camera,32,false,10,1500ms).empty());

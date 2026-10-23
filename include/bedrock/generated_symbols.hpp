@@ -229,6 +229,46 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "abi_verified": true,
       "abi": "std::string* __fastcall(ItemStackBase*, std::string*)"
     }
+  },
+  "native_world_render": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "runtime_verified": false,
+    "evidence": "Exact-build REA/Ghidra raw-function dossiers; docs/hitbox-world-render.md. Windows x64 ABI corroborated with Latite source and native call sites; runtime validation pending.",
+    "functions": {
+      "render_level": {
+        "rva": "0x47f8570",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 ec 48 02 00 00 48 8d ac 24 80"
+      },
+      "begin": {
+        "rva": "0x59ca2e0",
+        "entry_check": "56 57 55 53 48 83 ec 38 48 8b 05 91 fd e0 0b 48 31 e0 48 89 44 24 30 80"
+      },
+      "vertex": {
+        "rva": "0x59ca7a0",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 ec 98 00 00 00 48 8d ac 24 80"
+      },
+      "color": {
+        "rva": "0x59ca610",
+        "entry_check": "80 b9 54 02 00 00 00 0f 85 be 00 00 00 f3 0f 10 05 43 3b c5 08 f3 0f 10"
+      },
+      "render_mesh": {
+        "rva": "0x467ee50",
+        "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 ec 70 04 00 00 48 8d ac 24 80 00 00"
+      }
+    },
+    "offsets": {
+      "level_renderer_player": 1128,
+      "render_origin": 1632,
+      "selection_material": 4336,
+      "screen_tessellator": 184,
+      "screen_shader_color": 48,
+      "tess_translation": 460,
+      "tess_building": 672,
+      "tess_special_mode": 597,
+      "shader_color_dirty": 16
+    }
   }
 }
 )BDK_SYM_V1";

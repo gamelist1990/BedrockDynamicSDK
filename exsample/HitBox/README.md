@@ -3,7 +3,9 @@
 BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は `BedrockHitBox.dll` 単体です。
 
 - プレイヤーに限定せず、ActorOwner / RuntimeID / AABBShapeのEnTT componentを照合してAABBを取得
-- SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用し、ローカル視点はゲームtickで取得
+- SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
+- Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
+- ゲームのrender originとselection_boxマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
 - 全Actorの一括再検証を廃止。1回の更新は最大8エントリ、Actor読み取りの処理予算は250µs
 - 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
 - ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
@@ -45,7 +47,7 @@ Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1
 対象ごとのStateVector取得を廃止しました。範囲判定にはコピー済みAABBの中心を使います。
 
 2本の処理ワーカーは通常より低い優先度で常駐し、各ワーカーの待機入力は最新1件だけを保持します。
-キューが使用中のときゲームスレッドは待ちません。距離判定・保持期限の削除・8頂点の生成・行列投影用の
+キューが使用中のときゲームスレッドは待ちません。距離判定・保持期限の削除・8頂点の生成・描画用の
 スナップショット作成・古い大きなスナップショットの破棄をワーカーで処理します。
 ワールドの世代が異なる入力・描画結果は拒否します。保持レコードは各ワーカー最大4096件で、上限到達時は
 最も古いものを削除します。保持済みの枠も現在の表示距離内だけ描画します。
@@ -53,7 +55,16 @@ Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1
 読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
 `retain_last_position=true` の場合は、近距離で最後に確認した位置を指定時間だけ保持します。
-描画側ではコピー済み頂点を現在の視点で投影し、三角関数とFOV係数は1フレームに1回だけ計算します。
+描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
+ゲームのLineListへ渡します。最大512枠、1回のbegin/mesh flushにまとめます。選択枠マテリアルの
+深度設定・ゲームのカメラ行列を使い、DXGI/ImGui overlayは起動しません。
+`line_thickness` は以前の設定との互換性のため読み込みますが、この描画経路ではゲーム側の線幅を使います。
+
+メモリ範囲の照会結果は1回のコールバック内だけ再利用し、後のtickには持ち越しません。
+ローカルActorのキャッシュはclient/world/registry/entity IDを照合し、最大500msでgetterから再取得します。
+FOV Hookとローカル回転の読み取りは不要になりました。遅いキャプチャのログは `local` / `position` /
+`actors` / `publish` に分けて記録します。250µsはActorループの協調的予算であり、コールバック全体の
+上限ではありません。実ゲームでのFPS・取得時間の改善量は未測定です。
 ActorTypeのstorageが存在しない場合は、ActorOwner / RuntimeID / AABBShapeの交差と所有者のregistry/entity ID照合を
 維持します。必須storageが欠ける場合は読み取りを拒否します。
 
@@ -92,7 +103,17 @@ game and pass the DLL path as a Wine path (for example
 Use a local/offline test world. This loader is not a game launcher or a
 compatibility layer; the HitBox DLL itself must match the target's C++ ABI.
 
-起動時はキャッシュのEXE一致だけでなく、HitBoxが必要とするNative item/Actorレイアウト全体を検査します。
+ワールド描画のRVA・呼出規約・オフセットは対象1.26.52.3 EXEのREA/Ghidra解析とLatiteのソースで
+照合しました。[解析根拠](../../docs/hitbox-world-render.md)に範囲と未確認事項を記載しています。
+`native_world_render` は実機未検証の `candidate` です。全5関数の実メモリ上の入口24バイトを検査し、
+不一致なら描画Hookを登録しません。借用したTessellatorが使用中ならその描画をスキップします。
+ネイティブ描画で例外が起きた場合は以後の描画を無効化します。SEHであらゆる内部状態破損やクラッシュを
+防げることを保証するものではありません。
+
+DLLはプロセス終了まで固定します。Stop後の直接描画Hookは元関数を呼ぶだけの状態で残し、実行中の
+trampolineを解放しません。更新DLLを使う際はMinecraftを再起動してください。
+
+起動時はキャッシュのEXE一致だけでなく、HitBoxが必要とするNative item/Actor/world-renderレイアウト全体を検査します。
 古いキャッシュで `value_offset` などの必須キーが欠ける場合は、GitHubの同一EXE用プロファイルを再取得します。
 再取得できない場合は同梱プロファイルを検査し、実行中EXEの指紋と一致する場合だけ使用します。
 どの候補も不足・不一致ならHookを登録せず起動を中止し、欠けたオフセットを既定値で補うことはありません。

@@ -32,6 +32,24 @@ inline std::array<bedrock::Vec3, 8> corners(const bedrock::ActorBounds& b) noexc
         {b.minimum.x,b.maximum.y,b.minimum.z}, {b.maximum.x,b.maximum.y,b.minimum.z},
         {b.maximum.x,b.maximum.y,b.maximum.z}, {b.minimum.x,b.maximum.y,b.maximum.z}}};
 }
+// The engine's 3D pass already owns the view/projection matrices. Supply line
+// vertices relative to its render origin; do not add an eye-height or FOV guess.
+inline std::array<bedrock::Vec3, 24> worldLineVertices(
+    const BoxRecord& box, const bedrock::Vec3& renderOrigin) noexcept {
+    constexpr std::array<std::array<unsigned, 2>, 12> edges{{
+        {{0,1}},{{1,2}},{{2,3}},{{3,0}},{{4,5}},{{5,6}},{{6,7}},{{7,4}},
+        {{0,4}},{{1,5}},{{2,6}},{{3,7}}}};
+    std::array<bedrock::Vec3, 24> result{};
+    std::size_t index = 0;
+    for (const auto& edge : edges) {
+        for (const auto corner : edge) {
+            const auto& point = box.corners[corner];
+            result[index++] = {point.x - renderOrigin.x, point.y - renderOrigin.y,
+                               point.z - renderOrigin.z};
+        }
+    }
+    return result;
+}
 // Worker-owned state. No native handles, component pointers or game calls.
 class BoxCache {
 public:

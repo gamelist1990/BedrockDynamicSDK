@@ -7,7 +7,7 @@
 
 #include <bedrock/game_api.hpp>
 #include <bedrock/game_hooks.hpp>
-#include <bedrock/gui_overlay.hpp>
+#include <bedrock/hook_runtime.h>
 #include <bedrock/logger.hpp>
 #include <bedrock/native_actors.hpp>
 #include <bedrock/native_items.hpp>
@@ -15,9 +15,10 @@
 #include <bedrock/resolver.hpp>
 #include <bedrock/generated_symbols.hpp>
 #include <entt/entt.hpp>
-#include <imgui.h>
+
 #include <nlohmann/json.hpp>
 #include "hitbox/box_cache.hpp"
+#include "hitbox/world_render_profile.hpp"
 #include <condition_variable>
 #include <deque>
 
@@ -69,6 +70,9 @@ namespace {
 enum class Status : unsigned { NotStarted, Loading, Running, Failed, Stopped };
 using Clock = std::chrono::steady_clock;
 
+constexpr std::uint32_t packColor(unsigned r,unsigned g,unsigned b,unsigned a) {
+    return r|(g<<8)|(b<<16)|(a<<24);
+}
 struct Config {
     bool enabled = true;
     bool debug = false;
@@ -76,16 +80,14 @@ struct Config {
     unsigned retentionMinutes = 10;
     float nearbyDistance = 32.0f;
     float lineThickness = 1.5f;
-    ImU32 liveColor = IM_COL32(76, 230, 132, 230);
-    ImU32 retainedColor = IM_COL32(255, 174, 66, 210);
+    std::uint32_t liveColor = packColor(76, 230, 132, 230);
+    std::uint32_t retainedColor = packColor(255, 174, 66, 210);
 };
 
 using BoxRecord = hitbox::BoxRecord;
 struct CameraState {
     std::uint64_t epoch{};
     bedrock::Vec3 cameraPosition{};
-    bedrock::ActorRotation cameraRotation{};
-    float fovDegrees = 70.0f;
 };
 struct RenderSnapshot {
     std::uint64_t epoch{};
@@ -113,13 +115,11 @@ struct ProcessingWorker {
 std::array<ProcessingWorker, workerCount> processingWorkers;
 std::atomic<std::uint64_t> worldEpoch{};
 std::atomic<std::int64_t> gameHeartbeatMs{};
-std::shared_ptr<const CameraState> currentCamera;
 std::atomic<Status> status{Status::NotStarted};
 std::atomic<bool> stopRequested{false};
 // Use the shared_ptr atomic free functions for cross-standard-library
 // compatibility. Some C++20 libraries do not yet implement atomic<shared_ptr>.
 std::shared_ptr<const Config> liveConfig{std::make_shared<const Config>()};
-std::atomic<float> currentFov{70.0f};
 // Logs are drained by a third persistent worker, never flushed by game/render callbacks.
 std::mutex logMutex;
 std::condition_variable logReady;
@@ -200,7 +200,7 @@ std::filesystem::path dataDirectory() {
 }
 
 nlohmann::json configJson(const Config& config) {
-    const auto colorString = [](ImU32 color) {
+    const auto colorString = [](std::uint32_t color) {
         std::array<char, 10> text{};
         std::snprintf(text.data(), text.size(), "#%02X%02X%02X%02X",
             color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF, (color >> 24) & 0xFF);
@@ -224,7 +224,7 @@ Config parseConfig(const nlohmann::json& root) {
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
     config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1u, 60u);
     config.lineThickness = std::clamp(root.value("line_thickness", config.lineThickness), 0.5f, 5.0f);
-    const auto parseColor = [&](const char* key, ImU32 fallback) {
+    const auto parseColor = [&](const char* key, std::uint32_t fallback) {
         const auto it = root.find(key);
         if (it == root.end() || !it->is_string()) return fallback;
         const auto value = it->get<std::string>();
@@ -234,7 +234,7 @@ Config parseConfig(const nlohmann::json& root) {
             const auto g = std::stoul(value.substr(3, 2), nullptr, 16);
             const auto b = std::stoul(value.substr(5, 2), nullptr, 16);
             const auto a = value.size() == 9 ? std::stoul(value.substr(7, 2), nullptr, 16) : 255ul;
-            return IM_COL32(r, g, b, a);
+            return packColor(r, g, b, a);
         } catch (...) { return fallback; }
     };
     config.liveColor = parseColor("live_color", config.liveColor);
@@ -254,26 +254,68 @@ void loadConfigFile(const std::filesystem::path& path) {
     }
 }
 
+// Keep VirtualQuery results only within one native callback. Scalar reads still
+// have their SEH boundary; no native address validation is reused on later ticks.
+struct NativeReadWindow {
+    struct Region { std::uintptr_t begin{}, end{}; DWORD protection{}; };
+    std::array<Region, 16> regions{};
+    std::size_t count{};
+    NativeReadWindow* previous{};
+    static thread_local NativeReadWindow* active;
+    NativeReadWindow() noexcept : previous(active) { active = this; }
+    ~NativeReadWindow() { active = previous; }
+};
+thread_local NativeReadWindow* NativeReadWindow::active{};
+
+bool permittedAddress(const void* pointer, std::size_t length, bool code = false, bool write = false) noexcept {
+    const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+    if (!start || !length || start > UINTPTR_MAX - length) return false;
+    const auto end = start + length;
+    const auto permitted = [code, write](DWORD protection) {
+        if (write) return protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
+            protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+        if (code) return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ ||
+            protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+        return protection == PAGE_READONLY || protection == PAGE_READWRITE ||
+            protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_READ ||
+            protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+    };
+    auto* window = NativeReadWindow::active;
+    if (window) {
+        for (std::size_t i = 0; i < window->count; ++i) {
+            const auto& region = window->regions[i];
+            if (start >= region.begin && end <= region.end) return permitted(region.protection);
+        }
+    }
+    auto cursor = start;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) ||
+            info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
+        const auto protection = info.Protect & 0xFF;
+        if (!permitted(protection)) return false;
+        const auto begin = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+        if (begin > UINTPTR_MAX - info.RegionSize) return false;
+        const auto regionEnd = begin + info.RegionSize;
+        if (regionEnd <= cursor) return false;
+        if (window && window->count < window->regions.size())
+            window->regions[window->count++] = {begin, regionEnd, protection};
+        cursor = regionEnd;
+    }
+    return true;
+}
+
 template<class T>
 bool safeRead(const void* base, std::size_t offset, T& output) noexcept {
     static_assert(std::is_trivially_copyable_v<T>);
-    if (!base) return false;
-    MEMORY_BASIC_INFORMATION info{};
-    const auto* address = static_cast<const std::byte*>(base) + offset;
-    if (!VirtualQuery(address, &info, sizeof(info)) || info.State != MEM_COMMIT ||
-        (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) return false;
-    __try { output = *reinterpret_cast<const T*>(address); return true; }
+    const auto start = reinterpret_cast<std::uintptr_t>(base);
+    if (!start || start > UINTPTR_MAX - offset) return false;
+    const auto* address = reinterpret_cast<const T*>(start + offset);
+    if (!permittedAddress(address, sizeof(T))) return false;
+    __try { output = *address; return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-
-bool isExecutable(const void* address) noexcept {
-    MEMORY_BASIC_INFORMATION info{};
-    if (!address || !VirtualQuery(address, &info, sizeof(info)) || info.State != MEM_COMMIT)
-        return false;
-    const auto protection = info.Protect & 0xFF;
-    return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ ||
-           protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
-}
+bool isExecutable(const void* address) noexcept { return permittedAddress(address, 1, true); }
 
 bool looksLikeActor(void* actor) noexcept {
     void** vtable = nullptr;
@@ -298,14 +340,39 @@ public:
     bool isActorValid(void* actor) const noexcept override { return looksLikeActor(actor); }
     void* localPlayer() const noexcept override {
         void* client = client_.load(std::memory_order_acquire);
+        void* world = world_.load(std::memory_order_acquire);
         if (!client || itemLayout_.localPlayerVtableSlot > 0x1000) return nullptr;
+        struct LocalCache {
+            const HitBoxAccess* adapter{};
+            void* client{};
+            void* world{};
+            void* actor{};
+            void* registry{};
+            std::uint32_t entity{};
+            Clock::time_point expires{};
+        };
+        static thread_local LocalCache cached;
+        void* registry = nullptr;
+        std::uint32_t entity = 0;
+        const auto context = actorLayout_.actorEntityContextOffset;
+        if (cached.adapter == this && cached.client == client && cached.world == world && cached.actor && Clock::now() < cached.expires &&
+            safeRead(cached.actor, context + actorLayout_.contextRegistryOffset, registry) &&
+            registry == cached.registry &&
+            safeRead(cached.actor, context + actorLayout_.contextEntityIdOffset, entity) &&
+            entity == cached.entity) return cached.actor;
+        cached = {};
         void** vtable = nullptr;
         void* target = nullptr;
         if (!safeRead(client, 0, vtable) || !safeRead(vtable,
                 itemLayout_.localPlayerVtableSlot * sizeof(void*), target) || !isExecutable(target))
             return nullptr;
-        return callLocalPlayer(target, client);
+        void* actor = callLocalPlayer(target, client);
+        if (actor && safeRead(actor, context + actorLayout_.contextRegistryOffset, registry) && registry &&
+            safeRead(actor, context + actorLayout_.contextEntityIdOffset, entity))
+            cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(500)};
+        return actor;
     }
+
     void* worldOf(void* actor) const noexcept override {
         return isActorValid(actor) ? world_.load(std::memory_order_acquire) : nullptr;
     }
@@ -574,25 +641,27 @@ void refreshGameTickSnapshot() {
     }
     if (now < nextCapture) return;
     nextCapture = now + std::chrono::milliseconds(25); // Never catch up in a burst.
+    NativeReadWindow readWindow;
     auto* local = access.localPlayer();
+    const auto localReadyAt = Clock::now();
     if (!local) return;
     const auto cameraPosition = access.actorPosition(local);
-    const auto cameraRotation = access.actorRotation(local);
-    if (!cameraPosition || !cameraRotation) {
+    const auto positionReadyAt = Clock::now();
+    if (!cameraPosition) {
         if (!loggedCameraWaiting) { loggedCameraWaiting = true;
-            log("waiting for native local Actor position/rotation components"); }
+            log("waiting for native local Actor position component"); }
         return;
     }
     CaptureBatch batch;
     batch.config = config;
-    batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition,
-                    *cameraRotation, currentFov.load(std::memory_order_acquire)};
+    batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition};
     std::size_t visited = 0;
     if (!access.captureBatch(local, cursor, batch, visited)) {
         if (!loggedNativeFailure) { loggedNativeFailure = true;
             log("incremental Actor capture unavailable [required storage or guarded read failed]"); }
         return;
     }
+    const auto actorsReadyAt = Clock::now();
     if (visited) averageVisited = averageVisited * 0.9 + static_cast<double>(visited) * 0.1;
     if (batch.count && !loggedNativeReady) {
         loggedNativeReady = true;
@@ -604,8 +673,6 @@ void refreshGameTickSnapshot() {
     batch.liveLifetime = std::chrono::milliseconds(std::clamp<std::size_t>(
         batch.population * 100 / std::max<std::size_t>(1, static_cast<std::size_t>(averageVisited)),
         750, 30000));
-    std::atomic_store_explicit(&currentCamera,
-        std::make_shared<const CameraState>(batch.camera), std::memory_order_release);
     gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()).count(), std::memory_order_release);
     for (auto& worker : processingWorkers) {
@@ -618,7 +685,13 @@ void refreshGameTickSnapshot() {
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-now).count();
     if ((config->debug || elapsed >= 2000) && now >= nextReport) {
         nextReport = now + std::chrono::seconds(10);
-        log("HitBox native capture us=", elapsed, " pool=", batch.population,
+        const auto us = [](auto from, auto to) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(to - from).count();
+        };
+        log("HitBox native capture us=", elapsed,
+            " local=", us(now, localReadyAt), " position=", us(localReadyAt, positionReadyAt),
+            " actors=", us(positionReadyAt, actorsReadyAt),
+            " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
             " [8 rows maximum; cooperative 250us actor budget; 2 workers]");
     }
@@ -630,59 +703,155 @@ void observeWorld(const bedrock::LevelTickEvent& event) {
     catch (...) { log("native capture skipped; retaining worker snapshots"); }
 }
 
-struct Projection {
-    bedrock::Vec3 camera;
-    ImVec2 viewport;
-    float sy, cy, sp, cp, focal;
-    Projection(const CameraState& view, ImVec2 size) : camera(view.cameraPosition), viewport(size) {
-        constexpr float radians = 0.01745329251994329577f;
-        sy=std::sin(view.cameraRotation.yaw*radians); cy=std::cos(view.cameraRotation.yaw*radians);
-        sp=std::sin(view.cameraRotation.pitch*radians); cp=std::cos(view.cameraRotation.pitch*radians);
-        focal=size.y/(2*std::tan(std::clamp(view.fovDegrees,30.0f,150.0f)*radians*0.5f));
-    }
-    std::optional<ImVec2> project(const bedrock::Vec3& point) const noexcept {
-        const float dx=point.x-camera.x, dy=point.y-camera.y-1.62f, dz=point.z-camera.z;
-        const float right=dx*cy+dz*sy, up=dx*(-sy*sp)+dy*cp+dz*(cy*sp);
-        const float depth=dx*(-sy*cp)-dy*sp+dz*(cy*cp);
-        if (!std::isfinite(depth) || depth<0.05f) return std::nullopt;
-        const ImVec2 result{viewport.x*0.5f+right*focal/depth,viewport.y*0.5f-up*focal/depth};
-        if (!std::isfinite(result.x)||!std::isfinite(result.y)) return std::nullopt;
-        return result;
-    }
+// Win64 prototypes corroborated by exact-build register use and native callers.
+// Borrow game-owned render objects only during LevelRenderer::renderLevel.
+using RenderLevelFn = void(__fastcall*)(void*, void*, void*);
+using BeginFn = void(__fastcall*)(void*, int, int, int, bool);
+using VertexFn = void(__fastcall*)(void*, float, float, float);
+struct FloatColor { float r,g,b,a; };
+using ColorFn = void(__fastcall*)(void*, const FloatColor*);
+using MeshFn = void(__fastcall*)(void*, void*, void*, void*);
+hitbox::WorldRenderProfile worldRenderProfile;
+RenderLevelFn originalRenderLevel{};
+BeginFn tessBegin{};
+VertexFn tessVertex{};
+ColorFn tessColor{};
+MeshFn renderMesh{};
+BDS_HookToken renderHookToken{};
+std::atomic<bool> worldRenderFault{};
+
+// This mod is pinned for process lifetime. On Stop the direct hook remains a
+// forwarding trampoline: removing it while another render call uses its original
+// would free executable code still in flight. No worker/native data is touched.
+constexpr std::size_t maximumRenderedBoxes = 512;
+struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
+    std::chrono::milliseconds liveLifetime{}; };
+struct NativeDrawInput {
+    std::array<NativeDrawRange, workerCount> ranges{};
+    Config config;
+    Clock::time_point now;
 };
 
-void drawBoxes(void*) {
-    const auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
-    if (!config->enabled) return;
-    const auto camera = std::atomic_load_explicit(&currentCamera, std::memory_order_acquire);
-    if (!camera || camera->epoch != worldEpoch.load(std::memory_order_acquire)) return;
-    const auto heartbeat = gameHeartbeatMs.load(std::memory_order_acquire);
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count()
-        - heartbeat > 1000) return;
-    const ImVec2 viewport = ImGui::GetIO().DisplaySize;
-    auto* draw = ImGui::GetBackgroundDrawList();
-    constexpr std::array<std::array<unsigned, 2>, 12> edges{{
-        {{0,1}},{{1,2}},{{2,3}},{{3,0}},{{4,5}},{{5,6}},{{6,7}},{{7,4}},
-        {{0,4}},{{1,5}},{{2,6}},{{3,7}}}};
-    const auto now = Clock::now();
-    const Projection projection(*camera, viewport);
-    for (const auto& worker : processingWorkers) {
-        const auto snapshot = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
-        if (!snapshot || snapshot->epoch != camera->epoch) continue;
-        for (const auto& box : snapshot->boxes) {
-            std::array<std::optional<ImVec2>, 8> screen;
-            for (std::size_t i = 0; i < box.corners.size(); ++i)
-                screen[i] = projection.project(box.corners[i]);
-            const bool retained = config->retainLastPosition &&
-                now - box.seenAt > snapshot->liveLifetime;
-            const ImU32 color = retained ? config->retainedColor : config->liveColor;
-            for (const auto& edge : edges) {
-                const auto& a = screen[edge[0]];
-                const auto& b = screen[edge[1]];
-                if (a && b) draw->AddLine(*a, *b, color, config->lineThickness);
+template<class T>
+bool safeWrite(void* base, std::size_t offset, const T& value) noexcept {
+    static_assert(std::is_trivially_copyable_v<T>);
+    const auto start=reinterpret_cast<std::uintptr_t>(base);
+    if (!start || start>UINTPTR_MAX-offset) return false;
+    auto* dest=reinterpret_cast<T*>(start+offset);
+    if (!permittedAddress(dest,sizeof(T),false,true)) return false;
+    __try { *dest=value; return true; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input) noexcept {
+    // No owning C++ objects inside SEH. Snapshots remain owned by drawWorldBoxes.
+    const auto& p=worldRenderProfile;
+    void* player=nullptr; void* tess=nullptr; void* shader=nullptr; void* materialInfo=nullptr;
+    bedrock::Vec3 origin{}, oldTranslation{};
+    FloatColor oldColor{}, white{1,1,1,1};
+    std::uint8_t building=0, special=0;
+    if (!safeRead(renderer,p.player,player) || !player ||
+        !safeRead(player,p.origin,origin) || !std::isfinite(origin.x) ||
+        !std::isfinite(origin.y) || !std::isfinite(origin.z) ||
+        !safeRead(player,p.material,materialInfo) || !materialInfo ||
+        !permittedAddress(materialInfo,sizeof(void*)) ||
+        !safeRead(screen,p.tess,tess) || !tess ||
+        !safeRead(screen,p.shader,shader) || !shader ||
+        !safeRead(tess,p.building,building) || building ||
+        !safeRead(tess,p.special,special) || special ||
+        !safeRead(tess,p.translation,oldTranslation) || !safeRead(shader,0,oldColor)) return 0;
+    const bedrock::Vec3 zero{};
+    const std::uint8_t dirty=1;
+    if (!safeWrite(tess,p.translation,zero)) return 0;
+    if (!safeWrite(shader,0,white) || !safeWrite(shader,p.dirty,dirty)) {
+        safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
+        safeWrite(tess,p.translation,oldTranslation); return 0;
+    }
+    bool success=true;
+    __try {
+        // Mode 4 is the game's LineList. 24 vertices / AABB, one native mesh flush.
+        std::size_t total=0;
+        for (const auto& range:input->ranges) total+=range.count;
+        total=std::min(total,maximumRenderedBoxes);
+        tessBegin(tess,0,4,static_cast<int>(total*24),false);
+        std::size_t drawn=0;
+        for (const auto& range:input->ranges) {
+            for (std::size_t i=0;i<range.count && drawn<total;++i,++drawn) {
+                const auto& box=range.boxes[i];
+                const auto packed=input->config.retainLastPosition &&
+                    input->now-box.seenAt>range.liveLifetime
+                    ? input->config.retainedColor : input->config.liveColor;
+                const FloatColor color{(packed&255)/255.f,((packed>>8)&255)/255.f,
+                    ((packed>>16)&255)/255.f,((packed>>24)&255)/255.f};
+                tessColor(tess,&color);
+                const auto vertices=hitbox::worldLineVertices(box,origin);
+                for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
             }
         }
+        alignas(16) std::array<std::byte,0x58> scratch{};
+        renderMesh(screen,tess,static_cast<std::byte*>(player)+p.material,scratch.data());
+    } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
+    // Restore the borrowed scalar state, also after a guarded native fault.
+    safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
+    safeWrite(tess,p.translation,oldTranslation);
+    return success ? 1 : -1;
+}
+void drawWorldBoxes(void* renderer, void* screen) {
+    if (stopRequested.load(std::memory_order_acquire) || worldRenderFault.load()) return;
+    const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
+    if (!config->enabled) return;
+    const auto now=Clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()-
+        gameHeartbeatMs.load(std::memory_order_acquire)>1000) return;
+    const auto epoch=worldEpoch.load(std::memory_order_acquire);
+    std::array<std::shared_ptr<const RenderSnapshot>,workerCount> snapshots;
+    NativeDrawInput input; input.config=*config; input.now=now;
+    std::size_t count=0;
+    for (std::size_t i=0;i<workerCount;++i) {
+        snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
+        if (!snapshots[i] || snapshots[i]->epoch!=epoch) continue;
+        input.ranges[i]={snapshots[i]->boxes.data(),snapshots[i]->boxes.size(),snapshots[i]->liveLifetime};
+        count+=input.ranges[i].count;
     }
+    if (!count || worldEpoch.load(std::memory_order_acquire)!=epoch) return;
+    NativeReadWindow window;
+    const auto result=drawNativeGuarded(renderer,screen,&input);
+    static std::atomic<bool> loggedDraw{};
+    if (result>0 && !loggedDraw.exchange(true))
+        log("native world mesh submitted [12 edges/box; engine render origin + selection_box]");
+    if (result<0 && !worldRenderFault.exchange(true))
+        log("world rendering disabled after guarded native fault [restart required]");
+}
+void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
+    originalRenderLevel(renderer,screen,context);
+    // The native world pass supplies view/projection matrices, origin and depth.
+    static thread_local bool drawing=false;
+    if (drawing) return;
+    drawing=true;
+    try { drawWorldBoxes(renderer,screen); }
+    catch (...) { if(!worldRenderFault.exchange(true)) log("world rendering disabled after exception"); }
+    drawing=false;
+}
+bool installWorldRenderer(std::string& error) {
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    std::array<void*,5> addresses{};
+    for (std::size_t i=0;i<addresses.size();++i) {
+        const auto& f=worldRenderProfile.functions[i];
+        auto* target=reinterpret_cast<const std::byte*>(base+f.rva);
+        if (!isExecutable(target)) { error="world render target is not executable"; return false; }
+        for (std::size_t j=0;j<f.guard.size();++j) {
+            std::uint8_t value{};
+            if(!safeRead(target,j,value) || value!=f.guard[j]) {
+                error="world render entry guard mismatch: function "+std::to_string(i); return false;
+            }
+        }
+        addresses[i]=const_cast<std::byte*>(target);
+    }
+    tessBegin=reinterpret_cast<BeginFn>(addresses[1]); tessVertex=reinterpret_cast<VertexFn>(addresses[2]);
+    tessColor=reinterpret_cast<ColorFn>(addresses[3]); renderMesh=reinterpret_cast<MeshFn>(addresses[4]);
+    return BDS_HookDirectInstall(addresses[0],reinterpret_cast<void*>(&renderLevelDetour),
+        reinterpret_cast<void**>(&originalRenderLevel),&renderHookToken)!=0 ||
+        (error="world render direct hook conflict/install failure",false);
 }
 
 std::filesystem::path configPath() { return dataDirectory() / L"config.json"; }
@@ -742,6 +911,9 @@ DWORD WINAPI startClient(void*) {
             error = "native_actors: " + error;
             return false;
         }
+        hitbox::WorldRenderProfile candidateRender;
+        if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
+        worldRenderProfile = std::move(candidateRender);
         resolver = std::move(candidateResolver);
         itemLayout = std::move(candidateItems);
         actorLayout = std::move(candidateActors);
@@ -785,28 +957,21 @@ DWORD WINAPI startClient(void*) {
     gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);
     });
-    gameApi.Event.Enum.Fov.then([](const bedrock::FovEvent& event) {
-        currentFov.store(event.inputFov, std::memory_order_release);
-    });
     gameApi.Event.Enum.LevelTick.then(&observeWorld);
     if (!gameHooks->installGameplay(resolver, error) ||
-        !gameHooks->installFov(resolver, error) ||
         !gameHooks->installLevelTick(resolver, error)) {
         log("SDK hook registration failed: ", error);
         gameHooks.reset();
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    bedrock::gui::OverlayOptions options;
-    options.captureInput = false;
-    options.nativeCursor = false;
-    options.initiallyVisible = true;
-    if (!bedrock::gui::Overlay::install(&drawBoxes, nullptr, error, options)) {
-        log("overlay install failed: ", error);
+    if (!installWorldRenderer(error)) {
+        log("world renderer install failed: ", error);
         gameHooks.reset();
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
+    log("native world rendering active [LevelRenderer::renderLevel + selection_box; exact-build guards; runtime candidate]");
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 
@@ -819,7 +984,6 @@ DWORD WINAPI startClient(void*) {
             lastWrite = write;
         }
     }
-    bedrock::gui::Overlay::shutdown();
     gameHooks.reset();
     status.store(Status::Stopped, std::memory_order_release);
     return 0;

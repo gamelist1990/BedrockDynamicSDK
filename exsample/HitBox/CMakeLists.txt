@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 set(BEDROCK_SDK_REF "main" CACHE STRING "BedrockDynamicSDK branch/tag/commit")
-set(BEDROCK_SDK_ENABLE_GUI ON CACHE BOOL "Enable the in-game overlay" FORCE)
+set(BEDROCK_SDK_ENABLE_GUI OFF CACHE BOOL "Native world rendering needs no GUI overlay" FORCE)
 set(BEDROCK_SDK_BUILD_TOOLS OFF CACHE BOOL "Do not build SDK tools" FORCE)
 FetchContent_Declare(bedrock_sdk
     GIT_REPOSITORY https://github.com/gamelist1990/BedrockDynamicSDK.git
@@ -27,7 +27,7 @@ if(WIN32)
     set_target_properties(BedrockHitBox PROPERTIES PREFIX "")
     target_include_directories(BedrockHitBox PRIVATE include)
     target_link_libraries(BedrockHitBox PRIVATE bedrock::symbols bedrock::logging
-        bedrock::gui_overlay bedrock::hook_runtime EnTT::EnTT shell32 ole32)
+        bedrock::hook_runtime EnTT::EnTT shell32 ole32)
     target_compile_features(BedrockHitBox PRIVATE cxx_std_20)
     bedrock_enable_hook_runtime(BedrockHitBox)
     if(MSVC)
@@ -51,6 +51,7 @@ if(BUILD_TESTING)
     add_executable(hitbox_box_cache_test tests/box_cache_test.cpp)
     target_include_directories(hitbox_box_cache_test PRIVATE include)
     target_link_libraries(hitbox_box_cache_test PRIVATE bedrock::game_api)
+    target_include_directories(hitbox_box_cache_test PRIVATE ${bedrock_sdk_SOURCE_DIR}/third_party)
     if(MSVC)
         target_compile_options(hitbox_box_cache_test PRIVATE /UNDEBUG)
         set_property(TARGET hitbox_box_cache_test PROPERTY MSVC_RUNTIME_LIBRARY

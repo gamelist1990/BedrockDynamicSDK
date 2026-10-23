@@ -1,0 +1,72 @@
+# HitBox native world rendering: 1.26.52.3
+
+## Scope and confidence
+
+The implementation follows Latite's post-`LevelRenderer::renderLevel` drawing
+path, using the game's ScreenContext/Tessellator and an existing selection_box
+material. Reference source: LatiteClient/Latite commit
+`9f7463515dd298a496da918285936d78c7416aad`,
+`src/client/memory/hook/hooks/LevelRendererHooks.cpp`,
+`src/util/DrawUtil3D.cpp`, and the native renderer declarations.
+
+Exact original Windows x64 executable SHA-256:
+`4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4`.
+These are static observations and ABI inferences, **not runtime verification**.
+`native_world_render` is kept separately from the SDK's verified symbol table,
+with `status=candidate` and `runtime_verified=false`.
+
+REA/Ghidra could not complete whole-image analysis within either the 330-second
+or the scoped 1200-second startup limit. Focused analysis used unchanged function
+bytes extracted from the original PE, loaded at their original virtual addresses.
+Function boundaries came from the PE exception directory where available. The
+raw slices do not contain external callees, global data, or incoming xrefs. Their
+default decompiler convention is not authoritative for Windows: ABI deductions
+below use actual register instructions plus Latite's Windows declarations.
+
+Evidence bundles, slice hashes, and original file offsets are retained outside
+source control in `Documents/PEXData/REA/world-render-1.26.52.3/`.
+
+## Observed path
+
+| Function | RVA | Win64 call shape | REA Evidence ID |
+|---|---|---|---|
+| LevelRenderer::renderLevel | `0x047f8570` | RCX renderer, RDX ScreenContext, R8 context; source declaration returns void | `ev_4fc07be63ed7f16412e9e9e6cd2fab39a3fa79b433ba94ecc2c291f1df712a88` |
+| Tessellator::begin | `0x059ca2e0` | RCX tess, EDX 0, R8D primitive, R9D vertex count, stack bool | `ev_242f9ff6cc167eae6c175516d20b56511b41b6fda8bda93cb671647ff2b13450` |
+| Tessellator::vertex | `0x059ca7a0` | RCX tess, XMM1/XMM2/XMM3 xyz | `ev_41f68164f3d6d7b161133bdb15ee6ecf0f9ada6b5c6a7c847f29f4d47829c61c` |
+| Tessellator::color | `0x059ca610` | RCX tess, RDX pointer to float RGBA | `ev_6e5b4db260733eb9667df675d0ecc3e63e4f89357e7196f142be1204356ff9bf` |
+| MeshHelpers::renderMeshImmediately | `0x0467ee50` | RCX screen, RDX tess, R8 MaterialPtr address, R9 zeroed 0x58-byte scratch | `ev_01ab8da87735a4caaebc275f302d80763e03272f98861c2fac665f9944df38b1` |
+
+The native selection drawing routine at `0x046b6000` loads the tessellator from
+ScreenContext+0xb8, shader-color pointer from +0x30, and the render origin from
+LevelRendererPlayer+0x660. It passes the inline material at player+0x10f0 to the
+mesh helper. It also writes shader RGBA and its dirty byte at +0x10.
+Evidence: `ev_8f5cfe23d20735089ae6edffe9491da226338d2a1dcfc3166ffc92c60501542b`.
+
+The constructor at `0x04697190` constructs the inline string `selection_box` at
+instructions `0x04697de1..0x04697df9`, takes this+0x10f0 at 0x04697dfd, then calls
+the material constructor with that address in RCX at 0x04697e20. This corroborates
+the material's identity rather than guessing it from an offset.
+Evidence: `ev_c007da2031b46b3fc710c04ec98ff0a68ef50c0949bfa46b1324eef9ad3fb5ec`.
+
+The renderLevel body accesses LevelRenderer+0x468 for the player renderer. Begin
+checks tess+0x2a0 and +0x255 before starting. Vertex adds tess translation +0x1cc;
+HitBox supplies origin-relative vertices with that translation temporarily zeroed,
+then restores the previous translation and shader color. The engine owns all
+objects and their material lifetime: no foreign shared_ptr/STL object is created.
+
+## Implementation boundaries
+
+- Only the exact attached executable profile is accepted. All five function
+  entry guards (24 bytes) must still match loaded memory before installing.
+- Native actor capture stays on the game tick; two workers receive copied
+  RuntimeID/AABB/position data. Native drawing stays inside the world render pass.
+- Twelve edges per AABB, one mesh submission, at most 512 boxes per pass. The
+  selected material determines depth behavior and line width. The legacy
+  `line_thickness` setting does not change native line width.
+- Active native tessellation is skipped. Read/write guards and SEH reduce the
+  risk of invalid accesses but cannot make an incorrect native ABI or corrupted
+  engine state safe. A guarded draw fault disables further HitBox drawing.
+- Local tests validate coordinate conversion, retention/world epochs, and profile
+  rejection. Cross-compilation/Windows CI establish compilation, not in-game
+  visuals, third-person correctness, or a measured FPS improvement. Those remain
+  runtime acceptance checks on this exact build.
