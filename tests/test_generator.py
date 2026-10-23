@@ -209,6 +209,8 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         "MouseDevice::feed", "Keyboard::feed", "GameCore::keyboardEvent",
         "Actor::getNameTag", "LevelRendererPlayer::getFov",
         "Level::getRuntimeActorList", "ItemStackBase::getHoverName",
+        "ClientInstance::grabCursor", "ClientInstance::releaseCursor",
+        "MultiPlayerLevel::_subTick", "GameCore::handleMouseInput",
     }
     for name, symbol in data["symbols"].items():
         if name in verified:

@@ -77,7 +77,7 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "schema": 1,
     "pointer_size": 8,
     "status": "candidate",
-    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). RuntimeIDComponent is provisionally read as a 64-bit scalar at offset 0; its storage ABI and value layout still require live validation.",
+    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), ActorUniqueIDComponent (0x18F957AF), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Disassembly shows ActorUniqueIDComponent resolved through the entity registry and writes an eight-byte value at component offset 0; RuntimeIDComponent is also provisionally read as a 64-bit scalar at offset 0. Native storage ABI and live values still require runtime validation.",
     "actor_context": {
       "actor_offset": "0x8",
       "registry_offset": "0x8",
@@ -94,6 +94,11 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "value_size": 4,
       "player_type_id": 319,
       "evidence": "Latite ActorTypeComponent and Actor::isPlayer (319); exact EXE REA ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa: RVA 0x019e9580 resolves 0x4F6BA419 and compares the four-byte component at offset 0 to 0x13F. Runtime layout remains candidate."
+    },
+    "actor_unique_id": {
+      "component_hash": "0x18F957AF",
+      "value_offset": "0x0",
+      "value_size": 8
     },
     "runtime_id": {
       "component_hash": "0xFC0DBBB5",
@@ -129,13 +134,40 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
   "symbols": {
     "Level::getRuntimeActorList": {
       "rva": "0x117C640",
-      "signature": "55 41 56 56 57 53 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF 48 8B B1 B0 04 00 00 0F 57 C0 0F 11 02 48 89 55 F0 48 C7 42 10 00 00 00 00 48 8B 5E 10 4C 8B 33 49 39 DE 74 ??",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 8B B1 B0 04 00 00",
       "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF",
-      "cross_version_signature_available": false,
+      "cross_version_signature_available": true,
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 Level vftable slot 0x145 and native vector construction/Actor pointer loop",
       "abi_verified": true,
-      "abi": "void __fastcall(Level*, std::vector<Actor*>* hidden_return_buffer)"
+      "abi": "void __fastcall(Level*, std::vector<Actor*>* hidden_return_buffer)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 8B B1 ?? ?? ?? ?? 0F 57 C0",
+          "bytes": 33,
+          "fixed_bytes": 26,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 33,
+          "pattern": "0F 11 02 48 89 55 ?? 48 C7 42 ?? 00 00 00 00 48 8B 5E ?? 4C 8B 33 49 39 DE 74 ?? 48 8D 7D ?? EB ??",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 96,
+          "pattern": "49 8B 56 ?? 48 89 F1 45 31 C0 E8 ?? ?? ?? ?? 48 89 45 ?? 48 85 C0 74 ?? 48 8B 4D ?? 48 8B 51 ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "signature_length": 30
     },
     "LevelRendererPlayer::getFov": {
       "rva": "0x46BD250",
@@ -145,34 +177,107 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 FOV callsites and return-value flow",
       "abi_verified": true,
-      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)"
+      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1 48 89 CE",
+          "bytes": 32,
+          "fixed_bytes": 28,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 152,
+          "pattern": "0F 1F 84 00 ?? ?? ?? ?? 48 89 C1 48 8B 40 ?? 48 8B 80 ?? ?? ?? ?? 48 85 C0 75 ?? 0F 28 D1 F3 0F C2 D0 01",
+          "bytes": 35,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 306,
+          "pattern": "74 ?? F3 0F 59 3D ?? ?? ?? ?? F3 0F 5E 3D ?? ?? ?? ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 35,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 459,
+          "pattern": "48 8B 0C CA 3B 81 ?? ?? ?? ?? 0F 8F ?? ?? ?? ?? F3 0F 5E 35 ?? ?? ?? ?? 0F 57 C0 F3 44 0F 10 05 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 617,
+          "pattern": "0F 28 F1 F3 0F C2 F7 01 0F 54 CE 0F 55 F0 0F 56 F1 84 DB 74 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 38,
+          "fixed_bytes": 29,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "ClientInstance::grabCursor": {
       "rva": "0x5DCE3C0",
       "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 10 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E A8 01 00 00 48 8B 01 48 8B 80 38 04 00 00",
       "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
-      "source": "LatiteClient/Latite@9f74635:src/mc/Addresses.h",
-      "abi_verified": false
+      "status": "verified",
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x5DCE3C0; .pdata records exact function range 0x5DCE3C0-0x5DCE403; disassembly uses ClientInstance in RCX and tail-dispatches the cursor-grab vtable slot 0x87",
+      "abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature_anchors": []
     },
     "ClientInstance::releaseCursor": {
       "rva": "0x5DCE410",
       "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 10 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E A8 01 00 00 48 8B 01 48 8B 80 40 04 00 00",
       "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
-      "source": "LatiteClient/Latite@9f74635:src/mc/Addresses.h",
-      "abi_verified": false
+      "status": "verified",
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x5DCE410; .pdata records exact function range 0x5DCE410-0x5DCE453; disassembly uses ClientInstance in RCX and tail-dispatches the cursor-release vtable slot 0x88",
+      "abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature_anchors": []
     },
     "MultiPlayerLevel::_subTick": {
       "rva": "0x12F4B70",
       "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 6D 40",
       "entry_check": "55 56 57 53 48 81 EC D8 00 00 00 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
-      "source": "LatiteClient/Latite@9f74635:src/mc/Addresses.h",
-      "abi_verified": false
+      "status": "verified",
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x12F4B70; .pdata records exact function range 0x12F4B70-0x12F5068; native x64 prologue and body use MultiPlayerLevel in RCX as the sole incoming argument",
+      "abi_verified": true,
+      "abi": "void __fastcall(MultiPlayerLevel*)",
+      "signature_anchors": [
+        {
+          "offset": 513,
+          "pattern": "0F 28 0D ?? ?? ?? ?? 0F 57 D2 0F 1F 44 00 ?? F3 41 0F 10 59 ?? F3 41 0F 10 61 ?? 0F 14 DC F3 41 0F 10 61 ??",
+          "bytes": 36,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 767,
+          "pattern": "0F 28 35 ?? ?? ?? ?? 0F 57 FF 49 89 CA 0F 1F 40 ?? 45 0F 10 09 45 0F 10 41 ?? 45 0F 10 51 ?? 45 0F 28 DA",
+          "bytes": 35,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1020,
+          "pattern": "0F 57 ED F3 0F 10 35 ?? ?? ?? ?? 66 0F 1F 84 00 ?? ?? 00 00 F3 0F 10 38 44 0F 28 C1 F3 44 0F 5C C7",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "MouseDevice::feed": {
       "rva": "0x361AD0",
@@ -182,7 +287,49 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 native raw-input callsites",
       "abi_verified": true,
-      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)"
+      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 31,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 102,
+          "pattern": "66 44 89 6C 24 ?? 66 44 89 64 24 ?? C7 44 24 ?? 00 00 00 00 88 44 24 ?? 48 8B 56 ?? 48 3B 56 ??",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 202,
+          "pattern": "66 89 7C 24 ?? C7 44 24 ?? 00 00 00 00 C7 44 24 ?? 00 00 00 00 C6 44 24 ?? 01 48 8B 56 ?? 48 3B 56 ??",
+          "bytes": 34,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 303,
+          "pattern": "88 5E ?? E9 ?? ?? ?? ?? 4C 8D 44 24 ?? 4C 89 F1 E8 ?? ?? ?? ?? 40 84 ED 0F 85 ?? ?? ?? ?? 0F B7 46 ??",
+          "bytes": 34,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 400,
+          "pattern": "C7 46 ?? FF FF FF FF EB ?? 4C 8D 44 24 ?? 4C 89 F1 E8 ?? ?? ?? ?? 66 81 7E ?? F1 D8 0F 84 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "GameCore::keyboardEvent": {
       "rva": "0x98FA0",
@@ -192,7 +339,33 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 native keyboard callback: prefilter at 0x98FD2, HIDController key-down/key-up at 0x99017/0x99030",
       "abi_verified": true,
-      "abi": "void* __fastcall(void* callback, void* result, void* context)"
+      "abi": "void* __fastcall(void* callback, void* result, void* context)",
+      "signature_anchors": [
+        {
+          "offset": 42,
+          "pattern": "0F 94 C2 41 0F B6 48 ?? E8 ?? ?? ?? ?? 84 C0 75 ?? 83 CB 04 81 FB 04 01 00 00 75 ?? 48 8D 4C 24 ??",
+          "bytes": 33,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 84,
+          "pattern": "85 C0 74 ?? 83 7C 24 ?? 01 75 ?? 8B 44 24 ?? 45 31 C0 83 F8 02 41 0F 94 C0 45 01 C0 83 F8 01 44 0F 44 C0",
+          "bytes": 35,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 126,
+          "pattern": "8B 57 ?? 48 8B 01 48 8B 40 ?? FF 15 ?? ?? ?? ?? EB ?? 48 8B 07 48 8B 48 ?? 8B 57 ?? 48 8B 01 48 8B 40 ??",
+          "bytes": 35,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "Keyboard::feed": {
       "rva": "0x2D18D0",
@@ -202,16 +375,53 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 native key-event callback and KeyboardManager callsite",
       "abi_verified": true,
-      "abi": "bool __fastcall(int inputKey, bool down)"
+      "abi": "bool __fastcall(int inputKey, bool down)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 89 D3 89 CE 4C 8D 35 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 236,
+          "pattern": "41 89 D8 4C 89 C8 FF 15 ?? ?? ?? ?? 89 C6 EB ?? 31 F6 48 8D 45 ?? 0F 57 C0 0F 11 00 48 85 FF 0F 84 ?? ?? ?? ??",
+          "bytes": 37,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "GameCore::handleMouseInput": {
       "rva": "0x8A880",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 BD 80 02 00 00 44 0F 29 B5 70 02 00 00 44 0F 29 AD 60 02 00 00 44 0F 29 A5 50 02 00 00 44 0F 29 9D 40 02 00 00 44 0F 29 95 30 02 00 00 44 0F 29 8D 20 02 00 00 44 0F 29 85 10 02 00 00 0F 29 BD 00 02 00 00 0F 29 B5 F0 01 00 00 48 C7 85 E8 01 00 00 FE FF FF FF 48 89 CE",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": true,
-      "status": "candidate",
-      "source": "LatiteClient/Latite@9f74635:src/mc/Addresses.h",
-      "abi_verified": false
+      "status": "verified",
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x8A880; .pdata records exact function range 0x8A880-0x8D4EA; native x64 prologue and body use GameCore in RCX as the sole incoming argument",
+      "abi_verified": true,
+      "abi": "void __fastcall(GameCore*)",
+      "signature_anchors": [
+        {
+          "offset": 4548,
+          "pattern": "74 ?? EB ?? 0F 1F 84 00 ?? ?? ?? ?? 48 89 C8 48 8B 09 80 79 ?? 00 74 ?? 0F 1F 40 ?? 48 8B 4E ??",
+          "bytes": 32,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 6830,
+          "pattern": "49 8B 45 ?? 48 8B 80 ?? ?? ?? ?? 4C 89 E9 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 85 ?? ?? ?? ?? 80 78 ?? 01",
+          "bytes": 35,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "Actor::getNameTag": {
       "rva": "0x1A14AC0",
@@ -221,17 +431,46 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 live Actor::getNameTag hook; observed §-formatted names returned without disrupting the game",
       "abi_verified": true,
-      "abi": "const std::string& __fastcall(Actor*)"
+      "abi": "const std::string& __fastcall(Actor*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 8B 81 ?? ?? ?? ?? 48 85 C0 74 ?? 8B 50 ?? 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
+          "bytes": 38,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ]
     },
     "ItemStackBase::getHoverName": {
       "rva": "0x24901E0",
-      "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? ?? ?? ?? ?? 48 89 D6 48 8D 55",
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 89 D6 48 8D 55 B0",
       "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83 EC",
-      "cross_version_signature_available": false,
+      "cross_version_signature_available": true,
       "status": "verified",
       "source": "Minecraft.Windows.exe 1.26.52.3 disassembly: RCX is ItemStackBase, RDX is the std::string sret buffer, and RAX returns that buffer",
       "abi_verified": true,
-      "abi": "std::string* __fastcall(ItemStackBase*, std::string*)"
+      "abi": "std::string* __fastcall(ItemStackBase*, std::string*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 D6 48 8D 55 ??",
+          "bytes": 34,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 67,
+          "pattern": "72 ?? 48 8B 5C 05 ?? EB ?? 48 8D 1C 28 48 83 C3 B0 48 85 FF 0F 88 ?? ?? ?? ?? 48 83 FF 0F 77 ??",
+          "bytes": 32,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "signature_length": 34
     }
   },
   "native_world_render": {

@@ -114,6 +114,12 @@ public:
         (void)actor;
         return std::nullopt;
     }
+    // Bedrock's long-lived ActorUniqueID component, distinct from both the
+    // registry entity handle and the network RuntimeID.
+    [[nodiscard]] virtual std::optional<std::uint64_t> actorUniqueId(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
     // Bedrock ActorRuntimeID from RuntimeIDComponent. This is distinct from
     // the registry's raw EnTT entity ID exposed by actorEntityId().
     [[nodiscard]] virtual std::optional<std::uint64_t> actorRuntimeId(void* actor) const {
@@ -233,6 +239,7 @@ public:
     [[nodiscard]] std::optional<Vec3> getPosition() const;
     [[nodiscard]] std::optional<ActorRotation> getRotation() const;
     [[nodiscard]] std::optional<std::uint32_t> getEntityId() const;
+    [[nodiscard]] std::optional<std::uint64_t> getUniqueId() const;
     [[nodiscard]] std::optional<std::uint64_t> getRuntimeId() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
@@ -659,7 +666,7 @@ private:
         return result;
     }
     enum class ActorReadSlot : std::size_t {
-        Valid, World, NameTag, Bounds, Position, Rotation, EntityId, RuntimeId,
+        Valid, World, NameTag, Bounds, Position, Rotation, EntityId, UniqueId, RuntimeId,
         MainHand, Offhand, Head, Chest, Legs, Feet, Count
     };
     enum class WorldReadSlot : std::size_t { Actors, PlayerNames, Count };
@@ -979,6 +986,11 @@ inline std::optional<std::uint32_t> Actor::getEntityId() const {
     return isValid() ? api_->cachedActorRead<std::optional<std::uint32_t>>(
         handle_, GameApi::ActorReadSlot::EntityId,
         [&] { return api_->access_->actorEntityId(handle_); }) : std::nullopt;
+}
+inline std::optional<std::uint64_t> Actor::getUniqueId() const {
+    return isValid() ? api_->cachedActorRead<std::optional<std::uint64_t>>(
+        handle_, GameApi::ActorReadSlot::UniqueId,
+        [&] { return api_->access_->actorUniqueId(handle_); }) : std::nullopt;
 }
 inline std::optional<std::uint64_t> Actor::getRuntimeId() const {
     return isValid() ? api_->cachedActorRead<std::optional<std::uint64_t>>(

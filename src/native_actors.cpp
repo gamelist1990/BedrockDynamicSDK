@@ -23,6 +23,9 @@ bool NativeActorLayout::valid() const noexcept {
     return actorEntityContextOffset <= 0x10000 && contextRegistryOffset <= 0x10000 &&
            contextEntityIdOffset <= 0x10000 && actorOwnerComponentHash != 0 &&
            actorOwnerPointerOffset <= 0x10000 && actorTypeComponentHash != 0 &&
+           (actorUniqueIdComponentHash == 0 ||
+            (actorUniqueIdValueOffset <= 0x10000 &&
+             actorUniqueIdValueSize == sizeof(std::uint64_t))) &&
            runtimeIdComponentHash != 0 && runtimeIdValueOffset <= 0x10000 &&
            runtimeIdValueSize == sizeof(std::uint64_t) && aabbShapeComponentHash != 0 &&
            aabbMinimumOffset <= 0x10000 && aabbMaximumOffset <= 0x10000 &&
@@ -54,6 +57,13 @@ bool parseNativeActorLayout(std::string_view source, NativeActorLayout& output,
 
         value.actorTypeComponentHash = static_cast<std::uint32_t>(
             number(data.at("actor_type"), "component_hash"));
+        if (data.contains("actor_unique_id")) {
+            const auto& uniqueId = data.at("actor_unique_id");
+            value.actorUniqueIdComponentHash = static_cast<std::uint32_t>(
+                number(uniqueId, "component_hash"));
+            value.actorUniqueIdValueOffset = number(uniqueId, "value_offset");
+            value.actorUniqueIdValueSize = number(uniqueId, "value_size");
+        }
         const auto& runtimeId = data.at("runtime_id");
         value.runtimeIdComponentHash = static_cast<std::uint32_t>(
             number(runtimeId, "component_hash"));

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .pe import Executable
-from .signature import generate_unique_signature, unique_match
+from .signature import find_matches, generate_signature_anchors, generate_unique_signature
 
 
 def make_database(exe: Executable, version: str, role: str = "client",
@@ -37,7 +37,7 @@ def make_database(exe: Executable, version: str, role: str = "client",
             errors.append(f"{name}: reference .text SHA-256 does not match")
             continue
         function_end = exe.function_end(rva)
-        max_bytes = min(320, function_end - rva) if function_end else 320
+        max_bytes = min(0x10000, function_end - rva) if function_end else 0x1400
         snippet = exe.text_bytes_at(rva, max_bytes)
         result = generate_unique_signature(snippet, exe.text_data, rva - exe.text_rva, max_length=256)
         if result is None:
@@ -46,6 +46,8 @@ def make_database(exe: Executable, version: str, role: str = "client",
             pattern, pattern_length = "", 0
         else:
             pattern, pattern_length = result
+        anchors = (generate_signature_anchors(snippet, exe.text_data, rva - exe.text_rva)
+                   if function_end else [])
         results[name] = {
             "rva": f"0x{rva:X}",
             "signature": pattern,
@@ -55,6 +57,7 @@ def make_database(exe: Executable, version: str, role: str = "client",
             "source": str(row.get("source", "manual-rva")),
             "function_boundary": rva in bounds,
             "signature_length": pattern_length,
+            "signature_anchors": anchors,
             "category": str(row.get("category", "unknown")),
             "origin_key": str(row.get("origin_key", "")),
             "reference_commit": str(row.get("reference_commit", "")),
@@ -88,27 +91,65 @@ def make_database(exe: Executable, version: str, role: str = "client",
 
 
 def port_database(old: dict, exe: Executable, version: str) -> dict:
-    """Match old masked patterns on new .text, always retain 'candidate' status."""
+    """Port symbol candidates using exact-build entry/body anchors and new .pdata.
+
+    All results remain candidates. Every bounded hit votes for its containing
+    function; distinct anchors increase support. A tied top result fails closed.
+    """
     targets = []
     warnings = []
+    support: dict[str, dict[str, int]] = {}
+    containing = getattr(exe, "containing_function", None)
+    boundaries = set(exe.pdata_bounds()) if not callable(containing) else set()
     for name, symbol in old.get("symbols", {}).items():
-        pattern = symbol.get("signature")
-        if not pattern:
+        anchors = list(symbol.get("signature_anchors", []))
+        if not anchors and symbol.get("signature"):
+            anchors = [{"pattern": symbol["signature"], "offset": 0}]
+        votes: dict[int, set[int]] = {}
+        capped_anchors = 0
+        for index, anchor in enumerate(anchors):
+            pattern = anchor.get("pattern", "")
+            if not pattern:
+                continue
+            offsets = find_matches(exe.text_data, pattern)
+            if offsets is None:
+                capped_anchors += 1
+                warnings.append(f"{name}: anchor {index} exceeded the match cap; ignored")
+                continue
+            for offset in offsets:
+                matched_rva = exe.text_rva + offset
+                function_rva = (containing(matched_rva) if callable(containing)
+                                else (matched_rva if matched_rva in boundaries else None))
+                if function_rva is None:
+                    continue
+                votes.setdefault(function_rva, set()).add(index)
+        if not votes:
+            warnings.append(f"{name}: no anchor hit mapped to a .pdata function")
             continue
-        offset = unique_match(exe.text_data, pattern)
-        if offset is None:
-            warnings.append(f"{name}: zero or multiple matches")
-        else:
-            targets.append({
-                "name": name,
-                "rva": exe.text_rva + offset,
-                "source": f"pattern-port:{old['target']['version']}",
-                "verified": False,
-            })
+        ranked = sorted(votes.items(), key=lambda row: (-len(row[1]), row[0]))
+        top_score = len(ranked[0][1])
+        if len(ranked) > 1 and len(ranked[1][1]) == top_score:
+            warnings.append(f"{name}: conflicting .pdata function candidates ({top_score} anchors each)")
+            continue
+        rva, matched = ranked[0]
+        targets.append({
+            "name": name,
+            "rva": rva,
+            "source": f"anchor-port:{old['target']['version']} ({len(matched)}/{len(anchors)} source-unique anchors)",
+            "verified": False,
+        })
+        support[name] = {
+            "matched_anchors": len(matched),
+            "available_anchors": len(anchors),
+            "anchors_over_match_cap": capped_anchors,
+        }
+        if len(matched) < 2 and len(anchors) > 1:
+            warnings.append(f"{name}: weak candidate supported by one anchor pattern")
     generated = make_database(exe, version, old["target"].get("kind", "client"),
                               targets=targets, include_exports=False,
                               max_entries=len(targets))
     generated["generation"]["warnings"].extend(warnings)
+    generated["generation"]["port_support"] = support
     if old.get("native_items"):
         generated["generation"]["warnings"].append(
             "native_items layout was not copied: revalidate Actor equipment, local inventory, "

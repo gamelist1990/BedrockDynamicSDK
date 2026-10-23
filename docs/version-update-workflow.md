@@ -114,12 +114,19 @@ uv run bedrock-symbols port "$NEW_EXE" \
   --output "$UPDATE_WORK/ported.json"
 ```
 
-この処理は各旧signatureを新EXEの `.text` 全体から検索します。
+この処理は旧プロファイルの関数入口と本体から得た複数の命令アンカーを
+新EXEの `.text` 全体で検索し、ヒット位置を新EXEの `.pdata` 関数境界へ対応付けます。
+複数アンカーの投票が同じ関数入口に集まれば、その入口から新RVA・signature・entry checkを生成します。
 
-- 1件だけヒット: 新RVAから新しいsignatureとentry checkを生成
+- アンカーのヒットが同じ `.pdata` 関数に集まる: 候補として出力
 - 0件ヒット: warningsへ記録
-- 複数ヒット: 曖昧なのでwarningsへ記録
-- 関数境界外: 採用しない、または要確認
+- 同点の別関数へ分かれる: 曖昧なので候補から除外
+- 一意アンカーが1つだけ: 弱い候補として警告付きで出力
+- `.pdata` に対応しない: 採用しない
+
+この処理はRVA候補の移植です。命令列が一致しても関数の意味やABIが保たれた証明には
+ならないため、Ghidraで関数本体・呼び出し元・ABIを確認します。
+アンカー設計の説明と1.26.52.3の照合結果は [`signature-porting.md`](signature-porting.md) を参照してください。
 
 生成された全シンボルは `candidate` です。過去バージョンの `verified` 状態を
 自動継承しないのは意図した安全動作です。

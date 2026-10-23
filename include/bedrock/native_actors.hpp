@@ -17,6 +17,9 @@ struct NativeActorLayout {
     std::uint32_t actorOwnerComponentHashAlternate{};
     std::size_t actorOwnerPointerOffset{};
     std::uint32_t actorTypeComponentHash{};
+    std::uint32_t actorUniqueIdComponentHash{};
+    std::size_t actorUniqueIdValueOffset{};
+    std::size_t actorUniqueIdValueSize{};
     std::uint32_t runtimeIdComponentHash{};
     std::size_t runtimeIdValueOffset{};
     std::size_t runtimeIdValueSize{};

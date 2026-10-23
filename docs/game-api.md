@@ -114,10 +114,11 @@ consumers still need to provide their own validated `GameAccess` adapter.
 `Actor::getBounds()`, `getPosition()`, and `getRotation()` return value
 snapshots; their native component hashes and offsets belong in the matching
 profile, not in client feature code. `Actor::getEntityId()` exposes the
-adapter's registry entity ID when available (it is not necessarily Minecraft's
-long-lived ActorUniqueID). `Actor::getRuntimeId()` exposes the Bedrock
-RuntimeIDComponent value as a 64-bit identifier, separate from the EnTT entity
-ID. Its adapter must use the
+adapter's registry entity ID when available (it is not Minecraft's long-lived
+ActorUniqueID). `Actor::getUniqueId()` exposes that distinct component value
+when the adapter can read it. `Actor::getRuntimeId()` exposes the Bedrock
+RuntimeIDComponent value as a 64-bit identifier, separate from both the EnTT
+entity ID and ActorUniqueID. Its adapter must use the
 matching versioned `native_actors.runtime_id` layout; the current 1.26.52.3
 value offset/width are candidates and require live validation before relying on
 them for cross-source identity matching. `GameHooks::installLevelTick()` publishes

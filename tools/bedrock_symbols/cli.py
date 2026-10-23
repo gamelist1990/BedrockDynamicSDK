@@ -29,7 +29,7 @@ def main() -> int:
     generate.add_argument("--no-exports", action="store_true")
     generate.add_argument("--max-entries", type=int, default=50)
     generate.add_argument("--output", type=Path, required=True)
-    port = sub.add_parser("port", help="Find unique old signature patterns in a newer PE")
+    port = sub.add_parser("port", help="Port candidates with source-unique anchors and destination .pdata boundaries")
     port.add_argument("binary", type=Path)
     port.add_argument("--old", type=Path, required=True)
     port.add_argument("--version", required=True)

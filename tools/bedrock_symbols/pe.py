@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_right
 from pathlib import Path
 from functools import cached_property
 
@@ -95,3 +96,16 @@ class Executable:
 
     def function_end(self, rva: int) -> int | None:
         return self.pdata_ranges.get(rva)
+
+    @cached_property
+    def pdata_starts(self) -> tuple[int, ...]:
+        return tuple(sorted(self.pdata_ranges))
+
+    def containing_function(self, rva: int) -> int | None:
+        """Return the .pdata entry containing an observed code address."""
+        ranges = self.pdata_ranges
+        index = bisect_right(self.pdata_starts, rva) - 1
+        if index < 0:
+            return None
+        start = self.pdata_starts[index]
+        return start if rva < ranges[start] else None
