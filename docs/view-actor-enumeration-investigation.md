@@ -90,6 +90,24 @@ must first resolve the render pass's actual candidate Actor handles and then
 publish them; passing `ViewRenderObject*` as an Actor is invalid. Until that
 entry and data path are validated, the SDK leaves the native hook disabled.
 
+For Actors whose name tags the renderer requests, the render hook is not needed
+to obtain their pointers: the existing exact-build `Actor::getNameTag` hook
+receives the Actor as its `this` pointer and publishes it through
+`ActorNameTagEvent` / the `ActorGetter` cache. TabList already uses this route.
+The client now refreshes its MurderDetect roster on the next Level tick after a
+new name-tag observation instead of waiting up to one second. This provides a
+low-latency roster of observed name-tag Actors, not a complete world list;
+actors whose name tags are never queried remain undiscovered.
+
+LeviLamina's current client headers are useful corroboration but not a
+substitute for the pinned 1.26.52.3 binary: they declare `LevelRendererCamera::render`
+with `BaseActorRenderContext&`, `ViewRenderObject const&`, and
+`IClientInstance&`, and put `mActorRenderCandidates` on `LevelRendererCamera`.
+Its `ViewRenderObject` fields instead include render collections such as actor
+shadows and name tags. This makes the name-tag getter a simpler, already
+integrated source for visible player Actors; it does not establish that the
+1.26.52.3 `ViewRenderObject` itself contains an Actor pointer array.
+
 The SDK `GameApi::actors()` merges a native
 `GameAccess::actorHandles(world)` source with its Hook/View observations. The
 HitBox adapter now implements the dynamic-storage equivalent of
