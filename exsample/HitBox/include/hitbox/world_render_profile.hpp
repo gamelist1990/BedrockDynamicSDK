@@ -9,8 +9,8 @@
 namespace hitbox {
 struct WorldRenderProfile {
     struct Function { std::uint32_t rva{}; std::vector<std::uint8_t> guard; };
-    std::array<Function, 5> functions;
-    std::uint32_t player{}, origin{}, material{}, tess{}, shader{}, translation{}, building{}, special{}, dirty{};
+    std::array<Function, 7> functions;
+    std::uint32_t commonMaterialGroup{}, player{}, origin{}, material{}, tess{}, shader{}, translation{}, building{}, special{}, dirty{};
 };
 inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile& out, std::string& error) {
     try {
@@ -26,7 +26,7 @@ inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile&
         };
         const auto imageSize = number(root.at("target").at("size_of_image"));
         WorldRenderProfile result;
-        constexpr std::array names{"render_level", "begin", "vertex", "color", "render_mesh"};
+        constexpr std::array names{"render_level", "begin", "vertex", "color", "render_mesh", "hashed_name_ctor", "material_ctor"};
         for (std::size_t i=0; i<names.size(); ++i) {
             const auto& value = data.at("functions").at(names[i]);
             auto& f = result.functions[i];
@@ -49,6 +49,9 @@ inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile&
             for (std::size_t j=0;j<i;++j) if (result.functions[j].rva==f.rva)
                 throw std::runtime_error("duplicate function RVA");
         }
+        result.commonMaterialGroup=number(data.at("common_material_group_rva"));
+        if (!result.commonMaterialGroup || result.commonMaterialGroup>=imageSize ||
+            imageSize-result.commonMaterialGroup<sizeof(void*)) throw std::runtime_error("material group outside image");
         const auto& offsets=data.at("offsets");
         const auto offset=[&](const char* key) {
             const auto n=number(offsets.at(key));

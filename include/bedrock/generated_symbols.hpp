@@ -235,7 +235,7 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "pointer_size": 8,
     "status": "candidate",
     "runtime_verified": false,
-    "evidence": "Exact-build REA/Ghidra raw-function dossiers; docs/hitbox-world-render.md. Windows x64 ABI corroborated with Latite source and native call sites; runtime validation pending.",
+    "evidence": "Exact-build REA/Ghidra raw-function dossiers; docs/hitbox-world-render.md. Windows x64 ABI corroborated with Latite source and native call sites; runtime validation pending. Native constructors of HashedString (48 bytes) and MaterialPtr (16 bytes) corroborated by REA dossiers; selection_overlay uses engine-owned allocation and is held until process exit.",
     "functions": {
       "render_level": {
         "rva": "0x47f8570",
@@ -256,6 +256,14 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "render_mesh": {
         "rva": "0x467ee50",
         "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 ec 70 04 00 00 48 8d ac 24 80 00 00"
+      },
+      "hashed_name_ctor": {
+        "rva": "0x6ac970",
+        "entry_check": "55 56 57 53 48 83 ec 38 48 8d 6c 24 30 48 c7 45 00 fe ff ff ff 48 89 d7"
+      },
+      "material_ctor": {
+        "rva": "0x52f1e00",
+        "entry_check": "55 56 57 48 83 ec 50 48 8d 6c 24 50 0f 29 75 f0 48 c7 45 e8 fe ff ff ff"
       }
     },
     "offsets": {
@@ -268,7 +276,8 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "tess_building": 672,
       "tess_special_mode": 597,
       "shader_color_dirty": 16
-    }
+    },
+    "common_material_group_rva": "0x11e3b308"
   }
 }
 )BDK_SYM_V1";

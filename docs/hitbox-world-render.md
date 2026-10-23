@@ -3,8 +3,7 @@
 ## Scope and confidence
 
 The implementation follows Latite's post-`LevelRenderer::renderLevel` drawing
-path, using the game's ScreenContext/Tessellator and an existing selection_box
-material. Reference source: LatiteClient/Latite commit
+path, using the game's ScreenContext/Tessellator and a selection_overlay material obtained through the native material constructor. Reference source: LatiteClient/Latite commit
 `9f7463515dd298a496da918285936d78c7416aad`,
 `src/client/memory/hook/hooks/LevelRendererHooks.cpp`,
 `src/util/DrawUtil3D.cpp`, and the native renderer declarations.
@@ -51,13 +50,41 @@ Evidence: `ev_c007da2031b46b3fc710c04ec98ff0a68ef50c0949bfa46b1324eef9ad3fb5ec`.
 The renderLevel body accesses LevelRenderer+0x468 for the player renderer. Begin
 checks tess+0x2a0 and +0x255 before starting. Vertex adds tess translation +0x1cc;
 HitBox supplies origin-relative vertices with that translation temporarily zeroed,
-then restores the previous translation and shader color. The engine owns all
-objects and their material lifetime: no foreign shared_ptr/STL object is created.
+then restores the previous translation and shader color. The screen, tessellator and renderer are borrowed from the engine.
+
+For through-block rendering, the implementation now uses `selection_overlay`,
+following Latite's Hitboxes transparent option rather than the previously borrowed
+selection_box. The common material group is addressed at RVA `0x11e3b308`, the same
+RDX address loaded by the original constructor at 0x04697e12. A separate native
+caller at 0x0442c7c8 passes a char literal to HashedString constructor 0x006ac970,
+then passes its output and the common group to MaterialPtr constructor 0x052f1e00.
+The two focused REA dossiers establish RCX output / RDX const char* for the first
+and RCX output / RDX group / R8 HashedString* for the second. The constructors
+write 48 and 16 bytes respectively. The actual hash algorithm is computed by the
+engine; it is not reimplemented from the historical reference.
+
+- HashedString ctor: `ev_4dd77c2d31b4b68ed41aa9dc578a89cce4b481af545b88fcfff0406c5ac37581`
+- MaterialPtr ctor: `ev_c13e00454c6069e2341abdca35ca45acf1c8a13e3fdfb76aafed9317a3142d2f`
+- Native construction caller: `ev_7b893d086817d8b02c881408a1afb404e85944901183c393c2a4eff1576c75db`
+
+Both constructors are called once on the render thread after the common group's
+factory is available. Native internal allocations and reference counts are held
+until process exit, matching the pinned DLL lifetime. This bounded lifetime avoids
+calling a foreign STL's destructors. Initialization failure disables HitBox drawing.
+The selected name matches the reference's through-block path, but the current
+build's material resource/depth settings and in-game result remain runtime checks.
 
 ## Implementation boundaries
 
-- Only the exact attached executable profile is accepted. All five function
+- Only the exact attached executable profile is accepted. All seven function
   entry guards (24 bytes) must still match loaded memory before installing.
+- Ten-tick sweep target: ceil(population/10) rows per tick, maximum 32, with the
+  existing cooperative 250us loop budget. Slower sweeps continue instead of
+  restarting; the upper bound and budget can extend a sweep beyond ten ticks.
+- Linear interpolation uses copied old/new bounds each render frame. New samples
+  start at the current interpolated position. Teleports beyond eight blocks,
+  sample gaps over two seconds, and world epochs reset interpolation. No motion
+  extrapolation is performed; smooth display adds up to a sample interval of lag.
 - Native actor capture stays on the game tick; two workers receive copied
   RuntimeID/AABB/position data. Native drawing stays inside the world render pass.
 - Twelve edges per AABB, one mesh submission, at most 512 boxes per pass. The
@@ -66,7 +93,7 @@ objects and their material lifetime: no foreign shared_ptr/STL object is created
 - Active native tessellation is skipped. Read/write guards and SEH reduce the
   risk of invalid accesses but cannot make an incorrect native ABI or corrupted
   engine state safe. A guarded draw fault disables further HitBox drawing.
-- Local tests validate coordinate conversion, retention/world epochs, and profile
+- Local tests validate coordinate conversion, interpolation/teleport resets, ten-tick scheduling, retention/world epochs, and profile
   rejection. Cross-compilation/Windows CI establish compilation, not in-game
   visuals, third-person correctness, or a measured FPS improvement. Those remain
   runtime acceptance checks on this exact build.

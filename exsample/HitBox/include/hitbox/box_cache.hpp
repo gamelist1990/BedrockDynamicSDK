@@ -17,6 +17,8 @@ struct Sample {
 };
 struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};
+    bedrock::ActorBounds blendFrom{};
+    std::chrono::milliseconds blendDuration{};
 };
 inline float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) noexcept {
     const float x=a.x-b.x, y=a.y-b.y, z=a.z-b.z;
@@ -32,18 +34,51 @@ inline std::array<bedrock::Vec3, 8> corners(const bedrock::ActorBounds& b) noexc
         {b.minimum.x,b.maximum.y,b.minimum.z}, {b.maximum.x,b.maximum.y,b.minimum.z},
         {b.maximum.x,b.maximum.y,b.maximum.z}, {b.minimum.x,b.maximum.y,b.maximum.z}}};
 }
+// A ten-tick sweep is spread across callbacks; slow callbacks keep the cursor
+// and finish the pending sweep rather than restarting and starving later rows.
+class CaptureSchedule {
+public:
+    static constexpr std::uint64_t periodTicks=10;
+    static constexpr std::size_t maximumBatch=32;
+    void reset() noexcept { tick_=nextSweep_=0; remaining_=population_=0; }
+    std::size_t beginTick(std::size_t population) noexcept {
+        const auto tick=tick_++;
+        if (!population) { remaining_=population_=0; nextSweep_=tick; return 0; }
+        if (!remaining_) {
+            if (tick<nextSweep_) return 0;
+            population_=population; remaining_=population; nextSweep_=tick+periodTicks;
+        }
+        remaining_=std::min(remaining_,population);
+        return std::min({maximumBatch,remaining_,std::max<std::size_t>(1,(population_+periodTicks-1)/periodTicks)});
+    }
+    void visited(std::size_t count) noexcept { remaining_-=std::min(count,remaining_); }
+private:
+    std::uint64_t tick_{},nextSweep_{};
+    std::size_t remaining_{},population_{};
+};
+inline bedrock::ActorBounds interpolatedBounds(const BoxRecord& box, Clock::time_point now) noexcept {
+    if (box.blendDuration.count()<=0) return box.bounds;
+    const float alpha=std::clamp(std::chrono::duration<float>(now-box.seenAt).count()/
+        std::chrono::duration<float>(box.blendDuration).count(),0.f,1.f);
+    const auto lerp=[alpha](const bedrock::Vec3& from,const bedrock::Vec3& to) {
+        return bedrock::Vec3{from.x+(to.x-from.x)*alpha,from.y+(to.y-from.y)*alpha,from.z+(to.z-from.z)*alpha};
+    };
+    return {lerp(box.blendFrom.minimum,box.bounds.minimum),lerp(box.blendFrom.maximum,box.bounds.maximum)};
+}
 // The engine's 3D pass already owns the view/projection matrices. Supply line
 // vertices relative to its render origin; do not add an eye-height or FOV guess.
 inline std::array<bedrock::Vec3, 24> worldLineVertices(
-    const BoxRecord& box, const bedrock::Vec3& renderOrigin) noexcept {
+    const BoxRecord& box, const bedrock::Vec3& renderOrigin,
+    Clock::time_point now=Clock::time_point::max()) noexcept {
     constexpr std::array<std::array<unsigned, 2>, 12> edges{{
         {{0,1}},{{1,2}},{{2,3}},{{3,0}},{{4,5}},{{5,6}},{{6,7}},{{7,4}},
         {{0,4}},{{1,5}},{{2,6}},{{3,7}}}};
+    const auto currentCorners=now==Clock::time_point::max() ? box.corners : corners(interpolatedBounds(box,now));
     std::array<bedrock::Vec3, 24> result{};
     std::size_t index = 0;
     for (const auto& edge : edges) {
         for (const auto corner : edge) {
-            const auto& point = box.corners[corner];
+            const auto& point = currentCorners[corner];
             result[index++] = {point.x - renderOrigin.x, point.y - renderOrigin.y,
                                point.z - renderOrigin.z};
         }
@@ -75,6 +110,18 @@ public:
         BoxRecord box;
         static_cast<Sample&>(box)=sample;
         box.corners=hitbox::corners(sample.bounds);
+        box.blendFrom=sample.bounds;
+        if (old!=records_.end()) {
+            const auto age=sample.seenAt-old->second.seenAt;
+            const auto from=interpolatedBounds(old->second,sample.seenAt);
+            // Snap teleports and stale/reused IDs; never extrapolate unknown movement.
+            if (age>Clock::duration::zero() && age<=std::chrono::seconds(2) &&
+                distanceSquared(center(from),center(sample.bounds))<=64.f) {
+                box.blendFrom=from;
+                box.blendDuration=std::clamp(std::chrono::duration_cast<std::chrono::milliseconds>(age),
+                    std::chrono::milliseconds(50),std::chrono::milliseconds(1000));
+            }
+        }
         records_.insert_or_assign(sample.runtimeId,std::move(box));
     }
     std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,

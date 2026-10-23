@@ -5,8 +5,8 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 - プレイヤーに限定せず、ActorOwner / RuntimeID / AABBShapeのEnTT componentを照合してAABBを取得
 - SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
 - Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
-- ゲームのrender originとselection_boxマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
-- 全Actorの一括再検証を廃止。1回の更新は最大8エントリ、Actor読み取りの処理予算は250µs
+- ゲームのrender originとselection_overlayマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
+- 全Actorの一括再検証を廃止。10tickで1周する目標で分散し、1tickは最大32エントリ、Actor読み取りの処理予算は250µs
 - 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
 - ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
 - ワーカーにはRuntimeID・AABB・視点などのコピーだけを渡し、ActorやEnTTのポインタを参照させない
@@ -40,9 +40,12 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。名前の取得やNameTag Hookは
 行わず、表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
 
-ゲームtickではActorOwnerのエントリを前回の続きから最大8件確認し、RuntimeIDとAABBをまとめて読みます。
+ActorOwnerのエントリは10tickで1周することを目標に、毎tick `ceil(Actor数/10)` 件ずつ確認します。
+1tickの上限は32件で、全件を10tickごとに一括更新しません。RuntimeIDとAABBだけをコピーします。
 250µsの処理予算を超えた場合は次のエントリを後のtickへ回します。これはNative呼び出し1回を途中で
-中断する仕組みではありません。取得開始の間隔を最短25msとし、遅れを一括で取り返す処理も行いません。
+中断する仕組みではありません。予算内に1周できない場合も続きから処理し、途中で先頭に戻しません。
+Actorが320件を超える場合や読み取りが遅い場合は1周が10tickより長くなります。20TPSでは10tickは約0.5秒ですが、
+サンプリングは実際のLevelTickコールバック数で管理するため、ゲーム側のtick速度にも従います。
 全Actorのハンドル一覧を500msごとに作り直す処理、各プロパティのSDKラッパーによる重複再検証、
 対象ごとのStateVector取得を廃止しました。範囲判定にはコピー済みAABBの中心を使います。
 
@@ -56,8 +59,14 @@ Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
 `retain_last_position=true` の場合は、近距離で最後に確認した位置を指定時間だけ保持します。
 描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
-ゲームのLineListへ渡します。最大512枠、1回のbegin/mesh flushにまとめます。選択枠マテリアルの
-深度設定・ゲームのカメラ行列を使い、DXGI/ImGui overlayは起動しません。
+ゲームのLineListへ渡します。最大512枠、1回のbegin/mesh flushにまとめます。Latiteが透過表示に使う
+`selection_overlay` マテリアルをゲームのAPIで一度だけ生成し、ブロック越しの表示に使います。
+DXGI/ImGui overlayは起動しません。実ゲームでの深度動作は未検証です。
+
+描画は毎フレーム、コピー済みの前回表示位置から新しいAABBへ線形補間します。更新途中で次の値が来ても
+その時点の補間位置を引き継ぎます。将来位置は予測しないため、動きの表示には最大で取得1周期程度の遅れが
+あります。初回・8ブロックを超える移動・2秒を超える取得の途切れ・ワールド変更は補間せず反映します。
+補間中もActorの追加読み取りは行いません。
 `line_thickness` は以前の設定との互換性のため読み込みますが、この描画経路ではゲーム側の線幅を使います。
 
 メモリ範囲の照会結果は1回のコールバック内だけ再利用し、後のtickには持ち越しません。
@@ -105,7 +114,7 @@ compatibility layer; the HitBox DLL itself must match the target's C++ ABI.
 
 ワールド描画のRVA・呼出規約・オフセットは対象1.26.52.3 EXEのREA/Ghidra解析とLatiteのソースで
 照合しました。[解析根拠](../../docs/hitbox-world-render.md)に範囲と未確認事項を記載しています。
-`native_world_render` は実機未検証の `candidate` です。全5関数の実メモリ上の入口24バイトを検査し、
+`native_world_render` は実機未検証の `candidate` です。全7関数の実メモリ上の入口24バイトを検査し、
 不一致なら描画Hookを登録しません。借用したTessellatorが使用中ならその描画をスキップします。
 ネイティブ描画で例外が起きた場合は以後の描画を無効化します。SEHであらゆる内部状態破損やクラッシュを
 防げることを保証するものではありません。

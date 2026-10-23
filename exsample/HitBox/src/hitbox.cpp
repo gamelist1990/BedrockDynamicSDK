@@ -95,7 +95,7 @@ struct RenderSnapshot {
     std::chrono::milliseconds liveLifetime{1000};
 };
 constexpr std::size_t workerCount = 2;
-constexpr std::size_t maximumNativeBatch = 8;
+constexpr std::size_t maximumNativeBatch = hitbox::CaptureSchedule::maximumBatch;
 struct CaptureBatch {
     CameraState camera;
     std::array<hitbox::Sample, maximumNativeBatch> samples;
@@ -405,7 +405,7 @@ public:
             ? std::optional<std::uint32_t>{entityId} : std::nullopt;
     }
 
-    bool captureBatch(void* local, std::size_t& cursor, CaptureBatch& batch,
+    bool captureBatch(void* local, std::size_t& cursor, hitbox::CaptureSchedule& schedule, CaptureBatch& batch,
                       std::size_t& visited) const noexcept {
         // No EnTT iterator/storage/component pointer survives the callback.
         visited = 0;
@@ -413,11 +413,11 @@ public:
         const auto& layout = actorLayout_;
         if (!safeRead(local, layout.actorEntityContextOffset + layout.contextRegistryOffset,
                       registry) || !registry) return false;
-        return captureRegistryBatch(registry, layout, &cursor, &batch, &visited);
+        return captureRegistryBatch(registry, layout, &cursor, &schedule, &batch, &visited);
     }
 private:
     static bool captureRegistryBatch(void* registry, const bedrock::NativeActorLayout& layout,
-        std::size_t* cursor, CaptureBatch* batch, std::size_t* visited) noexcept {
+        std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
         __try {
             using Registry = entt::basic_registry<hitbox_native::EntityId>;
             auto* typed = static_cast<Registry*>(registry);
@@ -430,15 +430,16 @@ private:
             // A fixed source keeps the incremental cursor stable when pool sizes change.
             batch->population = candidates->size();
             if (batch->population > 16384) return false;
-            if (!batch->population) { *cursor = 0; return true; }
+            if (!batch->population) { *cursor = 0; schedule->beginTick(0); return true; }
             const auto begin = Clock::now();
-            const auto count = std::min(maximumNativeBatch, batch->population);
+            const auto count = schedule->beginTick(batch->population);
             for (std::size_t n = 0; n < count; ++n) {
                 // Cooperative 250us budget; a single native read cannot be preempted.
                 if (n && Clock::now() - begin >= std::chrono::microseconds(250)) break;
                 if (*cursor >= batch->population) *cursor = 0;
                 const auto entity = candidates->data()[(*cursor)++];
                 ++*visited;
+                schedule->visited(1);
                 if (!typed->valid(entity) || !owner->contains(entity) ||
                     !runtime->contains(entity) || !shape->contains(entity) ||
                     (actorType && !actorType->contains(entity))) continue;
@@ -618,7 +619,7 @@ bool startProcessingWorkers() noexcept {
 void refreshGameTickSnapshot() {
     static void* snapshotWorld = nullptr;
     static std::size_t cursor = 0;
-    static auto nextCapture = Clock::time_point{};
+    static hitbox::CaptureSchedule schedule;
     static auto nextReport = Clock::time_point{};
     static double averageVisited = maximumNativeBatch;
     static bool loggedNativeReady = false;
@@ -634,13 +635,11 @@ void refreshGameTickSnapshot() {
         access.setWorld(world);
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);
         cursor = 0;
-        nextCapture = {};
+        schedule.reset();
         averageVisited = maximumNativeBatch;
         loggedNativeReady = loggedCameraWaiting = loggedNativeFailure = false;
         log("world actor source ready; worker caches reset by world epoch");
     }
-    if (now < nextCapture) return;
-    nextCapture = now + std::chrono::milliseconds(25); // Never catch up in a burst.
     NativeReadWindow readWindow;
     auto* local = access.localPlayer();
     const auto localReadyAt = Clock::now();
@@ -656,7 +655,7 @@ void refreshGameTickSnapshot() {
     batch.config = config;
     batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition};
     std::size_t visited = 0;
-    if (!access.captureBatch(local, cursor, batch, visited)) {
+    if (!access.captureBatch(local, cursor, schedule, batch, visited)) {
         if (!loggedNativeFailure) { loggedNativeFailure = true;
             log("incremental Actor capture unavailable [required storage or guarded read failed]"); }
         return;
@@ -666,7 +665,7 @@ void refreshGameTickSnapshot() {
     if (batch.count && !loggedNativeReady) {
         loggedNativeReady = true;
         log("native incremental capture active: pool=", batch.population,
-            " [RuntimeID + AABB copies; maximum 8 rows; 250us budget]");
+            " [RuntimeID + AABB copies; 10-tick sweep target; maximum 32 rows/tick; 250us budget]");
     }
     // Keep live records across a full incremental pass, even if the time budget
     // reduced the number of rows captured on a busy callback.
@@ -693,7 +692,7 @@ void refreshGameTickSnapshot() {
             " actors=", us(positionReadyAt, actorsReadyAt),
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
-            " [8 rows maximum; cooperative 250us actor budget; 2 workers]");
+            " [10-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
     }
 }
 void observeWorld(const bedrock::LevelTickEvent& event) {
@@ -711,6 +710,36 @@ using VertexFn = void(__fastcall*)(void*, float, float, float);
 struct FloatColor { float r,g,b,a; };
 using ColorFn = void(__fastcall*)(void*, const FloatColor*);
 using MeshFn = void(__fastcall*)(void*, void*, void*, void*);
+using HashedNameCtorFn = void*(__fastcall*)(void*, const char*);
+using MaterialCtorFn = void*(__fastcall*)(void*, void*, const void*);
+HashedNameCtorFn hashedNameCtor{};
+MaterialCtorFn materialCtor{};
+void* commonMaterialGroup{};
+// Native constructors own any internal allocations. Keep these two constructed
+// objects for the pinned DLL lifetime; never run another STL's destructor on them.
+alignas(16) std::array<std::byte,48> overlayNameStorage{};
+alignas(16) std::array<std::byte,16> overlayMaterialStorage{};
+std::atomic<int> overlayMaterialState{}; // 0 waiting, 1 constructing, 2 ready, -1 fault
+int ensureOverlayMaterial() noexcept {
+    const auto state=overlayMaterialState.load(std::memory_order_acquire);
+    if (state==2 || state==-1) return state==2 ? 1 : -1;
+    void* vtable=nullptr; void* factory=nullptr;
+    if (!safeRead(commonMaterialGroup,0,vtable) || !vtable ||
+        !safeRead(vtable,sizeof(void*),factory) || !isExecutable(factory)) return 0;
+    int expected=0;
+    if (!overlayMaterialState.compare_exchange_strong(expected,1,std::memory_order_acq_rel)) return 0;
+    __try {
+        hashedNameCtor(overlayNameStorage.data(),"selection_overlay");
+        materialCtor(overlayMaterialStorage.data(),commonMaterialGroup,overlayNameStorage.data());
+        void* info=nullptr;
+        if (!safeRead(overlayMaterialStorage.data(),0,info) || !info) {
+            overlayMaterialState.store(-1,std::memory_order_release); return -1;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        overlayMaterialState.store(-1,std::memory_order_release); return -1;
+    }
+    overlayMaterialState.store(2,std::memory_order_release); return 1;
+}
 hitbox::WorldRenderProfile worldRenderProfile;
 RenderLevelFn originalRenderLevel{};
 BeginFn tessBegin{};
@@ -753,13 +782,15 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
     if (!safeRead(renderer,p.player,player) || !player ||
         !safeRead(player,p.origin,origin) || !std::isfinite(origin.x) ||
         !std::isfinite(origin.y) || !std::isfinite(origin.z) ||
-        !safeRead(player,p.material,materialInfo) || !materialInfo ||
-        !permittedAddress(materialInfo,sizeof(void*)) ||
         !safeRead(screen,p.tess,tess) || !tess ||
         !safeRead(screen,p.shader,shader) || !shader ||
         !safeRead(tess,p.building,building) || building ||
         !safeRead(tess,p.special,special) || special ||
         !safeRead(tess,p.translation,oldTranslation) || !safeRead(shader,0,oldColor)) return 0;
+    const auto materialReady=ensureOverlayMaterial();
+    if (materialReady<=0) return materialReady;
+    if (!safeRead(overlayMaterialStorage.data(),0,materialInfo) || !materialInfo ||
+        !permittedAddress(materialInfo,sizeof(void*))) return -1;
     const bedrock::Vec3 zero{};
     const std::uint8_t dirty=1;
     if (!safeWrite(tess,p.translation,zero)) return 0;
@@ -784,12 +815,12 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
                 const FloatColor color{(packed&255)/255.f,((packed>>8)&255)/255.f,
                     ((packed>>16)&255)/255.f,((packed>>24)&255)/255.f};
                 tessColor(tess,&color);
-                const auto vertices=hitbox::worldLineVertices(box,origin);
+                const auto vertices=hitbox::worldLineVertices(box,origin,input->now);
                 for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
             }
         }
         alignas(16) std::array<std::byte,0x58> scratch{};
-        renderMesh(screen,tess,static_cast<std::byte*>(player)+p.material,scratch.data());
+        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
     } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
     // Restore the borrowed scalar state, also after a guarded native fault.
     safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
@@ -818,7 +849,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
     const auto result=drawNativeGuarded(renderer,screen,&input);
     static std::atomic<bool> loggedDraw{};
     if (result>0 && !loggedDraw.exchange(true))
-        log("native world mesh submitted [12 edges/box; engine render origin + selection_box]");
+        log("native world mesh submitted [12 edges/box; engine render origin + selection_overlay; through blocks; interpolated]");
     if (result<0 && !worldRenderFault.exchange(true))
         log("world rendering disabled after guarded native fault [restart required]");
 }
@@ -834,7 +865,7 @@ void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
 }
 bool installWorldRenderer(std::string& error) {
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    std::array<void*,5> addresses{};
+    std::array<void*,7> addresses{};
     for (std::size_t i=0;i<addresses.size();++i) {
         const auto& f=worldRenderProfile.functions[i];
         auto* target=reinterpret_cast<const std::byte*>(base+f.rva);
@@ -849,6 +880,9 @@ bool installWorldRenderer(std::string& error) {
     }
     tessBegin=reinterpret_cast<BeginFn>(addresses[1]); tessVertex=reinterpret_cast<VertexFn>(addresses[2]);
     tessColor=reinterpret_cast<ColorFn>(addresses[3]); renderMesh=reinterpret_cast<MeshFn>(addresses[4]);
+    hashedNameCtor=reinterpret_cast<HashedNameCtorFn>(addresses[5]);
+    materialCtor=reinterpret_cast<MaterialCtorFn>(addresses[6]);
+    commonMaterialGroup=reinterpret_cast<void*>(base+worldRenderProfile.commonMaterialGroup);
     return BDS_HookDirectInstall(addresses[0],reinterpret_cast<void*>(&renderLevelDetour),
         reinterpret_cast<void**>(&originalRenderLevel),&renderHookToken)!=0 ||
         (error="world render direct hook conflict/install failure",false);
@@ -971,7 +1005,7 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    log("native world rendering active [LevelRenderer::renderLevel + selection_box; exact-build guards; runtime candidate]");
+    log("native world rendering active [LevelRenderer::renderLevel + selection_overlay; 10-tick distributed sweep; exact-build guards; runtime candidate]");
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 
