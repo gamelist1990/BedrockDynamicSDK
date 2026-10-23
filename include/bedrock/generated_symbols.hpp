@@ -73,6 +73,39 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "hover_name_abi_verified": false
     }
   },
+  "native_actors": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "evidence": "ActorOwnerComponent, AABBShapeComponent, StateVectorComponent and ActorRotationComponent layouts cross-referenced against the attached Solstice 1.21.111 SDK declarations; hashes include bare-name and MSVC struct/class-name variants; current-build runtime validation remains required",
+    "actor_context": {
+      "actor_offset": "0x8",
+      "registry_offset": "0x8",
+      "entity_id_offset": "0x10"
+    },
+    "actor_owner": {
+      "component_hash": "0x85B93800",
+      "component_hash_alternate": "0x132A5818",
+      "actor_pointer_offset": "0x0"
+    },
+    "aabb_shape": {
+      "component_hash": "0xBAC1B3CF",
+      "component_hash_alternate": "0x1B10C9F2",
+      "minimum_offset": "0x0",
+      "maximum_offset": "0xC"
+    },
+    "state_vector": {
+      "component_hash": "0x1B5D5238",
+      "component_hash_alternate": "0x0EC93C91",
+      "position_offset": "0x0"
+    },
+    "actor_rotation": {
+      "component_hash": "0x75DF36B7",
+      "component_hash_alternate": "0xDC1E21CE",
+      "pitch_offset": "0x0",
+      "yaw_offset": "0x4"
+    }
+  },
   "symbols": {
     "LevelRendererPlayer::getFov": {
       "rva": "0x46BD250",

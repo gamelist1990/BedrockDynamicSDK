@@ -11,6 +11,7 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 - [BedrockGuiDemo](https://github.com/gamelist1990/BedrockGuiDemo)
 - [BedrockZoom](https://github.com/gamelist1990/BedrockZoom)
 - [BedrockTabList](https://github.com/gamelist1990/BedrockTabList) — Tabキー中のシンプルなプレイヤー一覧
+- [HitBox example](exsample/HitBox) — 全ActorのネイティブAABB表示と任意の最終位置保持
 
 ## Console / Logger API（必要なModだけ使用）
 

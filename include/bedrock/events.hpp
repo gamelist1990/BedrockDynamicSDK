@@ -21,6 +21,10 @@ struct UpdateEvent {
     // Emitted by a client-owned update source. NOT necessarily a Minecraft game tick.
     std::uint64_t sequence{};
 };
+struct LevelTickEvent {
+    void* level{};
+    std::uint64_t sequence{};
+};
 struct KeyEvent {
     // Kept as `virtualKey` for source compatibility. On Minecraft hooks this
     // is Minecraft's InputKey value, not a promise that it is a Win32 VK.
@@ -63,7 +67,10 @@ private:
 struct FocusEvent { bool focused{}; };
 // Emitted by a platform adapter when Minecraft is actively accepting gameplay
 // input (e.g. its window is focused and the gameplay cursor is captured).
-struct GameplayEvent { bool active{}; };
+struct GameplayEvent {
+    bool active{};
+    void* clientInstance{};
+};
 // Emitted after Minecraft calculates the baseline FOV. Listeners may adjust
 // the final value with setResultFov(); the shared hook runtime returns it to
 // the game after all listeners have run.
@@ -172,6 +179,6 @@ public:
 
 using ClientEvents = EventBus<UpdateEvent, KeyEvent, NativeKeyEvent, MouseEvent,
                                FocusEvent, GameplayEvent, FovEvent,
-                               ActorNameTagEvent, ViewNameTagEvent>;
+                               ActorNameTagEvent, ViewNameTagEvent, LevelTickEvent>;
 
 } // namespace bedrock

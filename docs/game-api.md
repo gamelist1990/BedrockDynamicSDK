@@ -93,6 +93,15 @@ tags, including the local player when its `GameAccess` adapter supplies one.
 It does not discover new Actors; new handles still come from View/getter observations. Callbacks remain
 synchronous on the emitting game/render/input thread; keep them short.
 
+An adapter may additionally provide `GameAccess::actorHandles(world)` from a
+version-specific native registry source. `GameApi::actors(world)` merges and
+deduplicates those live handles with observed View/name-tag handles.
+`Actor::getBounds()`, `getPosition()`, and `getRotation()` return value
+snapshots; their native component hashes and offsets belong in the matching
+profile, not in client feature code. `GameHooks::installLevelTick()` publishes
+`Event.Enum.LevelTick` after the original Level update, allowing a client to
+refresh actor data on the game thread and render an immutable cache later.
+
 ## Native input
 
 `GameHooks::installInput()` subscribes to the shared `Keyboard::feed` and

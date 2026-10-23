@@ -107,6 +107,20 @@ public:
         return true;
     }
 
+    bool installLevelTick(Resolver& resolver, std::string& error) {
+        if (!api_) { error = "GameApi is unavailable"; return false; }
+        if (tokens_[7]) { error.clear(); return true; }
+        const auto level = resolveSharedHook(resolver, "MultiPlayerLevel::_subTick",
+                                             BDS_HOOK_LEVEL_SUB_TICK);
+        if (!level || !subscribe(BDS_HOOK_LEVEL_SUB_TICK, level->address,
+                                 &onLevelTick, &tokens_[7])) {
+            error = "shared Level tick hook registration failed";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
     bool installNativeKeyboard(Resolver& resolver, std::string_view profile,
                                std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
@@ -180,16 +194,24 @@ private:
         api.dispatchFov(event);
         args.result = event.resultFov;
     }
+    static void BDS_HOOK_CALL onLevelTick(void* user, void* raw,
+                                          BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_LevelArgs*>(raw);
+        next(frame, &args);
+        static std::atomic<std::uint64_t> sequence{0};
+        static_cast<GameApi*>(user)->dispatchLevelTick(
+            args.level, sequence.fetch_add(1, std::memory_order_relaxed) + 1);
+    }
     static void BDS_HOOK_CALL onGrab(void* user, void* raw,
                                      BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_CursorArgs*>(raw);
         next(frame, &args);
-        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{true});
+        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{true, args.self});
     }
     static void BDS_HOOK_CALL onRelease(void* user, void* raw,
                                         BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_CursorArgs*>(raw);
-        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{false});
+        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{false, args.self});
         next(frame, &args);
     }
     static void BDS_HOOK_CALL onNativeKeyboard(void* user, void* raw,
@@ -215,7 +237,7 @@ private:
 
     GameApi* api_{};
     NativeKeyboardLayout keyboardLayout_{};
-    std::array<BDS_HookToken, 7> tokens_{};
+    std::array<BDS_HookToken, 8> tokens_{};
 };
 
 } // namespace bedrock

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <mutex>
 #include <memory>
@@ -62,6 +63,22 @@ using HeldItemInfo = ItemStack; // source-compatible name for older examples
 // Values match Minecraft's MouseDevice::feed InputKey values.
 enum class MouseButton : unsigned { Left = 1, Right = 2, Middle = 3, X1 = 4, X2 = 5 };
 
+struct Vec3 { float x{}, y{}, z{}; };
+struct ActorBounds {
+    Vec3 minimum;
+    Vec3 maximum;
+    [[nodiscard]] bool valid() const noexcept {
+        const auto finite = [](float value) {
+            return std::isfinite(value) && std::abs(value) < 1.0e7f;
+        };
+        return finite(minimum.x) && finite(minimum.y) && finite(minimum.z) &&
+               finite(maximum.x) && finite(maximum.y) && finite(maximum.z) &&
+               minimum.x <= maximum.x && minimum.y <= maximum.y &&
+               minimum.z <= maximum.z;
+    }
+};
+struct ActorRotation { float pitch{}, yaw{}; };
+
 // Implemented by the game-specific adapter after it has validated the live
 // pointers/layout for the exact executable. All returned pointers are borrowed.
 class GameAccess {
@@ -71,6 +88,24 @@ public:
     [[nodiscard]] virtual void* localPlayer() const noexcept = 0;
     [[nodiscard]] virtual void* worldOf(void* actor) const noexcept = 0;
     [[nodiscard]] virtual std::optional<std::string> nameTag(void* actor) const = 0;
+    // Optional native world source. Implementations return borrowed Actor
+    // handles from the live world's entity registry, never a temporary Actor.
+    [[nodiscard]] virtual std::vector<void*> actorHandles(void* world) const {
+        (void)world;
+        return {};
+    }
+    [[nodiscard]] virtual std::optional<ActorBounds> actorBounds(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<Vec3> actorPosition(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<ActorRotation> actorRotation(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
     // Return only this Actor's currently held hand item. Do not enumerate or
     // expose the Actor's full inventory; local-player inventory access is a
     // separate API with a different lifetime and access path.
@@ -147,6 +182,7 @@ struct GameEventRegistry {
         EventChannel<ActorNameTagEvent> ActorNameTag;
         EventChannel<ViewNameTagEvent> ViewNameTag;
         EventChannel<UpdateEvent> Update;
+        EventChannel<LevelTickEvent> LevelTick;
         EventChannel<GameplayEvent> Gameplay;
         EventChannel<FovEvent> Fov;
     } Enum;
@@ -340,6 +376,10 @@ public:
         catch (...) { return true; } // callback failures must not swallow game input
         return !event.cancelled();
     }
+    void dispatchLevelTick(void* level, std::uint64_t sequence) noexcept {
+        try { Event.Enum.LevelTick.emit(LevelTickEvent{level, sequence}); }
+        catch (...) { }
+    }
     [[nodiscard]] bool dispatchMouse(MouseEvent& event) noexcept {
         try { Event.Enum.Mouse.emit(event); }
         catch (...) { return true; }
@@ -502,6 +542,17 @@ public:
         const auto named = cachedActors(NameTagSource::ActorGetter);
         std::unordered_set<void*> handles;
         handles.reserve(view->size() + named->size() + 1);
+        if (access_ && world) {
+            for (auto* handle : access_->actorHandles(world))
+                if (validActor(handle)) handles.insert(handle);
+        } else if (access_) {
+            if (auto* local = access_->localPlayer()) {
+                if (auto* localWorld = access_->worldOf(local)) {
+                    for (auto* handle : access_->actorHandles(localWorld))
+                        if (validActor(handle)) handles.insert(handle);
+                }
+            }
+        }
         for (const auto& actor : *view) handles.insert(actor.handle_);
         for (const auto& actor : *named) handles.insert(actor.handle_);
         // The local player is useful even before a render/name-tag callback has
@@ -664,6 +715,17 @@ inline ActorIdentity Actor::getIdentity() const {
         identity.isPlayer = true;
     }
     return identity;
+}
+inline std::optional<ActorBounds> Actor::getBounds() const {
+    if (!isValid()) return std::nullopt;
+    auto bounds = api_->access_->actorBounds(handle_);
+    return bounds && bounds->valid() ? bounds : std::nullopt;
+}
+inline std::optional<Vec3> Actor::getPosition() const {
+    return isValid() ? api_->access_->actorPosition(handle_) : std::nullopt;
+}
+inline std::optional<ActorRotation> Actor::getRotation() const {
+    return isValid() ? api_->access_->actorRotation(handle_) : std::nullopt;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
     return getMainHand();

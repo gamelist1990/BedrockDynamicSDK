@@ -388,6 +388,13 @@ file SHA:   4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4
 このprototype、vectorの型/寿命、返されるActorの範囲はまだ確定しません。そのため現行JSONは意図的に
 `status: candidate`、`abi_verified: false`、`cross_version_signature_available: false` です。
 
+HitBox exampleはこの不安定な `getRuntimeActorList` 呼び出しを使わず、ローカルActorの
+`EntityContext` が指すEnTT registryから `ActorOwnerComponent` storageを列挙する別経路を追加しました。
+この経路のActor context offset、Owner/AABB/StateVector/Rotation component hashとfield offsetは
+`native_actors` profile sectionで管理します。1.26.52.3の値も既知component宣言と型名から作った候補であり、
+SEH境界・数値検証はクラッシュのリスクを下げるだけで、正しいstorage/hash/layoutの証明ではありません。
+実機でActor数・位置・AABBを照合できるまでは `status: candidate` のままにしてください。
+
 実機確認では、少なくとも以下を順番に記録します。
 
 1. 対象EXEのfile hashと選択されたプロファイルのhashが一致する。

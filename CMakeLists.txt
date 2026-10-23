@@ -30,7 +30,7 @@ endif()
 
 
 
-add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp src/native_keyboard.cpp src/native_items.cpp)
+add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp src/native_keyboard.cpp src/native_items.cpp src/native_actors.cpp)
 if(NOT PROJECT_IS_TOP_LEVEL)
     set_target_properties(bedrock_resolver PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
