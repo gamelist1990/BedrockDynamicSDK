@@ -112,8 +112,10 @@ std::atomic<float> currentFov{70.0f};
 std::mutex logMutex;
 std::ofstream logFile;
 std::unordered_map<std::uintptr_t, BoxRecord> records;
-std::unordered_set<std::uint32_t> loggedActorIds;
-std::unordered_map<std::uint32_t, std::uint64_t> pendingActorNameLogs;
+std::unordered_set<std::uint64_t> loggedRuntimeIds;
+std::unordered_map<std::uint64_t, std::uint64_t> pendingRuntimeNameLogs;
+std::unordered_set<std::uint32_t> loggedEntityIds;
+std::unordered_map<std::uint32_t, std::uint64_t> pendingEntityNameLogs;
 std::atomic<void*> currentWorld{};
 
 template<class... Args>
@@ -466,11 +468,21 @@ float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) {
     return x*x + y*y + z*z;
 }
 
+void refreshGameTickSnapshot();
+
 void observeWorld(const bedrock::LevelTickEvent& event) {
-    if (event.level) currentWorld.store(event.level, std::memory_order_release);
+    if (!event.level) return;
+    currentWorld.store(event.level, std::memory_order_release);
+    try {
+        refreshGameTickSnapshot();
+    } catch (...) {
+        static std::atomic<bool> loggedFailure{false};
+        if (!loggedFailure.exchange(true, std::memory_order_relaxed))
+            log("game-tick Actor refresh failed; retaining previous render snapshot");
+    }
 }
 
-void refreshFrameSnapshot() {
+void refreshGameTickSnapshot() {
     static bool loggedActorCount = false;
     static bool loggedCameraFailure = false;
     static std::uint64_t frameSequence = 0;
@@ -478,6 +490,7 @@ void refreshFrameSnapshot() {
     static std::vector<bedrock::Actor> actorRoster;
     static Clock::time_point actorRosterUpdated{};
     static bool actorRosterInitialized = false;
+    static std::size_t actorCursor = 0;
     ++frameSequence;
     auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
     if (!config->enabled) return;
@@ -490,8 +503,11 @@ void refreshFrameSnapshot() {
         actorRoster.clear();
         actorRosterUpdated = {};
         actorRosterInitialized = false;
-        loggedActorIds.clear();
-        pendingActorNameLogs.clear();
+        actorCursor = 0;
+        loggedRuntimeIds.clear();
+        pendingRuntimeNameLogs.clear();
+        loggedEntityIds.clear();
+        pendingEntityNameLogs.clear();
         gameApi.clearObservedActors();
         std::atomic_store_explicit(&renderSnapshot,
             std::make_shared<const RenderSnapshot>(), std::memory_order_release);
@@ -509,46 +525,72 @@ void refreshFrameSnapshot() {
         return;
     }
 
-    // Present/Execute can run many times per game tick. Full native EnTT
-    // enumeration belongs on a bounded cadence, not on every GPU frame.
-    // Positions and bounds are still sampled each frame from this handle cache
-    // so the visible boxes remain smooth.
+    // Native Actor reads stay on the game-tick callback. The renderer consumes
+    // only this immutable snapshot, regardless of GPU frame rate.
     const auto now = Clock::now();
-    if (!actorRosterInitialized || now - actorRosterUpdated >= std::chrono::milliseconds(250)) {
+    if (!actorRosterInitialized || now - actorRosterUpdated >= std::chrono::milliseconds(500)) {
         actorRoster = gameApi.actors(world);
         actorRosterUpdated = now;
         actorRosterInitialized = true;
+        actorCursor = actorRoster.empty() ? 0 : actorCursor % actorRoster.size();
     }
 
     const float range2 = config->nearbyDistance * config->nearbyDistance;
-    std::unordered_set<std::uintptr_t> seen;
     const auto& actors = actorRoster;
-    seen.reserve(actors.size());
-    for (const auto& actor : actors) {
+    constexpr std::size_t actorsPerGameTick = 32;
+    const auto sampleCount = std::min(actorsPerGameTick, actors.size());
+    for (std::size_t sampled = 0; sampled < sampleCount; ++sampled) {
+        if (actorCursor >= actors.size()) actorCursor = 0;
+        const auto& actor = actors[actorCursor++];
         const auto position = actor.getPosition();
-        if (!position || distanceSquared(*position, *cameraPosition) > range2) continue;
+        const auto runtimeId = actor.getRuntimeId();
+        const auto key = runtimeId ? static_cast<std::uintptr_t>(*runtimeId)
+                                   : reinterpret_cast<std::uintptr_t>(actor.handle());
+        if (!key || !position) continue;
+        if (distanceSquared(*position, *cameraPosition) > range2) {
+            if (!config->retainLastPosition) records.erase(key);
+            continue;
+        }
         const auto bounds = actor.getBounds();
         if (!bounds) continue;
-        const auto key = reinterpret_cast<std::uintptr_t>(actor.handle());
-        if (!key) continue;
-        seen.insert(key);
         records.insert_or_assign(key, BoxRecord{key, *bounds, now});
         if (config->debug) {
-            const auto entityId = actor.getEntityId();
-            if (entityId && !loggedActorIds.contains(*entityId)) {
+            if (runtimeId && !loggedRuntimeIds.contains(*runtimeId)) {
                 const auto name = actor.getName();
                 if (!name.empty()) {
-                    log("debug Actor detected: entity_id=", *entityId, " name=", name);
-                    loggedActorIds.insert(*entityId);
-                    pendingActorNameLogs.erase(*entityId);
+                    log("debug Actor detected: runtime_id=", *runtimeId, " name=", name);
+                    loggedRuntimeIds.insert(*runtimeId);
+                    pendingRuntimeNameLogs.erase(*runtimeId);
                 } else {
-                    const auto [pending, inserted] = pendingActorNameLogs.emplace(
-                        *entityId, frameSequence);
+                    const auto [pending, inserted] = pendingRuntimeNameLogs.emplace(
+                        *runtimeId, frameSequence);
                     if (!inserted && frameSequence - pending->second >= 60) {
-                        log("debug Actor detected: entity_id=", *entityId,
+                        log("debug Actor detected: runtime_id=", *runtimeId,
                             " name=<unavailable>");
-                        loggedActorIds.insert(*entityId);
-                        pendingActorNameLogs.erase(pending);
+                        loggedRuntimeIds.insert(*runtimeId);
+                        pendingRuntimeNameLogs.erase(pending);
+                    }
+                }
+            } else if (!runtimeId) {
+                // Keep diagnostics useful on profiles where RuntimeID is not
+                // exposed for a particular Actor; this fallback never affects
+                // the preferred RuntimeID tracking key above.
+                const auto entityId = actor.getEntityId();
+                if (entityId && !loggedEntityIds.contains(*entityId)) {
+                    const auto name = actor.getName();
+                    if (!name.empty()) {
+                        log("debug Actor detected: entity_id=", *entityId, " name=", name);
+                        loggedEntityIds.insert(*entityId);
+                        pendingEntityNameLogs.erase(*entityId);
+                    } else {
+                        const auto [pending, inserted] = pendingEntityNameLogs.emplace(
+                            *entityId, frameSequence);
+                        if (!inserted && frameSequence - pending->second >= 60) {
+                            log("debug Actor detected: entity_id=", *entityId,
+                                " name=<unavailable>");
+                            loggedEntityIds.insert(*entityId);
+                            pendingEntityNameLogs.erase(pending);
+                        }
                     }
                 }
             }
@@ -557,12 +599,14 @@ void refreshFrameSnapshot() {
     if (!loggedActorCount && (!actors.empty() || frameSequence > 120)) {
         loggedActorCount = true;
         log("native Actor snapshot: actor_count=", actors.size(),
-            " nearby_hitboxes=", seen.size());
+            " nearby_hitboxes=", records.size());
     }
 
     const auto expiry = now - std::chrono::minutes(config->retentionMinutes);
     for (auto it = records.begin(); it != records.end();) {
-        if ((!config->retainLastPosition && !seen.contains(it->first)) || it->second.seenAt < expiry)
+        const bool staleLiveBox = !config->retainLastPosition &&
+            now - it->second.seenAt > std::chrono::milliseconds(750);
+        if (staleLiveBox || it->second.seenAt < expiry)
             it = records.erase(it);
         else ++it;
     }
@@ -603,13 +647,6 @@ std::optional<ImVec2> project(const bedrock::Vec3& point, const RenderSnapshot& 
 void drawBoxes(void*) {
     const auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
     if (!config->enabled) return;
-    try {
-        refreshFrameSnapshot();
-    } catch (...) {
-        static std::atomic<bool> loggedFailure{false};
-        if (!loggedFailure.exchange(true, std::memory_order_relaxed))
-            log("frame Actor refresh failed; retaining previous render snapshot");
-    }
     const auto snapshot = std::atomic_load_explicit(&renderSnapshot, std::memory_order_acquire);
     if (!snapshot || snapshot->boxes.empty()) return;
     const ImVec2 viewport = ImGui::GetIO().DisplaySize;

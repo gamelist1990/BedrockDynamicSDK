@@ -4,7 +4,9 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 
 - プレイヤーに限定せず、SDKの `World::getActors()` が返すネイティブActorのAABBを描画
 - Actorの取得・位置・AABB・向きは `GameApi` / `Actor` APIを使用
-- Actor一覧のNative EnTT走査は最大4Hzに制限し、位置・AABBは描画フレームごとに更新して滑らかに描画
+- Actor一覧のNative EnTT走査は最大2Hzに制限し、位置・AABBはゲームtickごとに最大32体ずつ取得
+- Actorデータの取得はゲームtick側で行い、描画コールバックは不変スナップショットだけを読む
+- 表示の追跡キーはSDKのActor RuntimeIDを優先し、取得できない場合のみActorハンドルを使う
 - 一時的に取得できなくなったActorの最終AABBを保持する機能はconfigで切替可能
 - 最終位置の保持期限は既定10分。ワールドを移動した場合はキャッシュを破棄
 - Actorポインタやコンポーネント読み取りで例外が発生した対象はスキップ
@@ -33,13 +35,14 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 ```
 
 `debug` を `true` にすると、近距離で初回検知したActorについて `HitBox.log` に
-`entity_id` と取得できた名前を一度だけ記録します。名前タグがまだキャッシュされていない場合は
-最大60描画フレーム待ち、それでも得られない場合は `name=<unavailable>` と一度だけ記録します。
+`runtime_id` と取得できた名前を一度だけ記録します。名前タグがまだキャッシュされていない場合も
+RuntimeIDで同じActorを追跡し、最大60ゲームtick待ってから `name=<unavailable>` と一度だけ記録します。
+RuntimeIDを取得できないActorに限り、ログ追跡ではEnTTの `entity_id` にフォールバックします。
 
 プレイヤーだけに絞る設定は設けず、すべての取得可能なActorを対象にします。`retain_last_position` をtrueにすると、
 近距離で最後に確認したAABBを最大 `retention_minutes` 分その位置に残し、再検出時は位置と期限を更新します。
-Level更新時はワールド参照だけを更新します。Actorのハンドル一覧は250msごとに再列挙し、各描画フレームでは
-そのキャッシュのActorから位置とAABBを更新します。ライン描画はその処理が作る不変スナップショットを使います。
+Level更新時はワールド参照を更新します。Actorのハンドル一覧は500msごとに再列挙し、各ゲームtickでは
+最大32体ずつ位置とAABBを更新します。ライン描画はその処理が作る不変スナップショットだけを使います。
 ActorType component storageが対象レジストリから解決できない場合は、ActorOwner + RuntimeID + AABBShapeの交差と
 Actorのregistry/entity ID照合を維持した3-component fallbackを使います。必須storageが欠ける場合は一覧を拒否し、
 ログに不足状態を明示します。
