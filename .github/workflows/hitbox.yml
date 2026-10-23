@@ -25,6 +25,8 @@ jobs:
         run: cmake -S exsample/HitBox -B build-hitbox -A x64 -DBEDROCK_SDK_REF=main
       - name: Build
         run: cmake --build build-hitbox --config Release --parallel
+      - name: Test copied-data processing
+        run: ctest --test-dir build-hitbox -C Release --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: BedrockHitBox-windows-x64

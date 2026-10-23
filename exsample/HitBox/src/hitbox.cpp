@@ -17,6 +17,9 @@
 #include <entt/entt.hpp>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
+#include "hitbox/box_cache.hpp"
+#include <condition_variable>
+#include <deque>
 
 #include <algorithm>
 #include <array>
@@ -77,55 +80,89 @@ struct Config {
     ImU32 retainedColor = IM_COL32(255, 174, 66, 210);
 };
 
-struct BoxRecord {
-    std::uintptr_t actorKey{};
-    bedrock::ActorBounds bounds;
-    Clock::time_point seenAt;
-};
-struct RenderSnapshot {
-    std::vector<BoxRecord> boxes;
-    bedrock::Vec3 cameraPosition;
-    bedrock::ActorRotation cameraRotation;
+using BoxRecord = hitbox::BoxRecord;
+struct CameraState {
+    std::uint64_t epoch{};
+    bedrock::Vec3 cameraPosition{};
+    bedrock::ActorRotation cameraRotation{};
     float fovDegrees = 70.0f;
 };
-
-struct NativeActorViewStats {
-    bool requiredStorageAvailable{};
-    std::size_t ownerStorage{};
-    std::size_t actorTypeStorage{};
-    bool actorTypeAvailable{};
-    std::size_t runtimeIdStorage{};
-    std::size_t aabbStorage{};
-    std::size_t iterated{};
-    std::size_t liveEntities{};
-    std::size_t viewMatches{};
-    std::size_t validActorPointers{};
+struct RenderSnapshot {
+    std::uint64_t epoch{};
+    std::vector<BoxRecord> boxes;
+    std::chrono::milliseconds liveLifetime{1000};
 };
-
+constexpr std::size_t workerCount = 2;
+constexpr std::size_t maximumNativeBatch = 8;
+struct CaptureBatch {
+    CameraState camera;
+    std::array<hitbox::Sample, maximumNativeBatch> samples;
+    std::size_t count{};
+    std::size_t population{};
+    std::chrono::milliseconds liveLifetime{1000};
+    std::shared_ptr<const Config> config;
+};
+struct ProcessingWorker {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::optional<CaptureBatch> pending; // Fixed latest-input slot, no unbounded backlog.
+    std::thread thread;
+    bool stopping{};
+    std::shared_ptr<const RenderSnapshot> snapshot;
+};
+std::array<ProcessingWorker, workerCount> processingWorkers;
+std::atomic<std::uint64_t> worldEpoch{};
+std::atomic<std::int64_t> gameHeartbeatMs{};
+std::shared_ptr<const CameraState> currentCamera;
 std::atomic<Status> status{Status::NotStarted};
 std::atomic<bool> stopRequested{false};
 // Use the shared_ptr atomic free functions for cross-standard-library
 // compatibility. Some C++20 libraries do not yet implement atomic<shared_ptr>.
 std::shared_ptr<const Config> liveConfig{std::make_shared<const Config>()};
-std::shared_ptr<const RenderSnapshot> renderSnapshot{
-    std::make_shared<const RenderSnapshot>()};
 std::atomic<float> currentFov{70.0f};
+// Logs are drained by a third persistent worker, never flushed by game/render callbacks.
 std::mutex logMutex;
-std::ofstream logFile;
-std::unordered_map<std::uintptr_t, BoxRecord> records;
-std::unordered_set<std::uint64_t> loggedRuntimeIds;
-std::unordered_map<std::uint64_t, std::uint64_t> pendingRuntimeNameLogs;
-std::unordered_set<std::uint32_t> loggedEntityIds;
-std::unordered_map<std::uint32_t, std::uint64_t> pendingEntityNameLogs;
+std::condition_variable logReady;
+std::deque<std::string> logQueue;
+std::thread logThread;
+bool logStopping{};
 std::atomic<void*> currentWorld{};
 
 template<class... Args>
-void log(Args&&... args) {
-    std::lock_guard lock(logMutex);
-    if (!logFile) return;
-    (logFile << ... << std::forward<Args>(args));
-    logFile << '\n';
-    logFile.flush();
+void log(Args&&... args) noexcept {
+    try {
+        std::ostringstream text;
+        (text << ... << std::forward<Args>(args));
+        std::unique_lock lock(logMutex, std::try_to_lock);
+        if (lock && logQueue.size() < 512) logQueue.push_back(std::move(text).str());
+    } catch (...) {}
+}
+
+void startLogWorker(const std::filesystem::path& path) {
+    logThread = std::thread([path] {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        try {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            for (;;) {
+                std::deque<std::string> batch;
+                bool done;
+                {
+                    std::unique_lock lock(logMutex);
+                    logReady.wait_for(lock, std::chrono::milliseconds(250), [] { return logStopping; });
+                    batch.swap(logQueue);
+                    done = logStopping;
+                }
+                for (const auto& line : batch) file << line << '\n';
+                if (!batch.empty()) file.flush();
+                if (done) return;
+            }
+        } catch (...) {}
+    });
+}
+void stopLogWorker() noexcept {
+    { std::lock_guard lock(logMutex); logStopping = true; }
+    logReady.notify_one();
+    if (logThread.joinable()) logThread.join();
 }
 
 std::filesystem::path dataDirectory() {
@@ -277,32 +314,6 @@ public:
     std::optional<bedrock::ServerAddress> serverAddress(void*) const override {
         return std::nullopt;
     }
-    std::vector<void*> actorHandles(void* world) const override {
-        std::vector<void*> result;
-        if (!world || world != world_.load(std::memory_order_acquire)) return result;
-        auto* local = localPlayer();
-        void* registry = registryFor(local);
-        if (!registry) return result;
-        NativeActorViewStats stats{};
-        const bool enumerated = enumerateActorView(registry, actorLayout_, this,
-                                                   &result, &stats);
-        if (!nativeViewStatsLogged_.exchange(true, std::memory_order_relaxed)) {
-            log("native Actor EnTT view: owner=", stats.ownerStorage,
-                " actor_type=", stats.actorTypeStorage,
-                stats.actorTypeAvailable ? "" : " [ActorType storage missing; using validated 3-component fallback]",
-                " runtime_id=", stats.runtimeIdStorage,
-                " aabb=", stats.aabbStorage,
-                " iterated=", stats.iterated,
-                " live=", stats.liveEntities,
-                " view_matches=", stats.viewMatches,
-                " valid_actor_ptrs=", stats.validActorPointers,
-                " result=", result.size(),
-                enumerated ? " [ok]" : stats.requiredStorageAvailable
-                    ? " [view rejected by validation]" : " [required storage missing]");
-        }
-        if (!enumerated) result.clear();
-        return result;
-    }
     std::optional<bedrock::ActorBounds> actorBounds(void* actor) const override {
         bedrock::ActorBounds result{};
         return readActorBounds(actor, actorLayout_, &result) && result.valid()
@@ -327,7 +338,75 @@ public:
             ? std::optional<std::uint32_t>{entityId} : std::nullopt;
     }
 
+    bool captureBatch(void* local, std::size_t& cursor, CaptureBatch& batch,
+                      std::size_t& visited) const noexcept {
+        // No EnTT iterator/storage/component pointer survives the callback.
+        visited = 0;
+        void* registry = nullptr;
+        const auto& layout = actorLayout_;
+        if (!safeRead(local, layout.actorEntityContextOffset + layout.contextRegistryOffset,
+                      registry) || !registry) return false;
+        return captureRegistryBatch(registry, layout, &cursor, &batch, &visited);
+    }
 private:
+    static bool captureRegistryBatch(void* registry, const bedrock::NativeActorLayout& layout,
+        std::size_t* cursor, CaptureBatch* batch, std::size_t* visited) noexcept {
+        __try {
+            using Registry = entt::basic_registry<hitbox_native::EntityId>;
+            auto* typed = static_cast<Registry*>(registry);
+            auto* owner = typed->storage(layout.actorOwnerComponentHash);
+            auto* runtime = typed->storage(layout.runtimeIdComponentHash);
+            auto* shape = typed->storage(layout.aabbShapeComponentHash);
+            auto* actorType = typed->storage(layout.actorTypeComponentHash);
+            if (!owner || !runtime || !shape) return false;
+            auto* candidates = owner;
+            // A fixed source keeps the incremental cursor stable when pool sizes change.
+            batch->population = candidates->size();
+            if (batch->population > 16384) return false;
+            if (!batch->population) { *cursor = 0; return true; }
+            const auto begin = Clock::now();
+            const auto count = std::min(maximumNativeBatch, batch->population);
+            for (std::size_t n = 0; n < count; ++n) {
+                // Cooperative 250us budget; a single native read cannot be preempted.
+                if (n && Clock::now() - begin >= std::chrono::microseconds(250)) break;
+                if (*cursor >= batch->population) *cursor = 0;
+                const auto entity = candidates->data()[(*cursor)++];
+                ++*visited;
+                if (!typed->valid(entity) || !owner->contains(entity) ||
+                    !runtime->contains(entity) || !shape->contains(entity) ||
+                    (actorType && !actorType->contains(entity))) continue;
+                // Validate the owner against the exact registry/entity once, rather
+                // than validating the Actor vtable for every property wrapper.
+                void* actor = nullptr;
+                if (!safeRead(owner->value(entity), layout.actorOwnerPointerOffset, actor) || !actor)
+                    continue;
+                void* actorRegistry = nullptr;
+                std::uint32_t actorEntity = 0;
+                const auto context = layout.actorEntityContextOffset;
+                if (!safeRead(actor, context + layout.contextRegistryOffset, actorRegistry) ||
+                    actorRegistry != registry ||
+                    !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
+                    actorEntity != static_cast<std::uint32_t>(entity)) continue;
+                auto& sample = batch->samples[batch->count];
+                if (!safeRead(runtime->value(entity), layout.runtimeIdValueOffset, sample.runtimeId) ||
+                    !sample.runtimeId) continue;
+                auto* aabb = shape->value(entity);
+                if (layout.aabbMaximumOffset == layout.aabbMinimumOffset + sizeof(bedrock::Vec3)) {
+                    if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) continue;
+                } else if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds.minimum) ||
+                           !safeRead(aabb, layout.aabbMaximumOffset, sample.bounds.maximum)) continue;
+                if (!sample.bounds.valid()) continue;
+                const auto& b = sample.bounds;
+                if (b.maximum.x - b.minimum.x <= 0 || b.maximum.x - b.minimum.x > 64 ||
+                    b.maximum.y - b.minimum.y <= 0 || b.maximum.y - b.minimum.y > 64 ||
+                    b.maximum.z - b.minimum.z <= 0 || b.maximum.z - b.minimum.z > 64) continue;
+                sample.seenAt = Clock::now();
+                ++batch->count;
+            }
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { batch->count = 0; return false; }
+    }
+
     static void* callLocalPlayer(void* target, void* client) noexcept {
         using Function = void*(__fastcall*)(void*);
         __try {
@@ -341,65 +420,6 @@ private:
                             actorLayout_.contextRegistryOffset;
         if (!isActorValid(actor) || !safeRead(actor, offset, registry)) return nullptr;
         return registry;
-    }
-    static bool enumerateActorView(void* registry, const bedrock::NativeActorLayout& layout,
-        const HitBoxAccess* access, std::vector<void*>* output,
-        NativeActorViewStats* stats) noexcept {
-        if (!registry || !access || !output || !stats) return false;
-        __try {
-            using Registry = entt::basic_registry<hitbox_native::EntityId>;
-            auto* typed = static_cast<Registry*>(registry);
-            auto* owner = typed->storage(layout.actorOwnerComponentHash);
-            auto* actorType = typed->storage(layout.actorTypeComponentHash);
-            auto* runtimeId = typed->storage(layout.runtimeIdComponentHash);
-            auto* aabb = typed->storage(layout.aabbShapeComponentHash);
-            stats->requiredStorageAvailable = owner && runtimeId && aabb;
-            if (!owner || !runtimeId || !aabb) return false;
-
-            stats->ownerStorage = owner->size();
-            stats->actorTypeAvailable = actorType != nullptr;
-            stats->actorTypeStorage = actorType ? actorType->size() : 0;
-            stats->runtimeIdStorage = runtimeId->size();
-            stats->aabbStorage = aabb->size();
-
-            // This is the runtime equivalent of
-            // view<ActorOwner, ActorType, RuntimeID, AABBShape>().each().
-            // Iterate the smallest pool and test membership in the other
-            // three pools, avoiding a temporary EnTT view and reducing work.
-            auto* candidate = owner;
-            if (actorType && actorType->size() < candidate->size()) candidate = actorType;
-            if (runtimeId->size() < candidate->size()) candidate = runtimeId;
-            if (aabb->size() < candidate->size()) candidate = aabb;
-
-            for (const auto entity : *candidate) {
-                ++stats->iterated;
-                if (!typed->valid(entity)) continue;
-                ++stats->liveEntities;
-                if (!owner->contains(entity) || (actorType && !actorType->contains(entity)) ||
-                    !runtimeId->contains(entity) || !aabb->contains(entity)) continue;
-                ++stats->viewMatches;
-
-                void* ownerComponent = owner->value(entity);
-                void* actor = nullptr;
-                if (!ownerComponent ||
-                    !safeRead(ownerComponent, layout.actorOwnerPointerOffset, actor) ||
-                    !access->isActorValid(actor)) continue;
-
-                // The owner row must resolve back to this exact registry
-                // entity. This rejects stale owner pointers and coincidental
-                // component membership without dereferencing actor inventory.
-                void* actorRegistry = nullptr;
-                std::uint32_t actorEntity = 0;
-                const auto context = layout.actorEntityContextOffset;
-                if (!safeRead(actor, context + layout.contextRegistryOffset, actorRegistry) ||
-                    actorRegistry != registry ||
-                    !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
-                    actorEntity != static_cast<std::uint32_t>(entity)) continue;
-                ++stats->validActorPointers;
-                output->push_back(actor);
-            }
-            return true;
-        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     static void* component(void* actor, const bedrock::NativeActorLayout& layout,
         std::uint32_t hash, std::uint32_t alternate) noexcept {
@@ -457,224 +477,210 @@ private:
     bedrock::NativeActorLayout actorLayout_{};
     std::atomic<void*> client_{};
     std::atomic<void*> world_{};
-    mutable std::atomic<bool> nativeViewStatsLogged_{};
 };
 
 HitBoxAccess access;
 bedrock::GameApi gameApi{access};
 std::unique_ptr<bedrock::GameHooks> gameHooks;
 
-float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) {
-    const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
-    return x*x + y*y + z*z;
-}
-
-void refreshGameTickSnapshot();
-
-void observeWorld(const bedrock::LevelTickEvent& event) {
-    if (!event.level) return;
-    currentWorld.store(event.level, std::memory_order_release);
-    try {
-        refreshGameTickSnapshot();
-    } catch (...) {
-        static std::atomic<bool> loggedFailure{false};
-        if (!loggedFailure.exchange(true, std::memory_order_relaxed))
-            log("game-tick Actor refresh failed; retaining previous render snapshot");
+void processingLoop(std::size_t shard) noexcept {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    auto& worker = processingWorkers[shard];
+    hitbox::BoxCache cache;
+    std::uint64_t loggedEpoch = 0;
+    Clock::time_point nextLog{};
+    // Retain replaced snapshots until no callback holds them. Their vectors
+    // are then destroyed here, instead of on the game's/renderer's last release.
+    std::vector<std::shared_ptr<const RenderSnapshot>> retired;
+    for (;;) {
+        std::optional<CaptureBatch> batch;
+        {
+            std::unique_lock lock(worker.mutex);
+            worker.ready.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                return worker.stopping || worker.pending.has_value();
+            });
+            if (worker.stopping) return;
+            batch = std::move(worker.pending);
+            worker.pending.reset();
+        }
+        try {
+            std::erase_if(retired, [](const auto& value) { return value.use_count() == 1; });
+            if (!batch || batch->camera.epoch != worldEpoch.load(std::memory_order_acquire) ||
+                !cache.beginWorld(batch->camera.epoch)) continue;
+            const auto& config = *batch->config;
+            if (loggedEpoch != batch->camera.epoch) { loggedEpoch = batch->camera.epoch; nextLog = {}; }
+            for (std::size_t i = 0; i < batch->count; ++i) {
+                const auto& sample = batch->samples[i];
+                if (sample.runtimeId % workerCount != shard) continue;
+                cache.observe(sample, batch->camera.cameraPosition,
+                              config.nearbyDistance, config.retainLastPosition);
+            }
+            auto snapshot = std::make_shared<RenderSnapshot>();
+            snapshot->epoch = batch->camera.epoch;
+            snapshot->liveLifetime = batch->liveLifetime;
+            snapshot->boxes = cache.visible(Clock::now(), batch->camera.cameraPosition,
+                config.nearbyDistance, config.retainLastPosition,
+                config.retentionMinutes, batch->liveLifetime);
+            if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
+            const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
+            if (previous) retired.push_back(previous);
+            std::atomic_store_explicit(&worker.snapshot,
+                std::shared_ptr<const RenderSnapshot>(std::move(snapshot)), std::memory_order_release);
+            if (config.debug && Clock::now() >= nextLog) {
+                nextLog = Clock::now() + std::chrono::seconds(10);
+                log("HitBox worker ", shard, ": native_pool=", batch->population,
+                    " copied=", batch->count, " cached=", cache.size(), " [RuntimeID partition]");
+            }
+        } catch (...) {}
     }
 }
-
+void stopProcessingWorkers() noexcept {
+    for (auto& worker : processingWorkers) {
+        { std::lock_guard lock(worker.mutex); worker.stopping = true; worker.pending.reset(); }
+        worker.ready.notify_one();
+    }
+    for (auto& worker : processingWorkers) if (worker.thread.joinable()) worker.thread.join();
+}
+bool startProcessingWorkers() noexcept {
+    try {
+        for (std::size_t i = 0; i < workerCount; ++i)
+            processingWorkers[i].thread = std::thread(processingLoop, i);
+        return true;
+    } catch (...) { stopProcessingWorkers(); return false; }
+}
 void refreshGameTickSnapshot() {
-    static bool loggedActorCount = false;
-    static bool loggedCameraFailure = false;
-    static std::uint64_t frameSequence = 0;
     static void* snapshotWorld = nullptr;
-    static std::vector<bedrock::Actor> actorRoster;
-    static Clock::time_point actorRosterUpdated{};
-    static bool actorRosterInitialized = false;
-    static std::size_t actorCursor = 0;
-    ++frameSequence;
+    static std::size_t cursor = 0;
+    static auto nextCapture = Clock::time_point{};
+    static auto nextReport = Clock::time_point{};
+    static double averageVisited = maximumNativeBatch;
+    static bool loggedNativeReady = false;
+    static bool loggedCameraWaiting = false;
+    static bool loggedNativeFailure = false;
     auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
-    if (!config->enabled) return;
+    if (!config->enabled || stopRequested.load(std::memory_order_acquire)) return;
     auto* world = currentWorld.load(std::memory_order_acquire);
     if (!world) return;
+    const auto now = Clock::now();
     if (snapshotWorld != world) {
         snapshotWorld = world;
         access.setWorld(world);
-        records.clear();
-        actorRoster.clear();
-        actorRosterUpdated = {};
-        actorRosterInitialized = false;
-        actorCursor = 0;
-        loggedRuntimeIds.clear();
-        pendingRuntimeNameLogs.clear();
-        loggedEntityIds.clear();
-        pendingEntityNameLogs.clear();
-        gameApi.clearObservedActors();
-        std::atomic_store_explicit(&renderSnapshot,
-            std::make_shared<const RenderSnapshot>(), std::memory_order_release);
-        log("world actor source ready; retained hitboxes cleared for new world");
+        worldEpoch.fetch_add(1, std::memory_order_acq_rel);
+        cursor = 0;
+        nextCapture = {};
+        averageVisited = maximumNativeBatch;
+        loggedNativeReady = loggedCameraWaiting = loggedNativeFailure = false;
+        log("world actor source ready; worker caches reset by world epoch");
     }
-
-    auto local = gameApi.localPlayer();
-    const auto cameraPosition = local.getPosition();
-    const auto cameraRotation = local.getRotation();
+    if (now < nextCapture) return;
+    nextCapture = now + std::chrono::milliseconds(25); // Never catch up in a burst.
+    auto* local = access.localPlayer();
+    if (!local) return;
+    const auto cameraPosition = access.actorPosition(local);
+    const auto cameraRotation = access.actorRotation(local);
     if (!cameraPosition || !cameraRotation) {
-        if (!loggedCameraFailure) {
-            loggedCameraFailure = true;
-            log("waiting for native local Actor position/rotation components");
-        }
+        if (!loggedCameraWaiting) { loggedCameraWaiting = true;
+            log("waiting for native local Actor position/rotation components"); }
         return;
     }
-
-    // Native Actor reads stay on the game-tick callback. The renderer consumes
-    // only this immutable snapshot, regardless of GPU frame rate.
-    const auto now = Clock::now();
-    if (!actorRosterInitialized || now - actorRosterUpdated >= std::chrono::milliseconds(500)) {
-        actorRoster = gameApi.actors(world);
-        actorRosterUpdated = now;
-        actorRosterInitialized = true;
-        actorCursor = actorRoster.empty() ? 0 : actorCursor % actorRoster.size();
+    CaptureBatch batch;
+    batch.config = config;
+    batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition,
+                    *cameraRotation, currentFov.load(std::memory_order_acquire)};
+    std::size_t visited = 0;
+    if (!access.captureBatch(local, cursor, batch, visited)) {
+        if (!loggedNativeFailure) { loggedNativeFailure = true;
+            log("incremental Actor capture unavailable [required storage or guarded read failed]"); }
+        return;
     }
-
-    const float range2 = config->nearbyDistance * config->nearbyDistance;
-    const auto& actors = actorRoster;
-    constexpr std::size_t actorsPerGameTick = 32;
-    const auto sampleCount = std::min(actorsPerGameTick, actors.size());
-    for (std::size_t sampled = 0; sampled < sampleCount; ++sampled) {
-        if (actorCursor >= actors.size()) actorCursor = 0;
-        const auto& actor = actors[actorCursor++];
-        const auto position = actor.getPosition();
-        const auto runtimeId = actor.getRuntimeId();
-        const auto key = runtimeId ? static_cast<std::uintptr_t>(*runtimeId)
-                                   : reinterpret_cast<std::uintptr_t>(actor.handle());
-        if (!key || !position) continue;
-        if (distanceSquared(*position, *cameraPosition) > range2) {
-            if (!config->retainLastPosition) records.erase(key);
-            continue;
-        }
-        const auto bounds = actor.getBounds();
-        if (!bounds) continue;
-        records.insert_or_assign(key, BoxRecord{key, *bounds, now});
-        if (config->debug) {
-            if (runtimeId && !loggedRuntimeIds.contains(*runtimeId)) {
-                const auto name = actor.getName();
-                if (!name.empty()) {
-                    log("debug Actor detected: runtime_id=", *runtimeId, " name=", name);
-                    loggedRuntimeIds.insert(*runtimeId);
-                    pendingRuntimeNameLogs.erase(*runtimeId);
-                } else {
-                    const auto [pending, inserted] = pendingRuntimeNameLogs.emplace(
-                        *runtimeId, frameSequence);
-                    if (!inserted && frameSequence - pending->second >= 60) {
-                        log("debug Actor detected: runtime_id=", *runtimeId,
-                            " name=<unavailable>");
-                        loggedRuntimeIds.insert(*runtimeId);
-                        pendingRuntimeNameLogs.erase(pending);
-                    }
-                }
-            } else if (!runtimeId) {
-                // Keep diagnostics useful on profiles where RuntimeID is not
-                // exposed for a particular Actor; this fallback never affects
-                // the preferred RuntimeID tracking key above.
-                const auto entityId = actor.getEntityId();
-                if (entityId && !loggedEntityIds.contains(*entityId)) {
-                    const auto name = actor.getName();
-                    if (!name.empty()) {
-                        log("debug Actor detected: entity_id=", *entityId, " name=", name);
-                        loggedEntityIds.insert(*entityId);
-                        pendingEntityNameLogs.erase(*entityId);
-                    } else {
-                        const auto [pending, inserted] = pendingEntityNameLogs.emplace(
-                            *entityId, frameSequence);
-                        if (!inserted && frameSequence - pending->second >= 60) {
-                            log("debug Actor detected: entity_id=", *entityId,
-                                " name=<unavailable>");
-                            loggedEntityIds.insert(*entityId);
-                            pendingEntityNameLogs.erase(pending);
-                        }
-                    }
-                }
-            }
-        }
+    if (visited) averageVisited = averageVisited * 0.9 + static_cast<double>(visited) * 0.1;
+    if (batch.count && !loggedNativeReady) {
+        loggedNativeReady = true;
+        log("native incremental capture active: pool=", batch.population,
+            " [RuntimeID + AABB copies; maximum 8 rows; 250us budget]");
     }
-    if (!loggedActorCount && (!actors.empty() || frameSequence > 120)) {
-        loggedActorCount = true;
-        log("native Actor snapshot: actor_count=", actors.size(),
-            " nearby_hitboxes=", records.size());
+    // Keep live records across a full incremental pass, even if the time budget
+    // reduced the number of rows captured on a busy callback.
+    batch.liveLifetime = std::chrono::milliseconds(std::clamp<std::size_t>(
+        batch.population * 100 / std::max<std::size_t>(1, static_cast<std::size_t>(averageVisited)),
+        750, 30000));
+    std::atomic_store_explicit(&currentCamera,
+        std::make_shared<const CameraState>(batch.camera), std::memory_order_release);
+    gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count(), std::memory_order_release);
+    for (auto& worker : processingWorkers) {
+        std::unique_lock lock(worker.mutex, std::try_to_lock);
+        if (!lock || worker.stopping) continue;
+        worker.pending = batch;
+        lock.unlock();
+        worker.ready.notify_one();
     }
-
-    const auto expiry = now - std::chrono::minutes(config->retentionMinutes);
-    for (auto it = records.begin(); it != records.end();) {
-        const bool staleLiveBox = !config->retainLastPosition &&
-            now - it->second.seenAt > std::chrono::milliseconds(750);
-        if (staleLiveBox || it->second.seenAt < expiry)
-            it = records.erase(it);
-        else ++it;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-now).count();
+    if ((config->debug || elapsed >= 2000) && now >= nextReport) {
+        nextReport = now + std::chrono::seconds(10);
+        log("HitBox native capture us=", elapsed, " pool=", batch.population,
+            " visited=", visited, " copied=", batch.count,
+            " [8 rows maximum; cooperative 250us actor budget; 2 workers]");
     }
-
-    auto snapshot = std::make_shared<RenderSnapshot>();
-    snapshot->boxes.reserve(records.size());
-    for (const auto& [_, box] : records) snapshot->boxes.push_back(box);
-    snapshot->cameraPosition = *cameraPosition;
-    snapshot->cameraRotation = *cameraRotation;
-    snapshot->fovDegrees = currentFov.load(std::memory_order_acquire);
-    std::shared_ptr<const RenderSnapshot> immutableSnapshot = std::move(snapshot);
-    std::atomic_store_explicit(&renderSnapshot, std::move(immutableSnapshot),
-                               std::memory_order_release);
+}
+void observeWorld(const bedrock::LevelTickEvent& event) {
+    if (!event.level) return;
+    currentWorld.store(event.level, std::memory_order_release);
+    try { refreshGameTickSnapshot(); }
+    catch (...) { log("native capture skipped; retaining worker snapshots"); }
 }
 
-std::optional<ImVec2> project(const bedrock::Vec3& point, const RenderSnapshot& view,
-                              ImVec2 viewport) {
-    constexpr float radians = 0.01745329251994329577f;
-    const float yaw = view.cameraRotation.yaw * radians;
-    const float pitch = view.cameraRotation.pitch * radians;
-    const float sy = std::sin(yaw), cy = std::cos(yaw);
-    const float sp = std::sin(pitch), cp = std::cos(pitch);
-    const float dx = point.x - view.cameraPosition.x;
-    const float dy = point.y - (view.cameraPosition.y + 1.62f);
-    const float dz = point.z - view.cameraPosition.z;
-    const float right = dx * cy + dz * sy;
-    const float up = dx * (-sy * sp) + dy * cp + dz * (cy * sp);
-    const float depth = dx * (-sy * cp) + dy * (-sp) + dz * (cy * cp);
-    if (!std::isfinite(depth) || depth < 0.05f) return std::nullopt;
-    const float fov = std::clamp(view.fovDegrees, 30.0f, 150.0f) * radians;
-    const float focal = viewport.y / (2.0f * std::tan(fov * 0.5f));
-    const ImVec2 result{viewport.x * 0.5f + right * focal / depth,
-                        viewport.y * 0.5f - up * focal / depth};
-    if (!std::isfinite(result.x) || !std::isfinite(result.y)) return std::nullopt;
-    return result;
-}
+struct Projection {
+    bedrock::Vec3 camera;
+    ImVec2 viewport;
+    float sy, cy, sp, cp, focal;
+    Projection(const CameraState& view, ImVec2 size) : camera(view.cameraPosition), viewport(size) {
+        constexpr float radians = 0.01745329251994329577f;
+        sy=std::sin(view.cameraRotation.yaw*radians); cy=std::cos(view.cameraRotation.yaw*radians);
+        sp=std::sin(view.cameraRotation.pitch*radians); cp=std::cos(view.cameraRotation.pitch*radians);
+        focal=size.y/(2*std::tan(std::clamp(view.fovDegrees,30.0f,150.0f)*radians*0.5f));
+    }
+    std::optional<ImVec2> project(const bedrock::Vec3& point) const noexcept {
+        const float dx=point.x-camera.x, dy=point.y-camera.y-1.62f, dz=point.z-camera.z;
+        const float right=dx*cy+dz*sy, up=dx*(-sy*sp)+dy*cp+dz*(cy*sp);
+        const float depth=dx*(-sy*cp)-dy*sp+dz*(cy*cp);
+        if (!std::isfinite(depth) || depth<0.05f) return std::nullopt;
+        const ImVec2 result{viewport.x*0.5f+right*focal/depth,viewport.y*0.5f-up*focal/depth};
+        if (!std::isfinite(result.x)||!std::isfinite(result.y)) return std::nullopt;
+        return result;
+    }
+};
 
 void drawBoxes(void*) {
     const auto config = std::atomic_load_explicit(&liveConfig, std::memory_order_acquire);
     if (!config->enabled) return;
-    const auto snapshot = std::atomic_load_explicit(&renderSnapshot, std::memory_order_acquire);
-    if (!snapshot || snapshot->boxes.empty()) return;
+    const auto camera = std::atomic_load_explicit(&currentCamera, std::memory_order_acquire);
+    if (!camera || camera->epoch != worldEpoch.load(std::memory_order_acquire)) return;
+    const auto heartbeat = gameHeartbeatMs.load(std::memory_order_acquire);
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count()
+        - heartbeat > 1000) return;
     const ImVec2 viewport = ImGui::GetIO().DisplaySize;
     auto* draw = ImGui::GetBackgroundDrawList();
     constexpr std::array<std::array<unsigned, 2>, 12> edges{{
         {{0,1}},{{1,2}},{{2,3}},{{3,0}},{{4,5}},{{5,6}},{{6,7}},{{7,4}},
         {{0,4}},{{1,5}},{{2,6}},{{3,7}}}};
     const auto now = Clock::now();
-    for (const auto& box : snapshot->boxes) {
-        const std::array<bedrock::Vec3, 8> corners{{
-            {box.bounds.minimum.x, box.bounds.minimum.y, box.bounds.minimum.z},
-            {box.bounds.maximum.x, box.bounds.minimum.y, box.bounds.minimum.z},
-            {box.bounds.maximum.x, box.bounds.minimum.y, box.bounds.maximum.z},
-            {box.bounds.minimum.x, box.bounds.minimum.y, box.bounds.maximum.z},
-            {box.bounds.minimum.x, box.bounds.maximum.y, box.bounds.minimum.z},
-            {box.bounds.maximum.x, box.bounds.maximum.y, box.bounds.minimum.z},
-            {box.bounds.maximum.x, box.bounds.maximum.y, box.bounds.maximum.z},
-            {box.bounds.minimum.x, box.bounds.maximum.y, box.bounds.maximum.z}}};
-        std::array<std::optional<ImVec2>, 8> screen;
-        for (std::size_t i = 0; i < corners.size(); ++i)
-            screen[i] = project(corners[i], *snapshot, viewport);
-        const bool retained = now - box.seenAt >= std::chrono::milliseconds(500);
-        const ImU32 color = retained ? config->retainedColor : config->liveColor;
-        for (const auto& edge : edges) {
-            const auto& a = screen[edge[0]];
-            const auto& b = screen[edge[1]];
-            if (a && b) draw->AddLine(*a, *b, color, config->lineThickness);
+    const Projection projection(*camera, viewport);
+    for (const auto& worker : processingWorkers) {
+        const auto snapshot = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
+        if (!snapshot || snapshot->epoch != camera->epoch) continue;
+        for (const auto& box : snapshot->boxes) {
+            std::array<std::optional<ImVec2>, 8> screen;
+            for (std::size_t i = 0; i < box.corners.size(); ++i)
+                screen[i] = projection.project(box.corners[i]);
+            const bool retained = config->retainLastPosition &&
+                now - box.seenAt > snapshot->liveLifetime;
+            const ImU32 color = retained ? config->retainedColor : config->liveColor;
+            for (const auto& edge : edges) {
+                const auto& a = screen[edge[0]];
+                const auto& b = screen[edge[1]];
+                if (a && b) draw->AddLine(*a, *b, color, config->lineThickness);
+            }
         }
     }
 }
@@ -694,7 +700,9 @@ DWORD WINAPI startClient(void*) {
     std::error_code ec;
     std::filesystem::create_directories(directory, ec);
     if (ec) { status.store(Status::Failed, std::memory_order_release); return 1; }
-    logFile.open(directory / L"HitBox.log", std::ios::binary | std::ios::trunc);
+    try { startLogWorker(directory / L"HitBox.log"); }
+    catch (...) { status.store(Status::Failed); return 1; }
+    struct LogStop { ~LogStop() { stopLogWorker(); } } logStop;
     log("start");
     const auto cfgPath = configPath();
     if (!std::filesystem::exists(cfgPath)) {
@@ -770,6 +778,9 @@ DWORD WINAPI startClient(void*) {
     access.setLayouts(std::move(itemLayout), std::move(actorLayout));
     log("native Actor registry source ready [profile candidate; fail-closed reads]");
 
+    if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
+    struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
+    log("2 processing workers + 1 log writer ready [copied scalars only]");
     gameHooks = std::make_unique<bedrock::GameHooks>(gameApi);
     gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);
@@ -778,8 +789,7 @@ DWORD WINAPI startClient(void*) {
         currentFov.store(event.inputFov, std::memory_order_release);
     });
     gameApi.Event.Enum.LevelTick.then(&observeWorld);
-    if (!gameHooks->installActorNameTag(resolver, error) ||
-        !gameHooks->installGameplay(resolver, error) ||
+    if (!gameHooks->installGameplay(resolver, error) ||
         !gameHooks->installFov(resolver, error) ||
         !gameHooks->installLevelTick(resolver, error)) {
         log("SDK hook registration failed: ", error);

@@ -2,14 +2,14 @@
 
 BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は `BedrockHitBox.dll` 単体です。
 
-- プレイヤーに限定せず、SDKの `World::getActors()` が返すネイティブActorのAABBを描画
-- Actorの取得・位置・AABB・向きは `GameApi` / `Actor` APIを使用
-- Actor一覧のNative EnTT走査は最大2Hzに制限し、位置・AABBはゲームtickごとに最大32体ずつ取得
-- Actorデータの取得はゲームtick側で行い、描画コールバックは不変スナップショットだけを読む
-- 表示の追跡キーはSDKのActor RuntimeIDを優先し、取得できない場合のみActorハンドルを使う
-- 一時的に取得できなくなったActorの最終AABBを保持する機能はconfigで切替可能
-- 最終位置の保持期限は既定10分。ワールドを移動した場合はキャッシュを破棄
-- Actorポインタやコンポーネント読み取りで例外が発生した対象はスキップ
+- プレイヤーに限定せず、ActorOwner / RuntimeID / AABBShapeのEnTT componentを照合してAABBを取得
+- SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用し、ローカル視点はゲームtickで取得
+- 全Actorの一括再検証を廃止。1回の更新は最大8エントリ、Actor読み取りの処理予算は250µs
+- 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
+- ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
+- ワーカーにはRuntimeID・AABB・視点などのコピーだけを渡し、ActorやEnTTのポインタを参照させない
+- 最終AABBの保持はconfigで切替可能。保持期限は既定10分、ワールド変更時は世代番号で初期化
+- Native読み取りの例外や不正値を検知した対象はスキップ
 
 設定ファイル:
 
@@ -34,20 +34,28 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 }
 ```
 
-`debug` を `true` にすると、近距離で初回検知したActorについて `HitBox.log` に
-`runtime_id` と取得できた名前を一度だけ記録します。名前タグがまだキャッシュされていない場合も
-RuntimeIDで同じActorを追跡し、最大60ゲームtick待ってから `name=<unavailable>` と一度だけ記録します。
-RuntimeIDを取得できないActorに限り、ログ追跡ではEnTTの `entity_id` にフォールバックします。
+`debug=true` では、Nativeコピーの所要時間・走査数と、各ワーカーの保持数を10秒間隔で記録します。
+Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。名前の取得やNameTag Hookは
+行わず、表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
 
-プレイヤーだけに絞る設定は設けず、すべての取得可能なActorを対象にします。`retain_last_position` をtrueにすると、
-近距離で最後に確認したAABBを最大 `retention_minutes` 分その位置に残し、再検出時は位置と期限を更新します。
-Level更新時はワールド参照を更新します。Actorのハンドル一覧は500msごとに再列挙し、各ゲームtickでは
-最大32体ずつ位置とAABBを更新します。ライン描画はその処理が作る不変スナップショットだけを使います。
-ActorType component storageが対象レジストリから解決できない場合は、ActorOwner + RuntimeID + AABBShapeの交差と
-Actorのregistry/entity ID照合を維持した3-component fallbackを使います。必須storageが欠ける場合は一覧を拒否し、
-ログに不足状態を明示します。
-表示座標への投影はローカルActorの位置・視点角度・FOVから計算するため、実機で投影方向やAABB位置の差が
-見つかった場合は調整が必要です。
+ゲームtickではActorOwnerのエントリを前回の続きから最大8件確認し、RuntimeIDとAABBをまとめて読みます。
+250µsの処理予算を超えた場合は次のエントリを後のtickへ回します。これはNative呼び出し1回を途中で
+中断する仕組みではありません。取得開始の間隔を最短25msとし、遅れを一括で取り返す処理も行いません。
+全Actorのハンドル一覧を500msごとに作り直す処理、各プロパティのSDKラッパーによる重複再検証、
+対象ごとのStateVector取得を廃止しました。範囲判定にはコピー済みAABBの中心を使います。
+
+2本の処理ワーカーは通常より低い優先度で常駐し、各ワーカーの待機入力は最新1件だけを保持します。
+キューが使用中のときゲームスレッドは待ちません。距離判定・保持期限の削除・8頂点の生成・行列投影用の
+スナップショット作成・古い大きなスナップショットの破棄をワーカーで処理します。
+ワールドの世代が異なる入力・描画結果は拒否します。保持レコードは各ワーカー最大4096件で、上限到達時は
+最も古いものを削除します。保持済みの枠も現在の表示距離内だけ描画します。
+
+読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
+有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
+`retain_last_position=true` の場合は、近距離で最後に確認した位置を指定時間だけ保持します。
+描画側ではコピー済み頂点を現在の視点で投影し、三角関数とFOV係数は1フレームに1回だけ計算します。
+ActorTypeのstorageが存在しない場合は、ActorOwner / RuntimeID / AABBShapeの交差と所有者のregistry/entity ID照合を
+維持します。必須storageが欠ける場合は読み取りを拒否します。
 
 現在の `native_actors` プロファイル値は、ActorOwner/AABB/StateVector/Rotation componentの既知レイアウトと
 対象EXEのコンポーネント名から作った候補です。すべての読み取りは範囲・値チェックとSEH境界を通しますが、
@@ -60,6 +68,7 @@ Actorのregistry/entity ID照合を維持した3-component fallbackを使いま�
 ```powershell
 cmake -S . -B build -A x64 -DBEDROCK_SDK_REF=main
 cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 This also builds `BedrockHitBoxLoader.exe`, a small local test loader. It only
