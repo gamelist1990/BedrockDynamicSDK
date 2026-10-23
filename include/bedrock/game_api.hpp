@@ -214,6 +214,9 @@ public:
     [[nodiscard]] std::string getNameTag() const;
     [[nodiscard]] std::string getName() const;
     [[nodiscard]] ActorIdentity getIdentity() const;
+    [[nodiscard]] std::optional<ActorBounds> getBounds() const;
+    [[nodiscard]] std::optional<Vec3> getPosition() const;
+    [[nodiscard]] std::optional<ActorRotation> getRotation() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
     [[nodiscard]] std::optional<ItemStack> getMainHand() const {
