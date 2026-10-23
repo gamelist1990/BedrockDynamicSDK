@@ -19,7 +19,7 @@ int main() {
           "actor_pointer_offset": "0x0"
         },
         "actor_type": { "component_hash": "0x4F6BA419" },
-        "runtime_id": { "component_hash": "0xFC0DBBB5" },
+        "runtime_id": { "component_hash": "0xFC0DBBB5", "value_offset": "0x0", "value_size": 8 },
         "aabb_shape": {
           "component_hash": "0xBAC1B3CF",
           "component_hash_alternate": "0x0",
@@ -46,6 +46,8 @@ int main() {
     assert(layout.actorOwnerComponentHash == 0x85B93800);
     assert(layout.actorTypeComponentHash == 0x4F6BA419);
     assert(layout.runtimeIdComponentHash == 0xFC0DBBB5);
+    assert(layout.runtimeIdValueOffset == 0);
+    assert(layout.runtimeIdValueSize == sizeof(std::uint64_t));
     assert(layout.aabbShapeComponentHash == 0xBAC1B3CF);
     assert(layout.valid());
 

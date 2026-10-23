@@ -74,7 +74,7 @@
     "schema": 1,
     "pointer_size": 8,
     "status": "candidate",
-    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Registry/storage ABI and actor-owner pointer mapping remain runtime candidates.",
+    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). RuntimeIDComponent is provisionally read as a 64-bit scalar at offset 0; its storage ABI and value layout still require live validation.",
     "actor_context": {
       "actor_offset": "0x8",
       "registry_offset": "0x8",
@@ -89,7 +89,9 @@
       "component_hash": "0x4F6BA419"
     },
     "runtime_id": {
-      "component_hash": "0xFC0DBBB5"
+      "component_hash": "0xFC0DBBB5",
+      "value_offset": "0x0",
+      "value_size": 8
     },
     "aabb_shape": {
       "component_hash": "0xBAC1B3CF",

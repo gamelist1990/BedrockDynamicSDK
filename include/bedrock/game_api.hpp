@@ -114,6 +114,12 @@ public:
         (void)actor;
         return std::nullopt;
     }
+    // Bedrock ActorRuntimeID from RuntimeIDComponent. This is distinct from
+    // the registry's raw EnTT entity ID exposed by actorEntityId().
+    [[nodiscard]] virtual std::optional<std::uint64_t> actorRuntimeId(void* actor) const {
+        (void)actor;
+        return std::nullopt;
+    }
     // Return only this Actor's currently held hand item. Do not enumerate or
     // expose the Actor's full inventory; local-player inventory access is a
     // separate API with a different lifetime and access path.
@@ -227,6 +233,7 @@ public:
     [[nodiscard]] std::optional<Vec3> getPosition() const;
     [[nodiscard]] std::optional<ActorRotation> getRotation() const;
     [[nodiscard]] std::optional<std::uint32_t> getEntityId() const;
+    [[nodiscard]] std::optional<std::uint64_t> getRuntimeId() const;
     [[nodiscard]] std::optional<HeldItemInfo> getHeldItem() const;
     [[nodiscard]] std::optional<ItemStack> getEquipment(EquipmentSlot slot) const;
     [[nodiscard]] std::optional<ItemStack> getMainHand() const {
@@ -652,7 +659,7 @@ private:
         return result;
     }
     enum class ActorReadSlot : std::size_t {
-        Valid, World, NameTag, Bounds, Position, Rotation, EntityId,
+        Valid, World, NameTag, Bounds, Position, Rotation, EntityId, RuntimeId,
         MainHand, Offhand, Head, Chest, Legs, Feet, Count
     };
     enum class WorldReadSlot : std::size_t { Actors, PlayerNames, Count };
@@ -972,6 +979,11 @@ inline std::optional<std::uint32_t> Actor::getEntityId() const {
     return isValid() ? api_->cachedActorRead<std::optional<std::uint32_t>>(
         handle_, GameApi::ActorReadSlot::EntityId,
         [&] { return api_->access_->actorEntityId(handle_); }) : std::nullopt;
+}
+inline std::optional<std::uint64_t> Actor::getRuntimeId() const {
+    return isValid() ? api_->cachedActorRead<std::optional<std::uint64_t>>(
+        handle_, GameApi::ActorReadSlot::RuntimeId,
+        [&] { return api_->access_->actorRuntimeId(handle_); }) : std::nullopt;
 }
 inline std::optional<HeldItemInfo> Actor::getHeldItem() const {
     return getMainHand();

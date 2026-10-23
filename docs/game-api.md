@@ -115,7 +115,12 @@ consumers still need to provide their own validated `GameAccess` adapter.
 snapshots; their native component hashes and offsets belong in the matching
 profile, not in client feature code. `Actor::getEntityId()` exposes the
 adapter's registry entity ID when available (it is not necessarily Minecraft's
-long-lived ActorUniqueID). `GameHooks::installLevelTick()` publishes
+long-lived ActorUniqueID). `Actor::getRuntimeId()` exposes the Bedrock
+RuntimeIDComponent value as a 64-bit identifier, separate from the EnTT entity
+ID. Its adapter must use the
+matching versioned `native_actors.runtime_id` layout; the current 1.26.52.3
+value offset/width are candidates and require live validation before relying on
+them for cross-source identity matching. `GameHooks::installLevelTick()` publishes
 `Event.Enum.LevelTick` after the original Level update, allowing a client to
 track the active world. Features that need render-rate updates can then refresh
 their actor snapshot from their render callback and draw only copied values.

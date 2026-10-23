@@ -18,6 +18,8 @@ struct NativeActorLayout {
     std::size_t actorOwnerPointerOffset{};
     std::uint32_t actorTypeComponentHash{};
     std::uint32_t runtimeIdComponentHash{};
+    std::size_t runtimeIdValueOffset{};
+    std::size_t runtimeIdValueSize{};
     std::uint32_t aabbShapeComponentHash{};
     std::uint32_t aabbShapeComponentHashAlternate{};
     std::size_t aabbMinimumOffset{};

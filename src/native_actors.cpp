@@ -23,7 +23,8 @@ bool NativeActorLayout::valid() const noexcept {
     return actorEntityContextOffset <= 0x10000 && contextRegistryOffset <= 0x10000 &&
            contextEntityIdOffset <= 0x10000 && actorOwnerComponentHash != 0 &&
            actorOwnerPointerOffset <= 0x10000 && actorTypeComponentHash != 0 &&
-           runtimeIdComponentHash != 0 && aabbShapeComponentHash != 0 &&
+           runtimeIdComponentHash != 0 && runtimeIdValueOffset <= 0x10000 &&
+           runtimeIdValueSize == sizeof(std::uint64_t) && aabbShapeComponentHash != 0 &&
            aabbMinimumOffset <= 0x10000 && aabbMaximumOffset <= 0x10000 &&
            stateVectorComponentHash != 0 && statePositionOffset <= 0x10000 &&
            actorRotationComponentHash != 0 && rotationPitchOffset <= 0x10000 &&
@@ -53,8 +54,11 @@ bool parseNativeActorLayout(std::string_view source, NativeActorLayout& output,
 
         value.actorTypeComponentHash = static_cast<std::uint32_t>(
             number(data.at("actor_type"), "component_hash"));
+        const auto& runtimeId = data.at("runtime_id");
         value.runtimeIdComponentHash = static_cast<std::uint32_t>(
-            number(data.at("runtime_id"), "component_hash"));
+            number(runtimeId, "component_hash"));
+        value.runtimeIdValueOffset = number(runtimeId, "value_offset");
+        value.runtimeIdValueSize = number(runtimeId, "value_size");
 
         const auto& aabb = data.at("aabb_shape");
         value.aabbShapeComponentHash = static_cast<std::uint32_t>(number(aabb, "component_hash"));
