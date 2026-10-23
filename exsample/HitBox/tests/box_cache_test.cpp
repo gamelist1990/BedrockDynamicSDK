@@ -84,7 +84,7 @@ int main() {
     hitbox::BoxCache cache;
     assert(cache.beginWorld(1));
     cache.observe(sample,camera,32,false);
-    auto rows=cache.visible(now,camera,32,false,10,1500ms);
+    auto rows=cache.visible(now,camera,32,false,1500ms);
     assert(rows.size()==1 && rows[0].runtimeId==sample.runtimeId);
     const auto vertices = hitbox::worldLineVertices(rows[0], {100, 200, 300});
     assert(vertices.size() == 24);
@@ -99,7 +99,7 @@ int main() {
         auto moved=sample; moved.seenAt=now+500ms;
         moved.bounds={{2,0,0},{3,2,1}};
         smooth.observe(moved,camera,32,false);
-        auto boxes=smooth.visible(now+500ms,camera,32,false,10,1500ms);
+        auto boxes=smooth.visible(now+500ms,camera,32,false,1500ms);
         assert(hitbox::interpolatedBounds(boxes[0],now+500ms).minimum.x==0);
         assert(hitbox::interpolatedBounds(boxes[0],now+750ms).minimum.x==1);
         assert(hitbox::interpolatedBounds(boxes[0],now+1000ms).minimum.x==2);
@@ -109,18 +109,18 @@ int main() {
         // A new sample arriving during a blend starts at the currently drawn position.
         moved.seenAt=now+750ms; moved.bounds={{4,0,0},{5,2,1}};
         smooth.observe(moved,camera,32,false);
-        boxes=smooth.visible(now+750ms,camera,32,false,10,1500ms);
+        boxes=smooth.visible(now+750ms,camera,32,false,1500ms);
         assert(hitbox::interpolatedBounds(boxes[0],now+750ms).minimum.x==1);
         moved.seenAt=now+1000ms; moved.bounds={{20,0,0},{21,2,1}};
         smooth.observe(moved,camera,32,false);
-        boxes=smooth.visible(now+1000ms,camera,32,false,10,1500ms);
+        boxes=smooth.visible(now+1000ms,camera,32,false,1500ms);
         assert(boxes[0].blendDuration.count()==0); // Teleport snaps immediately.
         moved.seenAt=now+4000ms; moved.bounds={{21,0,0},{22,2,1}};
         smooth.observe(moved,camera,32,false);
-        boxes=smooth.visible(now+4000ms,camera,32,false,10,1500ms);
+        boxes=smooth.visible(now+4000ms,camera,32,false,1500ms);
         assert(boxes[0].blendDuration.count()==0); // Stale IDs do not animate across a gap.
         smooth.beginWorld(2); smooth.observe(sample,camera,32,false);
-        boxes=smooth.visible(now,camera,32,false,10,1500ms);
+        boxes=smooth.visible(now,camera,32,false,1500ms);
         assert(boxes[0].blendDuration.count()==0);
     }
     {
@@ -131,27 +131,95 @@ int main() {
             actor.bounds={{1000+static_cast<float>(id),0,0},{1001+static_cast<float>(id),2,1}};
             all.observe(actor,camera,32,false,true);
         }
-        assert(all.visible(now,camera,32,false,10,1500ms,true).size()==1025);
-        const auto players=all.visible(now,camera,32,false,10,1500ms,true,true);
+        assert(all.visible(now,camera,32,false,1500ms,true).size()==1025);
+        const auto players=all.visible(now,camera,32,false,1500ms,true,true);
         assert(players.size()==513);
         for(const auto& player:players) assert(player.isPlayer && player.runtimeId%2==1);
-        assert(all.visible(now,camera,32,false,10,1500ms,true,false).size()==1025);
-        assert(all.visible(now,camera,32,false,10,1500ms,false).empty()); // Optional distance filter.
-        assert(all.visible(now,camera,32,false,10,1500ms,true).size()==1025); // Not evicted by view filter.
+        assert(all.visible(now,camera,32,false,1500ms,true,false).size()==1025);
+        assert(all.visible(now,camera,32,false,1500ms,false).empty()); // Optional distance filter.
+        assert(all.visible(now,camera,32,false,1500ms,true).size()==1025); // Not evicted by view filter.
     }
     // Shortened native batches must not flicker out at the old 750ms expiry.
-    assert(cache.visible(now+1000ms,camera,32,false,10,1500ms).size()==1);
-    assert(cache.visible(now+1600ms,camera,32,false,10,1500ms).empty());
+    assert(cache.visible(now+1000ms,camera,32,false,1500ms).size()==1);
+    assert(cache.visible(now+1600ms,camera,32,false,1500ms).empty());
 
-    cache.observe(sample,camera,32,true);
-    auto far=sample;
-    far.bounds={{100,0,0},{101,2,1}};
-    far.seenAt=now+1s;
-    cache.observe(far,camera,32,true);
-    rows=cache.visible(now+5s,camera,32,true,10,1500ms);
-    assert(rows.size()==1 && rows[0].bounds.minimum.x==0); // Retain the last near position.
-    assert(cache.visible(now+5s,{100,0,0},4,true,10,1500ms).empty());
-    assert(cache.visible(now+11min,camera,32,true,10,1500ms).empty());
+    {
+        hitbox::BoxCache stopped;
+        stopped.beginWorld(1);
+        auto player=sample; player.isPlayer=true;
+        // A timeout is not proof of a stop; real samples must span two seconds.
+        for(int i=0;i<8;++i) {
+            player.seenAt=now+250ms*i;
+            stopped.observe(player,camera,32,true);
+            assert(stopped.retainedSize()==0);
+        }
+        player.seenAt=now+2s; stopped.observe(player,camera,32,true);
+        assert(stopped.retainedSize()==1);
+        auto boxes=stopped.visible(now+2s,camera,32,true,1500ms);
+        assert(boxes.size()==1 && !boxes[0].retained); // Live box, no duplicate.
+        const auto live=boxes[0];
+        player.bounds={{2,0,0},{3,2,1}}; player.seenAt=now+2250ms;
+        stopped.observe(player,camera,32,true);
+        boxes=stopped.visible(now+2375ms,camera,32,true,1500ms);
+        assert(boxes.size()==1 && !boxes[0].retained && boxes[0].bounds.minimum.x==2);
+        assert(hitbox::interpolatedBounds(boxes[0],now+2375ms).minimum.x==1);
+        boxes=stopped.visible(now+4s,camera,32,true,1500ms);
+        assert(boxes.size()==1 && boxes[0].retained && boxes[0].blendDuration.count()==0);
+        const auto frozen=boxes[0];
+        assert(!hitbox::visibleInFrame(live,now+4s,1500ms,true,true));
+        assert(hitbox::visibleInFrame(frozen,now+24h,1500ms,true,true));
+        assert(!hitbox::visibleInFrame(frozen,now+24h,1500ms,false,true));
+        // Reacquire and move: current display updates immediately, no old trail.
+        player.bounds={{5,0,0},{6,2,1}}; player.seenAt=now+5s;
+        stopped.observe(player,camera,32,true);
+        boxes=stopped.visible(now+5s,camera,32,true,1500ms);
+        assert(boxes.size()==1 && !boxes[0].retained && boxes[0].bounds.minimum.x==5);
+        assert(stopped.retainedSize()==1);
+        // Stop at the new location for two seconds: overwrite, never append.
+        for(int i=1;i<=8;++i) {
+            player.seenAt=now+5s+250ms*i; stopped.observe(player,camera,32,true);
+        }
+        assert(stopped.retainedSize()==1);
+        // Live cache pressure must never evict a confirmed world-lifetime marker.
+        for(std::uint64_t id=1;id<=hitbox::BoxCache::maximumRecords+1;++id) {
+            auto mob=sample; mob.runtimeId=id; mob.seenAt=now+10s+std::chrono::milliseconds(id);
+            stopped.observe(mob,camera,32,true);
+        }
+        assert(stopped.retainedSize()==1);
+        boxes=stopped.visible(now+24h,camera,32,true,1500ms);
+        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==5);
+        assert(stopped.beginWorld(1) && stopped.retainedSize()==1);
+        assert(!stopped.beginWorld(0) && stopped.retainedSize()==1);
+        assert(stopped.beginWorld(2) && stopped.retainedSize()==0 && stopped.size()==0);
+    }
+    {
+        hitbox::BoxCache missing, moving, npc, jitter;
+        missing.beginWorld(1); moving.beginWorld(1); npc.beginWorld(1); jitter.beginWorld(1);
+        auto player=sample; player.isPlayer=true;
+        missing.observe(player,camera,32,true);
+        player.seenAt=now+2s; missing.observe(player,camera,32,true); // Sampling gap restarts confirmation.
+        assert(missing.retainedSize()==0);
+        assert(missing.visible(now+5s,camera,32,true,1500ms).empty());
+        for(int i=0;i<=20;++i) {
+            player.seenAt=now+250ms*i;
+            player.bounds={{0.04f*i,0,0},{1+0.04f*i,2,1}};
+            moving.observe(player,camera,32,true); // Slow motion must not accumulate a stop.
+            auto other=sample; other.seenAt=player.seenAt;
+            npc.observe(other,camera,32,true); // Non-Players never become permanent markers.
+            player.bounds={{0.01f*(i%2),0,0},{1+0.01f*(i%2),2,1}};
+            jitter.observe(player,camera,32,true);
+        }
+        assert(moving.retainedSize()==0 && npc.retainedSize()==0 && jitter.retainedSize()==1);
+        jitter.visible(now+5s,camera,32,false,1500ms); // Turning retention off clears it.
+        assert(jitter.retainedSize()==0);
+        player.bounds=sample.bounds; player.seenAt=now+6s;
+        jitter.observe(player,camera,32,true);
+        assert(jitter.retainedSize()==0);
+        for(int i=1;i<=8;++i) {
+            player.seenAt=now+6s+250ms*i; jitter.observe(player,camera,32,true);
+        }
+        assert(jitter.retainedSize()==1);
+    }
 
     cache.observe(sample,camera,32,false);
     // Out-of-order samples cannot overwrite a more recent capture.
@@ -159,7 +227,7 @@ int main() {
     older.seenAt=now-1s;
     older.bounds.minimum.x=0.5f;
     cache.observe(older,camera,32,false);
-    assert(cache.visible(now,camera,32,false,10,1500ms)[0].bounds.minimum.x==0);
+    assert(cache.visible(now,camera,32,false,1500ms)[0].bounds.minimum.x==0);
     assert(cache.beginWorld(2) && cache.size()==0);
     assert(!cache.beginWorld(1) && cache.size()==0); // Reject an old world's delayed batch.
 
@@ -174,6 +242,6 @@ int main() {
         cache.observe(sample,camera,32,true);
     }
     assert(cache.size()==hitbox::BoxCache::maximumRecords);
-    rows=cache.visible(now+10s,camera,32,true,10,1500ms);
+    rows=cache.visible(now+10s,camera,32,true,1500ms);
     for (const auto& row:rows) assert(row.runtimeId!=1);
 }

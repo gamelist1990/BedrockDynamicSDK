@@ -20,6 +20,7 @@ struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};
     bedrock::ActorBounds blendFrom{};
     std::chrono::milliseconds blendDuration{};
+    bool retained{};
 };
 inline float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) noexcept {
     const float x=a.x-b.x, y=a.y-b.y, z=a.z-b.z;
@@ -91,65 +92,123 @@ inline std::array<bedrock::Vec3, 24> worldLineVertices(
     }
     return result;
 }
+inline bool visibleInFrame(const BoxRecord& box, Clock::time_point now,
+    std::chrono::milliseconds lifetime, bool retain, bool playersOnly) noexcept {
+    if (playersOnly && !box.isPlayer) return false;
+    if (box.retained) return retain && box.isPlayer;
+    return now-box.seenAt<=lifetime;
+}
 // Worker-owned state. No native handles, component pointers or game calls.
 class BoxCache {
 public:
-    static constexpr std::size_t maximumRecords = 16384;
+    static constexpr std::size_t maximumRecords = 16384; // Live records only.
+    static constexpr auto stationaryDelay = std::chrono::seconds(2);
+    static constexpr auto maximumObservationGap = std::chrono::seconds(1);
+    static constexpr float stationaryToleranceSquared = 0.05f*0.05f;
     bool beginWorld(std::uint64_t epoch) {
         if (epoch < epoch_) return false;
-        if (epoch != epoch_) { records_.clear(); epoch_=epoch; }
+        if (epoch != epoch_) { records_.clear(); retained_.clear(); retaining_=false; epoch_=epoch; }
         return true;
     }
+    static bool samePosition(const bedrock::ActorBounds& a,const bedrock::ActorBounds& b) noexcept {
+        return distanceSquared(a.minimum,b.minimum)<=stationaryToleranceSquared &&
+               distanceSquared(a.maximum,b.maximum)<=stationaryToleranceSquared;
+    }
     void observe(const Sample& sample, const bedrock::Vec3& camera, float range, bool retain, bool allActors=false) {
+        configureRetention(retain);
         if (!sample.runtimeId || !sample.bounds.valid()) return;
         if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
-            if (!retain) records_.erase(sample.runtimeId);
+            records_.erase(sample.runtimeId); // Out-of-range reads cannot confirm a stop.
             return;
         }
         const auto old=records_.find(sample.runtimeId);
-        if (old!=records_.end() && old->second.seenAt>sample.seenAt) return;
+        if (old!=records_.end() && old->second.box.seenAt>=sample.seenAt) return;
         if (old==records_.end() && records_.size()>=maximumRecords) {
             const auto oldest=std::min_element(records_.begin(),records_.end(),
-                [](const auto& a,const auto& b){return a.second.seenAt<b.second.seenAt;});
+                [](const auto& a,const auto& b){return a.second.box.seenAt<b.second.box.seenAt;});
             records_.erase(oldest);
         }
-        BoxRecord box;
+        Entry entry;
+        auto& box=entry.box;
         static_cast<Sample&>(box)=sample;
         box.corners=hitbox::corners(sample.bounds);
         box.blendFrom=sample.bounds;
+        entry.stationaryAnchor=sample.bounds;
+        entry.stationarySince=sample.seenAt;
         if (old!=records_.end()) {
-            const auto age=sample.seenAt-old->second.seenAt;
-            const auto from=interpolatedBounds(old->second,sample.seenAt);
-            // Snap teleports and stale/reused IDs; never extrapolate unknown movement.
-            if (age>Clock::duration::zero() && age<=std::chrono::seconds(2) &&
+            const auto& previous=old->second;
+            const auto age=sample.seenAt-previous.box.seenAt;
+            const auto from=interpolatedBounds(previous.box,sample.seenAt);
+            if (age<=std::chrono::seconds(2) &&
                 distanceSquared(center(from),center(sample.bounds))<=64.f) {
                 box.blendFrom=from;
                 box.blendDuration=std::clamp(std::chrono::duration_cast<std::chrono::milliseconds>(age),
                     std::chrono::milliseconds(50),std::chrono::milliseconds(1000));
             }
+            // Confirm only from repeated real observations, never from an old
+            // snapshot freezing after a failed read, unload or missed capture.
+            if (retain && sample.isPlayer && previous.box.isPlayer && previous.tracking &&
+                age<=maximumObservationGap && samePosition(sample.bounds,previous.stationaryAnchor)) {
+                entry.stationaryAnchor=previous.stationaryAnchor;
+                entry.stationarySince=previous.stationarySince;
+                entry.committed=previous.committed;
+            }
         }
-        records_.insert_or_assign(sample.runtimeId,std::move(box));
+        entry.tracking=retain && sample.isPlayer;
+        if (entry.tracking && !entry.committed && sample.seenAt-entry.stationarySince>=stationaryDelay) {
+            auto frozen=box;
+            frozen.retained=true;
+            frozen.blendFrom=frozen.bounds;
+            frozen.blendDuration=std::chrono::milliseconds(0);
+            // One last confirmed stop per RuntimeID; no trail and no time expiry.
+            retained_.insert_or_assign(sample.runtimeId,std::move(frozen));
+            entry.committed=true;
+        }
+        records_.insert_or_assign(sample.runtimeId,std::move(entry));
     }
     std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,
-        float range, bool retain, unsigned minutes, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false) {
+        float range, bool retain, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false) {
+        configureRetention(retain);
         std::vector<BoxRecord> result;
-        result.reserve(records_.size());
+        result.reserve(records_.size()+retained_.size());
+        const auto permitted=[&](const BoxRecord& box) {
+            return (!playersOnly || box.isPlayer) &&
+                   (allActors || distanceSquared(center(box.bounds),camera)<=range*range);
+        };
         for (auto it=records_.begin();it!=records_.end();) {
-            if (now-it->second.seenAt>std::chrono::minutes(minutes) ||
-                (!retain && now-it->second.seenAt>liveLifetime)) {
-                it=records_.erase(it);
-            } else {
-                if ((!playersOnly || it->second.isPlayer) &&
-                    (allActors || distanceSquared(center(it->second.bounds),camera)<=range*range))
-                    result.push_back(it->second);
+            if (now-it->second.box.seenAt>liveLifetime) it=records_.erase(it);
+            else {
+                if (permitted(it->second.box)) result.push_back(it->second.box);
                 ++it;
             }
+        }
+        if (retain) for (const auto& [id,frozen]:retained_) {
+            const auto live=records_.find(id);
+            // While tracked, draw the current position only. The last confirmed
+            // stop is a fallback, not an extra historical trail beside a moving Player.
+            if (live!=records_.end() && permitted(live->second.box)) continue;
+            if (permitted(frozen)) result.push_back(frozen);
         }
         return result;
     }
     std::size_t size() const noexcept { return records_.size(); }
+    std::size_t retainedSize() const noexcept { return retained_.size(); }
 private:
+    struct Entry {
+        BoxRecord box;
+        bedrock::ActorBounds stationaryAnchor{};
+        Clock::time_point stationarySince{};
+        bool tracking{},committed{};
+    };
+    void configureRetention(bool retain) {
+        if (retaining_==retain) return;
+        retaining_=retain;
+        retained_.clear();
+        for (auto& [id,entry]:records_) { entry.tracking=false; entry.committed=false; }
+    }
+    bool retaining_{};
     std::uint64_t epoch_{};
-    std::unordered_map<std::uint64_t, BoxRecord> records_;
+    std::unordered_map<std::uint64_t,Entry> records_;
+    std::unordered_map<std::uint64_t,BoxRecord> retained_;
 };
 } // namespace hitbox

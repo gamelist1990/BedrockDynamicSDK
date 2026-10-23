@@ -80,7 +80,6 @@ struct Config {
     bool showAllActors = true;
     bool playersOnly = false;
     bool retainLastPosition = false;
-    unsigned retentionMinutes = 10;
     float nearbyDistance = 32.0f;
     float lineThickness = 1.5f;
     std::uint32_t liveColor = packColor(76, 230, 132, 255);
@@ -215,7 +214,6 @@ nlohmann::json configJson(const Config& config) {
         {"players_only", config.playersOnly},
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
-        {"retention_minutes", config.retentionMinutes},
         {"line_thickness", config.lineThickness},
         {"live_color", colorString(config.liveColor)},
         {"retained_color", colorString(config.retainedColor)}};
@@ -229,7 +227,6 @@ Config parseConfig(const nlohmann::json& root) {
     config.playersOnly = root.value("players_only", config.playersOnly);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
-    config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1u, 60u);
     config.lineThickness = std::clamp(root.value("line_thickness", config.lineThickness), 0.5f, 5.0f);
     const auto parseColor = [&](const char* key, std::uint32_t fallback) {
         const auto it = root.find(key);
@@ -414,6 +411,11 @@ public:
             ? std::optional<std::uint32_t>{entityId} : std::nullopt;
     }
 
+    std::uintptr_t registryIdentity(void* actor) const noexcept {
+        void* registry=nullptr;
+        return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextRegistryOffset,registry)
+            ? reinterpret_cast<std::uintptr_t>(registry) : 0;
+    }
     bool captureBatch(void* local, std::size_t& cursor, hitbox::CaptureSchedule& schedule, CaptureBatch& batch,
                       std::size_t& visited) const noexcept {
         // No EnTT iterator/storage/component pointer survives the callback.
@@ -602,7 +604,7 @@ void processingLoop(std::size_t shard) noexcept {
             snapshot->liveLifetime = batch->liveLifetime;
             snapshot->boxes = cache.visible(Clock::now(), batch->camera.cameraPosition,
                 config.nearbyDistance, config.retainLastPosition,
-                config.retentionMinutes, batch->liveLifetime, config.showAllActors, config.playersOnly);
+                batch->liveLifetime, config.showAllActors, config.playersOnly);
             if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
             const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
             if (previous) retired.push_back(previous);
@@ -611,7 +613,7 @@ void processingLoop(std::size_t shard) noexcept {
             if (config.debug && Clock::now() >= nextLog) {
                 nextLog = Clock::now() + std::chrono::seconds(10);
                 log("HitBox worker ", shard, ": native_pool=", batch->population,
-                    " copied=", batch->count, " cached=", cache.size(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " [RuntimeID partition]");
+                    " copied=", batch->count, " cached=", cache.size(), " stationary_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " [RuntimeID partition]");
             }
         } catch (...) {}
     }
@@ -632,6 +634,7 @@ bool startProcessingWorkers() noexcept {
 }
 void refreshGameTickSnapshot() {
     static void* snapshotWorld = nullptr;
+    static std::uintptr_t snapshotRegistry = 0;
     static std::size_t cursor = 0;
     static hitbox::CaptureSchedule schedule;
     static hitbox::PendingDelivery<CaptureBatch,workerCount> delivery;
@@ -647,6 +650,7 @@ void refreshGameTickSnapshot() {
     const auto now = Clock::now();
     if (snapshotWorld != world) {
         snapshotWorld = world;
+        snapshotRegistry = 0;
         access.setWorld(world);
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);
         cursor = 0;
@@ -670,6 +674,16 @@ void refreshGameTickSnapshot() {
     auto* local = access.localPlayer();
     const auto localReadyAt = Clock::now();
     if (!local) return;
+    const auto registry=access.registryIdentity(local);
+    if (!registry) return;
+    if (snapshotRegistry && registry!=snapshotRegistry) {
+        worldEpoch.fetch_add(1,std::memory_order_acq_rel);
+        cursor=0; schedule.reset(); delivery.clear();
+        averageVisited=maximumNativeBatch;
+        loggedNativeReady=loggedCameraWaiting=loggedNativeFailure=false;
+        log("world entity registry replaced; stationary Player records cleared");
+    }
+    snapshotRegistry=registry;
     // All-Actor mode does not need local position for distance filtering.
     const auto cameraPosition = config->showAllActors
         ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
@@ -825,9 +839,9 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             std::size_t visited=0, count=0;
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
-                    if(input->config.playersOnly && !range.boxes[i].isPlayer) continue;
-                    const bool retained=input->config.retainLastPosition &&
-                        input->now-range.boxes[i].seenAt>range.liveLifetime;
+                    if(!hitbox::visibleInFrame(range.boxes[i],input->now,range.liveLifetime,
+                        input->config.retainLastPosition,input->config.playersOnly)) continue;
+                    const bool retained=range.boxes[i].retained;
                     if (retained==(pass==1)) ++count;
                 }
             }
@@ -839,9 +853,9 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     const auto& box=range.boxes[i];
-                    if(input->config.playersOnly && !box.isPlayer) continue;
-                    const bool retained=input->config.retainLastPosition &&
-                        input->now-box.seenAt>range.liveLifetime;
+                    if(!hitbox::visibleInFrame(box,input->now,range.liveLifetime,
+                        input->config.retainLastPosition,input->config.playersOnly)) continue;
+                    const bool retained=box.retained;
                     if (retained!=(pass==1)) continue;
                     if(!inMesh) {
                         if(!safeWrite(shader,0,color) || !safeWrite(shader,p.dirty,dirty)) { success=false; break; }
