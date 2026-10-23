@@ -221,10 +221,10 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "rva": "0x24901E0",
       "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? ?? ?? ?? ?? 48 89 D6 48 8D 55",
       "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83 EC",
-      "cross_version_signature_available": true,
-      "status": "candidate",
-      "source": "LatiteClient/Latite@9f74635 signature, uniquely matched in Minecraft.Windows.exe 1.26.52.3",
-      "abi_verified": false,
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "Minecraft.Windows.exe 1.26.52.3 disassembly: RCX is ItemStackBase, RDX is the std::string sret buffer, and RAX returns that buffer",
+      "abi_verified": true,
       "abi": "std::string* __fastcall(ItemStackBase*, std::string*)"
     }
   }
