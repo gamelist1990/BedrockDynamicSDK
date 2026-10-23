@@ -13,6 +13,7 @@
 #include <bedrock/native_items.hpp>
 #include <bedrock/remote_catalog.hpp>
 #include <bedrock/resolver.hpp>
+#include <bedrock/generated_symbols.hpp>
 #include <entt/entt.hpp>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -714,10 +715,54 @@ DWORD WINAPI startClient(void*) {
     bedrock::Resolver resolver;
     bedrock::NativeItemLayout itemLayout;
     bedrock::NativeActorLayout actorLayout;
-    if (!resolver.loadJson(profile, error) ||
-        !resolver.attachWindowsMainModule(choice.identity, error) || !resolver.exactBuild() ||
-        !bedrock::parseNativeItemLayout(profile, itemLayout, error) ||
-        !bedrock::parseNativeActorLayout(profile, actorLayout, error)) {
+    const auto identity = choice.identity;
+    const auto prepareProfile = [&](std::string_view candidate) {
+        // Profile selection checks executable identity, but an older cache can
+        // still lack layouts required by a newer mod. Validate the whole set
+        // before accepting it or installing any native hooks.
+        bedrock::Resolver candidateResolver;
+        bedrock::NativeItemLayout candidateItems;
+        bedrock::NativeActorLayout candidateActors;
+        if (!candidateResolver.loadJson(candidate, error) ||
+            !candidateResolver.attachWindowsMainModule(identity, error) ||
+            !candidateResolver.exactBuild()) return false;
+        if (!bedrock::parseNativeItemLayout(candidate, candidateItems, error)) {
+            error = "native_items: " + error;
+            return false;
+        }
+        if (!bedrock::parseNativeActorLayout(candidate, candidateActors, error)) {
+            error = "native_actors: " + error;
+            return false;
+        }
+        resolver = std::move(candidateResolver);
+        itemLayout = std::move(candidateItems);
+        actorLayout = std::move(candidateActors);
+        return true;
+    };
+    bool profileReady = prepareProfile(profile);
+    if (!profileReady) {
+        log("profile lacks required native layouts; checking GitHub: ", error);
+        std::string updatedProfile;
+        bedrock::ProfileChoice updatedChoice;
+        if (bedrock::refreshSupportedProfile(identity, updatedProfile, updatedChoice, error,
+                [](std::string_view stage) { log("profile ", stage); }) &&
+            prepareProfile(updatedProfile)) {
+            profile = std::move(updatedProfile);
+            choice = std::move(updatedChoice);
+            profileReady = true;
+            log("native layouts recovered from latest exact-build profile");
+        } else {
+            log("latest native profile unavailable: ", error);
+        }
+    }
+    if (!profileReady && prepareProfile(bedrock::generated::kSymbolDatabase)) {
+        // Reuse the original live fingerprint. A bundled profile from another
+        // executable/build is rejected by attachWindowsMainModule above.
+        choice.source = bedrock::ProfileSource::Embedded;
+        profileReady = true;
+        log("native layouts recovered from embedded exact-build profile");
+    }
+    if (!profileReady) {
         log("exact-build native Actor profile unavailable: ", error);
         status.store(Status::Failed, std::memory_order_release);
         return 1;

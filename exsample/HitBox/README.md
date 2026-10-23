@@ -82,3 +82,8 @@ game and pass the DLL path as a Wine path (for example
 `Z:\home\<user>\WorkSpace\DevBox\BedrockDLLs\HitBox-main-<sha>\BedrockHitBox.dll`).
 Use a local/offline test world. This loader is not a game launcher or a
 compatibility layer; the HitBox DLL itself must match the target's C++ ABI.
+
+起動時はキャッシュのEXE一致だけでなく、HitBoxが必要とするNative item/Actorレイアウト全体を検査します。
+古いキャッシュで `value_offset` などの必須キーが欠ける場合は、GitHubの同一EXE用プロファイルを再取得します。
+再取得できない場合は同梱プロファイルを検査し、実行中EXEの指紋と一致する場合だけ使用します。
+どの候補も不足・不一致ならHookを登録せず起動を中止し、欠けたオフセットを既定値で補うことはありません。

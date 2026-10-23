@@ -1,6 +1,7 @@
 #include <bedrock/native_actors.hpp>
 
 #include <cassert>
+#include <nlohmann/json.hpp>
 #include <string>
 
 int main() {
@@ -50,6 +51,24 @@ int main() {
     assert(layout.runtimeIdValueSize == sizeof(std::uint64_t));
     assert(layout.aabbShapeComponentHash == 0xBAC1B3CF);
     assert(layout.valid());
+
+    // Older exact-build caches can contain the component hash but omit its
+    // value layout. They must be rejected without guessing offset zero or
+    // replacing the last accepted layout; the caller can then try a new profile.
+    auto stale = nlohmann::json::parse(profile);
+    stale["native_actors"]["runtime_id"].erase("value_offset");
+    layout.runtimeIdValueOffset = 0x40;
+    assert(!bedrock::parseNativeActorLayout(stale.dump(), layout, error));
+    assert(error.find("value_offset") != std::string::npos);
+    assert(layout.runtimeIdValueOffset == 0x40);
+    assert(bedrock::parseNativeActorLayout(profile, layout, error));
+    assert(error.empty() && layout.runtimeIdValueOffset == 0);
+
+    stale = nlohmann::json::parse(profile);
+    stale["native_actors"]["runtime_id"].erase("value_size");
+    assert(!bedrock::parseNativeActorLayout(stale.dump(), layout, error));
+    assert(error.find("value_size") != std::string::npos);
+    assert(bedrock::parseNativeActorLayout(profile, layout, error));
 
     constexpr auto missingViewComponent = R"json({
       "native_actors": {
