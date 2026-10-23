@@ -15,6 +15,10 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 C:\Users\<ユーザー名>\Documents\PEXData\HitBox\config.json
 ```
 
+Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
+`~/Documents/PEXData/HitBox` を使用します。Wineの `Z:` ドライブ経由でLinuxパスへ解決します。
+`BEDROCK_HITBOX_DIR` を設定すると保存先を明示的に上書きできます（Linux環境では `/home/...` 形式も可）。
+
 ```json
 {
   "enabled": true,

@@ -111,6 +111,31 @@ void log(Args&&... args) {
 }
 
 std::filesystem::path dataDirectory() {
+    const auto environmentPath = [](const wchar_t* name) -> std::wstring {
+        const auto length = GetEnvironmentVariableW(name, nullptr, 0);
+        if (length <= 1) return {};
+        std::vector<wchar_t> value(length);
+        const auto written = GetEnvironmentVariableW(name, value.data(), length);
+        if (written == 0 || written >= length) return {};
+        return std::wstring(value.data(), written);
+    };
+    const auto linuxPath = [](std::wstring value) {
+        if (!value.empty() && value.front() == L'/') {
+            std::replace(value.begin(), value.end(), L'/', L'\\');
+            value.insert(0, L"Z:"); // Proton/Wine maps the host root to Z:\\.
+        }
+        return std::filesystem::path{value};
+    };
+
+    if (const auto overridePath = environmentPath(L"BEDROCK_HITBOX_DIR");
+        !overridePath.empty())
+        return linuxPath(overridePath);
+
+    const auto home = environmentPath(L"HOME");
+    const auto prefix = environmentPath(L"WINEPREFIX");
+    if (!home.empty() && home.front() == L'/' && !prefix.empty())
+        return linuxPath(home) / L"Documents" / L"PEXData" / L"HitBox";
+
     PWSTR documents = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_CREATE, nullptr, &documents)))
         return {};
