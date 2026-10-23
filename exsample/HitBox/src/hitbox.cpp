@@ -80,8 +80,8 @@ struct Config {
     unsigned retentionMinutes = 10;
     float nearbyDistance = 32.0f;
     float lineThickness = 1.5f;
-    std::uint32_t liveColor = packColor(76, 230, 132, 230);
-    std::uint32_t retainedColor = packColor(255, 174, 66, 210);
+    std::uint32_t liveColor = packColor(76, 230, 132, 255);
+    std::uint32_t retainedColor = packColor(255, 174, 66, 255);
 };
 
 using BoxRecord = hitbox::BoxRecord;
@@ -665,7 +665,7 @@ void refreshGameTickSnapshot() {
     if (batch.count && !loggedNativeReady) {
         loggedNativeReady = true;
         log("native incremental capture active: pool=", batch.population,
-            " [RuntimeID + AABB copies; 10-tick sweep target; maximum 32 rows/tick; 250us budget]");
+            " [RuntimeID + AABB copies; 5-tick sweep target; maximum 32 rows/tick; 250us budget]");
     }
     // Keep live records across a full incremental pass, even if the time budget
     // reduced the number of rows captured on a busy callback.
@@ -692,7 +692,7 @@ void refreshGameTickSnapshot() {
             " actors=", us(positionReadyAt, actorsReadyAt),
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
-            " [10-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
+            " [5-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
     }
 }
 void observeWorld(const bedrock::LevelTickEvent& event) {
@@ -729,7 +729,7 @@ int ensureOverlayMaterial() noexcept {
     int expected=0;
     if (!overlayMaterialState.compare_exchange_strong(expected,1,std::memory_order_acq_rel)) return 0;
     __try {
-        hashedNameCtor(overlayNameStorage.data(),"selection_overlay");
+        hashedNameCtor(overlayNameStorage.data(),"name_tag");
         materialCtor(overlayMaterialStorage.data(),commonMaterialGroup,overlayNameStorage.data());
         void* info=nullptr;
         if (!safeRead(overlayMaterialStorage.data(),0,info) || !info) {
@@ -777,7 +777,7 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
     const auto& p=worldRenderProfile;
     void* player=nullptr; void* tess=nullptr; void* shader=nullptr; void* materialInfo=nullptr;
     bedrock::Vec3 origin{}, oldTranslation{};
-    FloatColor oldColor{}, white{1,1,1,1};
+    FloatColor oldColor{};
     std::uint8_t building=0, special=0;
     if (!safeRead(renderer,p.player,player) || !player ||
         !safeRead(player,p.origin,origin) || !std::isfinite(origin.x) ||
@@ -794,33 +794,41 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
     const bedrock::Vec3 zero{};
     const std::uint8_t dirty=1;
     if (!safeWrite(tess,p.translation,zero)) return 0;
-    if (!safeWrite(shader,0,white) || !safeWrite(shader,p.dirty,dirty)) {
-        safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
-        safeWrite(tess,p.translation,oldTranslation); return 0;
-    }
     bool success=true;
     __try {
-        // Mode 4 is the game's LineList. 24 vertices / AABB, one native mesh flush.
+        // name_tag uses Position + current_color, depth Always, no depth writes.
+        // Uniform RGBA is captured at each flush: at most live/retained two batches.
         std::size_t total=0;
         for (const auto& range:input->ranges) total+=range.count;
         total=std::min(total,maximumRenderedBoxes);
-        tessBegin(tess,0,4,static_cast<int>(total*24),false);
-        std::size_t drawn=0;
-        for (const auto& range:input->ranges) {
-            for (std::size_t i=0;i<range.count && drawn<total;++i,++drawn) {
-                const auto& box=range.boxes[i];
-                const auto packed=input->config.retainLastPosition &&
-                    input->now-box.seenAt>range.liveLifetime
-                    ? input->config.retainedColor : input->config.liveColor;
-                const FloatColor color{(packed&255)/255.f,((packed>>8)&255)/255.f,
-                    ((packed>>16)&255)/255.f,((packed>>24)&255)/255.f};
-                tessColor(tess,&color);
-                const auto vertices=hitbox::worldLineVertices(box,origin,input->now);
-                for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
+        for (unsigned pass=0;pass<2;++pass) {
+            std::size_t visited=0, count=0;
+            for (const auto& range:input->ranges) {
+                for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
+                    const bool retained=input->config.retainLastPosition &&
+                        input->now-range.boxes[i].seenAt>range.liveLifetime;
+                    if (retained==(pass==1)) ++count;
+                }
             }
+            if (!count) continue;
+            const auto rgba=hitbox::opaqueColor(pass ? input->config.retainedColor : input->config.liveColor);
+            const FloatColor color{rgba[0],rgba[1],rgba[2],rgba[3]};
+            if (!safeWrite(shader,0,color) || !safeWrite(shader,p.dirty,dirty)) { success=false; break; }
+            tessBegin(tess,0,4,static_cast<int>(count*24),false);
+            visited=0;
+            for (const auto& range:input->ranges) {
+                for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
+                    const auto& box=range.boxes[i];
+                    const bool retained=input->config.retainLastPosition &&
+                        input->now-box.seenAt>range.liveLifetime;
+                    if (retained!=(pass==1)) continue;
+                    const auto vertices=hitbox::worldLineVertices(box,origin,input->now);
+                    for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
+                }
+            }
+            alignas(16) std::array<std::byte,0x58> scratch{};
+            renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
         }
-        alignas(16) std::array<std::byte,0x58> scratch{};
-        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
     } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
     // Restore the borrowed scalar state, also after a guarded native fault.
     safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
@@ -849,7 +857,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
     const auto result=drawNativeGuarded(renderer,screen,&input);
     static std::atomic<bool> loggedDraw{};
     if (result>0 && !loggedDraw.exchange(true))
-        log("native world mesh submitted [12 edges/box; engine render origin + selection_overlay; through blocks; interpolated]");
+        log("native world mesh submitted [12 edges/box; engine render origin + name_tag; depth Always; opaque uniform colors; interpolated]");
     if (result<0 && !worldRenderFault.exchange(true))
         log("world rendering disabled after guarded native fault [restart required]");
 }
@@ -1005,7 +1013,7 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    log("native world rendering active [LevelRenderer::renderLevel + selection_overlay; 10-tick distributed sweep; exact-build guards; runtime candidate]");
+    log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 5-tick distributed sweep; exact-build guards; runtime candidate]");
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 

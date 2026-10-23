@@ -32,22 +32,26 @@ int main() {
         assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
     }
     using namespace std::chrono_literals;
+    const auto opaque=hitbox::opaqueColor(0x0044aaee);
+    assert(opaque[0]==238/255.f && opaque[1]==170/255.f && opaque[2]==68/255.f && opaque[3]==1.f);
+    assert(hitbox::opaqueColor(0x0144aaee)==hitbox::opaqueColor(0xff44aaee));
     hitbox::CaptureSchedule schedule;
+    static_assert(hitbox::CaptureSchedule::periodTicks==5);
     std::size_t visited=0;
-    for(int tick=0;tick<10;++tick) {
+    for(int tick=0;tick<5;++tick) {
         const auto quota=schedule.beginTick(94);
-        assert(quota<=10); visited+=quota; schedule.visited(quota);
+        assert(quota<=19); visited+=quota; schedule.visited(quota);
     }
-    assert(visited==94 && schedule.beginTick(94)==10);
+    assert(visited==94 && schedule.beginTick(94)==19);
     schedule.reset();
-    for(int tick=0;tick<10;++tick) {
+    for(int tick=0;tick<5;++tick) {
         const auto quota=schedule.beginTick(2);
         assert(quota==(tick<2 ? 1u : 0u)); schedule.visited(quota);
     }
     assert(schedule.beginTick(2)==1);
     schedule.reset();
     for(int tick=0;tick<12;++tick) {
-        const auto quota=schedule.beginTick(94); assert(quota==10);
+        const auto quota=schedule.beginTick(94); assert(quota==19);
         schedule.visited(1); // A tight time budget preserves pending work across cycles.
     }
     schedule.reset(); assert(schedule.beginTick(0)==0);

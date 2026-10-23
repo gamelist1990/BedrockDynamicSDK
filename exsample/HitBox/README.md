@@ -5,8 +5,8 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 - プレイヤーに限定せず、ActorOwner / RuntimeID / AABBShapeのEnTT componentを照合してAABBを取得
 - SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
 - Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
-- ゲームのrender originとselection_overlayマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
-- 全Actorの一括再検証を廃止。10tickで1周する目標で分散し、1tickは最大32エントリ、Actor読み取りの処理予算は250µs
+- ゲームのrender originとname_tagマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
+- 全Actorの一括再検証を廃止。5tickで1周する目標で分散し、1tickは最大32エントリ、Actor読み取りの処理予算は250µs
 - 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
 - ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
 - ワーカーにはRuntimeID・AABB・視点などのコピーだけを渡し、ActorやEnTTのポインタを参照させない
@@ -31,8 +31,8 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
   "retain_last_position": false,
   "retention_minutes": 10,
   "line_thickness": 1.5,
-  "live_color": "#4CE684E6",
-  "retained_color": "#FFAE42D2"
+  "live_color": "#4CE684FF",
+  "retained_color": "#FFAE42FF"
 }
 ```
 
@@ -40,11 +40,11 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。名前の取得やNameTag Hookは
 行わず、表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
 
-ActorOwnerのエントリは10tickで1周することを目標に、毎tick `ceil(Actor数/10)` 件ずつ確認します。
-1tickの上限は32件で、全件を10tickごとに一括更新しません。RuntimeIDとAABBだけをコピーします。
+ActorOwnerのエントリは5tickで1周することを目標に、毎tick `ceil(Actor数/5)` 件ずつ確認します。
+1tickの上限は32件で、全件を5tickごとに一括更新しません。RuntimeIDとAABBだけをコピーします。
 250µsの処理予算を超えた場合は次のエントリを後のtickへ回します。これはNative呼び出し1回を途中で
 中断する仕組みではありません。予算内に1周できない場合も続きから処理し、途中で先頭に戻しません。
-Actorが320件を超える場合や読み取りが遅い場合は1周が10tickより長くなります。20TPSでは10tickは約0.5秒ですが、
+Actorが160件を超える場合や読み取りが遅い場合は1周が5tickより長くなります。20TPSでは5tickは約0.25秒ですが、
 サンプリングは実際のLevelTickコールバック数で管理するため、ゲーム側のtick速度にも従います。
 全Actorのハンドル一覧を500msごとに作り直す処理、各プロパティのSDKラッパーによる重複再検証、
 対象ごとのStateVector取得を廃止しました。範囲判定にはコピー済みAABBの中心を使います。
@@ -59,8 +59,11 @@ Actorが320件を超える場合や読み取りが遅い場合は1周が10tick�
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
 `retain_last_position=true` の場合は、近距離で最後に確認した位置を指定時間だけ保持します。
 描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
-ゲームのLineListへ渡します。最大512枠、1回のbegin/mesh flushにまとめます。Latiteが透過表示に使う
-`selection_overlay` マテリアルをゲームのAPIで一度だけ生成し、ブロック越しの表示に使います。
+ゲームのLineListへ渡します。最大512枠を、生存／保持色の最大2回のbegin/mesh flushにまとめます。
+`selection_overlay` は対象版では深度判定がLessEqualで、背景色と混ぜる設定だったため廃止しました。
+ゲームの `name_tag` マテリアル（depthFunc=Always / DisableDepthWrite / Positionのみ）を一度生成して使います。
+`current_color` シェーダーへ生存／保持色を直接渡します。白いシェーダー色と未使用の頂点カラーに依存しません。
+透明度は常に1.0とし、既存設定の色の末尾AA値も不透明として扱います。RGB指定は維持します。
 DXGI/ImGui overlayは起動しません。実ゲームでの深度動作は未検証です。
 
 描画は毎フレーム、コピー済みの前回表示位置から新しいAABBへ線形補間します。更新途中で次の値が来ても

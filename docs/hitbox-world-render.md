@@ -3,7 +3,7 @@
 ## Scope and confidence
 
 The implementation follows Latite's post-`LevelRenderer::renderLevel` drawing
-path, using the game's ScreenContext/Tessellator and a selection_overlay material obtained through the native material constructor. Reference source: LatiteClient/Latite commit
+path, using the game's ScreenContext/Tessellator and a name_tag material obtained through the native material constructor. Reference source: LatiteClient/Latite commit
 `9f7463515dd298a496da918285936d78c7416aad`,
 `src/client/memory/hook/hooks/LevelRendererHooks.cpp`,
 `src/util/DrawUtil3D.cpp`, and the native renderer declarations.
@@ -52,9 +52,9 @@ checks tess+0x2a0 and +0x255 before starting. Vertex adds tess translation +0x1c
 HitBox supplies origin-relative vertices with that translation temporarily zeroed,
 then restores the previous translation and shader color. The screen, tessellator and renderer are borrowed from the engine.
 
-For through-block rendering, the implementation now uses `selection_overlay`,
-following Latite's Hitboxes transparent option rather than the previously borrowed
-selection_box. The common material group is addressed at RVA `0x11e3b308`, the same
+The initial selection_overlay attempt followed Latite, but the user reported
+that walls still occluded the boxes and their colors appeared faint. The current
+implementation uses `name_tag` instead (material-source evidence below). The common material group is addressed at RVA `0x11e3b308`, the same
 RDX address loaded by the original constructor at 0x04697e12. A separate native
 caller at 0x0442c7c8 passes a char literal to HashedString constructor 0x006ac970,
 then passes its output and the common group to MaterialPtr constructor 0x052f1e00.
@@ -71,29 +71,47 @@ Both constructors are called once on the render thread after the common group's
 factory is available. Native internal allocations and reference counts are held
 until process exit, matching the pinned DLL lifetime. This bounded lifetime avoids
 calling a foreign STL's destructors. Initialization failure disables HitBox drawing.
-The selected name matches the reference's through-block path, but the current
-build's material resource/depth settings and in-game result remain runtime checks.
+### Correction from the shipped material sources
+
+The locally installed exact-version assets contain
+`data/resource_packs/vanilla/materials/ui3D.material` (SHA-256
+`61a9a6589bf2e9cdacb76adae26b0a0d7f93f77d203f7bbf668e67c6845ee7eb`). `common.json` loads that material file.
+The `selection_overlay:block_overlay` definition inherits depthFunc=LessEqual,
+StencilWrite/EnableStencilTest, and UV1/UV0 fields; its blendSrc=DestColor and
+blendDst=SourceColor combine the result with the background. It is not an
+always-visible untextured line material on this build. The prior inference from
+Latite's transparent option was insufficient.
+
+The independent `name_tag` definition uses depthFunc=Always, DisableDepthWrite,
+Position-only vertices, shaders/position.vertex, shaders/current_color.fragment,
+and supports both MSAA/non-MSAA. It does not inherit the stencil/UV settings.
+HitBox now supplies opaque shader RGBA, grouping live/retained boxes into at most
+two mesh flushes because this shader reads the uniform rather than vertex colors.
+Old configuration alpha is ignored for the boxes. These asset observations and
+hashes are preserved in `material-state-findings.json` beside the REA evidence.
+Actual in-game depth/opacity behavior still requires confirmation; the compiled
+RenderDragon material was not decoded in this investigation.
 
 ## Implementation boundaries
 
 - Only the exact attached executable profile is accepted. All seven function
   entry guards (24 bytes) must still match loaded memory before installing.
-- Ten-tick sweep target: ceil(population/10) rows per tick, maximum 32, with the
+- Five-tick sweep target: ceil(population/5) rows per tick, maximum 32, with the
   existing cooperative 250us loop budget. Slower sweeps continue instead of
-  restarting; the upper bound and budget can extend a sweep beyond ten ticks.
+  restarting; the upper bound and budget can extend a sweep beyond five ticks.
 - Linear interpolation uses copied old/new bounds each render frame. New samples
   start at the current interpolated position. Teleports beyond eight blocks,
   sample gaps over two seconds, and world epochs reset interpolation. No motion
   extrapolation is performed; smooth display adds up to a sample interval of lag.
 - Native actor capture stays on the game tick; two workers receive copied
   RuntimeID/AABB/position data. Native drawing stays inside the world render pass.
-- Twelve edges per AABB, one mesh submission, at most 512 boxes per pass. The
+- Twelve edges per AABB, at most two color-group mesh submissions, at most 512 boxes per pass. The
   selected material determines depth behavior and line width. The legacy
   `line_thickness` setting does not change native line width.
 - Active native tessellation is skipped. Read/write guards and SEH reduce the
   risk of invalid accesses but cannot make an incorrect native ABI or corrupted
   engine state safe. A guarded draw fault disables further HitBox drawing.
-- Local tests validate coordinate conversion, interpolation/teleport resets, ten-tick scheduling, retention/world epochs, and profile
+- Local tests validate coordinate conversion, interpolation/teleport resets, five-tick scheduling, retention/world epochs, and profile
   rejection. Cross-compilation/Windows CI establish compilation, not in-game
   visuals, third-person correctness, or a measured FPS improvement. Those remain
   runtime acceptance checks on this exact build.

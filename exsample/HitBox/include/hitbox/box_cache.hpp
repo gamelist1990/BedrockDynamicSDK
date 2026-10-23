@@ -34,11 +34,11 @@ inline std::array<bedrock::Vec3, 8> corners(const bedrock::ActorBounds& b) noexc
         {b.minimum.x,b.maximum.y,b.minimum.z}, {b.maximum.x,b.maximum.y,b.minimum.z},
         {b.maximum.x,b.maximum.y,b.maximum.z}, {b.minimum.x,b.maximum.y,b.maximum.z}}};
 }
-// A ten-tick sweep is spread across callbacks; slow callbacks keep the cursor
+// A five-tick sweep is spread across callbacks; slow callbacks keep the cursor
 // and finish the pending sweep rather than restarting and starving later rows.
 class CaptureSchedule {
 public:
-    static constexpr std::uint64_t periodTicks=10;
+    static constexpr std::uint64_t periodTicks=5;
     static constexpr std::size_t maximumBatch=32;
     void reset() noexcept { tick_=nextSweep_=0; remaining_=population_=0; }
     std::size_t beginTick(std::size_t population) noexcept {
@@ -64,6 +64,11 @@ inline bedrock::ActorBounds interpolatedBounds(const BoxRecord& box, Clock::time
         return bedrock::Vec3{from.x+(to.x-from.x)*alpha,from.y+(to.y-from.y)*alpha,from.z+(to.z-from.z)*alpha};
     };
     return {lerp(box.blendFrom.minimum,box.bounds.minimum),lerp(box.blendFrom.maximum,box.bounds.maximum)};
+}
+// Position-only/current_color materials read the shader uniform, not vertex
+// RGBA. Force opacity even when an older config still contains translucent alpha.
+inline std::array<float,4> opaqueColor(std::uint32_t packed) noexcept {
+    return {{(packed&255)/255.f,((packed>>8)&255)/255.f,((packed>>16)&255)/255.f,1.f}};
 }
 // The engine's 3D pass already owns the view/projection matrices. Supply line
 // vertices relative to its render origin; do not add an eye-height or FOV guess.
