@@ -2,7 +2,8 @@
 
 BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は `BedrockHitBox.dll` 単体です。
 
-- プレイヤーに限定せず、ActorOwner / RuntimeID / AABBShapeのEnTT componentを照合してAABBを取得
+- 既定では取得できた全Actorを表示。PlayerもNameTag表示や距離に依存せずRuntimeIDで追跡
+- `players_only=true` でPlayerのみに切替可能。ActorOwner / RuntimeID / AABBShapeを照合してAABBを取得
 - SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
 - Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
 - ゲームのrender originとname_tagマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
@@ -27,6 +28,8 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 {
   "enabled": true,
   "debug": false,
+  "show_all_actors": true,
+  "players_only": false,
   "nearby_distance": 32.0,
   "retain_last_position": false,
   "retention_minutes": 10,
@@ -35,6 +38,17 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
   "retained_color": "#FFAE42FF"
 }
 ```
+
+`players_only=true` でPlayerだけを表示し、`false` で全Actorを表示します。ActorTypeコンポーネントの
+32bit値が対象版のPlayer ID（319）と一致するかで判定します。NameTagが非表示でも名前の取得は不要です。
+Playerのみの場合は、Playerと分類できないActorを除外し、そのActorのRuntimeID/AABB読み取りも省きます。
+
+`show_all_actors=true`（既定）では、読み取れたActorを32ブロックなどの距離で除外しません。
+このモードでは距離計算用のローカル位置コンポーネントも読みません。
+既存configにこれらのキーがなくても既定値が適用されます。距離で絞りたい場合のみ
+`show_all_actors=false` にし、`nearby_distance` を使います。ゲームに未ロードのActorや、RuntimeID・
+所有者照合・有効な正の体積のAABBを取得できないActorは描画できません。全表示で距離や512枠による
+打切りは行いませんが、表示対象が増えれば描画量も増えます。
 
 `debug=true` では、Nativeコピーの所要時間・走査数と、各ワーカーの保持数を10秒間隔で記録します。
 Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。名前の取得やNameTag Hookは
@@ -49,17 +63,18 @@ Actorが160件を超える場合や読み取りが遅い場合は1周が5tickよ
 全Actorのハンドル一覧を500msごとに作り直す処理、各プロパティのSDKラッパーによる重複再検証、
 対象ごとのStateVector取得を廃止しました。範囲判定にはコピー済みAABBの中心を使います。
 
-2本の処理ワーカーは通常より低い優先度で常駐し、各ワーカーの待機入力は最新1件だけを保持します。
-キューが使用中のときゲームスレッドは待ちません。距離判定・保持期限の削除・8頂点の生成・描画用の
+2本の処理ワーカーは通常より低い優先度で常駐し、各ワーカーの待機入力は固定FIFOで最大8件を保持します。
+キューが使用中のときゲームスレッドは待ちません。取得済みバッチは両ワーカーへの受け渡しが完了するまで
+保持し、次のNative取得を延期します。受け渡し済みワーカーへの重複送信と未処理データの上書きを防ぎます。距離判定・保持期限の削除・8頂点の生成・描画用の
 スナップショット作成・古い大きなスナップショットの破棄をワーカーで処理します。
-ワールドの世代が異なる入力・描画結果は拒否します。保持レコードは各ワーカー最大4096件で、上限到達時は
-最も古いものを削除します。保持済みの枠も現在の表示距離内だけ描画します。
+ワールドの世代が異なる入力・描画結果は拒否します。保持レコードは各ワーカー最大16384件で、上限到達時は
+最も古いものを削除します。距離制限をOFFにしている場合は、保持済みの枠も距離で除外しません。
 
 読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
 `retain_last_position=true` の場合は、近距離で最後に確認した位置を指定時間だけ保持します。
 描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
-ゲームのLineListへ渡します。最大512枠を、生存／保持色の最大2回のbegin/mesh flushにまとめます。
+ゲームのLineListへ渡します。全対象を生存／保持色にまとめ、1回のmesh submissionを最大512枠に分割します。512枠を超えても続きを描画します。
 `selection_overlay` は対象版では深度判定がLessEqualで、背景色と混ぜる設定だったため廃止しました。
 ゲームの `name_tag` マテリアル（depthFunc=Always / DisableDepthWrite / Positionのみ）を一度生成して使います。
 `current_color` シェーダーへ生存／保持色を直接渡します。白いシェーダー色と未使用の頂点カラーに依存しません。
@@ -77,8 +92,10 @@ DXGI/ImGui overlayは起動しません。実ゲームでの深度動作は未�
 FOV Hookとローカル回転の読み取りは不要になりました。遅いキャプチャのログは `local` / `position` /
 `actors` / `publish` に分けて記録します。250µsはActorループの協調的予算であり、コールバック全体の
 上限ではありません。実ゲームでのFPS・取得時間の改善量は未測定です。
-ActorTypeのstorageが存在しない場合は、ActorOwner / RuntimeID / AABBShapeの交差と所有者のregistry/entity ID照合を
-維持します。必須storageが欠ける場合は読み取りを拒否します。
+全Actor表示ではActorTypeの有無や値を除外条件にせず、ActorOwner / RuntimeID / AABBShapeと所有者の
+registry/entity IDを照合します。Playerのみ表示にはActorType storageと値の読み取りが必要です。
+必須storageが欠ける場合は読み取りを拒否します。ActorTypeの値オフセット・Player IDも同一EXE用の
+プロファイルに記録し、欠落した旧キャッシュは更新します。
 
 現在の `native_actors` プロファイル値は、ActorOwner/AABB/StateVector/Rotation componentの既知レイアウトと
 対象EXEのコンポーネント名から作った候補です。すべての読み取りは範囲・値チェックとSEH境界を通しますが、

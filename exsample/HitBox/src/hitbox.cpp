@@ -18,6 +18,7 @@
 
 #include <nlohmann/json.hpp>
 #include "hitbox/box_cache.hpp"
+#include "hitbox/batch_queue.hpp"
 #include "hitbox/world_render_profile.hpp"
 #include <condition_variable>
 #include <deque>
@@ -76,6 +77,8 @@ constexpr std::uint32_t packColor(unsigned r,unsigned g,unsigned b,unsigned a) {
 struct Config {
     bool enabled = true;
     bool debug = false;
+    bool showAllActors = true;
+    bool playersOnly = false;
     bool retainLastPosition = false;
     unsigned retentionMinutes = 10;
     float nearbyDistance = 32.0f;
@@ -107,7 +110,7 @@ struct CaptureBatch {
 struct ProcessingWorker {
     std::mutex mutex;
     std::condition_variable ready;
-    std::optional<CaptureBatch> pending; // Fixed latest-input slot, no unbounded backlog.
+    hitbox::BatchQueue<CaptureBatch,8> pending; // Bounded FIFO; captured Actors are never overwritten.
     std::thread thread;
     bool stopping{};
     std::shared_ptr<const RenderSnapshot> snapshot;
@@ -208,6 +211,8 @@ nlohmann::json configJson(const Config& config) {
     };
     return nlohmann::json{{"enabled", config.enabled},
         {"debug", config.debug},
+        {"show_all_actors", config.showAllActors},
+        {"players_only", config.playersOnly},
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
         {"retention_minutes", config.retentionMinutes},
@@ -220,6 +225,8 @@ Config parseConfig(const nlohmann::json& root) {
     Config config;
     config.enabled = root.value("enabled", config.enabled);
     config.debug = root.value("debug", config.debug);
+    config.showAllActors = root.value("show_all_actors", config.showAllActors);
+    config.playersOnly = root.value("players_only", config.playersOnly);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
     config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1u, 60u);
@@ -330,9 +337,11 @@ bool looksLikeActor(void* actor) noexcept {
 
 class HitBoxAccess final : public bedrock::GameAccess {
 public:
-    void setLayouts(bedrock::NativeItemLayout items, bedrock::NativeActorLayout actors) {
+    void setLayouts(bedrock::NativeItemLayout items, bedrock::NativeActorLayout actors,
+                    std::size_t actorTypeOffset, std::uint32_t playerType) {
         itemLayout_ = std::move(items);
         actorLayout_ = std::move(actors);
+        actorTypeValueOffset_=actorTypeOffset; playerTypeId_=playerType;
     }
     void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
@@ -413,11 +422,11 @@ public:
         const auto& layout = actorLayout_;
         if (!safeRead(local, layout.actorEntityContextOffset + layout.contextRegistryOffset,
                       registry) || !registry) return false;
-        return captureRegistryBatch(registry, layout, &cursor, &schedule, &batch, &visited);
+        return captureRegistryBatch(registry, layout, actorTypeValueOffset_, playerTypeId_, &cursor, &schedule, &batch, &visited);
     }
 private:
     static bool captureRegistryBatch(void* registry, const bedrock::NativeActorLayout& layout,
-        std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
+        std::size_t typeOffset, std::uint32_t playerType, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
         __try {
             using Registry = entt::basic_registry<hitbox_native::EntityId>;
             auto* typed = static_cast<Registry*>(registry);
@@ -425,7 +434,7 @@ private:
             auto* runtime = typed->storage(layout.runtimeIdComponentHash);
             auto* shape = typed->storage(layout.aabbShapeComponentHash);
             auto* actorType = typed->storage(layout.actorTypeComponentHash);
-            if (!owner || !runtime || !shape) return false;
+            if (!owner || !runtime || !shape || (batch->config->playersOnly && !actorType)) return false;
             auto* candidates = owner;
             // A fixed source keeps the incremental cursor stable when pool sizes change.
             batch->population = candidates->size();
@@ -441,8 +450,11 @@ private:
                 ++*visited;
                 schedule->visited(1);
                 if (!typed->valid(entity) || !owner->contains(entity) ||
-                    !runtime->contains(entity) || !shape->contains(entity) ||
-                    (actorType && !actorType->contains(entity))) continue;
+                    !runtime->contains(entity) || !shape->contains(entity)) continue;
+                std::uint32_t type=0;
+                const bool isPlayer=actorType && actorType->contains(entity) &&
+                    safeRead(actorType->value(entity),typeOffset,type) && type==playerType;
+                if(batch->config->playersOnly && !isPlayer) continue;
                 // Validate the owner against the exact registry/entity once, rather
                 // than validating the Actor vtable for every property wrapper.
                 void* actor = nullptr;
@@ -456,6 +468,7 @@ private:
                     !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
                     actorEntity != static_cast<std::uint32_t>(entity)) continue;
                 auto& sample = batch->samples[batch->count];
+                sample.isPlayer=isPlayer;
                 if (!safeRead(runtime->value(entity), layout.runtimeIdValueOffset, sample.runtimeId) ||
                     !sample.runtimeId) continue;
                 auto* aabb = shape->value(entity);
@@ -465,14 +478,14 @@ private:
                            !safeRead(aabb, layout.aabbMaximumOffset, sample.bounds.maximum)) continue;
                 if (!sample.bounds.valid()) continue;
                 const auto& b = sample.bounds;
-                if (b.maximum.x - b.minimum.x <= 0 || b.maximum.x - b.minimum.x > 64 ||
-                    b.maximum.y - b.minimum.y <= 0 || b.maximum.y - b.minimum.y > 64 ||
-                    b.maximum.z - b.minimum.z <= 0 || b.maximum.z - b.minimum.z > 64) continue;
+                if (b.maximum.x - b.minimum.x <= 0 ||
+                    b.maximum.y - b.minimum.y <= 0 ||
+                    b.maximum.z - b.minimum.z <= 0) continue;
                 sample.seenAt = Clock::now();
                 ++batch->count;
             }
             return true;
-        } __except(EXCEPTION_EXECUTE_HANDLER) { batch->count = 0; return false; }
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return batch->count != 0; } // Keep already validated scalar copies.
     }
 
     static void* callLocalPlayer(void* target, void* client) noexcept {
@@ -543,6 +556,8 @@ private:
 
     bedrock::NativeItemLayout itemLayout_{};
     bedrock::NativeActorLayout actorLayout_{};
+    std::size_t actorTypeValueOffset_{};
+    std::uint32_t playerTypeId_{};
     std::atomic<void*> client_{};
     std::atomic<void*> world_{};
 };
@@ -565,11 +580,10 @@ void processingLoop(std::size_t shard) noexcept {
         {
             std::unique_lock lock(worker.mutex);
             worker.ready.wait_for(lock, std::chrono::milliseconds(250), [&] {
-                return worker.stopping || worker.pending.has_value();
+                return worker.stopping || !worker.pending.empty();
             });
             if (worker.stopping) return;
-            batch = std::move(worker.pending);
-            worker.pending.reset();
+            batch = worker.pending.pop();
         }
         try {
             std::erase_if(retired, [](const auto& value) { return value.use_count() == 1; });
@@ -581,14 +595,14 @@ void processingLoop(std::size_t shard) noexcept {
                 const auto& sample = batch->samples[i];
                 if (sample.runtimeId % workerCount != shard) continue;
                 cache.observe(sample, batch->camera.cameraPosition,
-                              config.nearbyDistance, config.retainLastPosition);
+                              config.nearbyDistance, config.retainLastPosition, config.showAllActors);
             }
             auto snapshot = std::make_shared<RenderSnapshot>();
             snapshot->epoch = batch->camera.epoch;
             snapshot->liveLifetime = batch->liveLifetime;
             snapshot->boxes = cache.visible(Clock::now(), batch->camera.cameraPosition,
                 config.nearbyDistance, config.retainLastPosition,
-                config.retentionMinutes, batch->liveLifetime);
+                config.retentionMinutes, batch->liveLifetime, config.showAllActors, config.playersOnly);
             if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
             const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
             if (previous) retired.push_back(previous);
@@ -597,14 +611,14 @@ void processingLoop(std::size_t shard) noexcept {
             if (config.debug && Clock::now() >= nextLog) {
                 nextLog = Clock::now() + std::chrono::seconds(10);
                 log("HitBox worker ", shard, ": native_pool=", batch->population,
-                    " copied=", batch->count, " cached=", cache.size(), " [RuntimeID partition]");
+                    " copied=", batch->count, " cached=", cache.size(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " [RuntimeID partition]");
             }
         } catch (...) {}
     }
 }
 void stopProcessingWorkers() noexcept {
     for (auto& worker : processingWorkers) {
-        { std::lock_guard lock(worker.mutex); worker.stopping = true; worker.pending.reset(); }
+        { std::lock_guard lock(worker.mutex); worker.stopping = true; worker.pending.clear(); }
         worker.ready.notify_one();
     }
     for (auto& worker : processingWorkers) if (worker.thread.joinable()) worker.thread.join();
@@ -620,6 +634,7 @@ void refreshGameTickSnapshot() {
     static void* snapshotWorld = nullptr;
     static std::size_t cursor = 0;
     static hitbox::CaptureSchedule schedule;
+    static hitbox::PendingDelivery<CaptureBatch,workerCount> delivery;
     static auto nextReport = Clock::time_point{};
     static double averageVisited = maximumNativeBatch;
     static bool loggedNativeReady = false;
@@ -636,15 +651,28 @@ void refreshGameTickSnapshot() {
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);
         cursor = 0;
         schedule.reset();
+        delivery.clear();
         averageVisited = maximumNativeBatch;
         loggedNativeReady = loggedCameraWaiting = loggedNativeFailure = false;
         log("world actor source ready; worker caches reset by world epoch");
     }
+    gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count(), std::memory_order_release);
+    const auto sendBatch=[](std::size_t shard,const CaptureBatch& batch) {
+        auto& worker=processingWorkers[shard];
+        std::unique_lock lock(worker.mutex,std::try_to_lock);
+        if(!lock || worker.stopping || !worker.pending.push(batch)) return false;
+        lock.unlock(); worker.ready.notify_one(); return true;
+    };
+    // Backpressure delays the next capture; previously copied rows are preserved.
+    if(!delivery.flush(sendBatch)) return;
     NativeReadWindow readWindow;
     auto* local = access.localPlayer();
     const auto localReadyAt = Clock::now();
     if (!local) return;
-    const auto cameraPosition = access.actorPosition(local);
+    // All-Actor mode does not need local position for distance filtering.
+    const auto cameraPosition = config->showAllActors
+        ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
     const auto positionReadyAt = Clock::now();
     if (!cameraPosition) {
         if (!loggedCameraWaiting) { loggedCameraWaiting = true;
@@ -672,15 +700,8 @@ void refreshGameTickSnapshot() {
     batch.liveLifetime = std::chrono::milliseconds(std::clamp<std::size_t>(
         batch.population * 100 / std::max<std::size_t>(1, static_cast<std::size_t>(averageVisited)),
         750, 30000));
-    gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count(), std::memory_order_release);
-    for (auto& worker : processingWorkers) {
-        std::unique_lock lock(worker.mutex, std::try_to_lock);
-        if (!lock || worker.stopping) continue;
-        worker.pending = batch;
-        lock.unlock();
-        worker.ready.notify_one();
-    }
+    delivery.begin(batch);
+    delivery.flush(sendBatch);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-now).count();
     if ((config->debug || elapsed >= 2000) && now >= nextReport) {
         nextReport = now + std::chrono::seconds(10);
@@ -752,7 +773,7 @@ std::atomic<bool> worldRenderFault{};
 // This mod is pinned for process lifetime. On Stop the direct hook remains a
 // forwarding trampoline: removing it while another render call uses its original
 // would free executable code still in flight. No worker/native data is touched.
-constexpr std::size_t maximumRenderedBoxes = 512;
+constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visibility limit.
 struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
     std::chrono::milliseconds liveLifetime{}; };
 struct NativeDrawInput {
@@ -797,14 +818,14 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
     bool success=true;
     __try {
         // name_tag uses Position + current_color, depth Always, no depth writes.
-        // Uniform RGBA is captured at each flush: at most live/retained two batches.
+        // Draw every copied Actor; split each color into bounded mesh submissions.
         std::size_t total=0;
         for (const auto& range:input->ranges) total+=range.count;
-        total=std::min(total,maximumRenderedBoxes);
         for (unsigned pass=0;pass<2;++pass) {
             std::size_t visited=0, count=0;
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
+                    if(input->config.playersOnly && !range.boxes[i].isPlayer) continue;
                     const bool retained=input->config.retainLastPosition &&
                         input->now-range.boxes[i].seenAt>range.liveLifetime;
                     if (retained==(pass==1)) ++count;
@@ -813,21 +834,31 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             if (!count) continue;
             const auto rgba=hitbox::opaqueColor(pass ? input->config.retainedColor : input->config.liveColor);
             const FloatColor color{rgba[0],rgba[1],rgba[2],rgba[3]};
-            if (!safeWrite(shader,0,color) || !safeWrite(shader,p.dirty,dirty)) { success=false; break; }
-            tessBegin(tess,0,4,static_cast<int>(count*24),false);
+            std::size_t remaining=count, inMesh=0;
             visited=0;
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     const auto& box=range.boxes[i];
+                    if(input->config.playersOnly && !box.isPlayer) continue;
                     const bool retained=input->config.retainLastPosition &&
                         input->now-box.seenAt>range.liveLifetime;
                     if (retained!=(pass==1)) continue;
+                    if(!inMesh) {
+                        if(!safeWrite(shader,0,color) || !safeWrite(shader,p.dirty,dirty)) { success=false; break; }
+                        tessBegin(tess,0,4,static_cast<int>(std::min(remaining,boxesPerMesh)*24),false);
+                    }
                     const auto vertices=hitbox::worldLineVertices(box,origin,input->now);
                     for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
+                    ++inMesh; --remaining;
+                    if(inMesh==boxesPerMesh || !remaining) {
+                        alignas(16) std::array<std::byte,0x58> scratch{};
+                        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
+                        inMesh=0;
+                    }
                 }
+                if(!success) break;
             }
-            alignas(16) std::array<std::byte,0x58> scratch{};
-            renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
+            if(!success) break;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
     // Restore the borrowed scalar state, also after a guarded native fault.
@@ -989,8 +1020,9 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    access.setLayouts(std::move(itemLayout), std::move(actorLayout));
-    log("native Actor registry source ready [profile candidate; fail-closed reads]");
+    access.setLayouts(std::move(itemLayout), std::move(actorLayout),
+                      worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
+    log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; optional ActorType player filter; no name filter; profile candidate]");
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;

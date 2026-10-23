@@ -86,7 +86,11 @@
       "actor_pointer_offset": "0x0"
     },
     "actor_type": {
-      "component_hash": "0x4F6BA419"
+      "component_hash": "0x4F6BA419",
+      "value_offset": "0x0",
+      "value_size": 4,
+      "player_type_id": 319,
+      "evidence": "Latite ActorTypeComponent and Actor::isPlayer (319); exact EXE REA ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa: RVA 0x019e9580 resolves 0x4F6BA419 and compares the four-byte component at offset 0 to 0x13F. Runtime layout remains candidate."
     },
     "runtime_id": {
       "component_hash": "0xFC0DBBB5",

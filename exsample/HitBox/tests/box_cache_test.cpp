@@ -1,4 +1,5 @@
 #include "hitbox/box_cache.hpp"
+#include "hitbox/batch_queue.hpp"
 #include "hitbox/world_render_profile.hpp"
 #include <bedrock/generated_symbols.hpp>
 #include <cassert>
@@ -8,6 +9,7 @@ int main() {
     hitbox::WorldRenderProfile profile;
     std::string error;
     assert(hitbox::parseWorldRenderProfile(bedrock::generated::kSymbolDatabase,profile,error));
+    assert(profile.actorTypeValueOffset==0 && profile.playerTypeId==319);
     assert(profile.functions[0].rva==0x47f8570 && profile.functions[0].guard.size()==24);
     assert(profile.commonMaterialGroup==0x11e3b308 && profile.material==0x10f0 && profile.origin==0x660 && profile.tess==0xb8);
     const auto original=nlohmann::json::parse(bedrock::generated::kSymbolDatabase);
@@ -31,6 +33,26 @@ int main() {
         invalid=original; invalid["native_world_render"]["functions"].erase(key);
         assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
     }
+    for(const char* key:{"value_offset","value_size","player_type_id"}) {
+        invalid=original; invalid["native_actors"]["actor_type"].erase(key);
+        assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    }
+    invalid=original; invalid["native_actors"]["actor_type"]["value_size"]=8;
+    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    hitbox::BatchQueue<int,2> queue;
+    assert(queue.empty() && !queue.pop());
+    assert(queue.push(1) && queue.push(2) && !queue.push(3));
+    assert(queue.pop()==1 && queue.push(3));
+    assert(queue.pop()==2 && queue.pop()==3 && queue.empty());
+    hitbox::PendingDelivery<int,2> delivery;
+    unsigned sent[2]{};
+    assert(delivery.begin(42));
+    assert(!delivery.flush([&](std::size_t shard,int value){assert(value==42); ++sent[shard]; return shard==0;}));
+    assert(!delivery.begin(99)); // New captures cannot overwrite a blocked delivery.
+    assert(delivery.flush([&](std::size_t shard,int value){assert(value==42 && shard==1); ++sent[shard];return true;}));
+    assert(sent[0]==1 && sent[1]==2); // Accepted shard is never sent a duplicate.
+    assert(delivery.begin(99)); delivery.clear();
+    assert(delivery.flush([](auto,auto){assert(false);return false;})); // Drop only at a world reset.
     using namespace std::chrono_literals;
     const auto opaque=hitbox::opaqueColor(0x0044aaee);
     assert(opaque[0]==238/255.f && opaque[1]==170/255.f && opaque[2]==68/255.f && opaque[3]==1.f);
@@ -100,6 +122,22 @@ int main() {
         smooth.beginWorld(2); smooth.observe(sample,camera,32,false);
         boxes=smooth.visible(now,camera,32,false,10,1500ms);
         assert(boxes[0].blendDuration.count()==0);
+    }
+    {
+        hitbox::BoxCache all;
+        all.beginWorld(1);
+        for(std::uint64_t id=1;id<=1025;++id) {
+            auto actor=sample; actor.runtimeId=id; actor.isPlayer=(id%2==1);
+            actor.bounds={{1000+static_cast<float>(id),0,0},{1001+static_cast<float>(id),2,1}};
+            all.observe(actor,camera,32,false,true);
+        }
+        assert(all.visible(now,camera,32,false,10,1500ms,true).size()==1025);
+        const auto players=all.visible(now,camera,32,false,10,1500ms,true,true);
+        assert(players.size()==513);
+        for(const auto& player:players) assert(player.isPlayer && player.runtimeId%2==1);
+        assert(all.visible(now,camera,32,false,10,1500ms,true,false).size()==1025);
+        assert(all.visible(now,camera,32,false,10,1500ms,false).empty()); // Optional distance filter.
+        assert(all.visible(now,camera,32,false,10,1500ms,true).size()==1025); // Not evicted by view filter.
     }
     // Shortened native batches must not flicker out at the old 750ms expiry.
     assert(cache.visible(now+1000ms,camera,32,false,10,1500ms).size()==1);

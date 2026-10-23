@@ -14,6 +14,7 @@ struct Sample {
     std::uint64_t runtimeId{};
     bedrock::ActorBounds bounds{};
     Clock::time_point seenAt{};
+    bool isPlayer{};
 };
 struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};
@@ -93,15 +94,15 @@ inline std::array<bedrock::Vec3, 24> worldLineVertices(
 // Worker-owned state. No native handles, component pointers or game calls.
 class BoxCache {
 public:
-    static constexpr std::size_t maximumRecords = 4096;
+    static constexpr std::size_t maximumRecords = 16384;
     bool beginWorld(std::uint64_t epoch) {
         if (epoch < epoch_) return false;
         if (epoch != epoch_) { records_.clear(); epoch_=epoch; }
         return true;
     }
-    void observe(const Sample& sample, const bedrock::Vec3& camera, float range, bool retain) {
+    void observe(const Sample& sample, const bedrock::Vec3& camera, float range, bool retain, bool allActors=false) {
         if (!sample.runtimeId || !sample.bounds.valid()) return;
-        if (distanceSquared(center(sample.bounds),camera)>range*range) {
+        if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
             if (!retain) records_.erase(sample.runtimeId);
             return;
         }
@@ -130,7 +131,7 @@ public:
         records_.insert_or_assign(sample.runtimeId,std::move(box));
     }
     std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,
-        float range, bool retain, unsigned minutes, std::chrono::milliseconds liveLifetime) {
+        float range, bool retain, unsigned minutes, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false) {
         std::vector<BoxRecord> result;
         result.reserve(records_.size());
         for (auto it=records_.begin();it!=records_.end();) {
@@ -138,7 +139,8 @@ public:
                 (!retain && now-it->second.seenAt>liveLifetime)) {
                 it=records_.erase(it);
             } else {
-                if (distanceSquared(center(it->second.bounds),camera)<=range*range)
+                if ((!playersOnly || it->second.isPlayer) &&
+                    (allActors || distanceSquared(center(it->second.bounds),camera)<=range*range))
                     result.push_back(it->second);
                 ++it;
             }

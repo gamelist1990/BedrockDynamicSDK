@@ -10,7 +10,7 @@ namespace hitbox {
 struct WorldRenderProfile {
     struct Function { std::uint32_t rva{}; std::vector<std::uint8_t> guard; };
     std::array<Function, 7> functions;
-    std::uint32_t commonMaterialGroup{}, player{}, origin{}, material{}, tess{}, shader{}, translation{}, building{}, special{}, dirty{};
+    std::uint32_t actorTypeValueOffset{}, playerTypeId{}, commonMaterialGroup{}, player{}, origin{}, material{}, tess{}, shader{}, translation{}, building{}, special{}, dirty{};
 };
 inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile& out, std::string& error) {
     try {
@@ -52,6 +52,12 @@ inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile&
         result.commonMaterialGroup=number(data.at("common_material_group_rva"));
         if (!result.commonMaterialGroup || result.commonMaterialGroup>=imageSize ||
             imageSize-result.commonMaterialGroup<sizeof(void*)) throw std::runtime_error("material group outside image");
+        const auto& actorType=root.at("native_actors").at("actor_type");
+        result.actorTypeValueOffset=number(actorType.at("value_offset"));
+        result.playerTypeId=number(actorType.at("player_type_id"));
+        if(number(actorType.at("value_size"))!=sizeof(std::uint32_t) ||
+            result.actorTypeValueOffset>0x10000 || !result.playerTypeId)
+            throw std::runtime_error("invalid ActorType filter layout");
         const auto& offsets=data.at("offsets");
         const auto offset=[&](const char* key) {
             const auto n=number(offsets.at(key));

@@ -105,7 +105,7 @@ RenderDragon material was not decoded in this investigation.
   extrapolation is performed; smooth display adds up to a sample interval of lag.
 - Native actor capture stays on the game tick; two workers receive copied
   RuntimeID/AABB/position data. Native drawing stays inside the world render pass.
-- Twelve edges per AABB, at most two color-group mesh submissions, at most 512 boxes per pass. The
+- Twelve edges per AABB, color-group mesh submissions of at most 512 boxes each, without a total 512-box cutoff. The
   selected material determines depth behavior and line width. The legacy
   `line_thickness` setting does not change native line width.
 - Active native tessellation is skipped. Read/write guards and SEH reduce the
@@ -115,3 +115,38 @@ RenderDragon material was not decoded in this investigation.
   rejection. Cross-compilation/Windows CI establish compilation, not in-game
   visuals, third-person correctness, or a measured FPS improvement. Those remain
   runtime acceptance checks on this exact build.
+
+## Complete Actor coverage and optional Player filter
+
+The default `show_all_actors=true` removes the old 32-block distance exclusion.
+`players_only=false` keeps all valid ActorOwner/RuntimeID/AABB entries, including
+entries lacking ActorType. The former ActorType-presence filter and 64-block AABB
+extent cutoff were removed; owner/entity generation, finite coordinates and
+positive-volume bounds remain required. Native pool size sanity checking remains
+16384 entries. Each worker's bounded cache holds up to 16384 records to accommodate
+that entire population even if RuntimeIDs map to one shard. Retained records still
+expire and can be evicted oldest first at the cache limit.
+
+Rendering splits all snapshot boxes into 512-box mesh submissions for each color,
+instead of selecting only the first 512. The two worker inputs are fixed eight-slot
+FIFOs. A capture waits in game-thread-owned copied storage until both shards accept
+it; capture is postponed under backpressure without blocking the game thread.
+Already accepted shards are not sent duplicates. World epochs discard old-world
+queued work. These policies preserve captured rows, though sustained overload can
+extend the five-tick target and freshness expiry still applies.
+
+`players_only=true` classifies Actors by ActorTypeComponent, not NameTag or display
+names. Latite's ActorTypeComponent is one uint32 at offset zero; Actor::isPlayer
+compares it with 319. Focused REA/Ghidra analysis of exact-build function RVA
+`0x019e9580..0x019e97b6` corroborates this: it looks up component hash `0x4f6ba419`,
+uses four-byte component elements and compares `[component_page + index*4]` with
+`0x13f` at RVA `0x019e96f6`. The version profile records value_offset=0, value_size=4,
+player_type_id=319, retaining candidate status pending live validation.
+
+Evidence: `ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa`.
+The raw-function slice has the original linked addresses but lacks external
+callees and global data; parent EXE/slice hashes and file offsets are in
+`actor-type-player-check-provenance.json` outside source control. A component read
+failure is not treated as a Player. In Player-only mode non-Players are skipped
+before RuntimeID/AABB capture; worker snapshots and rendering also apply the filter
+so previously cached non-Players disappear when the setting changes.
