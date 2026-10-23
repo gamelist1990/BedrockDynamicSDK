@@ -133,20 +133,31 @@ profile parser now requires `ActorTypeComponent` and `RuntimeIDComponent`; the
 new parser test checks both successful exact-profile parsing and rejection of
 a profile that cannot form the required view.
 
-This is implementation progress, not a verified claim of complete runtime
-enumeration. The present HitBox caller requests `GameApi::actors()` from its
-DXGI render callback; the registry query is therefore still synchronous on
-that caller's thread. Before marking this runtime route verified, move or
-confirm the query on a safe game-thread/tick boundary and test in a populated
-world: compare view matches with visible and non-rendered Actors, validate
-unique IDs over multiple ticks, and watch for stale actor handles or SEH. The
-prior `Level::getRuntimeActorList` call remains disabled; no Level method call
-is used by this implementation.
+`Level::getRuntimeActorList` has now been statically resolved for the pinned
+1.26.52.3 PE. Latite's unique `Level` vtable signature resolves to RVA
+`0x0E7ADAB0`; vtable slot `0x145` (decimal 325) points to RVA `0x117C640`.
+Disassembly confirms that the method initializes a 24-byte vector through
+RDX and appends Actor pointers. The exact-build profile records the vtable
+slot, target RVA, entry check, and `void(Level*, std::vector<Actor*>*)` ABI.
+
+TabList now calls this source only from the Level tick callback. It verifies
+the exact executable profile and that the live vtable entry equals the
+profiled target, catches native access violations, caps the vector size, and
+filters invalid/duplicate Actor handles. It feeds `GameAccess::actorHandles`,
+which is merged by `GameApi::actors()` with getter and render observations.
+Native reads remain on the game thread; only copied MurderDetect samples are
+sent to the worker.
+
+This is statically verified but has not yet been rechecked in a populated
+Minecraft session after the change. Compare the logged native/valid actor
+counts with PlayerList and visible Actors, then verify world leave/rejoin and
+watch for stale handles or exceptions before treating runtime behavior as
+confirmed.
 
 Do not replace the storage walk with a compile-time EnTT `view<T...>()` until
 the external component type IDs and the game's EnTT layout are confirmed to
 match. Do not promote `native_actors` to `verified` until an in-world test with
 multiple nearby and non-rendered Actors confirms stable counts, valid
-ActorOwner pointers, unique entity IDs, and no SEH/lockup. The existing
-`Level::getRuntimeActorList` invocation remains disabled because prior builds
-raised SEH exceptions.
+ActorOwner pointers, unique entity IDs, and no SEH/lockup. The native Level
+list route is a separate exact-build source and is now enabled only in the
+TabList game's tick callback; its in-world behavior still needs confirmation.

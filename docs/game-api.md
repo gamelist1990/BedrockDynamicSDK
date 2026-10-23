@@ -108,6 +108,9 @@ verification. Never pass render-object addresses as Actor handles.
 An adapter may additionally provide `GameAccess::actorHandles(world)` from a
 version-specific native registry source. `GameApi::actors(world)` merges and
 deduplicates those live handles with observed View/name-tag handles.
+The TabList example supplies this adapter through the exact-build
+`Level::getRuntimeActorList` method for Minecraft 1.26.52.3; reusable SDK
+consumers still need to provide their own validated `GameAccess` adapter.
 `Actor::getBounds()`, `getPosition()`, and `getRotation()` return value
 snapshots; their native component hashes and offsets belong in the matching
 profile, not in client feature code. `Actor::getEntityId()` exposes the

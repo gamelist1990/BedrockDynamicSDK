@@ -112,7 +112,25 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "yaw_offset": "0x4"
     }
   },
+  "virtual_methods": {
+    "Level::getRuntimeActorList": {
+      "slot": 325,
+      "status": "verified",
+      "source": "Latite Level vftable signature matched uniquely in the exact 1.26.52.3 PE; slot 0x145 points to RVA 0x117C640",
+      "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)"
+    }
+  },
   "symbols": {
+    "Level::getRuntimeActorList": {
+      "rva": "0x117C640",
+      "signature": "55 41 56 56 57 53 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF 48 8B B1 B0 04 00 00 0F 57 C0 0F 11 02 48 89 55 F0 48 C7 42 10 00 00 00 00 48 8B 5E 10 4C 8B 33 49 39 DE 74 ??",
+      "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "Minecraft.Windows.exe 1.26.52.3 Level vftable slot 0x145 and native vector construction/Actor pointer loop",
+      "abi_verified": true,
+      "abi": "void __fastcall(Level*, std::vector<Actor*>* hidden_return_buffer)"
+    },
     "LevelRendererPlayer::getFov": {
       "rva": "0x46BD250",
       "signature": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1",

@@ -359,59 +359,27 @@ file SHA:   4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4
 同じバージョン番号でも別配布物のEXEは異なることがあります。manifestのfile/text hashと一致しない
 実行ファイルで見つけたRVAやAOBを、そのまま本番プロファイルへ転記しないでください。
 
-### 失敗した推測を捨てる
+### 対象ビルドでLevelの仮想スロットとABIを照合する
 
-- 旧Solsticeソースから持ってきたsignatureは、このEXEでは0件でした。旧版由来のAOBを新バージョンで
-  無理に使わず、0件という結果を記録して次の調査に進みます。
-- 以前試したvtable slot `326` は実行時に `Level::getRuntimeActorList call failed` となりました。
-  slot番号を別の型やバージョンから推測して呼び出すのではなく、失敗した呼び出し経路を外し、対象EXEの
-  関数を直接解決する方針に切り替えます。
-- Flarialの公開チュートリアルにある短いprefix
-  `40 53 48 83 EC 30 48 81` は対象EXEの `.text` に2件ヒットしました。これだけでは一意ではありません。
-  参照元は[シグネチャ取得チュートリアル](https://github.com/flarialmc/dll-oss/blob/main/src/Utils/Memory/Game/Tutorial/HowToGetSigsAndOffsets.md)です。
+Latiteの `Level` vtable signatureを対象EXEの `.text` で照合すると一意に一致し、
+Level vtable RVA `0x0E7ADAB0` が得られました。slotはC++の0始まりで、Latiteが呼ぶ
+`0x145` は10進数で `325` です。slot `0x145` の関数ポインターはRVA `0x117C640` を指します。
 
-この例では、候補関数の命令列と `+0x2E8` のフィールド参照を確認してpatternを延長し、次のAOBに
-絞りました。
+関数本体は `RCX+0x4B0` のリストを辿り、`RDX` が指す3ポインターのvectorを初期化し、
+Actorポインターを8バイト単位で追加します。これは
+`void(__fastcall*)(Level*, std::vector<Actor*>*)` の隠し戻り領域ABIと一致します。
+従来のslot `326` は1つ後ろのslotでした。以前見つけたRVA `0xE440F30` も実際のLevel
+vtable entryとは一致しないため、直接呼び出し候補としては誤りでした。
 
-```text
-40 53 48 83 EC 30 48 81 C1 E8 02 00 00 48 8B DA E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 30 5B C3
-```
+プロファイルにはslot `325` とRVA `0x117C640`、entry check、ABIを登録しました。TabListは
+対象EXEの完全一致プロファイルから両方を解決し、実際のLevel vtable entryが期待RVAと一致する
+場合にだけ呼びます。呼び出しはLevel tick内に限定し、native Actorの読み取りをワーカーへ移しません。
+返却後は件数上限、Actor vtable、重複を検査してSDKの `GameAccess::actorHandles(world)` に渡します。
 
-対象EXEの `.text` では1件だけ一致し、RVAは `0xE440F30`、`.pdata` の関数終端は `0xE440F4E` でした。
-現在の定義は[data/1.26.52.3/windows-x64.json](../data/1.26.52.3/windows-x64.json)にあります。
-これらは対象EXE内で位置が一意で関数境界内にある根拠であり、関数の意味やABIが正しい証明ではありません。
-
-### ABIと実機動作は別に検証する
-
-逆アセンブル上では `RCX`（Level）に `0x2E8` を加算し、`RDX` を保持したままhelperを呼び出す形が見えたため、
-`void(__fastcall*)(Level*, std::vector<Actor*>*)` をABI候補として記録しています。しかし、候補patternが一意でも、
-このprototype、vectorの型/寿命、返されるActorの範囲はまだ確定しません。そのため現行JSONは意図的に
-`status: candidate`、`abi_verified: false`、`cross_version_signature_available: false` です。
-
-HitBox exampleはこの不安定な `getRuntimeActorList` 呼び出しを使わず、ローカルActorの
-`EntityContext` が指すEnTT registryから `ActorOwnerComponent` storageを列挙する別経路を追加しました。
-この経路のActor context offset、Owner/AABB/StateVector/Rotation component hashとfield offsetは
-`native_actors` profile sectionで管理します。1.26.52.3の値も既知component宣言と型名から作った候補であり、
-SEH境界・数値検証はクラッシュのリスクを下げるだけで、正しいstorage/hash/layoutの証明ではありません。
-実機でActor数・位置・AABBを照合できるまでは `status: candidate` のままにしてください。
-
-実機確認では、少なくとも以下を順番に記録します。
-
-1. 対象EXEのfile hashと選択されたプロファイルのhashが一致する。
-2. resolverがsignatureを一意に解決し、呼び出し先RVAが `0xE440F30` になる。
-3. ゲームスレッド上など、関数の所有権・スレッド要件に沿った安全なタイミングで呼ぶ。
-4. 複数回の呼び出しで例外、フリーズ、破損がなく、返却vectorの構築/破棄が正しい。
-5. ワールド内Actor数と取得数、NameTag読み取り数をログで比較し、TabListの色対応まで実際に確認する。
-
-`world Actor list ready` はresolver準備完了のログにすぎず、Actor一覧取得成功を意味しません。成功ログには実際の
-取得件数を含め、失敗時には例外/失敗状態を区別してください。実機でABIと意味を確認するまでは `verified` に
-昇格せず、別バージョンへpatternを流用しないでください。
-
-この調査を再現するときは、まず `bedrock-symbols inspect "$NEW_EXE"` でhash/PE情報を保存し、次に
-`bedrock-symbols` の既存port/scan機能で旧AOBと候補AOBを対象 `.text` に照合します。ヒット数、RVA、entry bytes、
-`.pdata`境界を別々に記録します。候補が0件なら再解析、複数件なら固定バイトを追加して再scanし、1件になっただけで
-ABI検証を省略しないでください。調査の再現にGhidra/Lensを使った場合は、使用したEXE hash、Ghidra分析結果、
-callsite/逆アセンブル根拠も更新記録へ残します。
+静的なRVA・slot・ABIの照合は完了しました。ゲーム内での取得件数や、ワールド離脱・再参加を含む
+実機動作の再確認はこの編集では実施していません。ログの
+`Level::getRuntimeActorList active` 件数をPlayerList/既知Actor数と照らし、複数ワールドで安定することを
+確認してください。signatureやslotを別バージョンへ流用せず、新しいEXEごとに同じ確認を行います。
 
 ## 14. 公開時のチェックリスト
 
