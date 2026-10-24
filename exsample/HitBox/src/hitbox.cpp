@@ -254,7 +254,8 @@ Config parseConfig(const nlohmann::json& root) {
     config.nameTagScale=std::clamp(config.nameTagScale,0.25f,3.0f);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
-    config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1, 60);
+    // Retained observations always expire after ten minutes, including legacy configs.
+    config.retentionMinutes = 10;
     config.lineThickness = std::clamp(root.value("line_thickness", config.lineThickness), 0.5f, 5.0f);
     const auto parseColor = [&](const char* key, std::uint32_t fallback) {
         const auto it = root.find(key);
@@ -698,6 +699,7 @@ void processingLoop(std::size_t shard) noexcept {
     bool fontFailureLogged=false;
     std::uint64_t loggedEpoch = 0;
     Clock::time_point nextLog{};
+    std::optional<CaptureBatch> lastCapture;
     // Retain replaced snapshots until no callback holds them. Their vectors
     // are then destroyed here, instead of on the game's/renderer's last release.
     std::vector<std::shared_ptr<const RenderSnapshot>> retired;
@@ -713,12 +715,24 @@ void processingLoop(std::size_t shard) noexcept {
         }
         try {
             std::erase_if(retired, [](const auto& value) { return value.use_count() == 1; });
-            if (!batch || batch->camera.epoch != worldEpoch.load(std::memory_order_acquire) ||
-                !cache.beginWorld(batch->camera.epoch)) continue;
-            const auto& config = *batch->config;
-            if (loggedEpoch != batch->camera.epoch) {
-                loggedEpoch = batch->camera.epoch; nextLog = {}; names.clear(); nameTouch=0;
+            const auto epoch=worldEpoch.load(std::memory_order_acquire);
+            if (!cache.beginWorld(epoch)) continue;
+            if (loggedEpoch != epoch) {
+                loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0;
+                lastCapture.reset();
+                const auto previous=std::atomic_exchange_explicit(&worker.snapshot,
+                    std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
+                if(previous) retired.push_back(previous);
             }
+            if (batch && batch->camera.epoch != epoch) continue;
+            if (batch) lastCapture=batch;
+            else if (lastCapture) {
+                // Expire retained records even when native capture has stopped.
+                batch=lastCapture;
+                batch->count=0;
+            }
+            if (!batch) continue;
+            const auto& config = *batch->config;
             for (std::size_t i = 0; i < batch->count; ++i) {
                 const auto& sample = batch->samples[i];
                 if (sample.runtimeId % workerCount != shard) continue;
@@ -798,7 +812,11 @@ bool startProcessingWorkers() noexcept {
 }
 void refreshGameTickSnapshot() {
     static void* snapshotWorld = nullptr;
+    static std::uint64_t snapshotEpoch = 0;
     static std::uintptr_t snapshotRegistry = 0;
+    static void* snapshotLocal = nullptr;
+    static std::uint32_t snapshotEntity = 0;
+    static auto lastTick = Clock::time_point{};
     static std::size_t cursor = 0;
     static hitbox::CaptureSchedule schedule;
     static hitbox::PendingDelivery<CaptureBatch,workerCount> delivery;
@@ -814,9 +832,13 @@ void refreshGameTickSnapshot() {
     auto* world = currentWorld.load(std::memory_order_acquire);
     if (!world) return;
     const auto now = Clock::now();
-    if (snapshotWorld != world) {
+    // Pointer addresses may be reused after leaving/rejoining a world.
+    const bool interrupted=lastTick!=Clock::time_point{} && now-lastTick>std::chrono::seconds(2);
+    lastTick=now;
+    if (snapshotWorld != world || interrupted || snapshotEpoch!=worldEpoch.load(std::memory_order_acquire)) {
         snapshotWorld = world;
         snapshotRegistry = 0;
+        snapshotLocal=nullptr; snapshotEntity=0;
         access.setWorld(world);
         access.resetPlayerTracking();
         diagnostics={};
@@ -826,6 +848,7 @@ void refreshGameTickSnapshot() {
         delivery.clear();
         averageVisited = maximumNativeBatch;
         loggedNativeReady = loggedCameraWaiting = loggedNativeFailure = false;
+        snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
         log("world actor source ready; worker caches reset by world epoch");
     }
     gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -836,24 +859,36 @@ void refreshGameTickSnapshot() {
         if(!lock || worker.stopping || !worker.pending.push(batch)) return false;
         lock.unlock(); worker.ready.notify_one(); return true;
     };
-    // Backpressure delays the next capture; previously copied rows are preserved.
-    if(!delivery.flush(sendBatch)) return;
     NativeReadWindow readWindow;
     auto* local = access.localPlayer();
     const auto localReadyAt = Clock::now();
-    if (!local) return;
-    const auto registry=access.registryIdentity(local);
-    if (!registry) return;
-    if (snapshotRegistry && registry!=snapshotRegistry) {
+    const auto registry=local ? access.registryIdentity(local) : 0;
+    std::uint32_t entity=0;
+    const bool identityReady=local && registry && access.copyNameEntityId(local,entity);
+    if (!identityReady) {
+        if(snapshotRegistry) {
+            worldEpoch.fetch_add(1,std::memory_order_acq_rel);
+            snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
+            snapshotRegistry=0; snapshotLocal=nullptr; snapshotEntity=0;
+            cursor=0; schedule.reset(); delivery.clear(); access.resetPlayerTracking();
+            log("local world unavailable; saved positions cleared");
+        }
+        return;
+    }
+    if (snapshotRegistry && (registry!=snapshotRegistry || local!=snapshotLocal || entity!=snapshotEntity)) {
         worldEpoch.fetch_add(1,std::memory_order_acq_rel);
         cursor=0; schedule.reset(); delivery.clear();
         access.resetPlayerTracking();
         diagnostics={};
         averageVisited=maximumNativeBatch;
         loggedNativeReady=loggedCameraWaiting=loggedNativeFailure=false;
-        log("world entity registry replaced; Player identity and last-position records cleared");
+        snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
+        log("world identity replaced; Player identity and last-position records cleared");
     }
     snapshotRegistry=registry;
+    snapshotLocal=local; snapshotEntity=entity;
+    // Validate the world before delivering any previously captured rows.
+    if(!delivery.flush(sendBatch)) return;
     // All-Actor mode does not need local position for distance filtering.
     const auto cameraPosition = config->showAllActors
         ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
@@ -923,7 +958,11 @@ void refreshGameTickSnapshot() {
     }
 }
 void observeWorld(const bedrock::LevelTickEvent& event) {
-    if (!event.level) return;
+    if (!event.level) {
+        if(currentWorld.exchange(nullptr,std::memory_order_acq_rel))
+            worldEpoch.fetch_add(1,std::memory_order_acq_rel);
+        return;
+    }
     currentWorld.store(event.level, std::memory_order_release);
     try { refreshGameTickSnapshot(); }
     catch (...) { log("native capture skipped; retaining worker snapshots"); }
