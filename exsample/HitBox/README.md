@@ -165,7 +165,7 @@ DXGI/ImGui overlayは起動しません。実ゲームでの深度動作は未�
 `line_thickness` は以前の設定との互換性のため読み込みますが、この描画経路ではゲーム側の線幅を使います。
 
 メモリ範囲の照会結果は1回のコールバック内だけ再利用し、後のtickには持ち越しません。
-ローカルActorのキャッシュはclient/world/registry/entity IDを照合し、最大500msでgetterから再取得します。
+ローカルActorのキャッシュはclient/world/registry/entity IDを照合し、最大50msでgetterから再取得します。
 FOV Hookとローカル回転の読み取りは不要になりました。遅いキャプチャのログは `local` / `position` /
 `actors` / `publish` に分けて記録します。250µsはActorループの協調的予算であり、コールバック全体の
 上限ではありません。実ゲームでのFPS・取得時間の改善量は未測定です。

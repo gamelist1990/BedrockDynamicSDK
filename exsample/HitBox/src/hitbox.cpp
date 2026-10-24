@@ -428,7 +428,7 @@ public:
         void* actor = callLocalPlayer(target, client);
         if (actor && safeRead(actor, context + actorLayout_.contextRegistryOffset, registry) && registry &&
             safeRead(actor, context + actorLayout_.contextEntityIdOffset, entity))
-            cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(500)};
+            cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(50)};
         return actor;
     }
 

@@ -266,3 +266,9 @@ clears actor name tags on CHANGE_DIMENSION. HitBox additionally invalidates epoc
 when renderer/player-renderer identity changes or disappears, and compares
 ClientInstance and the locally read RuntimeID. This does not establish packet
 handling coverage; unchanged identities during server-side travel remain unknown.
+
+Local-player getter cache lifetime is now 50ms (previously 500ms), so a live
+ClientInstance switching its local Actor is checked again within approximately
+one normal game tick. Focus/cursor release is not treated as disconnect. The
+existing 2s tick-interruption fallback is conservative and may also clear state
+when a paused game resumes; it is not claimed as a verified network event.
