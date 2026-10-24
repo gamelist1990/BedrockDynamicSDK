@@ -238,3 +238,14 @@ submissions; no font shaping, native name read, or text geometry allocation occu
 on the render thread. Windows tests exercise English/Japanese font tessellation;
 portable tests cover formatting, UTF-8 boundaries, identity isolation, and billboard
 coordinates. They do not establish native game rendering correctness.
+
+### Text-only label rendering correction
+
+Opaque background quads were drawn with depth Always, including for the local
+Actor near the camera. They could obscure the scene and native name tags.
+Labels now submit glyph faces only and exclude the current local Actor. Each
+mesh flush reapplies the requested uniform color and dirty flag immediately
+before native submission, including across the 16,384-vertex boundary. Existing
+translation/color restoration and diagnostic counters remain active. These
+changes address identified code paths; visual correctness still requires an
+in-game check.

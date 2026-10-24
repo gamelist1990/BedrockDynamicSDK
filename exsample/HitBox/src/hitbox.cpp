@@ -136,6 +136,7 @@ struct ProcessingWorker {
 std::array<ProcessingWorker, workerCount> processingWorkers;
 const auto trackingBudget=std::make_shared<hitbox::TrackingBudget>();
 std::atomic<std::uint64_t> worldEpoch{};
+std::atomic<std::uintptr_t> localNameActor{};
 std::atomic<std::int64_t> gameHeartbeatMs{};
 std::atomic<Status> status{Status::NotStarted};
 std::atomic<bool> stopRequested{false};
@@ -670,7 +671,7 @@ void reportNameDiagnostics() {
     auto& d=nameDiagnostics;
     log("NameTag diagnostic [5s]: epoch=",worldEpoch.load()," enabled=",config->enabled,
         " show_name_tags=",config->showNameTags," scale=",config->nameTagScale,
-        " getter=",nameGetter.load()," hook_calls=",d.hookCalls.exchange(0),
+        " draw_mode=text_only local_label=hidden getter=",nameGetter.load()," hook_calls=",d.hookCalls.exchange(0),
         " hook_copied=",d.hookCopied.exchange(0)," hook_rejected=",d.hookRejected.exchange(0));
     log("NameTag getter [5s]: calls=",d.nativeCalls.exchange(0)," copied=",d.nativeCopied.exchange(0),
         " empty=",d.nativeEmpty.exchange(0)," unreadable=",d.nativeUnreadable.exchange(0),
@@ -956,6 +957,7 @@ void refreshGameTickSnapshot() {
         snapshotWorld = world;
         snapshotRegistry = 0;
         snapshotLocal=nullptr; snapshotEntity=0;
+        localNameActor.store(0,std::memory_order_release);
         access.setWorld(world);
         access.resetPlayerTracking();
         diagnostics={};
@@ -983,6 +985,7 @@ void refreshGameTickSnapshot() {
     std::uint32_t entity=0;
     const bool identityReady=local && registry && access.copyNameEntityId(local,entity);
     if (!identityReady) {
+        localNameActor.store(0,std::memory_order_release);
         if(snapshotRegistry) {
             worldEpoch.fetch_add(1,std::memory_order_acq_rel);
             snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
@@ -1004,6 +1007,7 @@ void refreshGameTickSnapshot() {
     }
     snapshotRegistry=registry;
     snapshotLocal=local; snapshotEntity=entity;
+    localNameActor.store(reinterpret_cast<std::uintptr_t>(local),std::memory_order_release);
     // Validate the world before delivering any previously captured rows.
     if(!delivery.flush(sendBatch)) return;
     // All-Actor mode does not need local position for distance filtering.
@@ -1142,6 +1146,7 @@ struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
     std::chrono::milliseconds liveLifetime{}; };
 struct NativeDrawInput {
     std::array<NativeDrawRange, workerCount> ranges{};
+    std::uintptr_t localActor{};
     Config config;
     Clock::time_point now;
 };
@@ -1165,14 +1170,24 @@ struct NameDrawItem {
 struct NameQuadBatch {
     void* screen{};
     void* tess{};
+    void* shader{};
+    FloatColor color{};
     std::size_t remaining{},inMesh{};
+    bool failed{};
     void flush() noexcept {
-        if(!inMesh) return;
+        if(!inMesh || failed) return;
+        // Each native mesh submission gets its own uniform update. Do not rely
+        // on state surviving a previous engine submission or mesh split.
+        const std::uint8_t dirty=1;
+        if(!safeWrite(shader,0,color) || !safeWrite(shader,worldRenderProfile.dirty,dirty)) {
+            failed=true; ++nameDiagnostics.renderFaults; return;
+        }
         alignas(16) std::array<std::byte,0x58> scratch{};
         renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
         inMesh=0;
     }
     void quad(const std::array<bedrock::Vec3,4>& vertices) noexcept {
+        if(failed) return;
         if(!inMesh) tessBegin(tess,0,1,static_cast<int>(std::min<std::size_t>(remaining,16384)),false);
         for(const auto& p:vertices) tessVertex(tess,p.x,p.y,p.z);
         inMesh+=4; remaining-=4;
@@ -1190,12 +1205,13 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
         if(!range.nameMeshes) { missing+=range.count; continue; }
         for(std::size_t i=0;i<range.count && count<selected.size();++i) {
             const auto& box=range.boxes[i];
+            if(box.actorKey==input->localActor) { ++hidden; continue; }
             const auto* mesh=range.nameMeshes[i].get();
             if(!mesh || mesh->triangles.empty() || mesh->triangles.size()%3) { ++missing; continue; }
             if(!hitbox::visibleInFrame(box,input->now,range.liveLifetime,
                     input->config.retainLastPosition,input->config.playersOnly,
                     std::chrono::minutes(input->config.retentionMinutes))) { ++hidden; continue; }
-            const auto needed=8+(mesh->triangles.size()/3)*8;
+            const auto needed=(mesh->triangles.size()/3)*8;
             if(needed>maximumVertices-vertices) { ++budgetSkipped; continue; }
             vertices+=needed;
             selected[count++]={mesh,hitbox::nameBillboard(hitbox::interpolatedBounds(box,input->now),origin),box.retained};
@@ -1206,45 +1222,30 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
     nameDiagnostics.renderBudget+=budgetSkipped;
     if(!count) return true;
     const float height=0.25f*input->config.nameTagScale;
-    for(unsigned pass=0;pass<3;++pass) {
+    // Text only: an opaque depth-Always background can cover the world or
+    // another player's native NameTag, especially close to the camera.
+    for(unsigned pass=0;pass<2;++pass) {
         std::size_t groupVertices=0;
         for(std::size_t i=0;i<count;++i)
-            if(!pass || selected[i].retained==(pass==2))
-                groupVertices+=pass ? selected[i].mesh->triangles.size()/3*8 : 8;
+            if(selected[i].retained==(pass==1))
+                groupVertices+=selected[i].mesh->triangles.size()/3*8;
         if(!groupVertices) continue;
         const auto rgba=hitbox::opaqueColor(input->config.retainedColor);
-        const FloatColor color=pass==0 ? FloatColor{0.03f,0.03f,0.03f,1} :
-            pass==1 ? FloatColor{1,1,1,1} : FloatColor{rgba[0],rgba[1],rgba[2],1};
-        const std::uint8_t dirty=1;
-        if(!safeWrite(shader,0,color) || !safeWrite(shader,worldRenderProfile.dirty,dirty)) {
-            ++nameDiagnostics.renderFaults; return false;
-        }
-        NameQuadBatch batch{screen,tess,groupVertices};
+        const FloatColor color=pass==0 ? FloatColor{1,1,1,1} : FloatColor{rgba[0],rgba[1],rgba[2],1};
+        NameQuadBatch batch{screen,tess,shader,color,groupVertices};
         for(std::size_t i=0;i<count;++i) {
             const auto& item=selected[i];
-            if(pass && item.retained!=(pass==2)) continue;
-            if(!pass) {
-                const auto half=item.mesh->width*0.5f+0.08f;
-                batch.quad({hitbox::nameVertex(item.billboard,{-half,-0.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{half,-0.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{half,1.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{-half,1.04f},height,origin)});
-                batch.quad({hitbox::nameVertex(item.billboard,{-half,1.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{half,1.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{half,-0.04f},height,origin),
-                    hitbox::nameVertex(item.billboard,{-half,-0.04f},height,origin)});
-            } else {
-                for(std::size_t p=0;p<item.mesh->triangles.size();p+=3) {
-                    const auto a=hitbox::nameVertex(item.billboard,item.mesh->triangles[p],height,origin);
-                    const auto b=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+1],height,origin);
-                    const auto c=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+2],height,origin);
-                    // Existing native Quad mode, with a degenerate second triangle.
-                    batch.quad({a,b,c,c});
-                    batch.quad({c,b,a,a});
-                }
+            if(item.retained!=(pass==1)) continue;
+            for(std::size_t p=0;p<item.mesh->triangles.size();p+=3) {
+                const auto a=hitbox::nameVertex(item.billboard,item.mesh->triangles[p],height,origin);
+                const auto b=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+1],height,origin);
+                const auto c=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+2],height,origin);
+                batch.quad({a,b,c,c});
+                batch.quad({c,b,a,a});
             }
         }
         batch.flush();
+        if(batch.failed) return false;
     }
     nameDiagnostics.renderSubmitted+=count;
     return true;
@@ -1337,6 +1338,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
     const auto epoch=worldEpoch.load(std::memory_order_acquire);
     std::array<std::shared_ptr<const RenderSnapshot>,workerCount> snapshots;
     NativeDrawInput input; input.config=*config; input.now=now;
+    input.localActor=localNameActor.load(std::memory_order_acquire);
     std::size_t count=0;
     for (std::size_t i=0;i<workerCount;++i) {
         snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
