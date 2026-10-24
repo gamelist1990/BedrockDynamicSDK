@@ -136,7 +136,7 @@ struct ProcessingWorker {
 std::array<ProcessingWorker, workerCount> processingWorkers;
 const auto trackingBudget=std::make_shared<hitbox::TrackingBudget>();
 std::atomic<std::uint64_t> worldEpoch{};
-std::atomic<std::uintptr_t> localNameActor{};
+std::atomic<std::uintptr_t> localActorIdentity{};
 std::atomic<std::int64_t> gameHeartbeatMs{};
 std::atomic<Status> status{Status::NotStarted};
 std::atomic<bool> stopRequested{false};
@@ -461,10 +461,10 @@ public:
             batch.captureFailure="local_registry_unreadable";
             return false;
         }
-        return captureRegistryBatch(registry, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
+        return captureRegistryBatch(registry, local, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
     }
 private:
-    static bool captureRegistryBatch(void* registry, const bedrock::NativeActorLayout& layout,
+    static bool captureRegistryBatch(void* registry, void* local, const bedrock::NativeActorLayout& layout,
         std::size_t typeOffset, std::uint32_t playerType, hitbox::PlayerIdentityCache* identities, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
         __try {
             using Registry = entt::basic_registry<hitbox_native::EntityId>;
@@ -518,6 +518,8 @@ private:
                 if (!safeRead(owner->value(entity), layout.actorOwnerPointerOffset, actor) || !actor) {
                     ++batch->invalidOwner; continue;
                 }
+                // Exclude self before AABB/name reads, tracking and retention.
+                if(actor==local) continue;
                 batch->captureStage="validate_actor_context";
                 void* actorRegistry = nullptr;
                 std::uint32_t actorEntity = 0;
@@ -957,7 +959,7 @@ void refreshGameTickSnapshot() {
         snapshotWorld = world;
         snapshotRegistry = 0;
         snapshotLocal=nullptr; snapshotEntity=0;
-        localNameActor.store(0,std::memory_order_release);
+        localActorIdentity.store(0,std::memory_order_release);
         access.setWorld(world);
         access.resetPlayerTracking();
         diagnostics={};
@@ -985,7 +987,7 @@ void refreshGameTickSnapshot() {
     std::uint32_t entity=0;
     const bool identityReady=local && registry && access.copyNameEntityId(local,entity);
     if (!identityReady) {
-        localNameActor.store(0,std::memory_order_release);
+        localActorIdentity.store(0,std::memory_order_release);
         if(snapshotRegistry) {
             worldEpoch.fetch_add(1,std::memory_order_acq_rel);
             snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
@@ -1007,7 +1009,7 @@ void refreshGameTickSnapshot() {
     }
     snapshotRegistry=registry;
     snapshotLocal=local; snapshotEntity=entity;
-    localNameActor.store(reinterpret_cast<std::uintptr_t>(local),std::memory_order_release);
+    localActorIdentity.store(reinterpret_cast<std::uintptr_t>(local),std::memory_order_release);
     // Validate the world before delivering any previously captured rows.
     if(!delivery.flush(sendBatch)) return;
     // All-Actor mode does not need local position for distance filtering.
@@ -1283,6 +1285,7 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             std::size_t visited=0, count=0;
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
+                    if(range.boxes[i].actorKey==input->localActor) continue;
                     if(!hitbox::visibleInFrame(range.boxes[i],input->now,range.liveLifetime,
                         input->config.retainLastPosition,input->config.playersOnly,
                         std::chrono::minutes(input->config.retentionMinutes))) continue;
@@ -1298,6 +1301,7 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     const auto& box=range.boxes[i];
+                    if(box.actorKey==input->localActor) continue;
                     if(!hitbox::visibleInFrame(box,input->now,range.liveLifetime,
                         input->config.retainLastPosition,input->config.playersOnly,
                         std::chrono::minutes(input->config.retentionMinutes))) continue;
@@ -1338,7 +1342,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
     const auto epoch=worldEpoch.load(std::memory_order_acquire);
     std::array<std::shared_ptr<const RenderSnapshot>,workerCount> snapshots;
     NativeDrawInput input; input.config=*config; input.now=now;
-    input.localActor=localNameActor.load(std::memory_order_acquire);
+    input.localActor=localActorIdentity.load(std::memory_order_acquire);
     std::size_t count=0;
     for (std::size_t i=0;i<workerCount;++i) {
         snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
