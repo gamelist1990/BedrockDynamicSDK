@@ -24,7 +24,19 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
         reserve+=std::min(maximumVertices-reserve,names[i]->triangles.size()/3*8);
     output.vertices.reserve(reserve);
     output.labels.reserve(count);
-    for(std::size_t i=0;i<count;++i) {
+    // Saved Player labels must not be permanently starved behind live Actor
+    // meshes in unordered-map iteration order when the vertex budget fills.
+    std::vector<std::size_t> order;
+    order.reserve(count);
+    for(std::size_t i=0;i<count;++i) order.push_back(i);
+    std::sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b) {
+        if(boxes[a].retained!=boxes[b].retained) return boxes[a].retained>boxes[b].retained;
+        if(boxes[a].isPlayer!=boxes[b].isPlayer) return boxes[a].isPlayer>boxes[b].isPlayer;
+        const auto da=distanceSquared(center(boxes[a].bounds),origin);
+        const auto db=distanceSquared(center(boxes[b].bounds),origin);
+        return da==db ? boxes[a].runtimeId<boxes[b].runtimeId : da<db;
+    });
+    for(const auto i:order) {
         const auto* mesh=names[i].get();
         if(!mesh || mesh->triangles.empty() || mesh->triangles.size()%3) continue;
         const auto needed=mesh->triangles.size()/3*8;

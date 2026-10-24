@@ -697,7 +697,7 @@ struct NameDiagnostics {
         nativeEmpty{},nativeUnreadable{},nativeFaults{},mailboxMisses{},blankNames{},meshFailures{},workerExceptions{},
         renderCalls{},renderNoMesh{},renderHidden{},renderBudget{},renderSubmitted{},renderFaults{},
         frameNoBoxes{},frameStale{};
-    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{}; };
+    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{},retainedBoxes{},retainedMeshes{}; };
     std::array<Worker,workerCount> workers;
 } nameDiagnostics;
 void reportNameDiagnostics() {
@@ -717,7 +717,8 @@ void reportNameDiagnostics() {
     for(std::size_t i=0;i<workerCount;++i)
         log("NameTag worker state: shard=",i," boxes=",d.workers[i].boxes.load(),
             " matched_names=",d.workers[i].observed.load()," ready_meshes=",d.workers[i].meshes.load(),
-            " prepared_vertices=",d.workers[i].vertices.load()," prepare_us=",d.workers[i].prepareUs.load());
+            " prepared_vertices=",d.workers[i].vertices.load()," prepare_us=",d.workers[i].prepareUs.load(),
+            " retained_boxes=",d.workers[i].retainedBoxes.load()," retained_meshes=",d.workers[i].retainedMeshes.load());
     log("NameTag processing [5s]: mailbox_misses=",d.mailboxMisses.exchange(0),
         " blank_after_normalize=",d.blankNames.exchange(0)," mesh_failures=",d.meshFailures.exchange(0),
         " worker_exceptions=",d.workerExceptions.exchange(0));
@@ -830,6 +831,8 @@ struct CachedName {
     hitbox::NameKey key;
     std::uint64_t revision{},touched{};
     std::shared_ptr<const hitbox::NameMesh> mesh;
+    std::string text; // Keep the acquired name even if geometry is deferred/fails.
+    Clock::time_point retryAfter{};
 };
 
 void processingLoop(std::size_t shard) noexcept {
@@ -869,6 +872,7 @@ void processingLoop(std::size_t shard) noexcept {
                 nameDiagnostics.workers[shard].observed=0;
                 nameDiagnostics.workers[shard].meshes=0;
                 nameDiagnostics.workers[shard].vertices=0; nameDiagnostics.workers[shard].prepareUs=0;
+                nameDiagnostics.workers[shard].retainedBoxes=0; nameDiagnostics.workers[shard].retainedMeshes=0;
                 const auto previous=std::atomic_exchange_explicit(&worker.snapshot,
                     std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
                 if(previous) retired.push_back(previous);
@@ -895,61 +899,69 @@ void processingLoop(std::size_t shard) noexcept {
                 config.nearbyDistance, config.retainLastPosition,
                 batch->liveLifetime, config.showAllActors, config.playersOnly,
                 std::chrono::minutes(config.retentionMinutes));
-            std::size_t observedNames=0,readyMeshes=0,misses=0,blanks=0,failures=0;
+            std::size_t observedNames=0,readyMeshes=0,misses=0,blanks=0,failures=0,savedBoxes=0,savedMeshes=0;
             if(config.showNameTags) {
                 snapshot->nameMeshes.reserve(snapshot->boxes.size());
                 std::size_t built=0;
                 for(const auto& box:snapshot->boxes) {
+                    if(box.retained) ++savedBoxes;
                     const hitbox::NameKey key{batch->camera.epoch,box.actorKey,box.entityId};
                     auto found=names.find(box.runtimeId);
                     const auto observed=nameMailbox.read(key);
                     if(observed) ++observedNames; else ++misses;
                     if(observed && (found==names.end() || found->second.key!=key ||
                         found->second.revision!=observed->revision)) {
-                        auto name=hitbox::normalizedName(std::string_view(observed->bytes.data(),observed->size));
-                        if(name.empty()) ++blanks;
-                        if(!name.empty() && Clock::now()>=nextNameExample) {
-                            nextNameExample=Clock::now()+std::chrono::seconds(5);
-                            log("NameTag matched: shard=",shard," epoch=",key.epoch," runtime_id=",box.runtimeId,
-                                " actor=",reinterpret_cast<void*>(key.actor)," entity=",key.entity,
-                                " bytes=",observed->size," name=",name);
-                        }
-                        if(!name.empty() && (found==names.end() || !found->second.mesh || found->second.mesh->text!=name)) {
-                            if(built<4) {
-                                ++built;
-                                auto mesh=nameMesher.make(std::move(name));
-                                if(!mesh) ++failures;
-                                if(!mesh && !fontFailureLogged) {
-                                    fontFailureLogged=true; log("NameTag mesh failed: shard=",shard," runtime_id=",box.runtimeId,
-                                        " stage=",nameMesher.lastStage()," hresult=",static_cast<std::uint32_t>(nameMesher.lastResult()));
-                                }
-                                if(found==names.end() && names.size()>=hitbox::TrackingBudget::maximumActors) {
-                                    auto oldest=std::min_element(names.begin(),names.end(),[](const auto& a,const auto& b) {
-                                        return a.second.touched<b.second.touched;
-                                    });
-                                    names.erase(oldest);
-                                }
-                                auto& entry=names[box.runtimeId];
-                                entry.key=key; entry.revision=observed->revision;
-                                if(mesh) {
-                                    entry.mesh=std::move(mesh);
-                                    if(!nameReadyLogged) {
-                                        nameReadyLogged=true;
-                                        log("HitBox name mesh ready: worker=",shard," runtime_id=",box.runtimeId,
-                                            " name=",entry.mesh->text," [above AABB; double-sided]");
-                                    }
-                                }
-                                found=names.find(box.runtimeId);
+                        auto text=hitbox::normalizedName(std::string_view(observed->bytes.data(),observed->size));
+                        if(text.empty()) ++blanks;
+                        if(!text.empty()) {
+                            if(found==names.end() && names.size()>=hitbox::TrackingBudget::maximumActors) {
+                                const auto oldest=std::min_element(names.begin(),names.end(),[](const auto& a,const auto& b) {
+                                    return a.second.touched<b.second.touched;
+                                });
+                                names.erase(oldest);
+                            }
+                            auto& entry=names[box.runtimeId];
+                            entry.key=key; entry.revision=observed->revision;
+                            if(entry.text!=text) { entry.text=std::move(text); entry.retryAfter={}; }
+                            found=names.find(box.runtimeId);
+                            if(Clock::now()>=nextNameExample) {
+                                nextNameExample=Clock::now()+std::chrono::seconds(5);
+                                log("NameTag cached: shard=",shard," epoch=",key.epoch," runtime_id=",box.runtimeId,
+                                    " retained=",box.retained," name=",entry.text);
                             }
                         } else if(found!=names.end()) {
-                            // Blank/format-only observations do not erase a cached name.
                             found->second.key=key; found->second.revision=observed->revision;
                         }
                     }
-                    if(found!=names.end()) found->second.touched=++nameTouch;
-                    const bool sameActor=found!=names.end() && found->second.key==key;
-                    if(sameActor && found->second.mesh) ++readyMeshes;
-                    snapshot->nameMeshes.push_back(sameActor ? found->second.mesh : nullptr);
+                    if(found!=names.end()) {
+                        auto& entry=found->second;
+                        // RuntimeID + world epoch survives Actor disappearance. A
+                        // copied name must not depend on reading the old native Actor again.
+                        if(!entry.text.empty() && (!entry.mesh || entry.mesh->text!=entry.text) &&
+                            built<4 && Clock::now()>=entry.retryAfter) {
+                            ++built;
+                            auto mesh=nameMesher.make(entry.text);
+                            if(mesh) {
+                                entry.mesh=std::move(mesh); entry.retryAfter={};
+                                if(!nameReadyLogged) {
+                                    nameReadyLogged=true;
+                                    log("HitBox name mesh ready: worker=",shard," runtime_id=",box.runtimeId,
+                                        " name=",entry.mesh->text," [cached text; live + retained]");
+                                }
+                            } else {
+                                ++failures; entry.retryAfter=Clock::now()+std::chrono::seconds(1);
+                                if(!fontFailureLogged) {
+                                    fontFailureLogged=true;
+                                    log("NameTag mesh deferred: shard=",shard," runtime_id=",box.runtimeId,
+                                        " stage=",nameMesher.lastStage()," hresult=",static_cast<std::uint32_t>(nameMesher.lastResult()),
+                                        " [name preserved; retry in 1s]");
+                                }
+                            }
+                        }
+                        entry.touched=++nameTouch;
+                        if(entry.mesh) { ++readyMeshes; if(box.retained) ++savedMeshes; }
+                    }
+                    snapshot->nameMeshes.push_back(found==names.end() ? nullptr : found->second.mesh);
                 }
             }
             const auto preparationBegin=Clock::now();
@@ -964,6 +976,8 @@ void processingLoop(std::size_t shard) noexcept {
             nameDiagnostics.workers[shard].boxes=snapshot->boxes.size();
             nameDiagnostics.workers[shard].observed=observedNames;
             nameDiagnostics.workers[shard].meshes=readyMeshes;
+            nameDiagnostics.workers[shard].retainedBoxes=savedBoxes;
+            nameDiagnostics.workers[shard].retainedMeshes=savedMeshes;
             nameDiagnostics.mailboxMisses+=misses;
             nameDiagnostics.blankNames+=blanks;
             nameDiagnostics.meshFailures+=failures;

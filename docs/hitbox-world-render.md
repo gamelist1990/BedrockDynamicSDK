@@ -272,3 +272,21 @@ ClientInstance switching its local Actor is checked again within approximately
 one normal game tick. Focus/cursor release is not treated as disconnect. The
 existing 2s tick-interruption fallback is conservative and may also clear state
 when a paused game resumes; it is not claimed as a verified network event.
+
+## Conditional retained positions and persistent acquired names
+
+Retention now requires observed movement (feet displacement over 0.03 blocks),
+then at least one second of observed stillness, followed by live-record expiry.
+Only valid observations advance stillness; missing data does not. A sample gap
+over two seconds resets qualification. Initially static Actors and Actors that
+vanish while moving are not saved. New observations remove a previous saved
+position; disabling retention/world epochs resets qualification. Live expiry is
+a client observation timeout, not a verified server despawn packet.
+
+Acquired normalized text now persists independently of mesh creation. Geometry
+failures retry after one second; failed factory initialization retries after five
+seconds. Names remain keyed by RuntimeID within the worker's current world epoch,
+including retained records. Worker vertex preparation prioritizes retained Player
+labels before live/non-Player/farther labels under its existing vertex budget.
+This improves coverage but is not a claim that every loaded label fits the budget
+or that native text rendering has been verified in the game.

@@ -192,16 +192,21 @@ public:
         if ((old!=records_.end() && old->second.box.seenAt>=sample.seenAt) ||
             (saved!=retained_.end() && saved->second.seenAt>=sample.seenAt)) return;
         if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
-            records_.erase(sample.runtimeId); // Preserve only the last in-range observation.
-            if(!retained_.contains(sample.runtimeId)) budget_->release(sample.runtimeId,epoch_);
+            records_.erase(sample.runtimeId);
+            retained_.erase(sample.runtimeId); // A fresh out-of-range observation is not disappearance.
+            budget_->release(sample.runtimeId,epoch_);
             return;
         }
         if(old==records_.end() && !budget_->acquire(sample.runtimeId,epoch_)) return;
         Entry entry;
+        if(old!=records_.end()) entry=old->second;
+        const auto previousSeen=old!=records_.end() ? old->second.box.seenAt : Clock::time_point{};
         auto& box=entry.box;
         static_cast<Sample&>(box)=sample;
         box.corners=hitbox::corners(sample.bounds);
         box.blendFrom=sample.bounds;
+        box.blendDuration=std::chrono::milliseconds(0);
+        box.retained=false;
         // Preserve classification if this same RuntimeID changes ActorType.
         box.isPlayer=sample.isPlayer || (old!=records_.end() && old->second.box.isPlayer) ||
                      retained_.contains(sample.runtimeId);
@@ -216,14 +221,20 @@ public:
                     std::chrono::milliseconds(50),std::chrono::milliseconds(1000));
             }
         }
-        if (retain && box.isPlayer) {
-            auto frozen=box;
-            frozen.retained=true;
-            frozen.blendFrom=frozen.bounds;
-            frozen.blendDuration=std::chrono::milliseconds(0);
-            // One latest valid position per RuntimeID, refreshed on every sample.
-            retained_.insert_or_assign(sample.runtimeId,std::move(frozen));
+        // Qualification requires actual observed motion before a full second
+        // of observed stillness. Missing reads never advance this timer.
+        const auto position=feet(box.bounds);
+        if(!retain || old==records_.end() || sample.seenAt-previousSeen>std::chrono::seconds(2)) {
+            entry.moved=false; entry.stationaryConfirmed=false;
+            entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
+        } else if(distanceSquared(position,entry.stationaryAnchor)>0.03f*0.03f) {
+            entry.moved=true; entry.stationaryConfirmed=false;
+            entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
+        } else {
+            entry.stationaryConfirmed=entry.moved && sample.seenAt-entry.stationarySince>=std::chrono::seconds(1);
         }
+        // Returning/moving Actors must not leave an older saved box behind.
+        retained_.erase(sample.runtimeId);
         records_.insert_or_assign(sample.runtimeId,std::move(entry));
     }
     std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,
@@ -245,6 +256,14 @@ public:
         };
         for (auto it=records_.begin();it!=records_.end();) {
             if (now-it->second.box.seenAt>liveLifetime) {
+                const auto& entry=it->second;
+                if(retain && entry.box.isPlayer && entry.stationaryConfirmed &&
+                    now-entry.box.seenAt<retainedLifetime) {
+                    auto frozen=entry.box;
+                    frozen.retained=true; frozen.blendFrom=frozen.bounds;
+                    frozen.blendDuration=std::chrono::milliseconds(0);
+                    retained_.insert_or_assign(it->first,std::move(frozen));
+                }
                 if(!retained_.contains(it->first)) budget_->release(it->first,epoch_);
                 it=records_.erase(it);
             }
@@ -265,8 +284,15 @@ public:
     std::size_t size() const noexcept { return records_.size(); }
     std::size_t retainedSize() const noexcept { return retained_.size(); }
 private:
+    static bedrock::Vec3 feet(const bedrock::ActorBounds& bounds) noexcept {
+        return {(bounds.minimum.x+bounds.maximum.x)*0.5f,bounds.minimum.y,
+                (bounds.minimum.z+bounds.maximum.z)*0.5f};
+    }
     struct Entry {
         BoxRecord box;
+        bedrock::Vec3 stationaryAnchor{};
+        Clock::time_point stationarySince{};
+        bool moved{},stationaryConfirmed{};
     };
     void configureRetention(bool retain) {
         if (retaining_==retain) return;
@@ -274,6 +300,11 @@ private:
         for(const auto& [id,box]:retained_)
             if(!records_.contains(id)) budget_->release(id,epoch_);
         retained_.clear();
+        for(auto& [id,entry]:records_) {
+            entry.moved=entry.stationaryConfirmed=false;
+            entry.stationaryAnchor=feet(entry.box.bounds);
+            entry.stationarySince=entry.box.seenAt;
+        }
     }
     std::shared_ptr<TrackingBudget> budget_;
     bool retaining_{};

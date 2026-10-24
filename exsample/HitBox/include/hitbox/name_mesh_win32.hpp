@@ -144,8 +144,14 @@ private:
     const char* stage_="not_initialized";
     HRESULT result_=S_OK;
     bool initialize() {
-        if(initialized_) return ready_;
+        if(initialized_) {
+            if(ready_ || Clock::now()<retryInitialization_) return ready_;
+            // Factory initialization can fail transiently. Do not permanently
+            // strand a successfully captured name behind the first failure.
+            format_.put(); factory_.put(); write_.put();
+        }
         initialized_=true;
+        retryInitialization_=Clock::now()+std::chrono::seconds(5);
         if(!check(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(write_.put())),"DWriteCreateFactory")) return false;
         D2D1_FACTORY_OPTIONS options{};
@@ -161,6 +167,7 @@ private:
     NameComPtr<ID2D1Factory> factory_;
     NameComPtr<IDWriteTextFormat> format_;
     bool initialized_{},ready_{};
+    Clock::time_point retryInitialization_{};
 };
 } // namespace hitbox
 #endif

@@ -224,14 +224,16 @@ int main() {
         hitbox::BoxCache saved{budget}; saved.beginWorld(1);
         auto player=sample; player.isPlayer=true;
         for(int i=0;i<=8;++i) {
+            player.bounds={{i ? 1.f : 0.f,0,0},{i ? 2.f : 1.f,2,1}};
             player.seenAt=now+250ms*i; saved.observe(player,camera,100,true);
         }
-        assert(saved.size()==1 && saved.retainedSize()==1 && budget->size()==1);
+        assert(saved.size()==1 && saved.retainedSize()==0 && budget->size()==1);
         saved.visible(now+4s,camera,100,true,1500ms);
         assert(saved.size()==0 && saved.retainedSize()==1 && budget->size()==1);
         saved.visible(now+5s,camera,100,false,1500ms);
-        assert(budget->size()==0); // Disabling a saved-only record returns its slot.
+        assert(budget->size()==0);
         for(int i=0;i<=8;++i) {
+            player.bounds={{i ? 2.f : 1.f,0,0},{i ? 3.f : 2.f,2,1}};
             player.seenAt=now+6s+250ms*i; saved.observe(player,camera,100,true);
         }
         saved.visible(now+10min+8s,camera,100,true,1500ms);
@@ -258,36 +260,44 @@ int main() {
         latest.beginWorld(1);
         auto player=sample; player.isPlayer=true;
         latest.observe(player,camera,32,true);
-        assert(latest.retainedSize()==1); // Save the first valid Player observation immediately.
+        assert(latest.retainedSize()==0); // Initial static Player is not eligible.
         auto boxes=latest.visible(now,camera,32,true,1500ms,false,true);
-        assert(boxes.size()==1 && !boxes[0].retained); // No duplicate retained box while live.
+        assert(boxes.size()==1 && !boxes[0].retained);
         player.bounds={{2,0,0},{3,2,1}}; player.seenAt=now+250ms;
         latest.observe(player,camera,32,true);
-        boxes=latest.visible(now+2s,camera,32,true,1500ms,false,true);
+        player.seenAt=now+750ms; latest.observe(player,camera,32,true);
+        assert(latest.retainedSize()==0);
+        player.seenAt=now+1250ms; latest.observe(player,camera,32,true);
+        assert(latest.retainedSize()==0); // Confirmed stillness is only a candidate while live.
+        boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2);
-        assert(boxes[0].blendDuration.count()==0); // Missing Actor shows exact last bounds, no extrapolation.
+        assert(boxes[0].blendDuration.count()==0);
         const auto frozen=boxes[0];
         assert(hitbox::visibleInFrame(frozen,player.seenAt+10min-1ms,1500ms,true,true));
         assert(!hitbox::visibleInFrame(frozen,player.seenAt+10min,1500ms,true,true));
-        // A delayed batch must not rewind the saved position after live expiry.
         auto delayed=sample; delayed.isPlayer=true; delayed.seenAt=now+100ms;
         latest.observe(delayed,camera,32,true);
-        boxes=latest.visible(now+2s,camera,32,true,1500ms);
+        boxes=latest.visible(now+3s,camera,32,true,1500ms);
         assert(boxes.size()==1 && boxes[0].bounds.minimum.x==2);
-        // Same ID with a changed/missing ActorType keeps its Player classification and updates position.
         player.isPlayer=false; player.bounds={{5,0,0},{6,2,1}}; player.seenAt=now+3s;
         latest.observe(player,camera,32,true);
         boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
-        assert(boxes.size()==1 && boxes[0].isPlayer && !boxes[0].retained && boxes[0].bounds.minimum.x==5);
-        // A zero-sized or non-finite replacement shape is never recorded as a live box.
-        auto collapsed=player; collapsed.seenAt=now+4s; collapsed.bounds.maximum=collapsed.bounds.minimum;
+        assert(boxes.size()==1 && boxes[0].isPlayer && !boxes[0].retained && latest.retainedSize()==0);
+        player.bounds={{6,0,0},{7,2,1}}; player.seenAt=now+3250ms;
+        latest.observe(player,camera,32,true);
+        player.seenAt=now+4250ms; latest.observe(player,camera,32,true);
+        auto collapsed=player; collapsed.seenAt=now+5s; collapsed.bounds.maximum=collapsed.bounds.minimum;
         latest.observe(collapsed,camera,32,true);
-        boxes=latest.visible(now+5s,camera,32,true,1500ms,false,true);
-        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==5);
-        assert(latest.visible(now+3s+10min,camera,32,true,1500ms).empty());
+        boxes=latest.visible(now+6s,camera,32,true,1500ms,false,true);
+        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==6);
+        assert(latest.visible(player.seenAt+10min,camera,32,true,1500ms).empty());
         assert(latest.retainedSize()==0);
         player.seenAt=now+11min; player.isPlayer=true;
         latest.observe(player,camera,32,true);
+        player.bounds={{7,0,0},{8,2,1}}; player.seenAt=now+11min+250ms;
+        latest.observe(player,camera,32,true);
+        player.seenAt=now+11min+1250ms; latest.observe(player,camera,32,true);
+        latest.visible(now+11min+3s,camera,32,true,1500ms);
         assert(latest.retainedSize()==1);
         assert(!latest.beginWorld(0) && latest.retainedSize()==1);
         assert(latest.beginWorld(2) && latest.retainedSize()==0 && latest.size()==0);
@@ -296,12 +306,16 @@ int main() {
         hitbox::BoxCache ranged;
         ranged.beginWorld(1);
         auto edge=sample; edge.isPlayer=true;
-        edge.bounds={{99.5f,-0.5f,-0.5f},{100.5f,0.5f,0.5f}};
+        edge.bounds={{98.5f,-0.5f,-0.5f},{99.5f,0.5f,0.5f}};
         ranged.observe(edge,camera,100,true);
+        edge.bounds={{99.5f,-0.5f,-0.5f},{100.5f,0.5f,0.5f}}; edge.seenAt=now+250ms;
+        ranged.observe(edge,camera,100,true);
+        edge.seenAt=now+1250ms; ranged.observe(edge,camera,100,true);
+        assert(ranged.retainedSize()==0);
+        assert(ranged.visible(now+3s,camera,100,true,1500ms).size()==1);
         assert(ranged.retainedSize()==1);
-        assert(ranged.visible(now+2s,camera,100,true,1500ms).size()==1);
-        assert(ranged.visible(now+2s,camera,99,true,1500ms).empty());
-        assert(ranged.visible(now+10min,camera,99,true,1500ms).empty());
+        assert(ranged.visible(now+3s,camera,99,true,1500ms).empty());
+        assert(ranged.visible(edge.seenAt+10min,camera,99,true,1500ms).empty());
         assert(ranged.retainedSize()==0);
         edge.bounds={{100,-0.5f,-0.5f},{101,0.5f,0.5f}}; edge.seenAt=now+11min;
         ranged.observe(edge,camera,100,true);
@@ -314,24 +328,28 @@ int main() {
         for(int i=0;i<=20;++i) {
             player.seenAt=now+250ms*i;
             player.bounds={{0.04f*i,0,0},{1+0.04f*i,2,1}};
-            moving.observe(player,camera,32,true); // Motion continuously refreshes the same record.
+            moving.observe(player,camera,32,true);
             auto other=sample; other.seenAt=player.seenAt;
             npc.observe(other,camera,32,true);
         }
-        assert(moving.retainedSize()==1 && npc.retainedSize()==0);
-        auto boxes=moving.visible(now+7s,camera,32,true,1500ms);
-        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==player.bounds.minimum.x);
-        moving.visible(now+7s,camera,32,false,1500ms);
+        assert(moving.retainedSize()==0 && npc.retainedSize()==0);
+        assert(moving.visible(now+7s,camera,32,true,1500ms).empty()); // Moving at disappearance is not saved.
+        player.seenAt=now+8s; moving.observe(player,camera,32,true);
+        player.bounds={{2,0,0},{3,2,1}}; player.seenAt=now+8250ms;
+        moving.observe(player,camera,32,true);
+        player.seenAt=now+9250ms; moving.observe(player,camera,32,true);
+        auto boxes=moving.visible(now+11s,camera,32,true,1500ms);
+        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2);
+        moving.visible(now+11s,camera,32,false,1500ms);
         assert(moving.retainedSize()==0);
-        player.seenAt=now+8s;
+        player.seenAt=now+12s; moving.observe(player,camera,32,true);
+        player.bounds={{3,0,0},{4,2,1}}; player.seenAt=now+12250ms;
         moving.observe(player,camera,32,true);
-        assert(moving.retainedSize()==1); // Re-enabling starts saving from the next valid sample.
-        moving.visible(now+8s,camera,32,true,1500ms,false,true,1s);
+        player.seenAt=now+13250ms; moving.observe(player,camera,32,true);
+        assert(moving.visible(now+15s,camera,32,true,1500ms).size()==1);
         assert(moving.retainedSize()==1);
-        player.seenAt=now+9s;
-        moving.observe(player,camera,32,true);
-        assert(moving.visible(now+9s,camera,32,true,1500ms,false,true,1s).size()==1);
-        assert(moving.retainedSize()==1); // Fresh observations renew expiry without a new delay.
+        assert(moving.visible(player.seenAt+10min,camera,32,true,1500ms).empty());
+        assert(moving.retainedSize()==0);
     }
 
     cache.observe(sample,camera,32,false);
