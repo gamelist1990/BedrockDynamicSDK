@@ -106,6 +106,16 @@ HitBox上端から0.2ブロック上に、両面描画の黒い背景と白い�
 位置保存が有効なら保存枠にも名前を表示します。取得していない名前は表示しません。
 NameTag Hookを登録できない場合も枠の表示は継続します。
 
+### 名前が表示されない場合の診断ログ
+
+`debug` の値にかかわらず `Documents/PEXData/HitBox/HitBox.log` に5秒ごとの名前診断を出します。
+`NameTag resolved source` は関数の解決結果、`NameTag getter` は直接取得の成功・空・読み取り失敗、
+`NameTag worker state` は枠数・照合済み名・文字メッシュ数、`NameTag rendering` は描画送信数とスキップ理由です。
+`NameTag direct read` はActor/RuntimeID/entity ID/戻り値の例、`NameTag matched` は照合できた正規化名を間隔を空けて出します。
+文字形状の作成に失敗した場合は `NameTag mesh failed` にDirectWrite/Direct2Dの段階とHRESULTを出します。
+`submitted_labels` は描画APIへ送信した数で、画面で文字が見えたことを保証する値ではありません。
+ワールドに入って15秒ほど待ち、`NameTag` 行を含むログを確認してください。
+
 ### Playerの最終観測位置の保存
 
 `retain_last_position=true` の場合は、Playerの有効なAABBを取得するたびに最新の位置を保存します。

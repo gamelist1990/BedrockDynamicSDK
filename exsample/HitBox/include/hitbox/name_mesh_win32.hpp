@@ -109,39 +109,51 @@ private:
 };
 class NameMesher {
 public:
+    const char* lastStage() const noexcept { return stage_; }
+    HRESULT lastResult() const noexcept { return result_; }
     std::shared_ptr<const NameMesh> make(std::string name) {
-        if(!initialize() || name.empty()) return {};
+        if(!initialize()) return {};
+        stage_="input"; result_=S_OK;
+        if(name.empty()) { result_=E_INVALIDARG; return {}; }
         const int count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,name.data(),static_cast<int>(name.size()),nullptr,0);
-        if(count<=0 || count>192) return {};
+        if(count<=0 || count>192) { stage_="utf8_length"; result_=E_INVALIDARG; return {}; }
         std::wstring wide(count,L'\0');
-        if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,name.data(),static_cast<int>(name.size()),wide.data(),count)!=count) return {};
+        if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,name.data(),static_cast<int>(name.size()),wide.data(),count)!=count) { stage_="utf8_convert"; result_=E_INVALIDARG; return {}; }
         NameComPtr<IDWriteTextLayout> layout;
-        if(FAILED(write_->CreateTextLayout(wide.data(),static_cast<UINT32>(wide.size()),format_.get(),4096,128,layout.put()))) return {};
+        if(!check(write_->CreateTextLayout(wide.data(),static_cast<UINT32>(wide.size()),format_.get(),4096,128,layout.put()),"CreateTextLayout")) return {};
         DWRITE_TEXT_METRICS metrics{};
-        if(FAILED(layout->GetMetrics(&metrics)) || !std::isfinite(metrics.height) || !std::isfinite(metrics.width) || metrics.height<=0 || metrics.width<=0) return {};
+        if(!check(layout->GetMetrics(&metrics),"GetMetrics")) return {};
+        if(!std::isfinite(metrics.height) || !std::isfinite(metrics.width) || metrics.height<=0 || metrics.width<=0) {
+            stage_="invalid_metrics"; result_=E_FAIL; return {};
+        }
         auto mesh=std::make_shared<NameMesh>();
         mesh->text=std::move(name);
         NameTextRenderer renderer(factory_.get(),*mesh);
-        if(FAILED(layout->Draw(nullptr,&renderer,0,0)) || mesh->triangles.empty()) return {};
+        if(!check(layout->Draw(nullptr,&renderer,0,0),"DrawGlyphOutline")) return {};
+        if(mesh->triangles.empty()) { stage_="empty_triangles"; result_=E_FAIL; return {}; }
         mesh->width=metrics.width/metrics.height;
         for(auto& p:mesh->triangles) {
             p.x=(p.x-metrics.width*0.5f)/metrics.height;
             p.y=(metrics.height-p.y)/metrics.height;
         }
+        stage_="ready"; result_=S_OK;
         return mesh;
     }
 private:
+    bool check(HRESULT hr,const char* stage) noexcept { stage_=stage; result_=hr; return SUCCEEDED(hr); }
+    const char* stage_="not_initialized";
+    HRESULT result_=S_OK;
     bool initialize() {
         if(initialized_) return ready_;
         initialized_=true;
-        if(FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),
-            reinterpret_cast<IUnknown**>(write_.put())))) return false;
+        if(!check(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(write_.put())),"DWriteCreateFactory")) return false;
         D2D1_FACTORY_OPTIONS options{};
-        if(FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,__uuidof(ID2D1Factory),
-            &options,reinterpret_cast<void**>(factory_.put())))) return false;
-        if(FAILED(write_->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,20,L"ja-jp",format_.put()))) return false;
-        if(FAILED(format_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP))) return false;
+        if(!check(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,__uuidof(ID2D1Factory),
+            &options,reinterpret_cast<void**>(factory_.put())),"D2D1CreateFactory")) return false;
+        if(!check(write_->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,20,L"ja-jp",format_.put()),"CreateTextFormat")) return false;
+        if(!check(format_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP),"SetWordWrapping")) return false;
         ready_=true; return true;
     }
     NameComSession com_;
