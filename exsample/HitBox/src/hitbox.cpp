@@ -26,6 +26,8 @@
 #include "hitbox/box_cache.hpp"
 #include "hitbox/batch_queue.hpp"
 #include "hitbox/world_render_profile.hpp"
+#include "hitbox/name_tags.hpp"
+#include "hitbox/name_mesh_win32.hpp"
 #include <condition_variable>
 #include <deque>
 
@@ -85,6 +87,8 @@ struct Config {
     bool debug = false;
     bool showAllActors = false;
     bool playersOnly = false;
+    bool showNameTags = true;
+    float nameTagScale = 1.0f;
     bool retainLastPosition = false;
     float nearbyDistance = 100.0f;
     int retentionMinutes = 10;
@@ -101,6 +105,7 @@ struct CameraState {
 struct RenderSnapshot {
     std::uint64_t epoch{};
     std::vector<BoxRecord> boxes;
+    std::vector<std::shared_ptr<const hitbox::NameMesh>> nameMeshes;
     std::chrono::milliseconds liveLifetime{1000};
 };
 constexpr std::size_t workerCount = 2;
@@ -227,6 +232,8 @@ nlohmann::json configJson(const Config& config) {
         {"debug", config.debug},
         {"show_all_actors", config.showAllActors},
         {"players_only", config.playersOnly},
+        {"show_name_tags", config.showNameTags},
+        {"name_tag_scale", config.nameTagScale},
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
         {"retention_minutes", config.retentionMinutes},
@@ -241,6 +248,10 @@ Config parseConfig(const nlohmann::json& root) {
     config.debug = root.value("debug", config.debug);
     config.showAllActors = root.value("show_all_actors", config.showAllActors);
     config.playersOnly = root.value("players_only", config.playersOnly);
+    config.showNameTags = root.value("show_name_tags", config.showNameTags);
+    config.nameTagScale = root.value("name_tag_scale", config.nameTagScale);
+    if(!std::isfinite(config.nameTagScale)) config.nameTagScale=1.0f;
+    config.nameTagScale=std::clamp(config.nameTagScale,0.25f,3.0f);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
     config.retainLastPosition = root.value("retain_last_position", config.retainLastPosition);
     config.retentionMinutes = std::clamp(root.value("retention_minutes", config.retentionMinutes), 1, 60);
@@ -360,6 +371,9 @@ public:
     void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
     void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
+    bool copyNameEntityId(void* actor,std::uint32_t& id) const noexcept {
+        return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextEntityIdOffset,id);
+    }
 
     bool isActorValid(void* actor) const noexcept override { return looksLikeActor(actor); }
     void* localPlayer() const noexcept override {
@@ -522,6 +536,8 @@ private:
                 auto& sample = batch->samples[batch->count];
                 sample.isPlayer=isPlayer;
                 sample.runtimeId=runtimeId;
+                sample.actorKey=reinterpret_cast<std::uintptr_t>(actor);
+                sample.entityId=static_cast<std::uint32_t>(entity);
                 auto* aabb = shape->value(entity);
                 if (layout.aabbMaximumOffset == layout.aabbMinimumOffset + sizeof(bedrock::Vec3)) {
                     if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) {
@@ -633,10 +649,53 @@ HitBoxAccess access;
 bedrock::GameApi gameApi{access};
 std::unique_ptr<bedrock::GameHooks> gameHooks;
 
+hitbox::NameMailbox nameMailbox;
+BDS_HookToken nameTagToken{};
+bool copyObservedName(const void* native,char* bytes,std::size_t* count) noexcept {
+    __try {
+        const auto* name=static_cast<const std::string*>(native);
+        if(!name || name->empty() || name->size()>4096) return false;
+        *count=std::min(name->size(),hitbox::NameMailbox::maximumBytes);
+        const auto* source=name->data();
+        if(!permittedAddress(source,*count)) return false;
+        std::memcpy(bytes,source,*count);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void BDS_HOOK_CALL observeNameTag(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
+    next(frame,raw);
+    if(stopRequested.load(std::memory_order_acquire)) return;
+    try {
+        const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
+        if(!config->enabled || !config->showNameTags) return;
+        const auto epoch=worldEpoch.load(std::memory_order_acquire);
+        if(!epoch || !raw) return;
+        const auto& args=*static_cast<BDS_ActorNameTagArgs*>(raw);
+        NativeReadWindow window;
+        std::uint32_t entity=0;
+        std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
+        std::size_t count=0;
+        if(!args.actor || !access.copyNameEntityId(args.actor,entity) ||
+            !copyObservedName(args.name_tag,bytes.data(),&count) ||
+            epoch!=worldEpoch.load(std::memory_order_acquire)) return;
+        nameMailbox.observe({epoch,reinterpret_cast<std::uintptr_t>(args.actor),entity},
+            std::string_view(bytes.data(),count));
+    } catch(...) {}
+}
+struct CachedName {
+    hitbox::NameKey key;
+    std::uint64_t revision{},touched{};
+    std::shared_ptr<const hitbox::NameMesh> mesh;
+};
+
 void processingLoop(std::size_t shard) noexcept {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     auto& worker = processingWorkers[shard];
     hitbox::BoxCache cache{trackingBudget};
+    hitbox::NameMesher nameMesher;
+    std::unordered_map<std::uint64_t,CachedName> names;
+    std::uint64_t nameTouch=0;
+    bool fontFailureLogged=false;
     std::uint64_t loggedEpoch = 0;
     Clock::time_point nextLog{};
     // Retain replaced snapshots until no callback holds them. Their vectors
@@ -657,7 +716,9 @@ void processingLoop(std::size_t shard) noexcept {
             if (!batch || batch->camera.epoch != worldEpoch.load(std::memory_order_acquire) ||
                 !cache.beginWorld(batch->camera.epoch)) continue;
             const auto& config = *batch->config;
-            if (loggedEpoch != batch->camera.epoch) { loggedEpoch = batch->camera.epoch; nextLog = {}; }
+            if (loggedEpoch != batch->camera.epoch) {
+                loggedEpoch = batch->camera.epoch; nextLog = {}; names.clear(); nameTouch=0;
+            }
             for (std::size_t i = 0; i < batch->count; ++i) {
                 const auto& sample = batch->samples[i];
                 if (sample.runtimeId % workerCount != shard) continue;
@@ -671,6 +732,43 @@ void processingLoop(std::size_t shard) noexcept {
                 config.nearbyDistance, config.retainLastPosition,
                 batch->liveLifetime, config.showAllActors, config.playersOnly,
                 std::chrono::minutes(config.retentionMinutes));
+            if(config.showNameTags) {
+                snapshot->nameMeshes.reserve(snapshot->boxes.size());
+                std::size_t built=0;
+                for(const auto& box:snapshot->boxes) {
+                    const hitbox::NameKey key{batch->camera.epoch,box.actorKey,box.entityId};
+                    auto found=names.find(box.runtimeId);
+                    const auto observed=nameMailbox.read(key);
+                    if(observed && (found==names.end() || found->second.key!=key ||
+                        found->second.revision!=observed->revision)) {
+                        auto name=hitbox::normalizedName(std::string_view(observed->bytes.data(),observed->size));
+                        if(!name.empty() && (found==names.end() || !found->second.mesh || found->second.mesh->text!=name)) {
+                            if(built<2) {
+                                ++built;
+                                auto mesh=nameMesher.make(std::move(name));
+                                if(!mesh && !fontFailureLogged) {
+                                    fontFailureLogged=true; log("name label geometry unavailable; HitBox lines remain active");
+                                }
+                                if(found==names.end() && names.size()>=hitbox::TrackingBudget::maximumActors) {
+                                    auto oldest=std::min_element(names.begin(),names.end(),[](const auto& a,const auto& b) {
+                                        return a.second.touched<b.second.touched;
+                                    });
+                                    names.erase(oldest);
+                                }
+                                auto& entry=names[box.runtimeId];
+                                entry.key=key; entry.revision=observed->revision;
+                                if(mesh) entry.mesh=std::move(mesh);
+                                found=names.find(box.runtimeId);
+                            }
+                        } else if(found!=names.end()) {
+                            // Blank/format-only observations do not erase a cached name.
+                            found->second.key=key; found->second.revision=observed->revision;
+                        }
+                    }
+                    if(found!=names.end()) found->second.touched=++nameTouch;
+                    snapshot->nameMeshes.push_back(found==names.end() ? nullptr : found->second.mesh);
+                }
+            }
             if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
             const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
             if (previous) retired.push_back(previous);
@@ -679,7 +777,7 @@ void processingLoop(std::size_t shard) noexcept {
             if (config.debug && Clock::now() >= nextLog) {
                 nextLog = Clock::now() + std::chrono::seconds(10);
                 log("HitBox worker ", shard, ": native_pool=", batch->population,
-                    " copied=", batch->count, " cached=", cache.size(), " last_position_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " tracked_total=", trackingBudget->size(), " tracking_limit=", hitbox::TrackingBudget::maximumActors, " [RuntimeID partition]");
+                    " copied=", batch->count, " cached=", cache.size(), " last_position_records=", cache.retainedSize(), " name_cache=", names.size(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " tracked_total=", trackingBudget->size(), " tracking_limit=", hitbox::TrackingBudget::maximumActors, " [RuntimeID partition]");
             }
         } catch (...) {}
     }
@@ -883,6 +981,7 @@ std::atomic<bool> worldRenderFault{};
 // would free executable code still in flight. No worker/native data is touched.
 constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visibility limit.
 struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
+    const std::shared_ptr<const hitbox::NameMesh>* nameMeshes{};
     std::chrono::milliseconds liveLifetime{}; };
 struct NativeDrawInput {
     std::array<NativeDrawRange, workerCount> ranges{};
@@ -899,6 +998,87 @@ bool safeWrite(void* base, std::size_t offset, const T& value) noexcept {
     if (!permittedAddress(dest,sizeof(T),false,true)) return false;
     __try { *dest=value; return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+struct NameDrawItem {
+    const hitbox::NameMesh* mesh{};
+    hitbox::NameBillboard billboard;
+    bool retained{};
+};
+struct NameQuadBatch {
+    void* screen{};
+    void* tess{};
+    std::size_t remaining{},inMesh{};
+    void flush() noexcept {
+        if(!inMesh) return;
+        alignas(16) std::array<std::byte,0x58> scratch{};
+        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
+        inMesh=0;
+    }
+    void quad(const std::array<bedrock::Vec3,4>& vertices) noexcept {
+        if(!inMesh) tessBegin(tess,0,1,static_cast<int>(std::min<std::size_t>(remaining,16384)),false);
+        for(const auto& p:vertices) tessVertex(tess,p.x,p.y,p.z);
+        inMesh+=4; remaining-=4;
+        if(inMesh==16384 || !remaining) flush();
+    }
+};
+bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& origin,
+                     const NativeDrawInput* input) noexcept {
+    // Pointers are borrowed from the immutable snapshots retained by drawWorldBoxes.
+    std::array<NameDrawItem,hitbox::TrackingBudget::maximumActors> selected;
+    std::size_t count=0,vertices=0;
+    constexpr std::size_t maximumVertices=98304;
+    for(const auto& range:input->ranges) {
+        if(!range.nameMeshes) continue;
+        for(std::size_t i=0;i<range.count && count<selected.size();++i) {
+            const auto& box=range.boxes[i];
+            const auto* mesh=range.nameMeshes[i].get();
+            if(!mesh || mesh->triangles.empty() || mesh->triangles.size()%3 ||
+                !hitbox::visibleInFrame(box,input->now,range.liveLifetime,
+                    input->config.retainLastPosition,input->config.playersOnly,
+                    std::chrono::minutes(input->config.retentionMinutes))) continue;
+            const auto needed=4+(mesh->triangles.size()/3)*4;
+            if(needed>maximumVertices-vertices) continue;
+            vertices+=needed;
+            selected[count++]={mesh,hitbox::nameBillboard(hitbox::interpolatedBounds(box,input->now),origin),box.retained};
+        }
+    }
+    if(!count) return true;
+    const float height=0.25f*input->config.nameTagScale;
+    for(unsigned pass=0;pass<3;++pass) {
+        std::size_t groupVertices=0;
+        for(std::size_t i=0;i<count;++i)
+            if(!pass || selected[i].retained==(pass==2))
+                groupVertices+=pass ? selected[i].mesh->triangles.size()/3*4 : 4;
+        if(!groupVertices) continue;
+        const auto rgba=hitbox::opaqueColor(input->config.retainedColor);
+        const FloatColor color=pass==0 ? FloatColor{0.03f,0.03f,0.03f,1} :
+            pass==1 ? FloatColor{1,1,1,1} : FloatColor{rgba[0],rgba[1],rgba[2],1};
+        const std::uint8_t dirty=1;
+        if(!safeWrite(shader,0,color) || !safeWrite(shader,worldRenderProfile.dirty,dirty)) return false;
+        NameQuadBatch batch{screen,tess,groupVertices};
+        for(std::size_t i=0;i<count;++i) {
+            const auto& item=selected[i];
+            if(pass && item.retained!=(pass==2)) continue;
+            if(!pass) {
+                const auto half=item.mesh->width*0.5f+0.08f;
+                batch.quad({hitbox::nameVertex(item.billboard,{-half,-0.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{half,-0.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{half,1.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{-half,1.04f},height,origin)});
+            } else {
+                for(std::size_t p=0;p<item.mesh->triangles.size();p+=3) {
+                    const auto a=hitbox::nameVertex(item.billboard,item.mesh->triangles[p],height,origin);
+                    const auto b=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+1],height,origin);
+                    const auto c=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+2],height,origin);
+                    // Existing native Quad mode, with a degenerate second triangle.
+                    batch.quad({a,b,c,c});
+                }
+            }
+        }
+        batch.flush();
+    }
+    return true;
 }
 
 int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input) noexcept {
@@ -970,6 +1150,8 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             }
             if(!success) break;
         }
+        if(success && input->config.showNameTags)
+            success=drawNativeNames(screen,tess,shader,origin,input);
     } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
     // Restore the borrowed scalar state, also after a guarded native fault.
     safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
@@ -994,6 +1176,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
         // Bound the combined frame even during that asynchronous transition.
         input.ranges[i]={snapshots[i]->boxes.data(),
             std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
+            snapshots[i]->nameMeshes.size()==snapshots[i]->boxes.size() ? snapshots[i]->nameMeshes.data() : nullptr,
             snapshots[i]->liveLifetime};
         count+=input.ranges[i].count;
     }
@@ -1142,7 +1325,7 @@ DWORD WINAPI startClient(void*) {
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
-    log("2 processing workers + 1 log writer ready [copied scalars only]");
+    log("2 processing workers + 1 log writer ready [copied Actor snapshots + observed name bytes]");
     gameHooks = std::make_unique<bedrock::GameHooks>(gameApi);
     gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);
@@ -1155,6 +1338,15 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
+    const auto nameSource=bedrock::resolveSharedHook(resolver,"Actor::getNameTag",BDS_HOOK_ACTOR_GET_NAME_TAG);
+    if(nameSource && bedrock::isUsableSharedHookResolution(*nameSource) &&
+        BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG,reinterpret_cast<void*>(nameSource->address),
+            &observeNameTag,nullptr,&nameTagToken))
+        log("NameTag observation active [cached by RuntimeID; no getter polling; worker font geometry]");
+    else log("NameTag source unavailable; HitBox lines remain active");
+    struct NameHookStop { ~NameHookStop() {
+        if(nameTagToken) BDS_HookUnsubscribe(std::exchange(nameTagToken,nullptr));
+    } } nameHookStop;
     if (!installWorldRenderer(error)) {
         log("world renderer install failed: ", error);
         gameHooks.reset();

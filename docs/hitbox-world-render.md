@@ -206,3 +206,32 @@ The default range is now 100 blocks (show_all_actors=false); nearby_distance
 accepts 4..128. Explicit existing configuration is honored, including older
 32-block ranges and one-minute retention. show_all_actors=true bypasses distance
 filtering. Only loaded Actors with valid captures are available.
+
+## Cached name labels
+
+Name labels use the shared SDK Actor::getNameTag broker to observe returned names;
+there is no periodic native name getter call. Hook callbacks guard a bounded string
+copy and a scalar EnTT entity-ID read. A fixed-capacity, try-lock mailbox carries
+only copied bytes and numeric comparison keys. The worker joins these against
+Actor pointer + entity generation + world epoch from the existing capture, and
+stores normalized first-line names by RuntimeID. Empty observations preserve the
+previous name; changed generations/worlds cannot borrow an old pointer's label.
+
+Windows DirectWrite lays out the UTF-8 text with system font fallback. Its
+GetGlyphRunOutline output is tessellated through a CPU-only Direct2D geometry
+factory on the processing worker. See [Microsoft's glyph-run documentation](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwritefontface-getglyphrunoutline).
+No game font ABI or new function RVA is introduced. Immutable triangle meshes
+are regenerated only on name changes (at most two per worker batch) and retained
+with the existing worker-owned snapshots. Rendering converts them to camera-facing
+world-space quads through the existing native Tessellator/material path. Each
+triangle uses a degenerate Quad, following the native primitive numbering used by
+the Latite reference; the actual game label draw still needs runtime confirmation.
+
+show_name_tags defaults to true; name_tag_scale is clamped to 0.25..3.0. Labels
+share live/retained filtering and epochs with their boxes. CPU names/geometry are
+bounded to 1000 RuntimeIDs per worker, and the raw observation mailbox has 2048
+slots. Rendering permits at most 98,304 label vertices per frame and batches
+submissions; no font shaping, native name read, or text geometry allocation occurs
+on the render thread. Windows tests exercise English/Japanese font tessellation;
+portable tests cover formatting, UTF-8 boundaries, identity isolation, and billboard
+coordinates. They do not establish native game rendering correctness.

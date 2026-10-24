@@ -1,11 +1,65 @@
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#endif
 #include "hitbox/box_cache.hpp"
 #include "hitbox/batch_queue.hpp"
+#include "hitbox/name_tags.hpp"
+#ifdef _WIN32
+#include "hitbox/name_mesh_win32.hpp"
+#endif
 #include "hitbox/world_render_profile.hpp"
 #include <bedrock/generated_symbols.hpp>
 #include <cassert>
 #include <limits>
 
 int main() {
+    {
+        const std::string japanese=reinterpret_cast<const char*>(u8"テスト名前");
+        assert(hitbox::normalizedName("  Player  ")=="Player");
+        assert(hitbox::normalizedName("\xc2\xa7" "aPlayer\xc2\xa7" "r\nHealth: 20")=="Player");
+        assert(hitbox::normalizedName("\xc2\xa7" "b"+japanese)==japanese);
+        assert(hitbox::normalizedName("\xc2\xa7" "a   ").empty());
+        assert(hitbox::normalizedName(std::string("A\xf0\x9f",3))=="A");
+        assert(hitbox::normalizedName(std::string("A\xc0\xaf",3))=="A");
+        assert(hitbox::normalizedName(std::string(200,'x')).size()==96);
+        auto mailbox=std::make_unique<hitbox::NameMailbox>();
+        const hitbox::NameKey key{1,0x10000,42};
+        assert(!mailbox->read(key));
+        assert(mailbox->observe(key,"Player"));
+        const auto first=mailbox->read(key);
+        assert(first && std::string(first->bytes.data(),first->size)=="Player");
+        assert(!mailbox->observe(key,""));
+        assert(!mailbox->observe(key,"Player"));
+        assert(mailbox->read(key)->revision==first->revision);
+        assert(!mailbox->read({2,key.actor,key.entity})); // World change cannot reuse the name.
+        assert(!mailbox->read({1,key.actor,key.entity+0x40000})); // New EnTT generation at same pointer.
+        assert(!mailbox->read({1,key.actor+8,key.entity}));
+        assert(mailbox->observe(key,japanese));
+        const auto updated=mailbox->read(key);
+        assert(updated && updated->revision>first->revision);
+        assert(hitbox::normalizedName(std::string_view(updated->bytes.data(),updated->size))==japanese);
+        assert(mailbox->observe({2,key.actor,key.entity},"NewWorld"));
+        assert(std::string(mailbox->read(key)->bytes.data(),mailbox->read(key)->size)==japanese);
+        const bedrock::ActorBounds bounds{{-0.5f,0,-0.5f},{0.5f,2,0.5f}};
+        const auto label=hitbox::nameBillboard(bounds,{0,5,5});
+        const bedrock::Vec3 toCamera{-label.anchor.x,5-label.anchor.y,5-label.anchor.z};
+        assert(std::abs(label.up.x*toCamera.x+label.up.y*toCamera.y+label.up.z*toCamera.z)<0.0001f);
+        assert(std::abs(label.right.x*label.up.x+label.right.y*label.up.y+label.right.z*label.up.z)<0.0001f);
+        const auto vertex=hitbox::nameVertex(label,{0,0},0.25f,{100,200,300});
+        assert(vertex.x==-100 && std::abs(vertex.y+197.8f)<0.0001f && vertex.z==-300);
+#ifdef _WIN32
+        hitbox::NameMesher mesher;
+        assert(!mesher.make(""));
+        for(const auto& name: {std::string("Player_123"),japanese}) {
+            const auto mesh=mesher.make(name);
+            assert(mesh && mesh->text==name && mesh->width>0);
+            assert(!mesh->triangles.empty() && mesh->triangles.size()%3==0);
+            assert(mesh->triangles.size()<=hitbox::NameTriangleSink::maximumTriangles*3);
+            for(const auto point:mesh->triangles) assert(std::isfinite(point.x) && std::isfinite(point.y));
+        }
+#endif
+    }
     hitbox::WorldRenderProfile profile;
     std::string error;
     assert(hitbox::parseWorldRenderProfile(bedrock::generated::kSymbolDatabase,profile,error));

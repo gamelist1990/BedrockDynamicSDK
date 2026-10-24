@@ -4,6 +4,7 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 
 - 既定では100ブロック以内の取得できたActorを表示。NameTagに依存せずRuntimeIDで追跡
 - `players_only=true` でPlayerのみに切替可能。ActorOwner / RuntimeID / AABBShapeを照合してAABBを取得
+- 取得できたNameTagをRuntimeIDごとにキャッシュし、枠の上に表示。非表示になった後も取得済みの名前を使用
 - SDKのバージョン別Nativeレイアウトと共有Hook runtimeを使用
 - Latiteの方式を参考に、LevelRenderer::renderLevelの後でゲームのTessellatorへ直接描画
 - ゲームのrender originとname_tagマテリアルを使用し、独自の画面投影・目線高・FOV計算を廃止
@@ -30,6 +31,8 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
   "debug": false,
   "show_all_actors": false,
   "players_only": false,
+  "show_name_tags": true,
+  "name_tag_scale": 1.0,
   "nearby_distance": 100.0,
   "retain_last_position": false,
   "retention_minutes": 10,
@@ -55,8 +58,8 @@ Player判定履歴も最大1000件に制限し、ワールド変更時に消し�
 打切りは行いませんが、表示対象が増えれば描画量も増えます。
 
 `debug=true` では、Nativeコピーの所要時間・走査数と、各ワーカーの保持数を10秒間隔で記録します。
-Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。名前の取得やNameTag Hookは
-行わず、表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
+Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
+名前は共有NameTag Hookが返した結果だけを利用し、名前getterを周期的に呼び出しません。
 
 ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標に取得します。
 1tickの上限は32件、Native読み取りループの処理予算は250µsです。予算を超えた場合は続きから次のtickへ回します。
@@ -81,6 +84,27 @@ ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標
 
 読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
+### 名前表示とキャッシュ
+
+`show_name_tags=true`（既定）で枠の上にキャッシュ済みの名前を表示します。
+`name_tag_scale` は0.25〜3.0（既定1.0）で、文字の大きさを調整します。
+ゲームが `Actor::getNameTag` を呼んだ際の戻り値をSDKの共有Hookで観測し、Actorのポインタ・
+EnTT世代付きentity ID・ワールド世代で取得バッチへ照合してからRuntimeIDへ結び付けます。
+名前が空・装飾だけになっても、保存済みの名前は消しません。ポインタだけで別Actorへ引き継ぐことはありません。
+名前の先頭行を使い、Minecraftの `§` 装飾コードを除去します。文字数は96文字、観測コピーは最大384バイトです。
+
+ゲーム側のコールバックは名前のコピーとentity IDの確認だけを行い、待機しない固定容量メールボックスへ渡します。
+文字整形・Windows DirectWriteによるフォント処理・Direct2DによるCPU上の三角形化は処理ワーカーで実行します。
+日本語を含むUTF-8名はWindowsのフォントフォールバックを使用します。名前が変わった場合だけ文字形状を作り直し、
+各ワーカーは1バッチにつき最大2件作成します。描画側はキャッシュ済み頂点を、視点に向いた板としてゲームの
+Tessellatorへ渡します。DXGI/ImGuiのオーバーレイや、未確認のゲーム内フォント関数は使いません。
+黒い背景と白い文字で表示し、保存位置の名前は保存色になります。名前の描画頂点も1フレーム98,304頂点に制限します。
+
+名前キャッシュは各ワーカー最大1000 RuntimeID、観測メールボックスは固定2048スロットです。
+上限時には古いキャッシュを入れ替えます。ワールド変更時はキャッシュを消し、旧世代の観測も受け付けません。
+位置保存が有効なら保存枠にも名前を表示します。取得していない名前は表示しません。
+NameTag Hookを登録できない場合も枠の表示は継続します。
+
 ### Playerの最終観測位置の保存
 
 `retain_last_position=true` の場合は、Playerの有効なAABBを取得するたびに最新の位置を保存します。

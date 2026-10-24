@@ -18,6 +18,8 @@ struct Sample {
     bedrock::ActorBounds bounds{};
     Clock::time_point seenAt{};
     bool isPlayer{};
+    std::uintptr_t actorKey{};
+    std::uint32_t entityId{};
 };
 struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};
