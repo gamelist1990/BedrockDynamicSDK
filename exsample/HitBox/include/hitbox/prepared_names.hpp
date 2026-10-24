@@ -66,7 +66,7 @@ inline bool canReuseNames(const PreparedNames& prepared,
     if(prepared.height!=height || distanceSquared(prepared.origin,origin)>0.01f*0.01f ||
         oldBoxes.size()!=boxes.size() || oldNames.size()!=oldBoxes.size() ||
         oldNames.size()!=names.size() || names.size()!=boxes.size()) return false;
-    const auto near=[](const bedrock::Vec3& a,const bedrock::Vec3& b) {
+    const auto closeEnough=[](const bedrock::Vec3& a,const bedrock::Vec3& b) {
         return std::abs(a.x-b.x)<=0.001f && std::abs(a.y-b.y)<=0.001f && std::abs(a.z-b.z)<=0.001f;
     };
     for(std::size_t i=0;i<boxes.size();++i) {
@@ -75,7 +75,7 @@ inline bool canReuseNames(const PreparedNames& prepared,
         if(!names[i]) continue;
         const auto previous=interpolatedBounds(oldBoxes[i],prepared.preparedAt);
         const auto current=interpolatedBounds(boxes[i],now);
-        if(!near(previous.minimum,current.minimum) || !near(previous.maximum,current.maximum)) return false;
+        if(!closeEnough(previous.minimum,current.minimum) || !closeEnough(previous.maximum,current.maximum)) return false;
     }
     return true;
 }
