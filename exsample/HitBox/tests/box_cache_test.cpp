@@ -267,10 +267,11 @@ int main() {
         latest.observe(player,camera,32,true);
         player.seenAt=now+750ms; latest.observe(player,camera,32,true);
         assert(latest.retainedSize()==0);
+        player.bounds={{2.5f,0,0},{3.5f,2,1}};
         player.seenAt=now+1250ms; latest.observe(player,camera,32,true);
         assert(latest.retainedSize()==0); // Confirmed stillness is only a candidate while live.
         boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
-        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2);
+        assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2.5f);
         assert(boxes[0].blendDuration.count()==0);
         const auto frozen=boxes[0];
         assert(hitbox::visibleInFrame(frozen,player.seenAt+10min-1ms,1500ms,true,true));
@@ -278,7 +279,7 @@ int main() {
         auto delayed=sample; delayed.isPlayer=true; delayed.seenAt=now+100ms;
         latest.observe(delayed,camera,32,true);
         boxes=latest.visible(now+3s,camera,32,true,1500ms);
-        assert(boxes.size()==1 && boxes[0].bounds.minimum.x==2);
+        assert(boxes.size()==1 && boxes[0].bounds.minimum.x==2.5f);
         player.isPlayer=false; player.bounds={{5,0,0},{6,2,1}}; player.seenAt=now+3s;
         latest.observe(player,camera,32,true);
         boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
@@ -327,7 +328,7 @@ int main() {
         auto player=sample; player.isPlayer=true;
         for(int i=0;i<=20;++i) {
             player.seenAt=now+250ms*i;
-            player.bounds={{0.04f*i,0,0},{1+0.04f*i,2,1}};
+            player.bounds={{0.4f*i,0,0},{1+0.4f*i,2,1}};
             moving.observe(player,camera,32,true);
             auto other=sample; other.seenAt=player.seenAt;
             npc.observe(other,camera,32,true);

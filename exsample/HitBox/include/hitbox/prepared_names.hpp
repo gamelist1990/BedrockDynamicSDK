@@ -7,6 +7,8 @@ struct PreparedName {
 };
 struct PreparedNames {
     bedrock::Vec3 origin{};
+    Clock::time_point preparedAt{};
+    float height{};
     std::vector<bedrock::Vec3> vertices;
     std::vector<PreparedName> labels;
     std::size_t budgetSkipped{};
@@ -17,7 +19,7 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
     const std::vector<std::shared_ptr<const NameMesh>>& names,
     const bedrock::Vec3& origin,Clock::time_point now,float height,std::size_t maximumVertices) {
     PreparedNames output;
-    output.origin=origin;
+    output.origin=origin; output.preparedAt=now; output.height=height;
     const auto count=std::min(boxes.size(),names.size());
     std::size_t reserve=0;
     for(std::size_t i=0;i<count;++i) if(names[i])
@@ -53,5 +55,28 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
         output.labels.push_back({i,first,needed});
     }
     return output;
+}
+// Compare cheap scalar keys before allocating/sorting/transforming glyphs.
+// Bounds tolerance is 1mm; camera-origin tolerance is 1cm. Both are measured
+// against the original prepared geometry, so repeated reuse cannot accumulate drift.
+inline bool canReuseNames(const PreparedNames& prepared,
+    const std::vector<BoxRecord>& oldBoxes,const std::vector<std::shared_ptr<const NameMesh>>& oldNames,
+    const std::vector<BoxRecord>& boxes,const std::vector<std::shared_ptr<const NameMesh>>& names,
+    const bedrock::Vec3& origin,Clock::time_point now,float height) noexcept {
+    if(prepared.height!=height || distanceSquared(prepared.origin,origin)>0.01f*0.01f ||
+        oldBoxes.size()!=boxes.size() || oldNames.size()!=oldBoxes.size() ||
+        oldNames.size()!=names.size() || names.size()!=boxes.size()) return false;
+    const auto near=[](const bedrock::Vec3& a,const bedrock::Vec3& b) {
+        return std::abs(a.x-b.x)<=0.001f && std::abs(a.y-b.y)<=0.001f && std::abs(a.z-b.z)<=0.001f;
+    };
+    for(std::size_t i=0;i<boxes.size();++i) {
+        if(oldBoxes[i].runtimeId!=boxes[i].runtimeId || oldBoxes[i].retained!=boxes[i].retained ||
+            oldBoxes[i].isPlayer!=boxes[i].isPlayer || oldNames[i].get()!=names[i].get()) return false;
+        if(!names[i]) continue;
+        const auto previous=interpolatedBounds(oldBoxes[i],prepared.preparedAt);
+        const auto current=interpolatedBounds(boxes[i],now);
+        if(!near(previous.minimum,current.minimum) || !near(previous.maximum,current.maximum)) return false;
+    }
+    return true;
 }
 } // namespace hitbox

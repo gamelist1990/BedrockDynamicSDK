@@ -107,10 +107,11 @@ struct RenderSnapshot {
     std::uint64_t epoch{};
     std::vector<BoxRecord> boxes;
     std::vector<std::shared_ptr<const hitbox::NameMesh>> nameMeshes;
-    hitbox::PreparedNames preparedNames;
+    std::shared_ptr<const hitbox::PreparedNames> preparedNames;
     std::chrono::milliseconds liveLifetime{1000};
 };
-constexpr std::size_t workerCount = 2;
+constexpr std::size_t workerCapacity = 3;
+std::size_t workerCount = 1; // Selected once before workers/hooks start; never changes live.
 constexpr std::size_t maximumNativeBatch = hitbox::CaptureSchedule::maximumBatch;
 struct CaptureBatch {
     CameraState camera;
@@ -135,7 +136,12 @@ struct ProcessingWorker {
     bool stopping{};
     std::shared_ptr<const RenderSnapshot> snapshot;
 };
-std::array<ProcessingWorker, workerCount> processingWorkers;
+std::array<ProcessingWorker, workerCapacity> processingWorkers;
+std::size_t actorWorker(std::uint64_t id) noexcept {
+    id=(id^(id>>30))*0xbf58476d1ce4e5b9ULL;
+    id=(id^(id>>27))*0x94d049bb133111ebULL;
+    return static_cast<std::size_t>(id^(id>>31))%workerCount;
+}
 const auto trackingBudget=std::make_shared<hitbox::TrackingBudget>();
 std::atomic<std::uint64_t> worldEpoch{};
 std::atomic<std::uintptr_t> localActorIdentity{};
@@ -697,8 +703,8 @@ struct NameDiagnostics {
         nativeEmpty{},nativeUnreadable{},nativeFaults{},mailboxMisses{},blankNames{},meshFailures{},workerExceptions{},
         renderCalls{},renderNoMesh{},renderHidden{},renderBudget{},renderSubmitted{},renderFaults{},
         frameNoBoxes{},frameStale{};
-    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{},retainedBoxes{},retainedMeshes{}; };
-    std::array<Worker,workerCount> workers;
+    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{},retainedBoxes{},retainedMeshes{},geometryReused{}; };
+    std::array<Worker,workerCapacity> workers;
 } nameDiagnostics;
 void reportNameDiagnostics() {
     static auto next=Clock::time_point{};
@@ -718,7 +724,7 @@ void reportNameDiagnostics() {
         log("NameTag worker state: shard=",i," boxes=",d.workers[i].boxes.load(),
             " matched_names=",d.workers[i].observed.load()," ready_meshes=",d.workers[i].meshes.load(),
             " prepared_vertices=",d.workers[i].vertices.load()," prepare_us=",d.workers[i].prepareUs.load(),
-            " retained_boxes=",d.workers[i].retainedBoxes.load()," retained_meshes=",d.workers[i].retainedMeshes.load());
+            " retained_boxes=",d.workers[i].retainedBoxes.load()," retained_meshes=",d.workers[i].retainedMeshes.load()," geometry_reused=",d.workers[i].geometryReused.load());
     log("NameTag processing [5s]: mailbox_misses=",d.mailboxMisses.exchange(0),
         " blank_after_normalize=",d.blankNames.exchange(0)," mesh_failures=",d.meshFailures.exchange(0),
         " worker_exceptions=",d.workerExceptions.exchange(0));
@@ -844,9 +850,12 @@ void processingLoop(std::size_t shard) noexcept {
     std::uint64_t nameTouch=0;
     bool fontFailureLogged=false;
     bool nameReadyLogged=false;
+    bool publishedEmpty=false;
     std::uint64_t loggedEpoch = 0;
     Clock::time_point nextLog{};
     std::optional<CaptureBatch> lastCapture;
+    std::shared_ptr<const RenderSnapshot> previousPrepared;
+    std::uint64_t mailboxRevision=0;
     Clock::time_point nextNameExample{};
     // Retain replaced snapshots until no callback holds them. Their vectors
     // are then destroyed here, instead of on the game's/renderer's last release.
@@ -866,13 +875,14 @@ void processingLoop(std::size_t shard) noexcept {
             const auto epoch=worldEpoch.load(std::memory_order_acquire);
             if (!cache.beginWorld(epoch)) continue;
             if (loggedEpoch != epoch) {
-                loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0; nameReadyLogged=false;
-                lastCapture.reset(); nextNameExample={};
+                loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0; nameReadyLogged=false; publishedEmpty=false;
+                lastCapture.reset(); previousPrepared.reset(); mailboxRevision=0; nextNameExample={};
                 nameDiagnostics.workers[shard].boxes=0;
                 nameDiagnostics.workers[shard].observed=0;
                 nameDiagnostics.workers[shard].meshes=0;
                 nameDiagnostics.workers[shard].vertices=0; nameDiagnostics.workers[shard].prepareUs=0;
                 nameDiagnostics.workers[shard].retainedBoxes=0; nameDiagnostics.workers[shard].retainedMeshes=0;
+                nameDiagnostics.workers[shard].geometryReused=0;
                 const auto previous=std::atomic_exchange_explicit(&worker.snapshot,
                     std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
                 if(previous) retired.push_back(previous);
@@ -888,7 +898,7 @@ void processingLoop(std::size_t shard) noexcept {
             const auto& config = *batch->config;
             for (std::size_t i = 0; i < batch->count; ++i) {
                 const auto& sample = batch->samples[i];
-                if (sample.runtimeId % workerCount != shard) continue;
+                if (actorWorker(sample.runtimeId) != shard) continue;
                 cache.observe(sample, batch->camera.cameraPosition,
                               config.nearbyDistance, config.retainLastPosition, config.showAllActors);
             }
@@ -899,16 +909,22 @@ void processingLoop(std::size_t shard) noexcept {
                 config.nearbyDistance, config.retainLastPosition,
                 batch->liveLifetime, config.showAllActors, config.playersOnly,
                 std::chrono::minutes(config.retentionMinutes));
+            if(snapshot->boxes.empty() && publishedEmpty) continue;
+            const auto revision=nameMailbox.revision();
+            const bool mailboxChanged=revision!=mailboxRevision;
+            mailboxRevision=revision;
             std::size_t observedNames=0,readyMeshes=0,misses=0,blanks=0,failures=0,savedBoxes=0,savedMeshes=0;
             if(config.showNameTags) {
                 snapshot->nameMeshes.reserve(snapshot->boxes.size());
                 std::size_t built=0;
+                const auto fontBegin=Clock::now();
                 for(const auto& box:snapshot->boxes) {
                     if(box.retained) ++savedBoxes;
                     const hitbox::NameKey key{batch->camera.epoch,box.actorKey,box.entityId};
                     auto found=names.find(box.runtimeId);
-                    const auto observed=nameMailbox.read(key);
-                    if(observed) ++observedNames; else ++misses;
+                    const auto observed=(mailboxChanged || found==names.end() || found->second.key!=key)
+                        ? nameMailbox.read(key) : std::optional<hitbox::NameMailbox::Value>{};
+                    if(observed || (found!=names.end() && !found->second.text.empty())) ++observedNames; else ++misses;
                     if(observed && (found==names.end() || found->second.key!=key ||
                         found->second.revision!=observed->revision)) {
                         auto text=hitbox::normalizedName(std::string_view(observed->bytes.data(),observed->size));
@@ -938,7 +954,8 @@ void processingLoop(std::size_t shard) noexcept {
                         // RuntimeID + world epoch survives Actor disappearance. A
                         // copied name must not depend on reading the old native Actor again.
                         if(!entry.text.empty() && (!entry.mesh || entry.mesh->text!=entry.text) &&
-                            built<4 && Clock::now()>=entry.retryAfter) {
+                            built<2 && Clock::now()>=entry.retryAfter &&
+                            (!built || Clock::now()-fontBegin<std::chrono::microseconds(1500))) {
                             ++built;
                             auto mesh=nameMesher.make(entry.text);
                             if(mesh) {
@@ -965,13 +982,26 @@ void processingLoop(std::size_t shard) noexcept {
                 }
             }
             const auto preparationBegin=Clock::now();
+            bool reused=false;
             if(config.showNameTags) {
                 const auto origin=renderCamera.read(snapshot->epoch);
-                if(origin) snapshot->preparedNames=hitbox::prepareNames(snapshot->boxes,snapshot->nameMeshes,
-                    *origin,Clock::now(),0.25f*config.nameTagScale,49152);
-                nameDiagnostics.renderBudget+=snapshot->preparedNames.budgetSkipped;
+                const auto height=0.25f*config.nameTagScale;
+                if(origin && previousPrepared && previousPrepared->preparedNames &&
+                    hitbox::canReuseNames(*previousPrepared->preparedNames,
+                        previousPrepared->boxes,previousPrepared->nameMeshes,snapshot->boxes,snapshot->nameMeshes,
+                        *origin,preparationBegin,height)) {
+                    snapshot->preparedNames=previousPrepared->preparedNames;
+                    reused=true;
+                } else if(origin) {
+                    auto prepared=std::make_shared<hitbox::PreparedNames>(hitbox::prepareNames(
+                        snapshot->boxes,snapshot->nameMeshes,*origin,preparationBegin,height,98304/workerCount));
+                    nameDiagnostics.renderBudget+=prepared->budgetSkipped;
+                    snapshot->preparedNames=std::move(prepared);
+                }
             }
-            nameDiagnostics.workers[shard].vertices=snapshot->preparedNames.vertices.size();
+            if(!reused) previousPrepared=snapshot;
+            nameDiagnostics.workers[shard].geometryReused=reused;
+            nameDiagnostics.workers[shard].vertices=snapshot->preparedNames ? snapshot->preparedNames->vertices.size() : 0;
             nameDiagnostics.workers[shard].prepareUs=std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-preparationBegin).count();
             nameDiagnostics.workers[shard].boxes=snapshot->boxes.size();
             nameDiagnostics.workers[shard].observed=observedNames;
@@ -984,6 +1014,7 @@ void processingLoop(std::size_t shard) noexcept {
             if (snapshot->epoch != worldEpoch.load(std::memory_order_acquire)) continue;
             const auto previous = std::atomic_load_explicit(&worker.snapshot, std::memory_order_acquire);
             if (previous) retired.push_back(previous);
+            publishedEmpty=snapshot->boxes.empty();
             std::atomic_store_explicit(&worker.snapshot,
                 std::shared_ptr<const RenderSnapshot>(std::move(snapshot)), std::memory_order_release);
             if (config.debug && Clock::now() >= nextLog) {
@@ -1002,6 +1033,8 @@ void stopProcessingWorkers() noexcept {
     for (auto& worker : processingWorkers) if (worker.thread.joinable()) worker.thread.join();
 }
 bool startProcessingWorkers() noexcept {
+    const auto logicalCpus=std::thread::hardware_concurrency();
+    workerCount=std::clamp<std::size_t>(logicalCpus>2 ? logicalCpus-2 : 1,1,workerCapacity);
     try {
         for (std::size_t i = 0; i < workerCount; ++i)
             processingWorkers[i].thread = std::thread(processingLoop, i);
@@ -1019,7 +1052,7 @@ void refreshGameTickSnapshot() {
     static auto lastTick = Clock::time_point{};
     static std::size_t cursor = 0;
     static hitbox::CaptureSchedule schedule;
-    static hitbox::PendingDelivery<CaptureBatch,workerCount> delivery;
+    static hitbox::PendingDelivery<CaptureBatch,workerCapacity> delivery;
     static auto nextReport = Clock::time_point{};
     static auto nextFailureReport = Clock::time_point{};
     static double averageVisited = maximumNativeBatch;
@@ -1059,6 +1092,7 @@ void refreshGameTickSnapshot() {
     gameHeartbeatMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()).count(), std::memory_order_release);
     const auto sendBatch=[](std::size_t shard,const CaptureBatch& batch) {
+        if(shard>=workerCount) return true;
         auto& worker=processingWorkers[shard];
         std::unique_lock lock(worker.mutex,std::try_to_lock);
         if(!lock || worker.stopping || !worker.pending.push(batch)) return false;
@@ -1158,7 +1192,7 @@ void refreshGameTickSnapshot() {
             " actors=", us(positionReadyAt, actorsReadyAt),
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
-            " [1-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
+            " workers=",workerCount," [1-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget]");
         if(config->debug) log("HitBox capture observations since last report: visited=", diagnostics[0],
             " copied=", diagnostics[1], " native_player=", diagnostics[2],
             " remembered_player=", diagnostics[3], " filtered_non_player=", diagnostics[4],
@@ -1234,7 +1268,7 @@ struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
     const hitbox::PreparedNames* names{};
     std::chrono::milliseconds liveLifetime{}; };
 struct NativeDrawInput {
-    std::array<NativeDrawRange, workerCount> ranges{};
+    std::array<NativeDrawRange, workerCapacity> ranges{};
     std::uintptr_t localActor{};
     Config config;
     Clock::time_point now;
@@ -1413,7 +1447,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()-
         gameHeartbeatMs.load(std::memory_order_acquire)>1000) { ++nameDiagnostics.frameStale; return; }
     const auto epoch=worldEpoch.load(std::memory_order_acquire);
-    std::array<std::shared_ptr<const RenderSnapshot>,workerCount> snapshots;
+    std::array<std::shared_ptr<const RenderSnapshot>,workerCapacity> snapshots;
     NativeDrawInput input; input.config=*config; input.now=now;
     input.localActor=localActorIdentity.load(std::memory_order_acquire);
     std::size_t count=0;
@@ -1424,7 +1458,7 @@ void drawWorldBoxes(void* renderer, void* screen) {
         // Bound the combined frame even during that asynchronous transition.
         input.ranges[i]={snapshots[i]->boxes.data(),
             std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
-            &snapshots[i]->preparedNames,
+            snapshots[i]->preparedNames.get(),
             snapshots[i]->liveLifetime};
         count+=input.ranges[i].count;
     }
@@ -1594,7 +1628,7 @@ DWORD WINAPI startClient(void*) {
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
-    log("2 processing workers + 1 log writer ready [copied Actor snapshots + observed name bytes]");
+    log(workerCount," processing workers + 1 log writer ready [hashed RuntimeID shards; reusable name vertices; copied scalars only]");
     gameHooks = std::make_unique<bedrock::GameHooks>(gameApi);
     gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);

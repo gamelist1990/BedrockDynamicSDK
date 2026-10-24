@@ -1,6 +1,7 @@
 #pragma once
 #include "box_cache.hpp"
 #include <cstring>
+#include <atomic>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -70,6 +71,7 @@ public:
         selected->key=key;
         std::memcpy(selected->value.bytes.data(),text.data(),length);
         selected->value.size=length; selected->value.revision=++revision_;
+        publishedRevision_.store(revision_,std::memory_order_release);
         return true;
     }
     // A busy worker means defer the optional native lookup, never block the game.
@@ -81,6 +83,7 @@ public:
             if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return true;
         return false;
     }
+    std::uint64_t revision() const noexcept { return publishedRevision_.load(std::memory_order_acquire); }
     std::optional<Value> read(NameKey key) const {
         std::lock_guard lock(mutex_);
         const auto begin=bucket(key);
@@ -100,6 +103,7 @@ private:
     mutable std::mutex mutex_;
     std::array<Slot,capacity> slots_{};
     std::uint64_t revision_{};
+    std::atomic<std::uint64_t> publishedRevision_{};
 };
 struct TextPoint { float x{},y{}; };
 struct NameMesh {

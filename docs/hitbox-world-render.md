@@ -290,3 +290,24 @@ including retained records. Worker vertex preparation prioritizes retained Playe
 labels before live/non-Player/farther labels under its existing vertex budget.
 This improves coverage but is not a claim that every loaded label fits the budget
 or that native text rendering has been verified in the game.
+
+## Adaptive worker count and immutable geometry reuse
+
+Workers are selected once at startup: clamp(logical CPUs - 2, 1, 3), with a
+safe minimum of one when CPU count is unavailable. RuntimeIDs are mixed before
+partitioning. Native capture remains on the game thread and graphics calls on
+the render thread. The 98,304 total label-vertex budget is divided across active
+workers; the 1000 Actor admission budget remains shared.
+
+A published mailbox revision avoids repeated reads/copies of unchanged known
+names. Workers build at most two font meshes per batch with a cooperative 1.5ms
+budget; individual native font calls cannot be interrupted. Prepared label
+vertices are shared between snapshots when mesh identity/Actor membership/flags
+are unchanged, geometry is within 1mm and camera translation is within 1cm of the
+last actual preparation. Geometry comparisons use the original prepared snapshot,
+not the latest reused one, so tolerance cannot accumulate into drift.
+
+Retention uses a 1-block radius around the stationary anchor after movement is
+first established above 0.03 blocks. Remaining within that radius for one second
+of valid observations qualifies a Player; moving outside it restarts the timer.
+This supersedes the previous 0.03-block stillness radius.

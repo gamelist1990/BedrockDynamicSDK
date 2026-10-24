@@ -227,7 +227,8 @@ public:
         if(!retain || old==records_.end() || sample.seenAt-previousSeen>std::chrono::seconds(2)) {
             entry.moved=false; entry.stationaryConfirmed=false;
             entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
-        } else if(distanceSquared(position,entry.stationaryAnchor)>0.03f*0.03f) {
+        } else if((!entry.moved && distanceSquared(position,entry.stationaryAnchor)>0.03f*0.03f) ||
+                  distanceSquared(position,entry.stationaryAnchor)>1.0f) {
             entry.moved=true; entry.stationaryConfirmed=false;
             entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
         } else {
