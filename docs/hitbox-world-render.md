@@ -155,46 +155,54 @@ player_type_id=319, retaining candidate status pending live validation.
 Evidence: `ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa`.
 The raw-function slice has the original linked addresses but lacks external
 callees and global data; parent EXE/slice hashes and file offsets are in
-`actor-type-player-check-provenance.json` outside source control. A component read
-failure is not treated as a Player. In Player-only mode non-Players are skipped
-before RuntimeID/AABB capture; worker snapshots and rendering also apply the filter
-so previously cached non-Players disappear when the setting changes.
+`actor-type-player-check-provenance.json` outside source control. A first-time component read failure is not treated as a Player. Once confirmed,
+Player identity is remembered in a fixed 2048-slot table (at most 1000 IDs) for the
+current world. The same RuntimeID retains classification if its ActorType changes
+or disappears. Replacement IDs are never linked by proximity or appearance.
+Player-only filtering occurs after reading RuntimeID and before reading AABB.
 
-## Retention: confirm a Player's physical stop, not a frozen stale snapshot
+## Retention: latest valid Player observation
 
-With retain_last_position enabled, fresh Player observations must stay within
-0.05 blocks of the initial minimum and maximum AABB coordinates for at least two
-seconds. The maximum gap between observations is one second. Time passing without
-another sample cannot confirm a stop. Moving, missing observations, changing
-Player classification or enabling retention restarts confirmation. Non-Players
-never enter the retained map.
+With retain_last_position enabled, every valid Player observation overwrites one
+saved box for that RuntimeID immediately. There is no stationary delay or
+observation-gap requirement. Live interpolation remains independent of retention;
+a fresh live box takes precedence over the saved box and avoids historical trails.
+When live capture expires, the last measured AABB can be drawn in the retained
+color with interpolation disabled. Non-Players and invalid/zero-size bounds never
+create a retained box. Delayed samples cannot rewind a newer saved observation.
 
-Live records retain their existing interpolation and adaptive freshness. A fresh
-live record takes visual precedence over the saved marker for the same RuntimeID,
-including while it moves. Each newly confirmed stop overwrites that RuntimeID's
-saved marker. When live capture expires, only the last confirmed stationary box
-remains; there is no conversion of arbitrary stale Actor boxes into retained ones.
-Confirmed boxes disable interpolation and use an explicit retained flag for color
-selection. Render-time freshness checks also reject stale live snapshots when
-native capture fails and workers cannot publish an updated view.
+The saved map shares the 1000-Actor tracking budget with the live cache.
+retention_minutes defaults to 10 and is clamped to 1..60. Expiry is measured from
+the last valid observation, including for markers outside display range. World
+or local registry changes clear identity history and both maps. Disabling
+retention clears saved markers. Missing server Actors or a replacement entity
+without the same RuntimeID cannot supply a fresh measured position; the saved
+box is explicitly a last observation, not a claim of a current live location.
 
-The saved map shares the 1000-Actor tracking budget with the live cache. retention_minutes
-is active again: default 10, clamped to 1..60 minutes. Expiry is measured from the
-last confirmed stop, including for markers outside display range. Both workers
-and rendering reject expired saved boxes, even if native capture stalls. A live
-Player whose saved marker expires needs another two seconds of observed rest to
-be saved again. World epochs clear both maps; replacement of the local Actor
-registry also resets them when the Level address stays the same. Disabling
-retention clears markers and candidate timers.
+Portable tests cover immediate retention, movement refreshing the saved box,
+live/saved deduplication, invalid or zero-size bounds, stale batch rejection,
+expiry and refresh, range filtering, bounded Player history, identity reset,
+capacity rejection and slot reuse across workers, and render-time freshness.
+They establish copied-data behavior, not live Minecraft verification.
+
+## Native build and failure diagnostics
+
+The DLL dereferences game-owned EnTT and C++ container objects, so its C++ ABI
+must be compatible with the game. Windows DLL builds now require MSVC/clang-cl
+and a release STL layout (_ITERATOR_DEBUG_LEVEL=0); MinGW builds are rejected.
+A successful GNU-target cross-compilation and pure-data test are not evidence
+of native container compatibility. CI builds MSVC against the SDK checkout from
+the same source commit and places that revision in the startup log.
+
+Capture failures now distinguish missing owner/runtime storages, rejected pool
+sizes, unreadable local registry context, and guarded native exceptions. The
+exception report identifies the attempted operation and exception code/address.
+Failed captures retry on later ticks and produce a rate-limited report every ten
+seconds; partial batches are preserved and recovery is logged. These details
+locate a failed native operation without guessing new memory offsets or silently
+turning incompatible reads into successful captures.
 
 The default range is now 100 blocks (show_all_actors=false); nearby_distance
 accepts 4..128. Explicit existing configuration is honored, including older
 32-block ranges and one-minute retention. show_all_actors=true bypasses distance
 filtering. Only loaded Actors with valid captures are available.
-
-Portable tests cover the two-second boundary, live movement/interpolation after
-confirmation, replacement by the next stop, live/saved deduplication, ten-minute
-expiry and refresh, expiry outside range, the 100-block boundary, live-cache
-capacity rejection and slot reuse across workers, observation gaps, slow movement, position jitter, non-Players, feature
-toggles, world epochs, and render-time stale-live/expired-saved rejection.
-These establish copied-data behavior, not live Minecraft verification.

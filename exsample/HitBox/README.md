@@ -11,7 +11,7 @@ BedrockDynamicSDK用のWindows x64 HitBox表示Mod exampleです。公開物は 
 - 2本の常駐処理ワーカーがRuntimeIDで担当を分け、距離判定・保持管理・頂点生成・スナップショット公開を実行
 - ログ専用ワーカーが最大250msごとにまとめて書き込み、ゲーム／描画側でflushしない
 - ワーカーにはRuntimeID・AABB・視点などのコピーだけを渡し、ActorやEnTTのポインタを参照させない
-- `retain_last_position=true` で、2秒静止を確認したPlayerの最後の位置を既定10分保存。ワールド変更時は全リセット
+- `retain_last_position=true` で、Playerの最新の有効な位置を即時更新し、最後の観測から既定10分保存。ワールド変更時は全リセット
 - Native読み取りの例外や不正値を検知した対象はスキップ
 
 設定ファイル:
@@ -41,7 +41,10 @@ Linux上のBedrockOnLinux/Protonでは、`HOME` を基準にホスト側の
 
 `players_only=true` でPlayerだけを表示し、`false` で全Actorを表示します。ActorTypeコンポーネントの
 32bit値が対象版のPlayer ID（319）と一致するかで判定します。NameTagが非表示でも名前の取得は不要です。
-Playerのみの場合は、Playerと分類できないActorを除外し、そのActorのRuntimeID/AABB読み取りも省きます。
+一度確認したPlayerは同じRuntimeIDが続く間、ActorTypeの変更や欠落後もPlayerとして扱います。
+Playerのみの場合は、RuntimeIDとActorTypeを先に確認し、未確認の非PlayerのAABB読み取りを省きます。
+Player判定履歴も最大1000件に制限し、ワールド変更時に消します。固定サイズの表を使い、取得ループでメモリ確保やロックは行いません。
+別のRuntimeIDへ変更されたActorには引き継ぎません。
 
 既定は `show_all_actors=false`、`nearby_distance=100.0` で100ブロック以内を表示します。
 距離は4〜128ブロックで設定できます。`show_all_actors=true` では距離制限を解除します。
@@ -65,7 +68,7 @@ ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標
 
 2本の処理ワーカーは通常より低い優先度で常駐し、各ワーカーの待機入力は固定FIFOで最大8件を保持します。
 キューが使用中のときゲームスレッドは待ちません。取得済みバッチは両ワーカーへの受け渡しが完了するまで
-保持し、次のNative取得を延期します。受け渡し済みワーカーへの重複送信と未処理データの上書きを防ぎます。距離判定・期限切れライブ情報の削除・静止確認・8頂点の生成・描画用の
+保持し、次のNative取得を延期します。受け渡し済みワーカーへの重複送信と未処理データの上書きを防ぎます。距離判定・期限切れライブ情報の削除・最終位置の更新・8頂点の生成・描画用の
 スナップショット作成・古い大きなスナップショットの破棄をワーカーで処理します。
 ワールドの世代が異なる入力・描画結果は拒否します。追跡は2本のワーカー合計で最大1000 Actorです。
 ライブと保存位置は同じRuntimeIDなら1件として数え、片方のワーカーに偏っても1000枠を利用できます。
@@ -78,24 +81,38 @@ ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標
 
 読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
-### 静止したPlayerの位置保存
+### Playerの最終観測位置の保存
 
-`retain_last_position=true` の場合は、Player自身の静止を2秒間確認してから位置を確定します。
-AABBの最小・最大座標が最初の観測位置からそれぞれ5cm以内に収まり、観測間隔が1秒以内であることを条件にします。
-取得が途切れて枠が止まっただけでは確定しません。移動や長い観測の途切れで、静止確認を最初からやり直します。
+`retain_last_position=true` の場合は、Playerの有効なAABBを取得するたびに最新の位置を保存します。
+2秒の静止確認や観測間隔の条件はありません。移動中も同じRuntimeIDの1件を上書きし、移動経路は増やしません。
+そのPlayerを取得できている間は現在位置だけを表示し、古い保存枠は重ねません。
+ライブ枠の有効期間が終わると、最後に取得できた位置を保存色で表示します。これは現在位置の実測ではありません。
+Playerと確認できていないActorや、不正・ゼロサイズのAABBからは保存位置を作りません。
 
-移動中のライブ枠は1tick目標の取得＋補間で更新します。そのPlayerを取得できている間は現在位置だけを表示し、
-古い保存枠は重ねません。次の場所で再び2秒静止すると、同じRuntimeIDの記録を上書きします。移動経路は増やしません。
-そのPlayerを取得できなくなった場合は、ライブ枠の有効期間が終わると、最後に確定した静止位置だけを保存色で表示します。
-未確定のPlayerやPlayer以外のActorは、取得が止まっても保存枠に変換しません。
-
-確定記録は最後の静止確認から `retention_minutes` 分で削除します（既定10分、1〜60分）。
-次の場所で2秒静止すると上書きと同時に期限を更新します。期限後も観測できているPlayerは、
-新たに2秒の静止確認を経て再保存します。距離外の保存位置も期限で削除します。
-ワールド（LevelまたはローカルActorのregistry）が変わった場合は、期限を待たず全記録をリセットします。
-`retain_last_position=false` への切り替えも記録と静止確認を消します。
+記録は最後の有効な観測から `retention_minutes` 分で削除します（既定10分、1〜60分）。
+新しい観測で上書きするたび期限を更新し、表示範囲外の保存位置も期限で削除します。
+ワールド（LevelまたはローカルActorのregistry）が変わった場合は、期限を待たず判定履歴と全記録をリセットします。
+`retain_last_position=false` への切り替えも保存記録を消します。
 旧configの `retention_minutes: 1` は1分として有効なので、10分にするには `10` に変更してください。
 ライブ枠と保存枠の双方を描画時にも期限確認し、取得停止中も期限切れの枠を出しません。
+
+### ブロックかくれんぼでの取得途切れ
+
+[Hiveの公式説明](https://support.playhive.com/gamemodes/)では、隠れる側はブロックに変身し、
+静止時には移動中の装飾が消える仕様です。公式説明から内部のActor送信方式までは確定できません。
+以前の実装には、ActorTypeが変わると `players_only` で除外する経路がありました。
+現在は同じRuntimeIDの確認済みPlayerなら分類を維持します。AABBが消えたりゼロサイズになった場合は
+無効な枠を作らず、位置保存が有効なら最後の有効な位置に切り替わります。
+
+サーバーがそのActorをクライアントから削除した場合、クライアント側の列挙だけでは現在位置を更新できません。
+別RuntimeIDのブロックActorや通常の地形ブロックに置き換わる場合も、同一人物という対応情報なしには結び付けません。
+`players_only=false` では、Player判定のないブロックActorもRuntimeID・所有者・AABBが揃えば表示対象になります。
+地形だけになったものは対象になりません。
+
+`debug=true` の10秒間隔ログに `native_player`（現時点でPlayer）、`remembered_player`（RuntimeID履歴でPlayer）、
+`filtered_non_player`、`missing_runtime`、`invalid_owner`、`missing_shape`、`invalid_or_zero_bounds` を出します。
+これらは前回報告以降の観測回数で、ユニークなActor人数ではありません。変身前後のログでどの取得条件が変わったか確認できます。
+Actor自体が列挙から消えた原因の確定には、同じ実行時点の追加観測が必要です。
 
 描画側ではコピー済み頂点から12辺（24頂点）を作り、ネイティブのrender originを差し引いて
 ゲームのLineListへ渡します。全対象を生存／保持色にまとめ、1回のmesh submissionを最大512枠に分割します。512枠を超えても続きを描画します。
@@ -117,7 +134,8 @@ FOV Hookとローカル回転の読み取りは不要になりました。遅い
 `actors` / `publish` に分けて記録します。250µsはActorループの協調的予算であり、コールバック全体の
 上限ではありません。実ゲームでのFPS・取得時間の改善量は未測定です。
 全Actor表示ではActorTypeの有無や値を除外条件にせず、ActorOwner / RuntimeID / AABBShapeと所有者の
-registry/entity IDを照合します。Playerのみ表示にはActorType storageと値の読み取りが必要です。
+registry/entity IDを照合します。Playerとして初めて認識するにはActorType storageと値の読み取りが必要です。
+確認済みRuntimeIDはActorType storageがなくても判定履歴で追跡を続けます。
 必須storageが欠ける場合は読み取りを拒否します。ActorTypeの値オフセット・Player IDも同一EXE用の
 プロファイルに記録し、欠落した旧キャッシュは更新します。
 
@@ -127,7 +145,19 @@ registry/entity IDを照合します。Playerのみ表示にはActorType storage
 未対応なら該当Actorを描画せず、ゲーム側の更新に干渉しません。新しいMinecraft版では対象EXEの一致プロファイルに
 `native_actors` レイアウトを追加して更新してください。
 
+取得処理が失敗したときは `Actor capture waiting: reason=... stage=... exception_code=...` を出し、
+10秒間隔に抑えて次のtickでも再試行します。`actor_owner_storage_missing` と `runtime_id_storage_missing` は
+必須ストレージが見つからない場合、`guarded_native_exception` は `stage` の操作中に例外を捕捉した場合です。
+一部をコピー済みならそのバッチは公開し、正常な取得に戻ったときは `Actor capture recovered` を出します。
+起動ログの `build <revision> native ABI=Microsoft C++` で使用中のDLLも確認できます。
+
 ## Build
+
+ゲーム内のEnTT/C++オブジェクトを直接読むため、Windows x64のMSVCまたはclang-clでReleaseビルドします。
+MinGWのC++ ABI・標準ライブラリの配置はここではサポートしません。CMakeでMinGWを拒否し、
+ソース側でもMicrosoft C++ ABIとReleaseのSTL配置（`_ITERATOR_DEBUG_LEVEL=0`）を必須にしています。
+Linux上のコピー済みデータのテストは引き続き実行できます。
+GitHub Actionsは同じコミットのSDKソースを使い、MSVCでビルドとテストを実行します。
 
 ```powershell
 cmake -S . -B build -A x64 -DBEDROCK_SDK_REF=main

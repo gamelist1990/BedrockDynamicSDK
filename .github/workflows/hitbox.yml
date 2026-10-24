@@ -22,7 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S exsample/HitBox -B build-hitbox -A x64 -DBEDROCK_SDK_REF=main
+        run: >-
+          cmake -S exsample/HitBox -B build-hitbox -A x64
+          "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE"
+          -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }}
       - name: Build
         run: cmake --build build-hitbox --config Release --parallel
       - name: Test copied-data processing

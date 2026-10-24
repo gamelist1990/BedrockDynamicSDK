@@ -132,6 +132,41 @@ private:
     std::uint64_t epoch_{};
     std::unordered_set<std::uint64_t> ids_;
 };
+// Game-thread-owned identity history. Only confirmed RuntimeIDs are remembered;
+// an unrelated replacement entity is never inferred to be the same Player.
+class PlayerIdentityCache {
+public:
+    static constexpr std::size_t maximumPlayers=TrackingBudget::maximumActors;
+    void reset() noexcept { players_.fill(0); size_=0; }
+    bool known(std::uint64_t runtimeId) const noexcept {
+        return runtimeId && players_[slot(runtimeId)]==runtimeId;
+    }
+    bool classify(std::uint64_t runtimeId, bool nativePlayer) noexcept {
+        if (!runtimeId) return false;
+        if (nativePlayer) {
+            const auto index=slot(runtimeId);
+            if (!players_[index] && size_<maximumPlayers) {
+                players_[index]=runtimeId; ++size_;
+            }
+            return true;
+        }
+        return known(runtimeId);
+    }
+private:
+    // Fixed storage, under 50% occupancy: no allocations or locks in native capture.
+    static constexpr std::size_t tableSize=2048;
+    static_assert(maximumPlayers<tableSize/2);
+    std::size_t slot(std::uint64_t id) const noexcept {
+        auto hash=id;
+        hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ULL;
+        hash=(hash^(hash>>27))*0x94d049bb133111ebULL;
+        auto index=static_cast<std::size_t>(hash^(hash>>31))&(tableSize-1);
+        while(players_[index] && players_[index]!=id) index=(index+1)&(tableSize-1);
+        return index;
+    }
+    std::array<std::uint64_t,tableSize> players_{};
+    std::size_t size_{};
+};
 // Worker-owned state. No native handles, component pointers or game calls.
 class BoxCache {
 public:
@@ -140,36 +175,34 @@ public:
         : budget_(std::move(budget)) {}
     BoxCache(const BoxCache&)=delete;
     BoxCache& operator=(const BoxCache&)=delete;
-    static constexpr auto stationaryDelay = std::chrono::seconds(2);
-    static constexpr auto maximumObservationGap = std::chrono::seconds(1);
-    static constexpr float stationaryToleranceSquared = 0.05f*0.05f;
     bool beginWorld(std::uint64_t epoch) {
         if (epoch < epoch_ || !budget_->beginWorld(epoch)) return false;
         if (epoch != epoch_) { records_.clear(); retained_.clear(); retaining_=false; epoch_=epoch; }
         return true;
     }
-    static bool samePosition(const bedrock::ActorBounds& a,const bedrock::ActorBounds& b) noexcept {
-        return distanceSquared(a.minimum,b.minimum)<=stationaryToleranceSquared &&
-               distanceSquared(a.maximum,b.maximum)<=stationaryToleranceSquared;
-    }
     void observe(const Sample& sample, const bedrock::Vec3& camera, float range, bool retain, bool allActors=false) {
         configureRetention(retain);
-        if (!sample.runtimeId || !sample.bounds.valid()) return;
+        const auto& bounds=sample.bounds;
+        if (!sample.runtimeId || !bounds.valid() || bounds.minimum.x==bounds.maximum.x ||
+            bounds.minimum.y==bounds.maximum.y || bounds.minimum.z==bounds.maximum.z) return;
+        const auto old=records_.find(sample.runtimeId);
+        const auto saved=retained_.find(sample.runtimeId);
+        if ((old!=records_.end() && old->second.box.seenAt>=sample.seenAt) ||
+            (saved!=retained_.end() && saved->second.seenAt>=sample.seenAt)) return;
         if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
-            records_.erase(sample.runtimeId); // Out-of-range reads cannot confirm a stop.
+            records_.erase(sample.runtimeId); // Preserve only the last in-range observation.
             if(!retained_.contains(sample.runtimeId)) budget_->release(sample.runtimeId,epoch_);
             return;
         }
-        const auto old=records_.find(sample.runtimeId);
-        if (old!=records_.end() && old->second.box.seenAt>=sample.seenAt) return;
         if(old==records_.end() && !budget_->acquire(sample.runtimeId,epoch_)) return;
         Entry entry;
         auto& box=entry.box;
         static_cast<Sample&>(box)=sample;
         box.corners=hitbox::corners(sample.bounds);
         box.blendFrom=sample.bounds;
-        entry.stationaryAnchor=sample.bounds;
-        entry.stationarySince=sample.seenAt;
+        // Preserve classification if this same RuntimeID changes ActorType.
+        box.isPlayer=sample.isPlayer || (old!=records_.end() && old->second.box.isPlayer) ||
+                     retained_.contains(sample.runtimeId);
         if (old!=records_.end()) {
             const auto& previous=old->second;
             const auto age=sample.seenAt-previous.box.seenAt;
@@ -180,24 +213,14 @@ public:
                 box.blendDuration=std::clamp(std::chrono::duration_cast<std::chrono::milliseconds>(age),
                     std::chrono::milliseconds(50),std::chrono::milliseconds(1000));
             }
-            // Confirm only from repeated real observations, never from an old
-            // snapshot freezing after a failed read, unload or missed capture.
-            if (retain && sample.isPlayer && previous.box.isPlayer && previous.tracking &&
-                age<=maximumObservationGap && samePosition(sample.bounds,previous.stationaryAnchor)) {
-                entry.stationaryAnchor=previous.stationaryAnchor;
-                entry.stationarySince=previous.stationarySince;
-                entry.committed=previous.committed;
-            }
         }
-        entry.tracking=retain && sample.isPlayer;
-        if (entry.tracking && !entry.committed && sample.seenAt-entry.stationarySince>=stationaryDelay) {
+        if (retain && box.isPlayer) {
             auto frozen=box;
             frozen.retained=true;
             frozen.blendFrom=frozen.bounds;
             frozen.blendDuration=std::chrono::milliseconds(0);
-            // One last confirmed stop per RuntimeID; each new stop restarts its expiry.
+            // One latest valid position per RuntimeID, refreshed on every sample.
             retained_.insert_or_assign(sample.runtimeId,std::move(frozen));
-            entry.committed=true;
         }
         records_.insert_or_assign(sample.runtimeId,std::move(entry));
     }
@@ -208,13 +231,6 @@ public:
         for (auto it=retained_.begin();it!=retained_.end();) {
             if (now-it->second.seenAt>=retainedLifetime) {
                 const auto live=records_.find(it->first);
-                if (live!=records_.end()) {
-                    // Require another two seconds of actual observations before
-                    // saving a still-present Player again after expiry.
-                    live->second.committed=false;
-                    live->second.stationarySince=now;
-                    live->second.stationaryAnchor=live->second.box.bounds;
-                }
                 if(live==records_.end()) budget_->release(it->first,epoch_);
                 it=retained_.erase(it);
             } else ++it;
@@ -237,8 +253,8 @@ public:
         }
         if (retain) for (const auto& [id,frozen]:retained_) {
             const auto live=records_.find(id);
-            // While tracked, draw the current position only. The last confirmed
-            // stop is a fallback, not an extra historical trail beside a moving Player.
+            // While tracked, draw the current position only. The last valid
+            // position is a fallback, not an extra historical trail beside a moving Player.
             if (live!=records_.end() && permitted(live->second.box)) continue;
             if (permitted(frozen)) result.push_back(frozen);
         }
@@ -249,9 +265,6 @@ public:
 private:
     struct Entry {
         BoxRecord box;
-        bedrock::ActorBounds stationaryAnchor{};
-        Clock::time_point stationarySince{};
-        bool tracking{},committed{};
     };
     void configureRetention(bool retain) {
         if (retaining_==retain) return;
@@ -259,7 +272,6 @@ private:
         for(const auto& [id,box]:retained_)
             if(!records_.contains(id)) budget_->release(id,epoch_);
         retained_.clear();
-        for (auto& [id,entry]:records_) { entry.tracking=false; entry.committed=false; }
     }
     std::shared_ptr<TrackingBudget> budget_;
     bool retaining_{};

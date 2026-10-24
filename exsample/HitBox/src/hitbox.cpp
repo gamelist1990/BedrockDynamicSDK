@@ -1,4 +1,7 @@
 #ifdef _WIN32
+#if !defined(_MSC_VER)
+#error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
+#endif
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -15,6 +18,9 @@
 #include <bedrock/resolver.hpp>
 #include <bedrock/generated_symbols.hpp>
 #include <entt/entt.hpp>
+#if _ITERATOR_DEBUG_LEVEL != 0
+#error "HitBox must use the release STL layout: build Release with iterator debugging disabled."
+#endif
 
 #include <nlohmann/json.hpp>
 #include "hitbox/box_cache.hpp"
@@ -104,6 +110,13 @@ struct CaptureBatch {
     std::array<hitbox::Sample, maximumNativeBatch> samples;
     std::size_t count{};
     std::size_t population{};
+    const char* captureStage="registry_context";
+    const char* captureFailure=nullptr;
+    std::uint32_t faultCode{};
+    std::uintptr_t faultAddress{};
+    // Per-batch observations; aggregate on the game thread for periodic diagnostics.
+    std::size_t nativePlayers{}, rememberedPlayers{}, missingRuntime{}, filteredActors{},
+                invalidOwner{}, missingShape{}, invalidBounds{};
     std::chrono::milliseconds liveLifetime{1000};
     std::shared_ptr<const Config> config;
 };
@@ -346,6 +359,7 @@ public:
     }
     void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
+    void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
 
     bool isActorValid(void* actor) const noexcept override { return looksLikeActor(actor); }
     void* localPlayer() const noexcept override {
@@ -427,24 +441,35 @@ public:
         void* registry = nullptr;
         const auto& layout = actorLayout_;
         if (!safeRead(local, layout.actorEntityContextOffset + layout.contextRegistryOffset,
-                      registry) || !registry) return false;
-        return captureRegistryBatch(registry, layout, actorTypeValueOffset_, playerTypeId_, &cursor, &schedule, &batch, &visited);
+                      registry) || !registry) {
+            batch.captureFailure="local_registry_unreadable";
+            return false;
+        }
+        return captureRegistryBatch(registry, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
     }
 private:
     static bool captureRegistryBatch(void* registry, const bedrock::NativeActorLayout& layout,
-        std::size_t typeOffset, std::uint32_t playerType, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
+        std::size_t typeOffset, std::uint32_t playerType, hitbox::PlayerIdentityCache* identities, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
         __try {
             using Registry = entt::basic_registry<hitbox_native::EntityId>;
             auto* typed = static_cast<Registry*>(registry);
+            batch->captureStage="lookup_actor_owner_storage";
             auto* owner = typed->storage(layout.actorOwnerComponentHash);
+            if (!owner) { batch->captureFailure="actor_owner_storage_missing"; return false; }
+            batch->captureStage="lookup_runtime_id_storage";
             auto* runtime = typed->storage(layout.runtimeIdComponentHash);
+            if (!runtime) { batch->captureFailure="runtime_id_storage_missing"; return false; }
+            batch->captureStage="lookup_aabb_storage";
             auto* shape = typed->storage(layout.aabbShapeComponentHash);
+            batch->captureStage="lookup_actor_type_storage";
             auto* actorType = typed->storage(layout.actorTypeComponentHash);
-            if (!owner || !runtime || !shape || (batch->config->playersOnly && !actorType)) return false;
             auto* candidates = owner;
             // A fixed source keeps the incremental cursor stable when pool sizes change.
+            batch->captureStage="owner_pool_size";
             batch->population = candidates->size();
-            if (batch->population > 16384) return false;
+            if (batch->population > 16384) {
+                batch->captureFailure="owner_pool_size_out_of_range"; return false;
+            }
             if (!batch->population) { *cursor = 0; schedule->beginTick(0); return true; }
             const auto begin = Clock::now();
             const auto count = schedule->beginTick(batch->population);
@@ -452,46 +477,81 @@ private:
                 // Cooperative 250us budget; a single native read cannot be preempted.
                 if (n && Clock::now() - begin >= std::chrono::microseconds(250)) break;
                 if (*cursor >= batch->population) *cursor = 0;
+                batch->captureStage="owner_pool_entry";
                 const auto entity = candidates->data()[(*cursor)++];
                 ++*visited;
                 schedule->visited(1);
-                if (!typed->valid(entity) || !owner->contains(entity) ||
-                    !runtime->contains(entity) || !shape->contains(entity)) continue;
+                batch->captureStage="validate_registry_entity";
+                if (!typed->valid(entity) || !owner->contains(entity)) continue;
+                batch->captureStage="read_runtime_id_component";
+                std::uint64_t runtimeId=0;
+                if (!runtime->contains(entity) ||
+                    !safeRead(runtime->value(entity), layout.runtimeIdValueOffset, runtimeId) || !runtimeId) {
+                    ++batch->missingRuntime; continue;
+                }
+                batch->captureStage="read_actor_type_component";
                 std::uint32_t type=0;
-                const bool isPlayer=actorType && actorType->contains(entity) &&
+                const bool nativePlayer=actorType && actorType->contains(entity) &&
                     safeRead(actorType->value(entity),typeOffset,type) && type==playerType;
-                if(batch->config->playersOnly && !isPlayer) continue;
+                const bool isPlayer=nativePlayer || identities->known(runtimeId);
+                if(batch->config->playersOnly && !isPlayer) { ++batch->filteredActors; continue; }
                 // Validate the owner against the exact registry/entity once, rather
                 // than validating the Actor vtable for every property wrapper.
+                batch->captureStage="read_actor_owner_component";
                 void* actor = nullptr;
-                if (!safeRead(owner->value(entity), layout.actorOwnerPointerOffset, actor) || !actor)
-                    continue;
+                if (!safeRead(owner->value(entity), layout.actorOwnerPointerOffset, actor) || !actor) {
+                    ++batch->invalidOwner; continue;
+                }
+                batch->captureStage="validate_actor_context";
                 void* actorRegistry = nullptr;
                 std::uint32_t actorEntity = 0;
                 const auto context = layout.actorEntityContextOffset;
                 if (!safeRead(actor, context + layout.contextRegistryOffset, actorRegistry) ||
                     actorRegistry != registry ||
                     !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
-                    actorEntity != static_cast<std::uint32_t>(entity)) continue;
+                    actorEntity != static_cast<std::uint32_t>(entity)) {
+                    ++batch->invalidOwner; continue;
+                }
+                if (nativePlayer) {
+                    identities->classify(runtimeId,true);
+                    ++batch->nativePlayers;
+                }
+                else if (isPlayer) ++batch->rememberedPlayers;
+                batch->captureStage="read_aabb_component";
+                if (!shape || !shape->contains(entity)) { ++batch->missingShape; continue; }
                 auto& sample = batch->samples[batch->count];
                 sample.isPlayer=isPlayer;
-                if (!safeRead(runtime->value(entity), layout.runtimeIdValueOffset, sample.runtimeId) ||
-                    !sample.runtimeId) continue;
+                sample.runtimeId=runtimeId;
                 auto* aabb = shape->value(entity);
                 if (layout.aabbMaximumOffset == layout.aabbMinimumOffset + sizeof(bedrock::Vec3)) {
-                    if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) continue;
+                    if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) {
+                        ++batch->invalidBounds; continue;
+                    }
                 } else if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds.minimum) ||
-                           !safeRead(aabb, layout.aabbMaximumOffset, sample.bounds.maximum)) continue;
-                if (!sample.bounds.valid()) continue;
+                           !safeRead(aabb, layout.aabbMaximumOffset, sample.bounds.maximum)) {
+                    ++batch->invalidBounds; continue;
+                }
+                if (!sample.bounds.valid()) { ++batch->invalidBounds; continue; }
                 const auto& b = sample.bounds;
                 if (b.maximum.x - b.minimum.x <= 0 ||
                     b.maximum.y - b.minimum.y <= 0 ||
-                    b.maximum.z - b.minimum.z <= 0) continue;
+                    b.maximum.z - b.minimum.z <= 0) { ++batch->invalidBounds; continue; }
                 sample.seenAt = Clock::now();
                 ++batch->count;
             }
+            batch->captureStage="complete";
             return true;
-        } __except(EXCEPTION_EXECUTE_HANDLER) { return batch->count != 0; } // Keep already validated scalar copies.
+        } __except(captureFault(GetExceptionInformation(),batch)) {
+            return batch->count != 0; // Publish any rows copied before the failed read.
+        }
+    }
+    static int captureFault(EXCEPTION_POINTERS* exception,CaptureBatch* batch) noexcept {
+        batch->captureFailure="guarded_native_exception";
+        if (exception && exception->ExceptionRecord) {
+            batch->faultCode=exception->ExceptionRecord->ExceptionCode;
+            batch->faultAddress=reinterpret_cast<std::uintptr_t>(exception->ExceptionRecord->ExceptionAddress);
+        }
+        return EXCEPTION_EXECUTE_HANDLER;
     }
 
     static void* callLocalPlayer(void* target, void* client) noexcept {
@@ -564,6 +624,7 @@ private:
     bedrock::NativeActorLayout actorLayout_{};
     std::size_t actorTypeValueOffset_{};
     std::uint32_t playerTypeId_{};
+    mutable hitbox::PlayerIdentityCache knownPlayers_;
     std::atomic<void*> client_{};
     std::atomic<void*> world_{};
 };
@@ -618,7 +679,7 @@ void processingLoop(std::size_t shard) noexcept {
             if (config.debug && Clock::now() >= nextLog) {
                 nextLog = Clock::now() + std::chrono::seconds(10);
                 log("HitBox worker ", shard, ": native_pool=", batch->population,
-                    " copied=", batch->count, " cached=", cache.size(), " stationary_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " tracked_total=", trackingBudget->size(), " tracking_limit=", hitbox::TrackingBudget::maximumActors, " [RuntimeID partition]");
+                    " copied=", batch->count, " cached=", cache.size(), " last_position_records=", cache.retainedSize(), " all_actors=", config.showAllActors, " players_only=", config.playersOnly, " tracked_total=", trackingBudget->size(), " tracking_limit=", hitbox::TrackingBudget::maximumActors, " [RuntimeID partition]");
             }
         } catch (...) {}
     }
@@ -644,7 +705,9 @@ void refreshGameTickSnapshot() {
     static hitbox::CaptureSchedule schedule;
     static hitbox::PendingDelivery<CaptureBatch,workerCount> delivery;
     static auto nextReport = Clock::time_point{};
+    static auto nextFailureReport = Clock::time_point{};
     static double averageVisited = maximumNativeBatch;
+    static std::array<std::size_t,9> diagnostics{};
     static bool loggedNativeReady = false;
     static bool loggedCameraWaiting = false;
     static bool loggedNativeFailure = false;
@@ -657,6 +720,8 @@ void refreshGameTickSnapshot() {
         snapshotWorld = world;
         snapshotRegistry = 0;
         access.setWorld(world);
+        access.resetPlayerTracking();
+        diagnostics={};
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);
         cursor = 0;
         schedule.reset();
@@ -684,9 +749,11 @@ void refreshGameTickSnapshot() {
     if (snapshotRegistry && registry!=snapshotRegistry) {
         worldEpoch.fetch_add(1,std::memory_order_acq_rel);
         cursor=0; schedule.reset(); delivery.clear();
+        access.resetPlayerTracking();
+        diagnostics={};
         averageVisited=maximumNativeBatch;
         loggedNativeReady=loggedCameraWaiting=loggedNativeFailure=false;
-        log("world entity registry replaced; stationary Player records cleared");
+        log("world entity registry replaced; Player identity and last-position records cleared");
     }
     snapshotRegistry=registry;
     // All-Actor mode does not need local position for distance filtering.
@@ -702,12 +769,27 @@ void refreshGameTickSnapshot() {
     batch.config = config;
     batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition};
     std::size_t visited = 0;
-    if (!access.captureBatch(local, cursor, schedule, batch, visited)) {
-        if (!loggedNativeFailure) { loggedNativeFailure = true;
-            log("incremental Actor capture unavailable [required storage or guarded read failed]"); }
-        return;
+    const bool captured=access.captureBatch(local, cursor, schedule, batch, visited);
+    if (!captured || batch.captureFailure) {
+        if (!loggedNativeFailure || now>=nextFailureReport) {
+            loggedNativeFailure=true;
+            nextFailureReport=now+std::chrono::seconds(10);
+            log("Actor capture waiting: reason=", batch.captureFailure ? batch.captureFailure : "unknown",
+                " stage=", batch.captureStage, " exception_code=", batch.faultCode,
+                " exception_address=", reinterpret_cast<void*>(batch.faultAddress),
+                " registry=", reinterpret_cast<void*>(registry), " pool=", batch.population,
+                " visited=", visited, " copied=", batch.count, " [will retry on next tick]");
+        }
+        if (!captured) return;
+    } else if (loggedNativeFailure) {
+        loggedNativeFailure=false;
+        log("Actor capture recovered: pool=", batch.population, " copied=", batch.count);
     }
     const auto actorsReadyAt = Clock::now();
+    const std::array<std::size_t,9> counts{visited,batch.count,batch.nativePlayers,
+        batch.rememberedPlayers,batch.filteredActors,batch.missingRuntime,
+        batch.invalidOwner,batch.missingShape,batch.invalidBounds};
+    for (std::size_t i=0;i<counts.size();++i) diagnostics[i]+=counts[i];
     if (visited) averageVisited = averageVisited * 0.9 + static_cast<double>(visited) * 0.1;
     if (batch.count && !loggedNativeReady) {
         loggedNativeReady = true;
@@ -733,6 +815,13 @@ void refreshGameTickSnapshot() {
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
             " [1-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget; 2 workers]");
+        if(config->debug) log("HitBox capture observations since last report: visited=", diagnostics[0],
+            " copied=", diagnostics[1], " native_player=", diagnostics[2],
+            " remembered_player=", diagnostics[3], " filtered_non_player=", diagnostics[4],
+            " missing_runtime=", diagnostics[5], " invalid_owner=", diagnostics[6],
+            " missing_shape=", diagnostics[7], " invalid_or_zero_bounds=", diagnostics[8],
+            " [observations, not distinct Actors; missing Actors cannot be read]");
+        diagnostics={};
     }
 }
 void observeWorld(const bedrock::LevelTickEvent& event) {
@@ -971,6 +1060,8 @@ DWORD WINAPI startClient(void*) {
     catch (...) { status.store(Status::Failed); return 1; }
     struct LogStop { ~LogStop() { stopLogWorker(); } } logStop;
     log("start");
+    log("build ", BEDROCK_HITBOX_BUILD_ID, " native ABI=Microsoft C++; compiler=", _MSC_VER,
+        " iterator_debug=", _ITERATOR_DEBUG_LEVEL);
     const auto cfgPath = configPath();
     if (!std::filesystem::exists(cfgPath)) {
         std::ofstream output(cfgPath, std::ios::binary | std::ios::trunc);
@@ -1047,7 +1138,7 @@ DWORD WINAPI startClient(void*) {
     }
     access.setLayouts(std::move(itemLayout), std::move(actorLayout),
                       worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
-    log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; optional ActorType player filter; no name filter; profile candidate]");
+    log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; ActorType + remembered RuntimeID player filter; no name filter; profile candidate]");
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
@@ -1070,7 +1161,7 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 5-tick distributed sweep; exact-build guards; runtime candidate]");
+    log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 1-tick target sweep; exact-build guards; runtime candidate]");
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 

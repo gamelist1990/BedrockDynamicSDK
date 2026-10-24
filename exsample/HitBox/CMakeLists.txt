@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 project(BedrockHitBox LANGUAGES C CXX)
 
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR "HitBox reads native EnTT/C++ objects and requires the Microsoft C++ ABI. Use MSVC or clang-cl in Release; MinGW DLLs are not supported.")
+endif()
+set(BEDROCK_HITBOX_BUILD_ID "local" CACHE STRING "Source revision for diagnostic logs")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -26,6 +31,7 @@ if(WIN32)
     # Keep the artifact name identical under MSVC and MinGW/LLVM toolchains.
     set_target_properties(BedrockHitBox PROPERTIES PREFIX "")
     target_include_directories(BedrockHitBox PRIVATE include)
+    target_compile_definitions(BedrockHitBox PRIVATE BEDROCK_HITBOX_BUILD_ID="${BEDROCK_HITBOX_BUILD_ID}")
     target_link_libraries(BedrockHitBox PRIVATE bedrock::symbols bedrock::logging
         bedrock::hook_runtime EnTT::EnTT shell32 ole32)
     target_compile_features(BedrockHitBox PRIVATE cxx_std_20)
