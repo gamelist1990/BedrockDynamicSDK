@@ -697,7 +697,7 @@ struct NameDiagnostics {
         nativeEmpty{},nativeUnreadable{},nativeFaults{},mailboxMisses{},blankNames{},meshFailures{},workerExceptions{},
         renderCalls{},renderNoMesh{},renderHidden{},renderBudget{},renderSubmitted{},renderFaults{},
         frameNoBoxes{},frameStale{};
-    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{}; };
+    struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{}; };
     std::array<Worker,workerCount> workers;
 } nameDiagnostics;
 void reportNameDiagnostics() {
@@ -716,7 +716,8 @@ void reportNameDiagnostics() {
         " faults=",d.nativeFaults.exchange(0));
     for(std::size_t i=0;i<workerCount;++i)
         log("NameTag worker state: shard=",i," boxes=",d.workers[i].boxes.load(),
-            " matched_names=",d.workers[i].observed.load()," ready_meshes=",d.workers[i].meshes.load());
+            " matched_names=",d.workers[i].observed.load()," ready_meshes=",d.workers[i].meshes.load(),
+            " prepared_vertices=",d.workers[i].vertices.load()," prepare_us=",d.workers[i].prepareUs.load());
     log("NameTag processing [5s]: mailbox_misses=",d.mailboxMisses.exchange(0),
         " blank_after_normalize=",d.blankNames.exchange(0)," mesh_failures=",d.meshFailures.exchange(0),
         " worker_exceptions=",d.workerExceptions.exchange(0));
@@ -772,19 +773,30 @@ void fillMissingName(const CaptureBatch& batch) {
     if(!batch.config->showNameTags || !batch.count) return;
     auto* target=nameGetter.load(std::memory_order_acquire);
     if(!target) return;
-    static Clock::time_point nextRead{};
-    struct Attempt { hitbox::NameKey key; Clock::time_point next; };
+    struct Attempt { hitbox::NameKey key; Clock::time_point next; unsigned failures{}; };
     static std::array<Attempt,2048> attempts{};
+    static Clock::time_point nextBatch{};
+    static std::size_t nextSample{};
     const auto now=Clock::now();
-    if(now<nextRead) return;
-    for(std::size_t i=0;i<batch.count;++i) {
+    if(now<nextBatch) return;
+    const auto start=nextSample%batch.count;
+    std::size_t calls=0;
+    // First serve missing Player names, then other captured Actors. This scans
+    // only the existing bounded capture batch, never the world a second time.
+    for(unsigned pass=0;pass<2;++pass) for(std::size_t n=0;n<batch.count;++n) {
+        if(calls>=3 || (calls && Clock::now()-now>=std::chrono::microseconds(200))) return;
+        const auto i=(start+n)%batch.count;
         const auto& sample=batch.samples[i];
+        if(sample.isPlayer!=(pass==0)) continue;
         const hitbox::NameKey key{batch.camera.epoch,sample.actorKey,sample.entityId};
         if(nameMailbox.cachedOrBusy(key)) continue;
         auto& attempt=attempts[(sample.runtimeId^(sample.runtimeId>>32))%attempts.size()];
         if(attempt.key==key && now<attempt.next) continue;
-        attempt={key,now+std::chrono::seconds(2)};
-        nextRead=now+std::chrono::milliseconds(100);
+        if(attempt.key!=key) attempt={key,{},0};
+        attempt.next=now+std::chrono::milliseconds(100);
+        nextBatch=now+std::chrono::milliseconds(20);
+        nextSample=(i+1)%batch.count;
+        ++calls;
         std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
         std::size_t count=0;
         ++nameDiagnostics.nativeCalls;
@@ -797,6 +809,10 @@ void fillMissingName(const CaptureBatch& batch) {
             ++nameDiagnostics.nativeCopied;
             nameMailbox.observe(key,std::string_view(bytes.data(),count));
         }
+        if(result<=0) {
+            attempt.failures=std::min<unsigned>(attempt.failures+1,16);
+            attempt.next=now+std::chrono::milliseconds(std::min<unsigned>(2000,100u<<std::min<unsigned>(attempt.failures-1,5)));
+        }
         if(result==0) ++nameDiagnostics.nativeEmpty;
         if(result==-2) ++nameDiagnostics.nativeUnreadable;
         static Clock::time_point nextResultLog{};
@@ -806,9 +822,10 @@ void fillMissingName(const CaptureBatch& batch) {
                 " actor=",reinterpret_cast<void*>(sample.actorKey)," entity=",sample.entityId,
                 " result=",result," bytes=",count," [1=copied 0=empty -1=native fault -2=unreadable]");
         }
-        break; // At most one getter call per 100ms, never per Actor/frame.
+        if(result==-1) return;
     }
 }
+
 struct CachedName {
     hitbox::NameKey key;
     std::uint64_t revision{},touched{};
@@ -851,6 +868,7 @@ void processingLoop(std::size_t shard) noexcept {
                 nameDiagnostics.workers[shard].boxes=0;
                 nameDiagnostics.workers[shard].observed=0;
                 nameDiagnostics.workers[shard].meshes=0;
+                nameDiagnostics.workers[shard].vertices=0; nameDiagnostics.workers[shard].prepareUs=0;
                 const auto previous=std::atomic_exchange_explicit(&worker.snapshot,
                     std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
                 if(previous) retired.push_back(previous);
@@ -897,7 +915,7 @@ void processingLoop(std::size_t shard) noexcept {
                                 " bytes=",observed->size," name=",name);
                         }
                         if(!name.empty() && (found==names.end() || !found->second.mesh || found->second.mesh->text!=name)) {
-                            if(built<2) {
+                            if(built<4) {
                                 ++built;
                                 auto mesh=nameMesher.make(std::move(name));
                                 if(!mesh) ++failures;
@@ -934,12 +952,15 @@ void processingLoop(std::size_t shard) noexcept {
                     snapshot->nameMeshes.push_back(sameActor ? found->second.mesh : nullptr);
                 }
             }
+            const auto preparationBegin=Clock::now();
             if(config.showNameTags) {
                 const auto origin=renderCamera.read(snapshot->epoch);
                 if(origin) snapshot->preparedNames=hitbox::prepareNames(snapshot->boxes,snapshot->nameMeshes,
                     *origin,Clock::now(),0.25f*config.nameTagScale,49152);
                 nameDiagnostics.renderBudget+=snapshot->preparedNames.budgetSkipped;
             }
+            nameDiagnostics.workers[shard].vertices=snapshot->preparedNames.vertices.size();
+            nameDiagnostics.workers[shard].prepareUs=std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-preparationBegin).count();
             nameDiagnostics.workers[shard].boxes=snapshot->boxes.size();
             nameDiagnostics.workers[shard].observed=observedNames;
             nameDiagnostics.workers[shard].meshes=readyMeshes;
@@ -1583,7 +1604,7 @@ DWORD WINAPI startClient(void*) {
     if(nameSource && bedrock::isUsableSharedHookResolution(*nameSource) &&
         BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG,reinterpret_cast<void*>(nameSource->address),
             &observeNameTag,nullptr,&nameTagToken))
-        log("NameTag observation active [RuntimeID cache; missing-name fallback <=10 calls/sec; worker font geometry]");
+        log("NameTag observation active [RuntimeID cache; missing-name fallback <=3/tick + cooperative 200us budget; worker font geometry]");
     else log("NameTag source unavailable; HitBox lines remain active");
     struct NameHookStop { ~NameHookStop() {
         if(nameTagToken) BDS_HookUnsubscribe(std::exchange(nameTagToken,nullptr));
