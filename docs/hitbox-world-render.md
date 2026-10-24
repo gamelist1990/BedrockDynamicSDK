@@ -210,7 +210,10 @@ filtering. Only loaded Actors with valid captures are available.
 ## Cached name labels
 
 Name labels use the shared SDK Actor::getNameTag broker to observe returned names;
-there is no periodic native name getter call. Hook callbacks guard a bounded string
+missing observations are filled on the game thread at most once per 100ms using
+the exact-build resolved getter on a freshly validated Actor. Cached names skip
+this fallback; empty results retry after two seconds per identity. A native fault
+disables fallback for the session. Hook callbacks guard a bounded string
 copy and a scalar EnTT entity-ID read. A fixed-capacity, try-lock mailbox carries
 only copied bytes and numeric comparison keys. The worker joins these against
 Actor pointer + entity generation + world epoch from the existing capture, and
@@ -224,7 +227,7 @@ No game font ABI or new function RVA is introduced. Immutable triangle meshes
 are regenerated only on name changes (at most two per worker batch) and retained
 with the existing worker-owned snapshots. Rendering converts them to camera-facing
 world-space quads through the existing native Tessellator/material path. Each
-triangle uses a degenerate Quad, following the native primitive numbering used by
+triangle uses two opposite-winding degenerate Quads to avoid material face culling, following the native primitive numbering used by
 the Latite reference; the actual game label draw still needs runtime confirmation.
 
 show_name_tags defaults to true; name_tag_scale is clamped to 0.25..3.0. Labels

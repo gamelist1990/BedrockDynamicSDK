@@ -72,6 +72,15 @@ public:
         selected->value.size=length; selected->value.revision=++revision_;
         return true;
     }
+    // A busy worker means defer the optional native lookup, never block the game.
+    bool cachedOrBusy(NameKey key) const noexcept {
+        std::unique_lock lock(mutex_,std::try_to_lock);
+        if(!lock) return true;
+        const auto begin=bucket(key);
+        for(std::size_t i=0;i<ways;++i)
+            if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return true;
+        return false;
+    }
     std::optional<Value> read(NameKey key) const {
         std::lock_guard lock(mutex_);
         const auto begin=bucket(key);

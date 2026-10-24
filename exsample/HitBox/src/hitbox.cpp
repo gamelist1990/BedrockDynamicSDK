@@ -652,6 +652,7 @@ std::unique_ptr<bedrock::GameHooks> gameHooks;
 
 hitbox::NameMailbox nameMailbox;
 BDS_HookToken nameTagToken{};
+std::atomic<void*> nameGetter{};
 bool copyObservedName(const void* native,char* bytes,std::size_t* count) noexcept {
     __try {
         const auto* name=static_cast<const std::string*>(native);
@@ -683,6 +684,43 @@ void BDS_HOOK_CALL observeNameTag(void*,void* raw,BDS_HookNext next,void* frame)
             std::string_view(bytes.data(),count));
     } catch(...) {}
 }
+// Only called on the game thread for a freshly validated capture sample.
+// Missing names are spread over ticks; known names use the observation cache.
+int copyMissingName(void* target,void* actor,char* bytes,std::size_t* count) noexcept {
+    using Getter=const std::string&(__fastcall*)(void*);
+    __try {
+        return copyObservedName(&reinterpret_cast<Getter>(target)(actor),bytes,count) ? 1 : 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+void fillMissingName(const CaptureBatch& batch) {
+    if(!batch.config->showNameTags || !batch.count) return;
+    auto* target=nameGetter.load(std::memory_order_acquire);
+    if(!target) return;
+    static Clock::time_point nextRead{};
+    struct Attempt { hitbox::NameKey key; Clock::time_point next; };
+    static std::array<Attempt,2048> attempts{};
+    const auto now=Clock::now();
+    if(now<nextRead) return;
+    for(std::size_t i=0;i<batch.count;++i) {
+        const auto& sample=batch.samples[i];
+        const hitbox::NameKey key{batch.camera.epoch,sample.actorKey,sample.entityId};
+        if(nameMailbox.cachedOrBusy(key)) continue;
+        auto& attempt=attempts[(sample.runtimeId^(sample.runtimeId>>32))%attempts.size()];
+        if(attempt.key==key && now<attempt.next) continue;
+        attempt={key,now+std::chrono::seconds(2)};
+        nextRead=now+std::chrono::milliseconds(100);
+        std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
+        std::size_t count=0;
+        const int result=copyMissingName(target,reinterpret_cast<void*>(sample.actorKey),bytes.data(),&count);
+        if(result<0) {
+            nameGetter.store(nullptr,std::memory_order_release);
+            log("NameTag fallback fault; native name polling disabled, observation cache remains active");
+        } else if(result>0 && batch.camera.epoch==worldEpoch.load(std::memory_order_acquire)) {
+            nameMailbox.observe(key,std::string_view(bytes.data(),count));
+        }
+        break; // At most one getter call per 100ms, never per Actor/frame.
+    }
+}
 struct CachedName {
     hitbox::NameKey key;
     std::uint64_t revision{},touched{};
@@ -697,6 +735,7 @@ void processingLoop(std::size_t shard) noexcept {
     std::unordered_map<std::uint64_t,CachedName> names;
     std::uint64_t nameTouch=0;
     bool fontFailureLogged=false;
+    bool nameReadyLogged=false;
     std::uint64_t loggedEpoch = 0;
     Clock::time_point nextLog{};
     std::optional<CaptureBatch> lastCapture;
@@ -718,7 +757,7 @@ void processingLoop(std::size_t shard) noexcept {
             const auto epoch=worldEpoch.load(std::memory_order_acquire);
             if (!cache.beginWorld(epoch)) continue;
             if (loggedEpoch != epoch) {
-                loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0;
+                loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0; nameReadyLogged=false;
                 lastCapture.reset();
                 const auto previous=std::atomic_exchange_explicit(&worker.snapshot,
                     std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
@@ -771,7 +810,14 @@ void processingLoop(std::size_t shard) noexcept {
                                 }
                                 auto& entry=names[box.runtimeId];
                                 entry.key=key; entry.revision=observed->revision;
-                                if(mesh) entry.mesh=std::move(mesh);
+                                if(mesh) {
+                                    entry.mesh=std::move(mesh);
+                                    if(!nameReadyLogged) {
+                                        nameReadyLogged=true;
+                                        log("HitBox name mesh ready: worker=",shard," runtime_id=",box.runtimeId,
+                                            " name=",entry.mesh->text," [above AABB; double-sided]");
+                                    }
+                                }
                                 found=names.find(box.runtimeId);
                             }
                         } else if(found!=names.end()) {
@@ -918,6 +964,7 @@ void refreshGameTickSnapshot() {
         loggedNativeFailure=false;
         log("Actor capture recovered: pool=", batch.population, " copied=", batch.count);
     }
+    fillMissingName(batch);
     const auto actorsReadyAt = Clock::now();
     const std::array<std::size_t,9> counts{visited,batch.count,batch.nativePlayers,
         batch.rememberedPlayers,batch.filteredActors,batch.missingRuntime,
@@ -1076,7 +1123,7 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                 !hitbox::visibleInFrame(box,input->now,range.liveLifetime,
                     input->config.retainLastPosition,input->config.playersOnly,
                     std::chrono::minutes(input->config.retentionMinutes))) continue;
-            const auto needed=4+(mesh->triangles.size()/3)*4;
+            const auto needed=8+(mesh->triangles.size()/3)*8;
             if(needed>maximumVertices-vertices) continue;
             vertices+=needed;
             selected[count++]={mesh,hitbox::nameBillboard(hitbox::interpolatedBounds(box,input->now),origin),box.retained};
@@ -1088,7 +1135,7 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
         std::size_t groupVertices=0;
         for(std::size_t i=0;i<count;++i)
             if(!pass || selected[i].retained==(pass==2))
-                groupVertices+=pass ? selected[i].mesh->triangles.size()/3*4 : 4;
+                groupVertices+=pass ? selected[i].mesh->triangles.size()/3*8 : 8;
         if(!groupVertices) continue;
         const auto rgba=hitbox::opaqueColor(input->config.retainedColor);
         const FloatColor color=pass==0 ? FloatColor{0.03f,0.03f,0.03f,1} :
@@ -1105,6 +1152,10 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                     hitbox::nameVertex(item.billboard,{half,-0.04f},height,origin),
                     hitbox::nameVertex(item.billboard,{half,1.04f},height,origin),
                     hitbox::nameVertex(item.billboard,{-half,1.04f},height,origin)});
+                batch.quad({hitbox::nameVertex(item.billboard,{-half,1.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{half,1.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{half,-0.04f},height,origin),
+                    hitbox::nameVertex(item.billboard,{-half,-0.04f},height,origin)});
             } else {
                 for(std::size_t p=0;p<item.mesh->triangles.size();p+=3) {
                     const auto a=hitbox::nameVertex(item.billboard,item.mesh->triangles[p],height,origin);
@@ -1112,6 +1163,7 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                     const auto c=hitbox::nameVertex(item.billboard,item.mesh->triangles[p+2],height,origin);
                     // Existing native Quad mode, with a degenerate second triangle.
                     batch.quad({a,b,c,c});
+                    batch.quad({c,b,a,a});
                 }
             }
         }
@@ -1378,10 +1430,12 @@ DWORD WINAPI startClient(void*) {
         return 1;
     }
     const auto nameSource=bedrock::resolveSharedHook(resolver,"Actor::getNameTag",BDS_HOOK_ACTOR_GET_NAME_TAG);
+    if(resolver.exactBuild() && nameSource && bedrock::isUsableSharedHookResolution(*nameSource))
+        nameGetter.store(reinterpret_cast<void*>(nameSource->address),std::memory_order_release);
     if(nameSource && bedrock::isUsableSharedHookResolution(*nameSource) &&
         BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG,reinterpret_cast<void*>(nameSource->address),
             &observeNameTag,nullptr,&nameTagToken))
-        log("NameTag observation active [cached by RuntimeID; no getter polling; worker font geometry]");
+        log("NameTag observation active [RuntimeID cache; missing-name fallback <=10 calls/sec; worker font geometry]");
     else log("NameTag source unavailable; HitBox lines remain active");
     struct NameHookStop { ~NameHookStop() {
         if(nameTagToken) BDS_HookUnsubscribe(std::exchange(nameTagToken,nullptr));
