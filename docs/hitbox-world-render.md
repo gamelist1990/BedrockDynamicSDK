@@ -249,3 +249,20 @@ before native submission, including across the 16,384-vertex boundary. Existing
 translation/color restoration and diagnostic counters remain active. These
 changes address identified code paths; visual correctness still requires an
 in-game check.
+
+## Worker-prepared label vertices and render-context epochs
+
+The existing two workers now compute camera-facing name vertices against the
+latest copied render origin. Each immutable snapshot owns its own prepared
+vertices, label offsets and preparation origin (49,152 vertices per shard).
+The render thread sets tessellator translation to preparedOrigin-currentOrigin
+and submits the arrays. It performs no per-triangle billboard construction;
+engine graphics calls remain in the post-renderLevel callback. The render-camera
+mailbox uses try-lock on the render thread; workers read copied scalars only.
+
+Reference review: Latite commit 9f7463515dd298a496da918285936d78c7416aad,
+LevelRendererHooks.cpp dispatches after the original renderLevel; PacketHooks.cpp
+clears actor name tags on CHANGE_DIMENSION. HitBox additionally invalidates epochs
+when renderer/player-renderer identity changes or disappears, and compares
+ClientInstance and the locally read RuntimeID. This does not establish packet
+handling coverage; unchanged identities during server-side travel remain unknown.
