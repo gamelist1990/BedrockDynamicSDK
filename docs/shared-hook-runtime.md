@@ -62,7 +62,10 @@ a rebuild and a complete Minecraft restart after a runtime upgrade.
 Runtime version is independent of the table capability ABI. Version 4.1 keeps
 the ABI 4 table byte-for-byte, including existing argument records. A new
 consumer accepts the inspected ABI 3/4 prefixes and checks points individually:
-ABI 3 supports 1..12; ABI 4 supports 1..13. `BDS_HookRuntimeSupports(point)` and
+Legacy ABI 3 supports 1..12; legacy ABI 4 supports 1..13. New owners publish
+an independent versioned capabilities mapping with an actual supported-point
+mask, build version and owner subscribe-pointer identity. Additive future
+points can update that mask without changing the shared function-table ABI. `BDS_HookRuntimeSupports(point)` and
 `BDS_HookRuntimeAbi()` report the **active owner**, not the caller's embedded
 version. All point-taking exports gate unsupported points before dispatch.
 Unknown incompatible ABIs are rejected; a larger integer is not proof of compatibility.

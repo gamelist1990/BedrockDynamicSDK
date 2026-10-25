@@ -131,6 +131,58 @@ void bootstrapPreferredRuntime() {
         else FreeLibrary(preferred); // Not activated; no owner pointers published.
     });
 }
+// Separate, versioned metadata leaves the legacy SharedApi allocation and
+// function-table prefix unchanged. Future additive hooks change only the mask.
+struct Capabilities {
+    volatile LONG state;
+    DWORD magic;
+    DWORD size;
+    DWORD pid;
+    DWORD abi;
+    unsigned buildVersion;
+    std::uintptr_t ownerSubscribe;
+    std::uint64_t points;
+};
+constexpr DWORD kCapabilitiesMagic=0x42444331; // BDC1
+HANDLE capabilitiesMapping{};
+Capabilities* capabilities{};
+void capabilitiesName(wchar_t* name,std::size_t size) {
+    swprintf_s(name,size,L"Local\\BedrockDynamicSDK.HookCapabilities.%lu",GetCurrentProcessId());
+}
+void publishCapabilities(const SharedApi* owner) {
+    wchar_t name[96]{};capabilitiesName(name,96);
+    capabilitiesMapping=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,
+        0,sizeof(Capabilities),name);
+    if(!capabilitiesMapping) return;
+    capabilities=static_cast<Capabilities*>(MapViewOfFile(capabilitiesMapping,
+        FILE_MAP_READ|FILE_MAP_WRITE,0,0,sizeof(Capabilities)));
+    if(!capabilities)return;
+    InterlockedExchange(&capabilities->state,1);
+    capabilities->magic=kCapabilitiesMagic;capabilities->size=sizeof(Capabilities);
+    capabilities->pid=GetCurrentProcessId();capabilities->abi=owner->abiVersion;
+    capabilities->buildVersion=kBuildVersion;
+    capabilities->ownerSubscribe=reinterpret_cast<std::uintptr_t>(owner->subscribe);
+    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_RENDER_LEVEL+1))-2;
+    MemoryBarrier();InterlockedExchange(&capabilities->state,2);
+}
+const Capabilities* ownerCapabilities(const SharedApi* owner) {
+    static std::once_flag once;
+    std::call_once(once,[]{
+        // Main owner initialization completed before capability lookup. An old
+        // owner has no metadata; do not create a misleading new descriptor.
+        if(capabilities)return;
+        wchar_t name[96]{};capabilitiesName(name,96);
+        capabilitiesMapping=OpenFileMappingW(FILE_MAP_READ,FALSE,name);
+        if(capabilitiesMapping) capabilities=static_cast<Capabilities*>(
+            MapViewOfFile(capabilitiesMapping,FILE_MAP_READ,0,0,sizeof(Capabilities)));
+    });
+    const auto* value=capabilities;
+    if(!value || value->state!=2)return nullptr;
+    MemoryBarrier();
+    return value->magic==kCapabilitiesMagic && value->size==sizeof(Capabilities) &&
+        value->pid==GetCurrentProcessId() && value->abi==owner->abiVersion &&
+        value->ownerSubscribe==reinterpret_cast<std::uintptr_t>(owner->subscribe) ? value : nullptr;
+}
 HANDLE sharedMapping{};
 SharedApi* sharedApi{};
 std::mutex sharedApiMutex;
@@ -178,6 +230,7 @@ SharedApi* getSharedApi() {
         sharedApi->version = &leaderVersion;
         sharedApi->directInstall = &leaderDirectInstall;
         sharedApi->directRemove = &leaderDirectRemove;
+        publishCapabilities(sharedApi);
         MemoryBarrier();
         InterlockedExchange(&sharedApi->state, 2);
     } else {
@@ -518,8 +571,13 @@ int BDS_HOOK_CALL leaderDirectRemove(BDS_HookToken token) {
 
 namespace {
 bool ownerSupports(const SharedApi* api,BDS_HookPoint point) {
-    const unsigned maximum=api && api->abiVersion==3 ? 12u : 13u;
-    return api && point>=BDS_HOOK_KEYBOARD_FEED && static_cast<unsigned>(point)<=maximum;
+    if(!api)return false;
+    const auto index=static_cast<unsigned>(point);
+    if(index==0 || index>=64)return false;
+    if(const auto* info=ownerCapabilities(api))return (info->points & (std::uint64_t{1}<<index))!=0;
+    // Legacy owners predate metadata; their published ABI is a known ceiling.
+    const unsigned maximum=api->abiVersion==3 ? 12u : 13u;
+    return index<=maximum;
 }
 }
 extern "C" int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point) {
