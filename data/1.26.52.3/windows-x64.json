@@ -595,6 +595,12 @@
     "actor_type_offset": 0,
     "player_type_id": 319,
     "renderer_player_offset": 1128,
-    "render_origin_offset": 1632
+    "render_origin_offset": 1632,
+    "local_player": {
+      "rva": "0x5DAED30",
+      "entry_check": "48 83 ec 48 48 8b 05 45 b3 a2 0b 48 31 e0 48 89 44 24 40 48 8d 91 48 02",
+      "abi": "Actor* __fastcall(ClientInstance*)",
+      "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration"
+    }
   }
 }

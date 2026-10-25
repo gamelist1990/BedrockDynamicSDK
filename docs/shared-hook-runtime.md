@@ -49,3 +49,10 @@ The Windows CI builds two separate test client DLLs, each containing its own
 static runtime copy, then loads both into one process and verifies they share
 the same hook chain. That is the key co-load guarantee; an in-game Windows test
 is still advisable after SDK changes.
+
+## Runtime 4.0.0
+
+Capability ABI 4 adds `BDS_HOOK_RENDER_LEVEL` with `BDS_RenderLevelArgs`
+(renderer, screen, context). Subscribers call the continuation before drawing.
+Updated HitBox and Freecam share this hook; all co-loaded consumers require
+a rebuild and a complete Minecraft restart after a runtime upgrade.

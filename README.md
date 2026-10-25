@@ -418,3 +418,10 @@ CMakeサンプルは [BedrockAutoSprint](https://github.com/gamelist1990/Bedrock
 - データの生成ソースは [Latite](https://github.com/LatiteClient/Latite) と [Bedrock Lens](https://github.com/bedrock-mc/lens) などを参考にしています。
 - Microsoft配布物そのものをリポジトリ内で再配布しない方針です。
 
+
+## Freecam example
+
+[Freecam](exsample/Freecam/README.md) adds configurable detached camera movement,
+damage auto-disable, and bounded nearby Player boxes for Windows x64.
+Native camera integration is an exact-build candidate; live validation pending.
+Runtime 4.0.0 shares renderLevel between Freecam and HitBox; rebuild all co-loaded mods.
