@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/world_events.hpp>
 // Lightweight, header-only, typed event dispatcher.
 // No Minecraft binary offsets, Win32 headers, hooks, JSON, downloads, or threads.
 // The event source belongs to the client (or an independently validated adapter).
@@ -186,6 +187,9 @@ public:
 
 using ClientEvents = EventBus<UpdateEvent, KeyEvent, NativeKeyEvent, MouseEvent,
                                FocusEvent, GameplayEvent, FovEvent,
-                               ActorNameTagEvent, ViewNameTagEvent, LevelTickEvent>;
+                               ActorNameTagEvent, ViewNameTagEvent, LevelTickEvent,
+                               WorldChangeEvent, ClientJoinLevelEvent,
+                               ClientExitLevelEvent, ClientCancelJoinLevelEvent,
+                               DimensionChangeEvent>;
 
 } // namespace bedrock

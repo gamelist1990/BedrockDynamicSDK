@@ -18,6 +18,18 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 ScanClientはWindows x64の開発用DLLです。起動時に静的取得と並行して、本体の書き込み可能セクションを`stop`まで低優先度で繰り返し読み、変化ページを時刻・RVA・前後バイト付きで`dynamic_changes.jsonl`に記録します。ヒープや他モジュールは走査しません。ワールド／ディメンション関連文字列、その`.text`からの参照候補、`.pdata`関数範囲、関数ポインタ表候補も`%USERPROFILE%\\Documents\\PEXData\\ScanClient\\<version>\\windows-x64`へ保存します。候補はABI検証済みのSDK定義ではありません。詳細は[ScanClient README](exsample/ScanClient/README.md)を参照してください。
 
+## ワールド移動イベント / PacketList
+
+`GameHooks::installWorldEvents(resolver, profileJson, error)`で、参加・退出・参加中止・
+ディメンション変更を`api.Event.Enum.WorldChange`から購読できます。
+`DimensionChange`等の個別イベントも提供し、通知時はSDKのActor／名前／描画キャッシュを
+失効させて`api.worldEpoch()`を進めます。HitBoxもこの通知を利用します。
+1.26.52.3用の関数と多重継承のthis補正を静的解析から追加しましたが、実機での発火は未検証です。
+
+`<bedrock/packet_ids.hpp>`には253種類の`PacketId`（別名`PacketList`）、
+`packetName`、`packetIdFromValue`、`packetIdFromName`を用意しています。
+使い方・出典・検証範囲は[ワールドイベントとPacket API](docs/world-events-and-packets.md)を参照してください。
+
 ## Console / Logger API（必要なModだけ使用）
 
 コンソールとデバッグ出力APIは**ヘッダーオンリー・独立モジュール**です。

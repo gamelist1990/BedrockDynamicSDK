@@ -203,6 +203,10 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         "Actor::getNameTag",
         "ItemStackBase::getHoverName",
         "Level::getRuntimeActorList",
+        "ClientInstance::onPlayerLoaded",
+        "ClientInstance::onLevelExit",
+        "ClientInstance::onDimensionChangedEvent",
+        "ClientInstance::onCancelJoinGame",
     }
     assert set(data["symbols"]) == expected
     verified = {

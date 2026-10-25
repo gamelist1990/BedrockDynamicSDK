@@ -1612,6 +1612,7 @@ DWORD WINAPI startClient(void*) {
         }
         hitbox::WorldRenderProfile candidateRender;
         if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
+        if (!bedrock::parseNativeWorldEventsLayout(candidate, error)) return false;
         worldRenderProfile = std::move(candidateRender);
         resolver = std::move(candidateResolver);
         itemLayout = std::move(candidateItems);
@@ -1638,6 +1639,7 @@ DWORD WINAPI startClient(void*) {
         // Reuse the original live fingerprint. A bundled profile from another
         // executable/build is rejected by attachWindowsMainModule above.
         choice.source = bedrock::ProfileSource::Embedded;
+        profile = bedrock::generated::kSymbolDatabase;
         profileReady = true;
         log("native layouts recovered from embedded exact-build profile");
     }
@@ -1658,8 +1660,18 @@ DWORD WINAPI startClient(void*) {
         if (event.clientInstance) access.setClient(event.clientInstance);
     });
     gameApi.Event.Enum.LevelTick.then(&observeWorld);
+    gameApi.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event) {
+        // Workers/renderers already fence their snapshots by this generation.
+        // Advancing it immediately hides old boxes, retained positions and text.
+        worldEpoch.fetch_add(1, std::memory_order_acq_rel);
+        currentWorld.store(nullptr, std::memory_order_release);
+        access.setClient(event.clientInstance);
+        log("world lifecycle event: reason=", static_cast<unsigned>(event.reason),
+            " sdk_epoch=", event.epoch, " [old-world snapshots invalidated]");
+    });
     if (!gameHooks->installGameplay(resolver, error) ||
-        !gameHooks->installLevelTick(resolver, error)) {
+        !gameHooks->installLevelTick(resolver, error) ||
+        !gameHooks->installWorldEvents(resolver, profile, error)) {
         log("SDK hook registration failed: ", error);
         gameHooks.reset();
         status.store(Status::Failed, std::memory_order_release);

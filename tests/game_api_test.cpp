@@ -164,4 +164,23 @@ int main() {
     assert(!api.dispatchKey(key));
     bedrock::KeyEvent passThrough{66, true, false};
     assert(api.dispatchKey(passThrough));
+
+    // Native world changes clear all caches before observers run, even if
+    // Minecraft reuses the same Level and Actor addresses in the new world.
+    const auto client = reinterpret_cast<void*>(0x1000);
+    api.dispatchWorldChange(bedrock::WorldChangeReason::Joined, client, game.local);
+    api.observeActorNameTag(game.local, game.tags.at(game.local));
+    (void)self.getHeldItem();
+    const auto beforeWorldRead = game.heldItemReads;
+    bool sawClearedCache = false;
+    api.Event.Enum.DimensionChange.then([&](const auto&) {
+        sawClearedCache = api.cachedActorNameTags(bedrock::NameTagSource::ActorGetter)->empty() &&
+            api.cachedActors(bedrock::NameTagSource::View)->empty() &&
+            !api.cachedRenderViewActors().actors;
+    });
+    const auto epoch = api.worldEpoch();
+    api.dispatchWorldChange(bedrock::WorldChangeReason::DimensionChanged, client);
+    assert(sawClearedCache && api.worldEpoch() == epoch + 1);
+    (void)self.getHeldItem();
+    assert(game.heldItemReads == beforeWorldRead + 1);
 }

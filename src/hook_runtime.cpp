@@ -32,6 +32,7 @@ using MouseFn = void(__fastcall*)(void*, std::int8_t, std::int8_t,
 using CursorFn = void(__fastcall*)(void*);
 using FovFn = float(__fastcall*)(void*, float, void*, void*);
 using LevelFn = void(__fastcall*)(void*);
+using ClientPlayerLoadedFn = void(__fastcall*)(void*, void*);
 using ActorNameTagFn = const std::string&(__fastcall*)(void*);
 using GameCoreKeyboardEventFn = void*(__fastcall*)(void*, void*, void*);
 
@@ -56,7 +57,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 9> states{};
+std::array<State, 13> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -92,7 +93,9 @@ struct SharedApi {
     DirectInstallFn directInstall;
     DirectRemoveFn directRemove;
 };
-constexpr DWORD kSharedAbiVersion = 2;
+// New points require a new owner capability version. An older process owner
+// must reject them, rather than silently installing a second hook broker.
+constexpr DWORD kSharedAbiVersion = 3;
 HANDLE sharedMapping{};
 SharedApi* sharedApi{};
 std::mutex sharedApiMutex;
@@ -226,6 +229,18 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
         if (original) reinterpret_cast<LevelFn>(original)(a.level);
         return 0;
     }
+    case BDS_HOOK_CLIENT_PLAYER_LOADED: {
+        auto& a = *static_cast<BDS_ClientPlayerLoadedArgs*>(args);
+        if (original) reinterpret_cast<ClientPlayerLoadedFn>(original)(a.self, a.player);
+        return 0;
+    }
+    case BDS_HOOK_CLIENT_LEVEL_EXIT:
+    case BDS_HOOK_CLIENT_DIMENSION_CHANGED:
+    case BDS_HOOK_CLIENT_JOIN_CANCELLED: {
+        auto& a = *static_cast<BDS_ClientWorldArgs*>(args);
+        if (original) reinterpret_cast<CursorFn>(original)(a.self);
+        return 0;
+    }
     case BDS_HOOK_ACTOR_GET_NAME_TAG: {
         auto& a = *static_cast<BDS_ActorNameTagArgs*>(args);
         if (!original) return 0;
@@ -285,6 +300,18 @@ float __fastcall fovDetour(void* self, float fov, void* a3, void* a4) {
 void __fastcall levelDetour(void* level) {
     BDS_LevelArgs args{level}; invoke(BDS_HOOK_LEVEL_SUB_TICK, &args);
 }
+void __fastcall clientPlayerLoadedDetour(void* self, void* player) {
+    BDS_ClientPlayerLoadedArgs args{self, player}; invoke(BDS_HOOK_CLIENT_PLAYER_LOADED, &args);
+}
+void __fastcall clientLevelExitDetour(void* self) {
+    BDS_ClientWorldArgs args{self}; invoke(BDS_HOOK_CLIENT_LEVEL_EXIT, &args);
+}
+void __fastcall clientDimensionChangedDetour(void* self) {
+    BDS_ClientWorldArgs args{self}; invoke(BDS_HOOK_CLIENT_DIMENSION_CHANGED, &args);
+}
+void __fastcall clientJoinCancelledDetour(void* self) {
+    BDS_ClientWorldArgs args{self}; invoke(BDS_HOOK_CLIENT_JOIN_CANCELLED, &args);
+}
 const std::string& __fastcall actorNameTagDetour(void* actor) {
     static const std::string empty;
     BDS_ActorNameTagArgs args{actor, nullptr};
@@ -305,6 +332,10 @@ void* detourFor(BDS_HookPoint point) {
     case BDS_HOOK_RELEASE_CURSOR: return reinterpret_cast<void*>(&releaseDetour);
     case BDS_HOOK_GET_FOV: return reinterpret_cast<void*>(&fovDetour);
     case BDS_HOOK_LEVEL_SUB_TICK: return reinterpret_cast<void*>(&levelDetour);
+    case BDS_HOOK_CLIENT_PLAYER_LOADED: return reinterpret_cast<void*>(&clientPlayerLoadedDetour);
+    case BDS_HOOK_CLIENT_LEVEL_EXIT: return reinterpret_cast<void*>(&clientLevelExitDetour);
+    case BDS_HOOK_CLIENT_DIMENSION_CHANGED: return reinterpret_cast<void*>(&clientDimensionChangedDetour);
+    case BDS_HOOK_CLIENT_JOIN_CANCELLED: return reinterpret_cast<void*>(&clientJoinCancelledDetour);
     case BDS_HOOK_ACTOR_GET_NAME_TAG: return reinterpret_cast<void*>(&actorNameTagDetour);
     case BDS_HOOK_GAMECORE_KEYBOARD_EVENT:
         return reinterpret_cast<void*>(&gameCoreKeyboardEventDetour);
@@ -312,7 +343,7 @@ void* detourFor(BDS_HookPoint point) {
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_GAMECORE_KEYBOARD_EVENT;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_CLIENT_JOIN_CANCELLED;
 }
 } // namespace
 
@@ -376,7 +407,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_GAMECORE_KEYBOARD_EVENT; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_CLIENT_JOIN_CANCELLED; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -394,7 +425,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "2.2.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "3.0.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {
