@@ -35,9 +35,9 @@ namespace entt {template<> struct entt_traits<freecam_native::Entity>:basic_entt
 namespace {
 using Vec=bedrock::Vec3; using Clock=std::chrono::steady_clock;
 using Registry=entt::basic_registry<freecam_native::Entity>;
-struct Box {std::uint64_t id{};bedrock::ActorBounds bounds{};};
-struct Capture {std::uint64_t epoch{};std::array<Box,16> boxes{};unsigned count{};Vec origin{};};
-struct Mesh {std::uint64_t epoch{};Clock::time_point made{};unsigned count{};std::array<Vec,128*24> vertices{};};
+struct Box {std::uint64_t id{};bedrock::ActorBounds bounds{},blendFrom{};};
+struct Capture {std::uint64_t epoch{};Clock::time_point made{};std::array<Box,128> boxes{};unsigned count{};Vec origin{};};
+struct Mesh {std::uint64_t epoch{};Clock::time_point made{};unsigned count{};std::array<Vec,128*24> vertices{},fromVertices{};};
 std::atomic<bool> stop{},desired{},active{},gameplay{};
 std::atomic<unsigned> status{};
 std::atomic<void*> client{},local{};
@@ -105,9 +105,15 @@ void mouseEvent(const bedrock::MouseEvent& e){
     else if(!c->allowInteraction && (e.action==1||e.action==2||e.action==3||e.action==4))e.cancel();
 }
 bool capturePlayers(void* actor,Capture* batch,unsigned limit) noexcept {
+    // The game thread owns these generation-checked handles. Workers receive
+    // only copied AABBs; discovery stays bounded while known Players update each tick.
+    struct Tracked {freecam_native::Entity entity{};std::uint64_t id{};bedrock::ActorBounds bounds{};Clock::time_point seen{};};
+    static thread_local std::array<Tracked,128> tracked{};
+    static thread_local std::size_t trackedCount=0,cursor=0;
+    static thread_local void* previousRegistry{};static thread_local std::uint64_t previousEpoch{};
     void* registry{};if(!read(actor,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||!registry)return false;
-    static thread_local std::size_t cursor=0;static thread_local void* previousRegistry{};static thread_local std::uint64_t previousEpoch{};
-    if(previousRegistry!=registry||previousEpoch!=batch->epoch){cursor=0;previousRegistry=registry;previousEpoch=batch->epoch;}
+    if(previousRegistry!=registry||previousEpoch!=batch->epoch){trackedCount=cursor=0;previousRegistry=registry;previousEpoch=batch->epoch;}
+    batch->made=Clock::now();batch->count=0;
     __try {
         auto* r=static_cast<Registry*>(registry);auto* types=r->storage(actors.actorTypeComponentHash);
         auto* owners=r->storage(actors.actorOwnerComponentHash);auto* bounds=r->storage(actors.aabbShapeComponentHash);
@@ -115,19 +121,33 @@ bool capturePlayers(void* actor,Capture* batch,unsigned limit) noexcept {
         const auto size=types->size();if(size>16384)return false;const auto start=Clock::now();
         for(unsigned n=0;n<limit&&n<size;++n){
             if(n&&Clock::now()-start>std::chrono::microseconds(150))break;
-            if(cursor>=size)cursor=0;auto entity=types->data()[cursor++];std::uint32_t type{};void* owner{};Box box;
+            if(cursor>=size)cursor=0;const auto entity=types->data()[cursor++];std::uint32_t type{};void* owner{};std::uint64_t id{};
             if(!r->valid(entity)||!types->contains(entity)||!read(types->value(entity),render.actorTypeValueOffset,type)||type!=render.playerTypeId||
-               !owners->contains(entity)||!read(owners->value(entity),actors.actorOwnerPointerOffset,owner)||owner==actor||
-               !bounds->contains(entity)||!ids->contains(entity)||!read(ids->value(entity),actors.runtimeIdValueOffset,box.id)||!box.id||
-               !read(bounds->value(entity),actors.aabbMinimumOffset,box.bounds.minimum)||
-               !read(bounds->value(entity),actors.aabbMaximumOffset,box.bounds.maximum)||!box.bounds.valid()||
-               !finite(box.bounds.minimum)||!finite(box.bounds.maximum))continue;
+               !owners->contains(entity)||!read(owners->value(entity),actors.actorOwnerPointerOffset,owner)||!owner||owner==actor||
+               !ids->contains(entity)||!read(ids->value(entity),actors.runtimeIdValueOffset,id)||!id)continue;
+            std::size_t i=0;for(;i<trackedCount;++i)if(tracked[i].id==id)break;
+            if(i==trackedCount && trackedCount<tracked.size())tracked[trackedCount++]={entity,id};
+        }
+        for(std::size_t i=0;i<trackedCount;){
+            auto& item=tracked[i];std::uint64_t id{};void* owner{};Box box;
+            if(!r->valid(item.entity)||!ids->contains(item.entity)||!owners->contains(item.entity)||
+               !read(ids->value(item.entity),actors.runtimeIdValueOffset,id)||id!=item.id||
+               !read(owners->value(item.entity),actors.actorOwnerPointerOffset,owner)||!owner||owner==actor||
+               !bounds->contains(item.entity)) {tracked[i]=tracked[--trackedCount];continue;}
+            auto* shape=bounds->value(item.entity);
+            if(!read(shape,actors.aabbMinimumOffset,box.bounds.minimum)||!read(shape,actors.aabbMaximumOffset,box.bounds.maximum)||
+               !box.bounds.valid()||!finite(box.bounds.minimum)||!finite(box.bounds.maximum)) {tracked[i]=tracked[--trackedCount];continue;}
             const auto a=box.bounds.minimum,b=box.bounds.maximum;
-            if(b.x-a.x>4||b.y-a.y>5||b.z-a.z>4)continue;
-            batch->boxes[batch->count++]=box;
+            if(b.x-a.x>4||b.y-a.y>5||b.z-a.z>4){tracked[i]=tracked[--trackedCount];continue;}
+            box.id=id;box.blendFrom=box.bounds;
+            const float dx=a.x-item.bounds.minimum.x,dy=a.y-item.bounds.minimum.y,dz=a.z-item.bounds.minimum.z;
+            if(item.seen!=Clock::time_point{} && batch->made-item.seen<=std::chrono::milliseconds(250) && dx*dx+dy*dy+dz*dz<=64.f)
+                box.blendFrom=item.bounds;
+            item.bounds=box.bounds;item.seen=batch->made;
+            batch->boxes[batch->count++]=box;++i;
         }
         return true;
-    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+    }__except(EXCEPTION_EXECUTE_HANDLER){batch->count=0;return false;}
 }
 // Borion-style local Player proxy. All mutable native access is confined to
 // LevelTick/world teardown callbacks; the network middleware reads atomics only.
@@ -315,7 +335,11 @@ bool drawNative(void* renderer,void* screen,const Mesh* geometry) noexcept {
         }
         if(materialState>0&&write(tess,render.translation,Vec{})&&write(shader,0,color)&&write(shader,render.dirty,dirty)){
             begin(tess,0,4,static_cast<int>(geometry->count),false);
-            for(unsigned i=0;i<geometry->count;++i){const auto v=geometry->vertices[i];vertex(tess,v.x-origin.x,v.y-origin.y,v.z-origin.z);}
+            const float alpha=std::clamp(std::chrono::duration<float>(Clock::now()-geometry->made).count()/0.05f,0.f,1.f);
+            for(unsigned i=0;i<geometry->count;++i){
+                const auto a=geometry->fromVertices[i],b=geometry->vertices[i];
+                vertex(tess,a.x+(b.x-a.x)*alpha-origin.x,a.y+(b.y-a.y)*alpha-origin.y,a.z+(b.z-a.z)*alpha-origin.z);
+            }
             alignas(16) std::array<std::byte,0x58> scratch{};submit(screen,tess,material.data(),scratch.data());success=true;
         }
     }__except(EXCEPTION_EXECUTE_HANDLER){success=false;}
@@ -325,7 +349,7 @@ bool drawNative(void* renderer,void* screen,const Mesh* geometry) noexcept {
 void BDS_HOOK_CALL renderSubscriber(void*,void* raw,BDS_HookNext next,void* frame){
     next(frame,raw);if(!active.load()||stop.load()||!config.load()->playerHitboxes)return;
     static thread_local bool drawing=false;if(drawing)return;
-    const auto geometry=mesh.load();if(!geometry||geometry->epoch!=epoch.load()||!geometry->count||Clock::now()-geometry->made>std::chrono::seconds(2))return;
+    const auto geometry=mesh.load();if(!geometry||geometry->epoch!=epoch.load()||!geometry->count||Clock::now()-geometry->made>std::chrono::milliseconds(250))return;
     auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);drawing=true;
     if(!drawNative(args.renderer,args.screen,geometry.get())){disable(RenderFault);}
     drawing=false;
@@ -378,33 +402,30 @@ bool loadConfig(const std::filesystem::path& path){
     }catch(const std::exception& e){log(std::string("config rejected: ")+e.what());return false;}
 }
 void worker(const std::filesystem::path& path){
-    struct Entry {Box box;Clock::time_point seen;};std::unordered_map<std::uint64_t,Entry> tracked;
     std::uint64_t generation{};auto lastReload=Clock::now();Clock::time_point nextWaitingLog{};std::error_code ec;auto modified=std::filesystem::last_write_time(path,ec);
     constexpr std::array<std::array<unsigned,2>,12> edges{{{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}}};
     while(!stop.load()){
         const auto now=Clock::now();
         if(!packetReady.load())installPacketSource();
-        const auto e=epoch.load();if(generation!=e){generation=e;tracked.clear();mesh.store(nullptr);}
+        const auto e=epoch.load();if(generation!=e){generation=e;mesh.store(nullptr);}
         Capture batch;bool have=false;{std::lock_guard lock(mailboxMutex);if(mailboxReady){batch=mailbox;mailboxReady=false;have=true;}}
         if(have&&batch.epoch==generation&&active.load()){
-            for(unsigned i=0;i<batch.count;++i)tracked[batch.boxes[i].id]={batch.boxes[i],now};
-            const auto c=config.load();auto result=std::make_shared<Mesh>();result->epoch=generation;result->made=now;unsigned boxes=0;
-            for(auto it=tracked.begin();it!=tracked.end();){
-                if(now-it->second.seen>std::chrono::seconds(2)){it=tracked.erase(it);continue;}
-                const auto& b=it->second.box.bounds;const float x=(b.minimum.x+b.maximum.x)*0.5f-batch.origin.x,
+            const auto c=config.load();auto result=std::make_shared<Mesh>();result->epoch=generation;result->made=batch.made;unsigned boxes=0;
+            for(unsigned i=0;i<batch.count&&boxes<c->maxPlayers;++i){
+                const auto& box=batch.boxes[i];const auto& b=box.bounds;const auto& from=box.blendFrom;
+                const float x=(b.minimum.x+b.maximum.x)*0.5f-batch.origin.x,
                     y=(b.minimum.y+b.maximum.y)*0.5f-batch.origin.y,z=(b.minimum.z+b.maximum.z)*0.5f-batch.origin.z;
-                if(boxes<c->maxPlayers && x*x+y*y+z*z<=c->radius*c->radius){
-                    for(const auto& edge:edges)for(unsigned corner:edge){
-                        result->vertices[result->count++]={(corner&1)?b.maximum.x:b.minimum.x,(corner&2)?b.maximum.y:b.minimum.y,(corner&4)?b.maximum.z:b.minimum.z};
-                    }++boxes;
-                }++it;
+                if(x*x+y*y+z*z>c->radius*c->radius)continue;
+                for(const auto& edge:edges)for(unsigned corner:edge){
+                    result->fromVertices[result->count]={(corner&1)?from.maximum.x:from.minimum.x,(corner&2)?from.maximum.y:from.minimum.y,(corner&4)?from.maximum.z:from.minimum.z};
+                    result->vertices[result->count++]={(corner&1)?b.maximum.x:b.minimum.x,(corner&2)?b.maximum.y:b.minimum.y,(corner&4)?b.maximum.z:b.minimum.z};
+                }++boxes;
             }
-            if(tracked.size()>1024)tracked.clear();
             if(active.load()&&generation==epoch.load())mesh.store(result);
         }
-        if(!active.load()){tracked.clear();mesh.store(nullptr);}
+        if(!active.load())mesh.store(nullptr);
         const auto bits=logBits.exchange(0);
-        if(bits&Activated)log("Freecam active [Borion local Player proxy; movement packets suppressed]");
+        if(bits&Activated)log("Freecam active [Borion local Player proxy; movement packets suppressed; Player boxes: every tick + 50ms interpolation]");
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / recognized movement packet required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
         if(bits&ReadFailed)log("Freecam disabled: native camera/Player read failed");

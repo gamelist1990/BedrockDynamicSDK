@@ -108,3 +108,16 @@ Post-join/dimension callbacks discard the old epoch without writing old world
 coordinates into the new one. After Stop, pinned tick callbacks may perform
 pending restoration; other operations become pass-through/no-op. This is not
 validated in a live Minecraft process on this host.
+
+## Freecam Player boxes: per-tick capture
+
+Player discovery examines at most `capture_rows_per_update` type-pool rows per
+LevelTick (default 8, maximum 16), with the existing cooperative discovery budget.
+A fixed array of at most 128 known Player handles is refreshed each game tick;
+entity generation, RuntimeID and owner/self checks precede each AABB copy.
+This bounded refresh is separate from discovery and does not claim a hard 150us
+limit for the entire tick. No name or inventory APIs are involved.
+Workers prepare paired previous/current line vertices from copied AABBs. Render
+callbacks interpolate these scalar vertices over 50ms from the capture timestamp.
+Gaps above 250ms and jumps above 8 blocks snap. Missing Actors are removed on
+the next valid capture; stale snapshots expire after 250ms.
