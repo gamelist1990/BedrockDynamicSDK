@@ -702,7 +702,7 @@ struct NameDiagnostics {
     std::atomic<std::uint64_t> hookCalls{},hookCopied{},hookRejected{},nativeCalls{},nativeCopied{},
         nativeEmpty{},nativeUnreadable{},nativeFaults{},mailboxMisses{},blankNames{},meshFailures{},workerExceptions{},
         renderCalls{},renderNoMesh{},renderHidden{},renderBudget{},renderSubmitted{},renderFaults{},
-        frameNoBoxes{},frameStale{};
+        frameNoBoxes{},frameStale{},renderFrames{},renderUs{},renderPeakUs{};
     struct Worker { std::atomic<std::size_t> boxes{},observed{},meshes{},vertices{},prepareUs{},retainedBoxes{},retainedMeshes{},geometryReused{}; };
     std::array<Worker,workerCapacity> workers;
 } nameDiagnostics;
@@ -728,6 +728,10 @@ void reportNameDiagnostics() {
     log("NameTag processing [5s]: mailbox_misses=",d.mailboxMisses.exchange(0),
         " blank_after_normalize=",d.blankNames.exchange(0)," mesh_failures=",d.meshFailures.exchange(0),
         " worker_exceptions=",d.workerExceptions.exchange(0));
+    const auto renderFrames=d.renderFrames.exchange(0);
+    const auto renderUs=d.renderUs.exchange(0);
+    log("HitBox render cost [5s]: frames=",renderFrames," average_us=",renderFrames ? renderUs/renderFrames : 0,
+        " peak_us=",d.renderPeakUs.exchange(0)," [native submission only; worker geometry excluded]");
     log("NameTag rendering [5s]: passes=",d.renderCalls.exchange(0)," submitted_labels=",d.renderSubmitted.exchange(0),
         " no_mesh=",d.renderNoMesh.exchange(0)," hidden_or_expired=",d.renderHidden.exchange(0),
         " vertex_budget_skips=",d.renderBudget.exchange(0)," shader_write_failures=",d.renderFaults.exchange(0),
@@ -856,19 +860,28 @@ void processingLoop(std::size_t shard) noexcept {
     std::optional<CaptureBatch> lastCapture;
     std::shared_ptr<const RenderSnapshot> previousPrepared;
     std::uint64_t mailboxRevision=0;
-    Clock::time_point nextNameExample{};
+    Clock::time_point nextNameExample{},nextPublication{};
     // Retain replaced snapshots until no callback holds them. Their vectors
     // are then destroyed here, instead of on the game's/renderer's last release.
     std::vector<std::shared_ptr<const RenderSnapshot>> retired;
     for (;;) {
         std::optional<CaptureBatch> batch;
+        std::array<std::optional<CaptureBatch>,8> incoming;
+        std::size_t incomingCount=0;
         {
             std::unique_lock lock(worker.mutex);
+            // Consume every observation, but publish geometry at most 20 Hz.
+            // Notifications cannot turn this into an unbounded rebuild loop.
+            worker.ready.wait_until(lock,nextPublication,[&] { return worker.stopping; });
             worker.ready.wait_for(lock, std::chrono::milliseconds(250), [&] {
                 return worker.stopping || !worker.pending.empty();
             });
             if (worker.stopping) return;
-            batch = worker.pending.pop();
+            while(incomingCount<incoming.size()) {
+                auto value=worker.pending.pop();
+                if(!value) break;
+                incoming[incomingCount++]=std::move(value);
+            }
         }
         try {
             std::erase_if(retired, [](const auto& value) { return value.use_count() == 1; });
@@ -887,21 +900,21 @@ void processingLoop(std::size_t shard) noexcept {
                     std::shared_ptr<const RenderSnapshot>{},std::memory_order_acq_rel);
                 if(previous) retired.push_back(previous);
             }
-            if (batch && batch->camera.epoch != epoch) continue;
-            if (batch) lastCapture=batch;
-            else if (lastCapture) {
-                // Expire retained records even when native capture has stopped.
-                batch=lastCapture;
-                batch->count=0;
+            for(std::size_t n=0;n<incomingCount;++n) {
+                const auto& captured=*incoming[n];
+                if(captured.camera.epoch!=epoch) continue;
+                for(std::size_t i=0;i<captured.count;++i) {
+                    const auto& sample=captured.samples[i];
+                    cache.observe(sample,captured.camera.cameraPosition,captured.config->nearbyDistance,
+                        captured.config->retainLastPosition,captured.config->showAllActors);
+                }
+                batch=captured;
             }
-            if (!batch) continue;
-            const auto& config = *batch->config;
-            for (std::size_t i = 0; i < batch->count; ++i) {
-                const auto& sample = batch->samples[i];
-                if (actorWorker(sample.runtimeId) != shard) continue;
-                cache.observe(sample, batch->camera.cameraPosition,
-                              config.nearbyDistance, config.retainLastPosition, config.showAllActors);
-            }
+            if(batch) lastCapture=batch;
+            else if(lastCapture) { batch=lastCapture; batch->count=0; }
+            if(!batch) continue;
+            nextPublication=Clock::now()+std::chrono::milliseconds(50);
+            const auto& config=*batch->config;
             auto snapshot = std::make_shared<RenderSnapshot>();
             snapshot->epoch = batch->camera.epoch;
             snapshot->liveLifetime = batch->liveLifetime;
@@ -1095,7 +1108,13 @@ void refreshGameTickSnapshot() {
         if(shard>=workerCount) return true;
         auto& worker=processingWorkers[shard];
         std::unique_lock lock(worker.mutex,std::try_to_lock);
-        if(!lock || worker.stopping || !worker.pending.push(batch)) return false;
+        if(!lock || worker.stopping) return false;
+        CaptureBatch partition=batch;
+        partition.count=0;
+        for(std::size_t i=0;i<batch.count;++i)
+            if(actorWorker(batch.samples[i].runtimeId)==shard)
+                partition.samples[partition.count++]=batch.samples[i];
+        if(!worker.pending.push(partition)) return false;
         lock.unlock(); worker.ready.notify_one(); return true;
     };
     NativeReadWindow readWindow;
@@ -1265,10 +1284,12 @@ std::atomic<bool> worldRenderFault{};
 // would free executable code still in flight. No worker/native data is touched.
 constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visibility limit.
 struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
+    const std::uint8_t* visible{};
     const hitbox::PreparedNames* names{};
     std::chrono::milliseconds liveLifetime{}; };
 struct NativeDrawInput {
     std::array<NativeDrawRange, workerCapacity> ranges{};
+    std::array<std::uint8_t,hitbox::TrackingBudget::maximumActors> visible{};
     std::uintptr_t localActor{};
     Config config;
     Clock::time_point now;
@@ -1330,9 +1351,7 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
             for(const auto& label:prepared.labels) {
                 if(label.boxIndex>=range.count) continue;
                 const auto& box=range.boxes[label.boxIndex];
-                if(box.actorKey==input->localActor || !hitbox::visibleInFrame(box,input->now,range.liveLifetime,
-                    input->config.retainLastPosition,input->config.playersOnly,
-                    std::chrono::minutes(input->config.retentionMinutes))) { if(!pass) ++hidden; continue; }
+                if(!range.visible[label.boxIndex]) { if(!pass) ++hidden; continue; }
                 if(box.retained==(pass==1)) vertices+=label.vertexCount;
             }
             if(!vertices) continue;
@@ -1343,9 +1362,7 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                 if(label.boxIndex>=range.count || label.firstVertex>prepared.vertices.size() ||
                     label.vertexCount>prepared.vertices.size()-label.firstVertex) continue;
                 const auto& box=range.boxes[label.boxIndex];
-                if(box.actorKey==input->localActor || box.retained!=(pass==1) ||
-                    !hitbox::visibleInFrame(box,input->now,range.liveLifetime,input->config.retainLastPosition,
-                        input->config.playersOnly,std::chrono::minutes(input->config.retentionMinutes))) continue;
+                if(box.retained!=(pass==1) || !range.visible[label.boxIndex]) continue;
                 for(std::size_t p=label.firstVertex;p<label.firstVertex+label.vertexCount;p+=4)
                     batch.quad({prepared.vertices[p],prepared.vertices[p+1],prepared.vertices[p+2],prepared.vertices[p+3]});
                 ++submitted;
@@ -1392,10 +1409,7 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             std::size_t visited=0, count=0;
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
-                    if(range.boxes[i].actorKey==input->localActor) continue;
-                    if(!hitbox::visibleInFrame(range.boxes[i],input->now,range.liveLifetime,
-                        input->config.retainLastPosition,input->config.playersOnly,
-                        std::chrono::minutes(input->config.retentionMinutes))) continue;
+                    if(!range.visible[i]) continue;
                     const bool retained=range.boxes[i].retained;
                     if (retained==(pass==1)) ++count;
                 }
@@ -1408,10 +1422,7 @@ int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input
             for (const auto& range:input->ranges) {
                 for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
                     const auto& box=range.boxes[i];
-                    if(box.actorKey==input->localActor) continue;
-                    if(!hitbox::visibleInFrame(box,input->now,range.liveLifetime,
-                        input->config.retainLastPosition,input->config.playersOnly,
-                        std::chrono::minutes(input->config.retentionMinutes))) continue;
+                    if(!range.visible[i]) continue;
                     const bool retained=box.retained;
                     if (retained!=(pass==1)) continue;
                     if(!inMesh) {
@@ -1458,13 +1469,26 @@ void drawWorldBoxes(void* renderer, void* screen) {
         // Bound the combined frame even during that asynchronous transition.
         input.ranges[i]={snapshots[i]->boxes.data(),
             std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
+            input.visible.data()+count,
             snapshots[i]->preparedNames.get(),
             snapshots[i]->liveLifetime};
+        // Evaluate identity/expiry once, shared by line and both text passes.
+        for(std::size_t j=0;j<input.ranges[i].count;++j) {
+            const auto& box=snapshots[i]->boxes[j];
+            input.visible[count+j]=box.actorKey!=input.localActor &&
+                hitbox::visibleInFrame(box,now,snapshots[i]->liveLifetime,config->retainLastPosition,
+                    config->playersOnly,std::chrono::minutes(config->retentionMinutes));
+        }
         count+=input.ranges[i].count;
     }
     if (!count || worldEpoch.load(std::memory_order_acquire)!=epoch) { ++nameDiagnostics.frameNoBoxes; return; }
     NativeReadWindow window;
+    const auto renderBegin=Clock::now();
     const auto result=drawNativeGuarded(renderer,screen,&input);
+    const auto renderUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-renderBegin).count());
+    ++nameDiagnostics.renderFrames; nameDiagnostics.renderUs+=renderUs;
+    auto peak=nameDiagnostics.renderPeakUs.load(std::memory_order_relaxed);
+    while(peak<renderUs && !nameDiagnostics.renderPeakUs.compare_exchange_weak(peak,renderUs,std::memory_order_relaxed)) {}
     static std::atomic<bool> loggedDraw{};
     if (result>0 && !loggedDraw.exchange(true))
         log("native world mesh submitted [12 edges/box; engine render origin + name_tag; depth Always; opaque uniform colors; interpolated]");
@@ -1628,7 +1652,7 @@ DWORD WINAPI startClient(void*) {
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
-    log(workerCount," processing workers + 1 log writer ready [hashed RuntimeID shards; reusable name vertices; copied scalars only]");
+    log(workerCount," processing workers + 1 log writer ready [RuntimeID partitions; 20Hz coalesced snapshots; packed text quads; copied scalars only]");
     gameHooks = std::make_unique<bedrock::GameHooks>(gameApi);
     gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);

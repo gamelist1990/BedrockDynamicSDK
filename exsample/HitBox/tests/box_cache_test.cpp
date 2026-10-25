@@ -5,6 +5,7 @@
 #include "hitbox/box_cache.hpp"
 #include "hitbox/batch_queue.hpp"
 #include "hitbox/name_tags.hpp"
+#include "hitbox/prepared_names.hpp"
 #ifdef _WIN32
 #include "hitbox/name_mesh_win32.hpp"
 #endif
@@ -14,6 +15,34 @@
 #include <limits>
 
 int main() {
+    {
+        // Adjacent triangles become one convex quad with identical filled area.
+        hitbox::NameMesh mesh;
+        mesh.triangles={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
+        hitbox::packNameQuads(mesh);
+        assert(mesh.quads.size()==1);
+        const std::vector<hitbox::BoxRecord> boxes(1);
+        const std::vector<std::shared_ptr<const hitbox::NameMesh>> names{std::make_shared<hitbox::NameMesh>(mesh)};
+        const auto prepared=hitbox::prepareNames(boxes,names,{0,0,5},hitbox::Clock::now(),0.25f,8);
+        assert(prepared.vertices.size()==8 && prepared.labels.size()==1 && !prepared.budgetSkipped);
+        const auto area=[](const auto& q) {
+            float sum=0;
+            for(std::size_t i=0;i<4;++i) sum+=q[i].x*q[(i+1)%4].y-q[(i+1)%4].x*q[i].y;
+            return std::abs(sum)*0.5f;
+        };
+        assert(std::abs(area(mesh.quads[0])-1.f)<0.00001f);
+        // A concave union cannot be emitted as one native quad.
+        mesh.triangles={{0,0},{2,0},{0,2},{0,0},{2,0},{-0.2f,-0.1f}};
+        hitbox::packNameQuads(mesh);
+        assert(mesh.quads.size()==2);
+        float sum=0; for(const auto& quad:mesh.quads) sum+=area(quad);
+        assert(std::abs(sum-2.1f)<0.00001f);
+        // A disjoint component and a hole boundary remain independent.
+        mesh.triangles={{0,0},{1,0},{0,1},{2,0},{3,0},{2,1}};
+        hitbox::packNameQuads(mesh);
+        assert(mesh.quads.size()==2);
+    }
+
     {
         const std::string japanese=reinterpret_cast<const char*>(u8"テスト名前");
         assert(hitbox::normalizedName("  Player  ")=="Player");
@@ -57,6 +86,18 @@ int main() {
             assert(!mesh->triangles.empty() && mesh->triangles.size()%3==0);
             assert(mesh->triangles.size()<=hitbox::NameTriangleSink::maximumTriangles*3);
             for(const auto point:mesh->triangles) assert(std::isfinite(point.x) && std::isfinite(point.y));
+            assert(!mesh->quads.empty() && mesh->quads.size()<=mesh->triangles.size()/3);
+            float triangleArea=0,quadArea=0;
+            for(std::size_t i=0;i<mesh->triangles.size();i+=3) {
+                const auto a=mesh->triangles[i],b=mesh->triangles[i+1],c=mesh->triangles[i+2];
+                triangleArea+=std::abs((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x))*0.5f;
+            }
+            for(const auto& quad:mesh->quads) {
+                float sum=0;
+                for(std::size_t i=0;i<4;++i) sum+=quad[i].x*quad[(i+1)%4].y-quad[(i+1)%4].x*quad[i].y;
+                quadArea+=std::abs(sum)*0.5f;
+            }
+            assert(std::abs(triangleArea-quadArea)<=std::max(0.0001f,triangleArea*0.0001f));
         }
 #endif
     }

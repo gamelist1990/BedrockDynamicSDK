@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace hitbox {
 // Copied identity only. Workers never dereference an Actor handle.
@@ -110,7 +111,52 @@ struct NameMesh {
     std::string text;
     std::vector<TextPoint> triangles; // Three points per triangle, normalized to unit height.
     float width{};
+    std::vector<std::array<TextPoint,4>> quads; // Convex pairs; unmatched triangles use a repeated corner.
 };
+
+// Run once per acquired text on a worker. Merge only convex adjacent triangles;
+// holes, concave outlines and unpaired triangles retain their original coverage.
+inline void packNameQuads(NameMesh& mesh) {
+    mesh.quads.clear();
+    if(mesh.triangles.size()%3) return;
+    struct Edge { TextPoint a,b,tip; std::size_t triangle; };
+    const auto less=[](TextPoint a,TextPoint b) { return std::tie(a.x,a.y)<std::tie(b.x,b.y); };
+    const auto equal=[](TextPoint a,TextPoint b) { return a.x==b.x && a.y==b.y; };
+    const auto cross=[](TextPoint a,TextPoint b,TextPoint c) {
+        return (b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x);
+    };
+    const auto count=mesh.triangles.size()/3;
+    std::vector<Edge> edges; edges.reserve(count*3);
+    std::vector<bool> used(count);
+    mesh.quads.reserve(count);
+    for(std::size_t i=0;i<count;++i) for(std::size_t j=0;j<3;++j) {
+        auto a=mesh.triangles[i*3+j],b=mesh.triangles[i*3+(j+1)%3];
+        if(less(b,a)) std::swap(a,b);
+        edges.push_back({a,b,mesh.triangles[i*3+(j+2)%3],i});
+    }
+    std::sort(edges.begin(),edges.end(),[&](const Edge& a,const Edge& b) {
+        if(!equal(a.a,b.a)) return less(a.a,b.a);
+        return less(a.b,b.b);
+    });
+    for(std::size_t i=0;i<edges.size();) {
+        auto end=i+1;
+        while(end<edges.size() && equal(edges[i].a,edges[end].a) && equal(edges[i].b,edges[end].b)) ++end;
+        if(end-i==2) {
+            const auto& a=edges[i]; const auto& b=edges[i+1];
+            if(a.triangle!=b.triangle && !used[a.triangle] && !used[b.triangle]) {
+                const std::array<TextPoint,4> quad{a.tip,a.a,b.tip,a.b};
+                const float first=cross(quad[0],quad[1],quad[2]);
+                bool convex=std::abs(first)>1e-10f;
+                for(std::size_t j=1;j<4;++j)
+                    convex=convex && cross(quad[j],quad[(j+1)%4],quad[(j+2)%4])*first>0;
+                if(convex) { mesh.quads.push_back(quad); used[a.triangle]=used[b.triangle]=true; }
+            }
+        }
+        i=end;
+    }
+    for(std::size_t i=0;i<count;++i) if(!used[i])
+        mesh.quads.push_back({mesh.triangles[i*3],mesh.triangles[i*3+1],mesh.triangles[i*3+2],mesh.triangles[i*3+2]});
+}
 // Camera-facing label basis in the same world coordinates as the native boxes.
 struct NameBillboard { bedrock::Vec3 anchor,right,up; };
 inline NameBillboard nameBillboard(const bedrock::ActorBounds& bounds,const bedrock::Vec3& origin) noexcept {

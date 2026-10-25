@@ -23,7 +23,7 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
     const auto count=std::min(boxes.size(),names.size());
     std::size_t reserve=0;
     for(std::size_t i=0;i<count;++i) if(names[i])
-        reserve+=std::min(maximumVertices-reserve,names[i]->triangles.size()/3*8);
+        reserve+=std::min(maximumVertices-reserve,(names[i]->quads.empty() ? names[i]->triangles.size()/3 : names[i]->quads.size())*8);
     output.vertices.reserve(reserve);
     output.labels.reserve(count);
     // Saved Player labels must not be permanently starved behind live Actor
@@ -41,16 +41,19 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
     for(const auto i:order) {
         const auto* mesh=names[i].get();
         if(!mesh || mesh->triangles.empty() || mesh->triangles.size()%3) continue;
-        const auto needed=mesh->triangles.size()/3*8;
+        const auto primitives=mesh->quads.empty() ? mesh->triangles.size()/3 : mesh->quads.size();
+        const auto needed=primitives*8;
         if(needed>maximumVertices-output.vertices.size()) { ++output.budgetSkipped; continue; }
         const auto first=output.vertices.size();
         const auto billboard=nameBillboard(interpolatedBounds(boxes[i],now),origin);
-        for(std::size_t p=0;p<mesh->triangles.size();p+=3) {
-            const auto a=nameVertex(billboard,mesh->triangles[p],height,origin);
-            const auto b=nameVertex(billboard,mesh->triangles[p+1],height,origin);
-            const auto c=nameVertex(billboard,mesh->triangles[p+2],height,origin);
-            for(const auto& vertex:std::array<bedrock::Vec3,8>{a,b,c,c,c,b,a,a})
-                output.vertices.push_back(vertex);
+        for(std::size_t p=0;p<primitives;++p) {
+            const auto quad=mesh->quads.empty()
+                ? std::array<TextPoint,4>{mesh->triangles[p*3],mesh->triangles[p*3+1],mesh->triangles[p*3+2],mesh->triangles[p*3+2]}
+                : mesh->quads[p];
+            std::array<bedrock::Vec3,4> points;
+            for(std::size_t j=0;j<4;++j) points[j]=nameVertex(billboard,quad[j],height,origin);
+            for(const auto& vertex:std::array<bedrock::Vec3,8>{points[0],points[1],points[2],points[3],
+                    points[3],points[2],points[1],points[0]}) output.vertices.push_back(vertex);
         }
         output.labels.push_back({i,first,needed});
     }

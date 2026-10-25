@@ -260,3 +260,11 @@ Latiteは `PacketHooks.cpp` で `CHANGE_DIMENSION` を検知して名前キャ�
 比較基準は最後に作成した頂点の位置なので、再利用を繰り返して誤差が積み重なることはありません。
 全体の文字頂点予算98,304とActor上限1000は増やしません。
 `NameTag worker state` の `prepare_us`・`geometry_reused` で再計算と再利用を確認できます。
+
+### Worker / rendering cost reduction (2026-10-25)
+
+- Capture batches are partitioned by RuntimeID before enqueueing. Each worker receives only its own samples.
+- Workers drain up to eight queued batches in order and consume every observation before publishing one snapshot. Publication/geometry preparation is capped at 20 Hz; native rendering still runs each frame and box positions interpolate.
+- DirectWrite outline triangles that share an edge are merged only when their union is convex. The double-sided native quad rendering preserves the filled shape, including holes. Each merged pair reduces native vertex calls from 16 to 8. Actual savings depend on the font/name.
+- The `HitBox render cost [5s]` log reports average and peak native submission time in microseconds. These timings exclude worker processing and are not an FPS measurement.
+- Native Actor access remains on the game thread with the existing bounded read budget. Workers use copied scalar data. The moved → within one block for one second → disappears retention rule is preserved.

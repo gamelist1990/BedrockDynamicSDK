@@ -136,6 +136,7 @@ public:
             p.x=(p.x-metrics.width*0.5f)/metrics.height;
             p.y=(metrics.height-p.y)/metrics.height;
         }
+        packNameQuads(*mesh);
         stage_="ready"; result_=S_OK;
         return mesh;
     }
