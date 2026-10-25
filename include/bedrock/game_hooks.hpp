@@ -4,6 +4,7 @@
 #include <bedrock/game_api.hpp>
 #include <bedrock/hook_runtime.h>
 #include <bedrock/native_keyboard.hpp>
+#include <bedrock/native_world_events.hpp>
 #include <bedrock/resolver.hpp>
 
 #include <array>
@@ -12,7 +13,7 @@
 
 namespace bedrock {
 
-// Convenience subscriber for input and Actor::getNameTag events. Hooks are
+// Convenience subscriber for input, world lifecycle and Actor events. Hooks are
 // routed through the process-wide shared MinHook broker, so multiple mod DLLs
 // can subscribe to the same native call without installing competing detours.
 class GameHooks final {
@@ -121,6 +122,48 @@ public:
         return true;
     }
 
+    // Opt-in native lifecycle source. Resolve all four guarded exact-build
+    // entries before subscribing, and roll back only this group on failure.
+    bool installWorldEvents(Resolver& resolver, std::string_view profile,
+                            std::string& error) {
+        if (!api_) { error = "GameApi is unavailable"; return false; }
+        if (worldEventsActive()) { error.clear(); return true; }
+        const auto layout = parseNativeWorldEventsLayout(profile, error);
+        if (!layout) return false;
+        constexpr std::array<const char*, 4> symbols{
+            "ClientInstance::onPlayerLoaded", "ClientInstance::onLevelExit",
+            "ClientInstance::onDimensionChangedEvent", "ClientInstance::onCancelJoinGame"};
+        constexpr std::array<BDS_HookPoint, 4> points{
+            BDS_HOOK_CLIENT_PLAYER_LOADED, BDS_HOOK_CLIENT_LEVEL_EXIT,
+            BDS_HOOK_CLIENT_DIMENSION_CHANGED, BDS_HOOK_CLIENT_JOIN_CANCELLED};
+        constexpr std::array<BDS_HookCallback, 4> callbacks{
+            &onPlayerLoaded, &onLevelExit, &onDimensionChanged, &onJoinCancelled};
+        std::array<std::uintptr_t, 4> addresses{};
+        for (std::size_t i = 0; i != symbols.size(); ++i) {
+            const auto target = resolveSharedHook(resolver, symbols[i], points[i]);
+            if (!target || !isUsableSharedHookResolution(*target)) {
+                error = std::string("world event target unavailable for this exact build: ") + symbols[i];
+                return false;
+            }
+            addresses[i] = target->address;
+        }
+        worldLayout_ = *layout;
+        for (std::size_t i = 0; i != points.size(); ++i) {
+            if (!BDS_HookSubscribe(points[i], reinterpret_cast<void*>(addresses[i]),
+                                   callbacks[i], this, &tokens_[8 + i])) {
+                for (std::size_t j = 8; j != tokens_.size(); ++j)
+                    if (tokens_[j]) BDS_HookUnsubscribe(std::exchange(tokens_[j], nullptr));
+                error = std::string("shared world event hook registration failed: ") + symbols[i];
+                return false;
+            }
+        }
+        error.clear();
+        return true;
+    }
+    [[nodiscard]] bool worldEventsActive() const noexcept {
+        return tokens_[8] && tokens_[9] && tokens_[10] && tokens_[11];
+    }
+
     bool installNativeKeyboard(Resolver& resolver, std::string_view profile,
                                std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
@@ -152,6 +195,45 @@ public:
     }
 
 private:
+    static void BDS_HOOK_CALL onPlayerLoaded(void* user, void* raw,
+                                            BDS_HookNext next, void* frame) noexcept {
+        auto& args = *static_cast<BDS_ClientPlayerLoadedArgs*>(raw);
+        next(frame, raw);
+        static_cast<GameHooks*>(user)->api_->dispatchWorldChange(
+            WorldChangeReason::Joined, args.self, args.player);
+    }
+    static void BDS_HOOK_CALL onLevelExit(void* user, void* raw,
+                                         BDS_HookNext next, void* frame) noexcept {
+        auto& hooks = *static_cast<GameHooks*>(user);
+        const auto self = reinterpret_cast<std::uintptr_t>(
+            static_cast<BDS_ClientWorldArgs*>(raw)->self);
+        bool notified = false;
+        if (self >= hooks.worldLayout_.exitClientOffset && self != 0)
+            notified = hooks.api_->dispatchWorldChange(WorldChangeReason::Left,
+                reinterpret_cast<void*>(self - hooks.worldLayout_.exitClientOffset));
+        const auto epoch = hooks.api_->worldEpoch();
+        next(frame, raw); // keep original GameCallbacks*, never pass normalized this
+        if (notified && hooks.api_->worldEpoch() == epoch)
+            try { hooks.api_->clearObservedActors(); } catch (...) { }
+    }
+    static void BDS_HOOK_CALL onDimensionChanged(void* user, void* raw,
+                                                BDS_HookNext next, void* frame) noexcept {
+        next(frame, raw);
+        static_cast<GameHooks*>(user)->api_->dispatchWorldChange(
+            WorldChangeReason::DimensionChanged,
+            static_cast<BDS_ClientWorldArgs*>(raw)->self);
+    }
+    static void BDS_HOOK_CALL onJoinCancelled(void* user, void* raw,
+                                             BDS_HookNext next, void* frame) noexcept {
+        auto& api = *static_cast<GameHooks*>(user)->api_;
+        const bool notified = api.dispatchWorldChange(
+            WorldChangeReason::JoinCancelled,
+            static_cast<BDS_ClientWorldArgs*>(raw)->self);
+        const auto epoch = api.worldEpoch();
+        next(frame, raw);
+        if (notified && api.worldEpoch() == epoch)
+            try { api.clearObservedActors(); } catch (...) { }
+    }
     bool subscribe(BDS_HookPoint point, std::uintptr_t address,
                    BDS_HookCallback callback, BDS_HookToken* token) noexcept {
         return BDS_HookSubscribe(point, reinterpret_cast<void*>(address), callback,
@@ -237,7 +319,8 @@ private:
 
     GameApi* api_{};
     NativeKeyboardLayout keyboardLayout_{};
-    std::array<BDS_HookToken, 8> tokens_{};
+    NativeWorldEventsLayout worldLayout_{};
+    std::array<BDS_HookToken, 12> tokens_{};
 };
 
 } // namespace bedrock

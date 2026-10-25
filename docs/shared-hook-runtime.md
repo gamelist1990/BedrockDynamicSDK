@@ -1,5 +1,11 @@
 # Embedded shared hook runtime
 
+World lifecycle support uses runtime **3.0.0**, shared capability ABI **3**.
+After upgrading, restart Minecraft and rebuild participating SDK mods together.
+An older owner in the process rejects the incompatible capability; the SDK
+does not elect a competing owner. See [world events](world-events-and-packets.md)
+for exact-build source validation, candidate status and event subscriptions.
+
 Each Mod statically embeds `bedrock::hook_runtime` and MinHook; there is no
 `BedrockSDKRuntime.dll` dependency. On first API use, the embedded copy creates
 a named, process-local shared mapping and becomes the MinHook owner. Copies in

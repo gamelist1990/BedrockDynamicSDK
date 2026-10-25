@@ -8,6 +8,36 @@ namespace {
 int firstCalls{};
 int secondCalls{};
 int actorNameTagCalls{};
+unsigned worldOriginalCalls{};
+void* worldThis{};
+void* worldPlayer{};
+__declspec(noinline) void __fastcall joinedTarget(void* self, void* player) {
+    volatile auto room = reinterpret_cast<std::uintptr_t>(self);
+    worldThis = reinterpret_cast<void*>(room);
+    worldPlayer = player;
+    ++worldOriginalCalls;
+}
+__declspec(noinline) void __fastcall exitedTarget(void* self) {
+    volatile auto room = reinterpret_cast<std::uintptr_t>(self);
+    worldThis = reinterpret_cast<void*>(room);
+    ++worldOriginalCalls;
+}
+__declspec(noinline) void __fastcall dimensionTarget(void* self) {
+    volatile auto room = reinterpret_cast<std::uintptr_t>(self);
+    worldThis = reinterpret_cast<void*>(room);
+    worldPlayer = nullptr;
+    ++worldOriginalCalls;
+}
+__declspec(noinline) void __fastcall cancelledTarget(void* self) {
+    volatile auto room = reinterpret_cast<std::uintptr_t>(self);
+    worldThis = reinterpret_cast<void*>(room);
+    worldPlayer = self;
+    ++worldOriginalCalls;
+}
+void BDS_HOOK_CALL worldSubscriber(void* user, void* raw, BDS_HookNext next, void* frame) {
+    ++*static_cast<unsigned*>(user);
+    next(frame, raw);
+}
 __declspec(noinline) const std::string& __fastcall actorNameTagTarget(void*) {
     static const std::string name = "\xC2\xA7" "aSampleActor";
     return name;
@@ -92,4 +122,31 @@ int main() {
     assert(!subscribeA(reinterpret_cast<void*>(&directOriginal), first, &a));
     assert(directRemove(directToken));
     assert(directOriginal(1) == 2);
+
+    using SubscribePoint = int(*)(BDS_HookPoint, void*, BDS_HookCallback, void*, BDS_HookToken*);
+    const auto pointA = reinterpret_cast<SubscribePoint>(GetProcAddress(clientA, "Client_SubscribePoint"));
+    const auto pointB = reinterpret_cast<SubscribePoint>(GetProcAddress(clientB, "Client_SubscribePoint"));
+    assert(pointA && pointB);
+    void* const self = reinterpret_cast<void*>(0x2000);
+    void* const player = reinterpret_cast<void*>(0x3000);
+    const BDS_HookPoint worldPoints[]{BDS_HOOK_CLIENT_PLAYER_LOADED, BDS_HOOK_CLIENT_LEVEL_EXIT,
+        BDS_HOOK_CLIENT_DIMENSION_CHANGED, BDS_HOOK_CLIENT_JOIN_CANCELLED};
+    void* const worldTargets[]{reinterpret_cast<void*>(&joinedTarget),
+        reinterpret_cast<void*>(&exitedTarget), reinterpret_cast<void*>(&dimensionTarget),
+        reinterpret_cast<void*>(&cancelledTarget)};
+    for (unsigned i = 0; i != 4; ++i) {
+        unsigned observers{};
+        BDS_HookToken wa{}, wb{};
+        assert(pointA(worldPoints[i], worldTargets[i], worldSubscriber, &observers, &wa));
+        assert(pointB(worldPoints[i], worldTargets[i], worldSubscriber, &observers, &wb));
+        worldOriginalCalls = 0;
+        if (i == 0) joinedTarget(self, player);
+        else if (i == 1) exitedTarget(self);
+        else if (i == 2) dimensionTarget(self);
+        else cancelledTarget(self);
+        assert(observers == 2 && worldOriginalCalls == 1 && worldThis == self);
+        if (i == 0) assert(worldPlayer == player);
+        unsubscribeA(wa);
+        unsubscribeB(wb);
+    }
 }

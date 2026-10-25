@@ -206,6 +206,11 @@ struct GameEventRegistry {
         EventChannel<LevelTickEvent> LevelTick;
         EventChannel<GameplayEvent> Gameplay;
         EventChannel<FovEvent> Fov;
+        EventChannel<WorldChangeEvent> WorldChange;
+        EventChannel<ClientJoinLevelEvent> ClientJoinLevel;
+        EventChannel<ClientExitLevelEvent> ClientExitLevel;
+        EventChannel<ClientCancelJoinLevelEvent> ClientCancelJoinLevel;
+        EventChannel<DimensionChangeEvent> DimensionChange;
     } Enum;
 };
 
@@ -459,9 +464,61 @@ public:
         return !event.cancelled();
     }
     void dispatchLevelTick(void* level, std::uint64_t sequence) noexcept {
+        worldEventLevel_.store(level, std::memory_order_release);
         invalidateActorReadCaches();
         try { Event.Enum.LevelTick.emit(LevelTickEvent{level, sequence}); }
         catch (...) { }
+    }
+    [[nodiscard]] std::uint64_t worldEpoch() const noexcept {
+        return worldEventEpoch_.load(std::memory_order_acquire);
+    }
+    // Select the intended client for split-screen. Otherwise the first native
+    // notification binds each session, and exit/cancel releases that binding.
+    void setWorldEventClient(void* client) noexcept {
+        worldEventClientPinned_.store(client != nullptr, std::memory_order_release);
+        worldEventClient_.store(client, std::memory_order_release);
+    }
+    // Adapter entry point, also usable by an external event source. Each real
+    // notification advances the generation, even when Minecraft reuses pointers.
+    bool dispatchWorldChange(WorldChangeReason reason, void* client,
+                             void* player = nullptr) noexcept {
+        if (!client) return false;
+        auto* expected = static_cast<void*>(nullptr);
+        worldEventClient_.compare_exchange_strong(expected, client,
+            std::memory_order_acq_rel);
+        if (worldEventClient_.load(std::memory_order_acquire) != client) return false;
+        WorldChangeEvent event{reason, client,
+            worldEventLevel_.exchange(nullptr, std::memory_order_acq_rel), player,
+            worldEventEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1};
+        if (reason == WorldChangeReason::Joined) {
+            event.level = nullptr;
+            try {
+                if (player && access_->isActorValid(player)) event.level = access_->worldOf(player);
+            } catch (...) { }
+            worldEventLevel_.store(event.level, std::memory_order_release);
+        }
+        // Invalidate before callbacks so consumers cannot see the old roster.
+        try { clearObservedActors(); } catch (...) { }
+        if ((reason == WorldChangeReason::Left || reason == WorldChangeReason::JoinCancelled) &&
+            !worldEventClientPinned_.load(std::memory_order_acquire)) {
+            expected = client;
+            worldEventClient_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+        }
+        try { Event.Enum.WorldChange.emit(event); } catch (...) { }
+        // A throwing general listener must not suppress the specific event.
+        try {
+            switch (reason) {
+            case WorldChangeReason::Joined:
+                Event.Enum.ClientJoinLevel.emit(ClientJoinLevelEvent{event}); break;
+            case WorldChangeReason::Left:
+                Event.Enum.ClientExitLevel.emit(ClientExitLevelEvent{event}); break;
+            case WorldChangeReason::JoinCancelled:
+                Event.Enum.ClientCancelJoinLevel.emit(ClientCancelJoinLevelEvent{event}); break;
+            case WorldChangeReason::DimensionChanged:
+                Event.Enum.DimensionChange.emit(DimensionChangeEvent{event}); break;
+            }
+        } catch (...) { }
+        return true;
     }
     [[nodiscard]] bool dispatchMouse(MouseEvent& event) noexcept {
         try { Event.Enum.Mouse.emit(event); }
@@ -849,6 +906,10 @@ private:
                                    std::string* matched = nullptr) const;
 
     GameAccess* access_{};
+    std::atomic<void*> worldEventClient_{nullptr};
+    std::atomic<bool> worldEventClientPinned_{false};
+    std::atomic<void*> worldEventLevel_{nullptr};
+    std::atomic<std::uint64_t> worldEventEpoch_{0};
     mutable std::mutex inputMutex_;
     std::optional<NativeKeyboardInput> nativeKeyboard_;
     void* mouseDevice_{};
