@@ -14,7 +14,7 @@ cmake --build build-freecam --config Release --parallel 2
 DLLをロードし、Escでメニューを開いてゲームに戻ってから **M** で切替。
 WASDで移動、Spaceで上昇、Shiftで下降、Ctrlで高速移動、マウスで視点操作。
 メニュー表示、ワールド/ディメンション変更、被弾、必要なネイティブ値の取得失敗で解除します。
-Borion方式でクライアント側Playerを移動し、使用中は速度・落下距離をゼロ化してAABBを縮小します。
+Borion方式でクライアント側Playerを移動し、使用中は速度・落下距離をゼロ化し、AABBの大きさを保って移動します。
 解除時はゲームスレッドで開始位置とAABBを復元します。ワールド変更後に旧座標を書き戻しません。
 移動パケット（MovePlayer / PlayerAuthInput）は開始直前に観測した送信位置へ固定して転送します。
 PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム操作・取引・tick番号は維持します。
@@ -31,6 +31,8 @@ PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム�
 | `allow_interaction` | false | 手動の攻撃・使用・ホイール等の入力をゲームに渡す |
 | `disable_on_damage` | true | 自身のhurt time増加で解除。取得不能時も解除 |
 | `player_hitboxes` | true | Freecam中のみ付近のPlayerに簡易枠を表示 |
+| `spectator_mode` | false | Freecam中だけローカルActorのGameTypeを6へ変更し、解除時に復元 |
+| `full_bright` | true | Freecam中だけガンマを25へ上書き。解除時は本来の取得値 |
 | `speed_blocks_per_second` | 8 | 移動速度 |
 | `fast_multiplier` | 3 | 高速移動倍率 |
 | `mouse_sensitivity` | 0.15 | 旧カメラ方式用。現行方式の視点操作はゲーム設定に従う |
@@ -76,3 +78,26 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 `BedrockHookRuntime:`行には任意DLLの探索パス・LoadLibraryExのエラー番号・
 選択プロバイダと実際の所有者のバージョン・パスが出ます。
 パケット配置とライブ通信・サーバーでの操作受理は実機未確認です。
+
+## 地中表示・明るさ
+
+```json
+{
+  "spectator_mode": true,
+  "full_bright": true,
+  "allow_interaction": true
+}
+```
+
+既存のconfig.jsonにも不足している新設定を追記します。`spectator_mode`の既定はfalseです。
+ローカルActorGameTypeComponentの値6でクライアントのスペクテイター判定を有効にし、
+地中の表示を改善するための候補実装です。サーバーのゲームモード・権限は変更しません。
+能力更新やサーバー側ゲームモード変更を行うsetter／コマンドは呼びません。
+通常終了時は元の値へ戻し、サーバーや他Modが途中で別の値へ変更した場合は上書きしません。
+ワールド世代／RuntimeIDが変わった古いActorへは書き戻しません。
+スペクテイター判定によってゲーム側の操作制限が変わる可能性があるため、
+チェスト操作の問題を切り分ける際は`spectator_mode=false`でも確認してください。
+
+`full_bright`はOptionsのガンマ取得Hookだけで上書きし、options.txtの値は保存変更しません。
+Hook競合や入口不一致の場合は、明るさ機能を使用せず理由をログへ出します。
+地中表示と描画方式ごとの明るさは実機未確認です。

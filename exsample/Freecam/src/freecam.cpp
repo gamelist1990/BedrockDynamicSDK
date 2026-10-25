@@ -38,7 +38,7 @@ using Registry=entt::basic_registry<freecam_native::Entity>;
 struct Box {std::uint64_t id{};bedrock::ActorBounds bounds{},blendFrom{};};
 struct Capture {std::uint64_t epoch{};Clock::time_point made{};std::array<Box,128> boxes{};unsigned count{};Vec origin{};};
 struct Mesh {std::uint64_t epoch{};Clock::time_point made{};unsigned count{};std::array<Vec,128*24> vertices{},fromVertices{};};
-std::atomic<bool> stop{},desired{},active{},gameplay{};
+std::atomic<bool> stop{},desired{},active{},gameplay{},restoreRequested{};
 std::atomic<unsigned> status{};
 std::atomic<void*> client{},local{};
 std::atomic<std::uint64_t> epoch{1};
@@ -49,6 +49,14 @@ bedrock::NativeActorLayout actors;bedrock::NativeItemLayout items;bedrock::World
 std::size_t hurtOffset{};std::uint32_t hurtHash{};
 BDS_HookToken localToken{},renderToken{};
 using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
+using GammaFn=float(__fastcall*)(void*);GammaFn originalGamma{};
+BDS_HookToken gammaToken{};
+std::uint32_t gameTypeHash{};std::size_t gameTypeOffset{};
+std::atomic<bool> gammaReady{};
+float __fastcall gammaDetour(void* options){
+    const float value=originalGamma(options);
+    return active.load()&&!stop.load()&&config.load()->fullBright?25.f:value;
+}
 std::mutex mailboxMutex,logMutex;Capture mailbox{};bool mailboxReady{};
 std::atomic<std::shared_ptr<const Mesh>> mesh;
 std::ofstream logFile;
@@ -67,7 +75,7 @@ template<class T> bool write(void* p,std::size_t offset,const T& value) noexcept
     __try {std::memcpy(static_cast<std::byte*>(p)+offset,&value,sizeof(T));return true;}
     __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-void disable(unsigned reason=Disabled){desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
+void disable(unsigned reason=Disabled){restoreRequested.store(true);desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
 void reset(){disable(World);epoch.fetch_add(1);local.store(nullptr);for(auto& key:keys)key.store(false);}
 void* component(void* actor,std::uint32_t hash) noexcept {
     void* registry{};std::uint32_t id{};
@@ -93,7 +101,7 @@ void keyEvent(const bedrock::KeyEvent& e){
     if(releasing||stop.load())return;const auto c=config.load();const unsigned k=e.inputKey();if(k<keys.size())keys[k].store(e.pressed);
     if(k==c->toggleKey){
         if(e.pressed&&!e.repeat&&gameplay.load()&&c->enabled){
-            if(desired.load())disable();else{releaseMovement(*c);desired.store(true);}
+            if(desired.load())disable();else if(!restoreRequested.load()){releaseMovement(*c);desired.store(true);}
         }
         if(gameplay.load()) e.cancel();return;
     }
@@ -159,6 +167,7 @@ struct BorionState {
     Vec oldPosition{},oldPrevious{},oldVelocity{},position{};
     bedrock::ActorBounds oldBounds{};
     float oldFall{};
+    int oldGameType{};bool gameTypeChanged{};
 };
 BorionState borion;
 std::mutex borionMutex;
@@ -184,7 +193,9 @@ struct MotionPacketLayout {
 MotionPacketLayout authPacket,movePacket;
 struct PacketPose {Vec position{};Clock::time_point seen{};std::uint64_t runtime{};std::uint8_t onGround{};};
 struct MovementAnchor {std::uint64_t epoch{},runtime{};std::array<PacketPose,2> poses{};};
-std::mutex packetPoseMutex;
+// Serialize only scalar packet edits and activation/restoration phases. Never
+// hold this across the native send continuation or another network operation.
+std::mutex packetMotionMutex,packetPoseMutex;
 MovementAnchor observedPacketPoses;
 std::atomic<std::shared_ptr<const MovementAnchor>> movementAnchor;
 std::atomic<unsigned> anchoredPackets{},interactionPackets{};
@@ -257,6 +268,10 @@ int packetId(void* packet) noexcept {
     return -1;
 }
 void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
+    // Retain the entering flight session BEFORE waiting for restoration. A
+    // packet already constructed with proxy coordinates still needs anchoring
+    // even if restore clears the active session while this callback waits.
+    const auto enteringAnchor=movementAnchor.load();
     auto& args=*static_cast<BDS_PacketSendArgs*>(raw);
     if(args.sender!=observedSender.load()){next(frame,raw);return;}
     const bool auth=packetMatches(args.packet,authPacket),move=packetMatches(args.packet,movePacket);
@@ -266,10 +281,11 @@ void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* fram
         if(suppressMovement.load()&&(id==19||id==144)){disable(ReadFailed);return;}
         next(frame,raw);return;
     }
-    if(!suppressMovement.load()) {observeMotionPose(args.packet,auth);next(frame,raw);return;}
-    const auto anchor=movementAnchor.load();
+    std::unique_lock phase(packetMotionMutex);
+    const auto anchor=enteringAnchor?enteringAnchor:movementAnchor.load();
+    if(!anchor) {observeMotionPose(args.packet,auth);phase.unlock();next(frame,raw);return;}
     if(!anchor||!anchorMotionPacket(args.packet,auth,*anchor)) {disable(ReadFailed);blockedPackets.fetch_add(1);return;}
-    anchoredPackets.fetch_add(1);next(frame,raw);
+    anchoredPackets.fetch_add(1);phase.unlock();next(frame,raw);
 }
 void observePacketSender(void* instance) noexcept {
     if(stop.load())return;
@@ -305,6 +321,7 @@ std::uint64_t actorRuntime(void* actor) noexcept {
     std::uint64_t id{};read(component(actor,actors.runtimeIdComponentHash),actors.runtimeIdValueOffset,id);return id;
 }
 bool restoreBorionLocked() noexcept {
+    std::lock_guard phase(packetMotionMutex);
     if(!borion.saved)return true;
     void* registry{};std::uint32_t entity{};
     if(borion.epoch!=epoch.load()||borion.actor!=local.load()||actorRuntime(borion.actor)!=borion.runtime||
@@ -315,7 +332,13 @@ bool restoreBorionLocked() noexcept {
     auto* state=component(borion.actor,actors.stateVectorComponentHash);
     auto* shape=component(borion.actor,actors.aabbShapeComponentHash);
     auto* fall=component(borion.actor,fallHash);
-    if(!state||!shape||!fall)return false;
+    auto* gameType=borion.gameTypeChanged?component(borion.actor,gameTypeHash):nullptr;
+    int currentGameType{};
+    if(!state||!shape||!fall||(borion.gameTypeChanged&&(!gameType||!read(gameType,gameTypeOffset,currentGameType))))return false;
+    // Preserve a server/external mode update instead of restoring over it.
+    const bool restoreMode=!borion.gameTypeChanged||currentGameType!=6||write(gameType,gameTypeOffset,borion.oldGameType);
+    if(!restoreMode)return false;
+    borion.gameTypeChanged=false;
     // Position restore is a teleport, not a frame-long interpolation across
     // the flight path. Borion also clears motion/fall distance when returning.
     const bool ok=write(state,statePositionOffset,borion.oldPosition)&&
@@ -329,14 +352,30 @@ void restoreBorionBeforeBoundary() noexcept {
     std::unique_lock guard(borionMutex,std::try_to_lock);
     if(guard.owns_lock())restoreBorionLocked();
 }
+// A dimension callback can occur after the world switch while the same local
+// Actor survives. Restore ONLY our mode override for that exact live identity;
+// never write the old position/AABB into the new dimension.
+void restoreLocalViewAtBoundary(void* player) noexcept {
+    std::unique_lock guard(borionMutex,std::try_to_lock);if(!guard.owns_lock())return;
+    std::lock_guard phase(packetMotionMutex);
+    if(!borion.saved||!borion.gameTypeChanged||!player||player!=borion.actor)return;
+    void* registry{};std::uint32_t entity{};
+    if(!read(player,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||registry!=borion.registry||
+       !read(player,actors.actorEntityContextOffset+actors.contextEntityIdOffset,entity)||entity!=borion.entity||
+       actorRuntime(player)!=borion.runtime)return;
+    auto* value=component(player,gameTypeHash);int mode{};
+    if(!read(value,gameTypeOffset,mode)||(mode==6&&!write(value,gameTypeOffset,borion.oldGameType))){note(ReadFailed);return;}
+    borion.gameTypeChanged=false;
+}
 void borionTick(const bedrock::LevelTickEvent&) {
     std::unique_lock guard(borionMutex,std::try_to_lock);if(!guard.owns_lock())return;
     observePacketSender(client.load());
     const auto c=config.load();void* player=local.load();
-    if(borion.saved && (stop.load()||!desired.load()||!gameplay.load()||!c->enabled||
+    if(borion.saved && (restoreRequested.load()||stop.load()||!desired.load()||!gameplay.load()||!c->enabled||
        player!=borion.actor||borion.epoch!=epoch.load())) {
-        if(!restoreBorionLocked())note(ReadFailed);return;
+        if(!restoreBorionLocked())note(ReadFailed);else restoreRequested.store(false);return;
     }
+    if(!borion.saved)restoreRequested.store(false);
     if(stop.load()||!desired.load()||!gameplay.load()||!c->enabled||!player)return;
     if(!packetReady.load()||!movementPacketsSeen.load()){note(Waiting);return;}
     auto* state=component(player,actors.stateVectorComponentHash);
@@ -355,11 +394,21 @@ void borionTick(const bedrock::LevelTickEvent&) {
         void* registry{};std::uint32_t entity{};
         if(!read(player,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||
            !read(player,actors.actorEntityContextOffset+actors.contextEntityIdOffset,entity)){disable(ReadFailed);return;}
+        int oldMode{};void* gameType=c->spectatorMode?component(player,gameTypeHash):nullptr;
+        if(c->spectatorMode&&(!gameType||!read(gameType,gameTypeOffset,oldMode)||oldMode< -1||oldMode>6)) {disable(ReadFailed);return;}
+        std::unique_lock phase(packetMotionMutex);
         if(!prepareMovementAnchor(runtime,position)){note(Waiting);return;}
-        borion={true,player,epoch.load(),runtime,registry,entity,position,previous,velocity,position,bounds,fallDistance};
+        borion={true,player,epoch.load(),runtime,registry,entity,position,previous,velocity,position,bounds,fallDistance,oldMode,false};
+        if(c->spectatorMode&&oldMode!=6){
+            if(!write(gameType,gameTypeOffset,6)){borion.saved=false;movementAnchor.store(nullptr);disable(ReadFailed);return;}
+            borion.gameTypeChanged=true;
+        }
         suppressMovement.store(true);active.store(true);note(Activated);
     }
     if(actorRuntime(player)!=borion.runtime){disable(ReadFailed);restoreBorionLocked();return;}
+    if(borion.gameTypeChanged){int currentMode{};
+        if(!read(component(player,gameTypeHash),gameTypeOffset,currentMode)||currentMode!=6){disable(ReadFailed);restoreBorionLocked();return;}
+    }
     const auto down=[](unsigned key){return keys[key].load()?1.f:0.f;};
     const float forward=down(c->forward)-down(c->back),side=down(c->right)-down(c->left);
     const float radians=yaw*0.0174532925199433f;
@@ -374,9 +423,12 @@ void borionTick(const bedrock::LevelTickEvent&) {
     const Vec lower{borion.oldBounds.minimum.x+borion.position.x-borion.oldPosition.x,
         borion.oldBounds.minimum.y+borion.position.y-borion.oldPosition.y,
         borion.oldBounds.minimum.z+borion.position.z-borion.oldPosition.z};
+    const Vec upper{borion.oldBounds.maximum.x+borion.position.x-borion.oldPosition.x,
+        borion.oldBounds.maximum.y+borion.position.y-borion.oldPosition.y,
+        borion.oldBounds.maximum.z+borion.position.z-borion.oldPosition.z};
     if(!write(state,statePositionOffset,borion.position)||!write(state,statePreviousOffset,old)||
        !write(state,stateVelocityOffset,Vec{})||!write(fall,fallOffset,0.f)||
-       !write(shape,actors.aabbMinimumOffset,lower)||!write(shape,actors.aabbMaximumOffset,lower)) {
+       !write(shape,actors.aabbMinimumOffset,lower)||!write(shape,actors.aabbMaximumOffset,upper)) {
         disable(ReadFailed);restoreBorionLocked();return;
     }
     if(c->playerHitboxes){Capture batch;batch.epoch=epoch.load();batch.origin=borion.position;
@@ -448,6 +500,11 @@ void prepareProfile(const std::string& profile){
     if(f.at("schema")!=1||f.at("pointer_size")!=8)throw std::runtime_error("unsupported Freecam layout");
     hurtHash=number(f.at("hurt_time_component_hash"));hurtOffset=number(f.at("hurt_time_value_offset"));
     if(hurtOffset>4096||f.at("hurt_time_value_size")!=4)throw std::runtime_error("invalid camera/hurt layout");
+    const auto& visual=f.at("visual");
+    gameTypeHash=number(visual.at("game_type_component_hash"));gameTypeOffset=number(visual.at("game_type_value_offset"));
+    if(visual.at("schema")!=1||visual.at("game_type_value_size")!=4||gameTypeHash!=0x88d3eddf||gameTypeOffset!=0||visual.at("spectator_value")!=6)
+        throw std::runtime_error("unsupported local spectator layout");
+    checkedFunction(visual.at("spectator_predicate"));
     const auto& b=f.at("borion");
     statePositionOffset=number(b.at("state_position_offset"));statePreviousOffset=number(b.at("state_previous_position_offset"));
     stateVelocityOffset=number(b.at("state_velocity_offset"));fallHash=number(b.at("fall_distance_component_hash"));fallOffset=number(b.at("fall_distance_value_offset"));
@@ -486,12 +543,16 @@ std::filesystem::path directory(){
 bool loadConfig(const std::filesystem::path& path){
     try{std::ifstream in(path);if(!in)throw std::runtime_error("cannot open config");const std::string text((std::istreambuf_iterator<char>(in)),{});
         auto json=nlohmann::json::parse(text);
+        bool rewrite=false;
         if(!json.contains("config_revision")) {
             if(json.value("toggle_key",86)==86) json["toggle_key"]=77;
-            json["config_revision"]=2;
-            std::ofstream migrated(path,std::ios::trunc);migrated<<json.dump(2)<<'\n';
+            json["config_revision"]=2;rewrite=true;
         }
+        if(!json.contains("spectator_mode")){json["spectator_mode"]=false;rewrite=true;}
+        if(!json.contains("full_bright")){json["full_bright"]=true;rewrite=true;}
         const auto next=std::make_shared<const freecam::Config>(freecam::parseConfig(json.dump()));
+        if(rewrite){std::ofstream migrated(path,std::ios::trunc);migrated<<json.dump(2)<<'\n';
+            if(!migrated)throw std::runtime_error("config update failed");}
         // Key binding changes cannot leave old movement keys held in the game.
         disable();config.store(next);for(auto& key:keys)key.store(false);log("config ready");return true;
     }catch(const std::exception& e){log(std::string("config rejected: ")+e.what());return false;}
@@ -519,11 +580,13 @@ void worker(const std::filesystem::path& path){
             if(active.load()&&generation==epoch.load())mesh.store(result);
         }
         if(!active.load())mesh.store(nullptr);
-        if(active.load()&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
+        if((active.load()||interactionPackets.load()||blockedPackets.load())&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
-        if(bits&Activated)log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
+        if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
+            const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"local client 6":"off")+" full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+        }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
         if(bits&ReadFailed)log("Freecam disabled: native Player / movement packet validation failed");
@@ -546,7 +609,7 @@ DWORD WINAPI start(void*){
         if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion"))profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
@@ -560,11 +623,17 @@ DWORD WINAPI start(void*){
         }
         begin=reinterpret_cast<BeginFn>(functions[1]);vertex=reinterpret_cast<VertexFn>(functions[2]);submit=reinterpret_cast<MeshFn>(functions[4]);
         nameCtor=reinterpret_cast<NameCtor>(functions[5]);materialCtor=reinterpret_cast<MaterialCtor>(functions[6]);materialGroup=reinterpret_cast<void*>(base+render.commonMaterialGroup);
+        try {
+            void* gammaTarget=checkedFunction(f.at("visual").at("gamma"));
+            gammaReady.store(BDS_HookDirectInstall(gammaTarget,reinterpret_cast<void*>(&gammaDetour),reinterpret_cast<void**>(&originalGamma),&gammaToken)!=0);
+            log(gammaReady.load()?"Freecam full brightness hook ready [gamma 25 only while active]":"Freecam full brightness unavailable: gamma hook conflict");
+        } catch(const std::exception& e){log(std::string("Freecam full brightness unavailable: ")+e.what());}
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){
             if(event.reason==bedrock::WorldChangeReason::Left || event.reason==bedrock::WorldChangeReason::JoinCancelled)
                 restoreBorionBeforeBoundary();
+            else restoreLocalViewAtBoundary(event.player?event.player:local.load());
             // Post-transition notifications must never restore old coordinates
             // into the new world. The next tick discards the expired epoch.
             reset();packetReady.store(false);observedSender.store(nullptr);movementPacketsSeen.store(0);

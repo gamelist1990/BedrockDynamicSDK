@@ -24,7 +24,7 @@ if(WIN32)
     target_include_directories(ScanClient PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/minhook-vendor/src/hde")
     # Use a private symbol so the SDK's bundled MinHook copy can coexist.
     set_source_files_properties(../../third_party/minhook-vendor/src/hde/hde64.c
-        PROPERTIES COMPILE_DEFINITIONS "hde64_disasm=scanclient_hde64_disasm")
+        PROPERTIES COMPILE_DEFINITIONS "hde64_disasm=scanclient_hde64_disasm;hde64_table=scanclient_hde64_table")
     set_target_properties(ScanClient PROPERTIES PREFIX "" OUTPUT_NAME "ScanClient")
     target_link_libraries(ScanClient PRIVATE bedrock::sdk version bcrypt)
     target_compile_definitions(ScanClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

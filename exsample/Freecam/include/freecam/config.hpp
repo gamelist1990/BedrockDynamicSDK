@@ -7,6 +7,7 @@
 namespace freecam {
 struct Config {
     bool enabled=true, allowInteraction=false, disableOnDamage=true, playerHitboxes=true;
+    bool spectatorMode=false, fullBright=true;
     unsigned toggleKey=77, forward=87, back=83, left=65, right=68, up=32, down=16, fast=17;
     float speed=8.f, fastMultiplier=3.f, sensitivity=0.15f, radius=32.f;
     unsigned maxPlayers=64, captureRows=8;
@@ -14,6 +15,7 @@ struct Config {
 inline nlohmann::json configJson(const Config& c) {
     return {{"config_revision",2},{"enabled",c.enabled},{"toggle_key",c.toggleKey},{"allow_interaction",c.allowInteraction},
         {"disable_on_damage",c.disableOnDamage},{"player_hitboxes",c.playerHitboxes},
+        {"spectator_mode",c.spectatorMode},{"full_bright",c.fullBright},
         {"speed_blocks_per_second",c.speed},{"fast_multiplier",c.fastMultiplier},
         {"mouse_sensitivity",c.sensitivity},{"hitbox_radius",c.radius},{"max_players",c.maxPlayers},
         {"capture_rows_per_update",c.captureRows},
@@ -25,6 +27,7 @@ inline Config parseConfig(std::string_view source) {
     Config c;
     c.enabled=j.value("enabled",c.enabled);c.allowInteraction=j.value("allow_interaction",c.allowInteraction);
     c.disableOnDamage=j.value("disable_on_damage",c.disableOnDamage);c.playerHitboxes=j.value("player_hitboxes",c.playerHitboxes);
+    c.spectatorMode=j.value("spectator_mode",c.spectatorMode);c.fullBright=j.value("full_bright",c.fullBright);
     const auto integer=[](const nlohmann::json& v,unsigned lo,unsigned hi) {
         if(!v.is_number_integer()) throw std::runtime_error("expected integer");
         const auto n=v.get<long long>();if(n<lo||n>hi) throw std::runtime_error("integer out of range");return static_cast<unsigned>(n);

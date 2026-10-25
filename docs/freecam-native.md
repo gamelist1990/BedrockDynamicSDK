@@ -75,7 +75,7 @@ The current backend follows
 and the corresponding `Memory/Hooks.cpp` send middleware. It stores the local
 Player's original position/AABB, integrates yaw-relative horizontal movement
 on LevelTick, ascends/descends 0.5 blocks/tick, zeros velocity/fall distance,
-and collapses the local AABB while detached. On disable it restores position
+and translates the full-size local AABB while detached. On disable it restores position
 and full bounds. Native camera/rotation processing remains the game's own;
 the previous `_updatePlayer` detour is no longer installed. Legacy camera
 profile fields remain for older consumer DLLs.
@@ -153,3 +153,32 @@ the new forwarding fixes every case without live logs. Server reach checks and
 server inventory authority continue to apply. Nested transaction positions are
 left unchanged. The baseline is cleared by world/sender identity and age checks;
 vehicle packets and unsupported movement classes cause restoration.
+
+## Local spectator option and full brightness
+
+`native_freecam.visual` remains an exact-build static candidate. The optional
+`spectator_mode` (default false) writes only ActorGameTypeComponent's copied
+4-byte value to 6 during flight. It saves the previous value and restores it
+only for the same world/registry/entity/RuntimeID, and only if the current
+value is still 6. An externally changed mode is preserved. This does not call
+a Player setter, update server permissions or send a gamemode command.
+Inside-block visibility and effects on normal interaction still need live verification.
+
+REA/Ghidra `ev_48dad3a304afd96fd38d97b6cc09b736a9b8fbebf84acbb00bcb8cd6b894c6c2`
+for RVA `0x19E0840` observes EnTT hash `0x88D3EDDF`, 4-byte payload indexing,
+and a mode-6 success branch. LeviLamina's ActorGameTypeComponent / GameType
+declarations corroborate the field and spectator enum.
+
+`full_bright` (default true) hooks the Options getter at RVA `0xFB7880`,
+returning 25.0 only while active and otherwise forwarding the original float.
+REA/Ghidra `ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081`
+observes option ID 0x32, option inheritance traversal, and `MOVSS XMM0,[RAX+0x18]`
+return. Latite Options_getGamma and Fullbright corroborate meaning and value 25.
+No persisted gamma option is written; disabling restores the game's own getter.
+An exact entry guard and the shared broker's direct-hook conflict check apply.
+Evidence and original slices: `~/Documents/PEXData/REA/freecam-visual-1.26.52.3/`.
+
+[Borion GameModeCommand](https://github.com/Borion-Updated/Borion-OSS/blob/master/Horion/Command/Commands/GameModeCommand.cpp)
+accepts modes 0..2 and invokes its historical Player setter. Its offsets/ABI
+were not reused for the current executable. The optional local component path
+above is independently derived for 1.26.52.3.
