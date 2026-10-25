@@ -34,7 +34,7 @@ Borion方式でクライアント側Playerを移動し、使用中は速度・�
 | `mouse_sensitivity` | 0.15 | 旧カメラ方式用。現行方式の視点操作はゲーム設定に従う |
 | `hitbox_radius` | 32 | カメラからの距離（1～100） |
 | `max_players` | 64 | 描画上限（1～128） |
-| `capture_rows_per_update` | 8 | 1回のネイティブ取得上限（1～16） |
+| `capture_rows_per_update` | 8 | 1tick当たりの新Player発見走査上限（1～16） |
 | `keys` | WASD/Space/Shift/Ctrl | 各InputKeyを数値で変更可能 |
 
 インタラクション有効化は通常の手動入力を通す設定です。PlayerAuthInputに含まれる操作は、
