@@ -11,6 +11,9 @@
 #include <bedrock/remote_catalog.hpp>
 #include <nlohmann/json.hpp>
 #include "ghidra_import_script.hpp"
+#define hde64_disasm scanclient_hde64_disasm
+#include "hde64.h"
+#undef hde64_disasm
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -48,17 +51,26 @@ constexpr uint64_t kMaxDynamicLogBytes = 64ull * 1024 * 1024;
 constexpr size_t kMonitorPageSize = 4096;
 constexpr size_t kMaxFindings = 4096;
 constexpr size_t kMaxTableEntries = 256;
+constexpr size_t kMaxRuntimeCandidatePages = 2048;
+constexpr uint64_t kMaxCandidateScanBytes = 1024ull * 1024;
+struct ScanCandidate { std::string id; uint32_t beginRva{},endRva{}; json details; };
+struct DynamicCandidateStats { std::string section; uint64_t changes{},changedBytes{},firstPass{},lastPass{}; };
 std::atomic<bool> g_pause{false}, g_stop{false};
+std::atomic<bool> g_outputReady{false};
 std::atomic<uint64_t> g_done{0}, g_saved{0}, g_skipped{0}, g_total{0}, g_failures{0};
 std::atomic<uint64_t> g_monitorPasses{0}, g_monitorPagesChanged{0}, g_monitorBytesChanged{0}, g_monitorReadFailures{0};
 std::atomic<unsigned> g_monitorState{0}; // 0=not started, 1=running, 2=stopped
 std::mutex g_console;
+std::mutex g_candidateMutex;
+std::vector<ScanCandidate> g_staticCandidates;
+std::unordered_map<uint32_t,DynamicCandidateStats> g_dynamicCandidates;
 fs::path g_out;
 std::string g_version="unknown";
 bedrock::GameIdentity g_identity;
 uintptr_t g_moduleBase=0;
 uintptr_t g_preferredBase=0;
 uint32_t g_timestamp=0;
+std::string sha256(std::string_view data);
 
 bool safeRead(uintptr_t address,void* output,SIZE_T size) noexcept {
     if(!address||!output||!size||address>UINTPTR_MAX-size) return false;
@@ -306,6 +318,12 @@ void writeGhidraImportScript() {
 void saveProgress(const char* state) {
     const unsigned monitorState=g_monitorState.load();
     const char* monitorText=monitorState==1?"running":monitorState==2?"stopped":"not-started";
+    size_t runtimeCandidatePages=0,staticCandidateCount=0;
+    {
+        std::lock_guard lock(g_candidateMutex);
+        runtimeCandidatePages=g_dynamicCandidates.size();
+        staticCandidateCount=g_staticCandidates.size();
+    }
     json p={{"schema",3},{"scope","Minecraft.Windows.exe PE sections only"},
         {"state",state},{"version",g_version},{"pid",GetCurrentProcessId()},
         {"module_sha256",g_identity.fileSha256},{"module_text_sha256",g_identity.textSha256},
@@ -314,7 +332,9 @@ void saveProgress(const char* state) {
         {"read_failures",g_failures.load()},
         {"dynamic_monitor",{{"state",monitorText},{"passes",g_monitorPasses.load()},
             {"changed_pages",g_monitorPagesChanged.load()},{"changed_bytes",g_monitorBytesChanged.load()},
-            {"read_failures",g_monitorReadFailures.load()}}}};
+            {"read_failures",g_monitorReadFailures.load()},
+            {"runtime_candidate_pages",runtimeCandidatePages}}},
+        {"ranked_scan_candidates",staticCandidateCount}};
     atomicWrite(g_out/"progress.json",p.dump(2));
 }
 std::string bytePattern(const uint8_t* p,size_t n) {
@@ -324,6 +344,22 @@ std::string bytePattern(const uint8_t* p,size_t n) {
 }
 uint32_t parseHex32(const std::string& value) {
     try { return static_cast<uint32_t>(std::stoul(value,nullptr,0)); } catch(...) { return 0; }
+}
+std::string candidateRvaId(const char* prefix,uint32_t rva) {
+    std::ostringstream out; out<<prefix<<std::hex<<std::nouppercase<<rva; return out.str();
+}
+void recordDynamicCandidate(uint32_t rva,const std::string& section,uint64_t pass,size_t changedBytes) {
+    std::lock_guard lock(g_candidateMutex);
+    auto it=g_dynamicCandidates.find(rva);
+    if(it==g_dynamicCandidates.end()) {
+        if(g_dynamicCandidates.size()>=kMaxRuntimeCandidatePages) return;
+        it=g_dynamicCandidates.emplace(rva,DynamicCandidateStats{}).first;
+        it->second.section=section;
+        it->second.firstPass=pass;
+    }
+    ++it->second.changes;
+    it->second.changedBytes+=changedBytes;
+    it->second.lastPass=pass;
 }
 struct MonitorSection {
     Section section;
@@ -347,9 +383,12 @@ void recordMonitorPage(MonitorSection& monitored,size_t pageIndex,size_t pageOff
     }
     if(changed) {
         const uint32_t pageRva=monitored.section.rva+static_cast<uint32_t>(pageOffset);
+        recordDynamicCandidate(pageRva,monitored.section.name,pass,changed);
         json offsets=changedOffsets;
         json event={{"type","changed-page"},{"utc",utcTimestamp()},{"pass",pass},
             {"section",monitored.section.name},{"rva",hex(pageRva)},
+            {"candidate_id",candidateRvaId("data-",pageRva)},
+            {"candidate_kind","runtime-mutating-page; semantic role unclassified"},
             {"address",hex(g_moduleBase+pageRva)},{"page_size",length},
             {"changed_bytes",changed},{"changed_offsets_first_128",std::move(offsets)},
             {"offset_list_truncated",changed>changedOffsets.size()},
@@ -549,14 +588,24 @@ std::vector<uint8_t> readCapturedTextPrefix(const Section& text,const json& layo
     return out;
 }
 std::vector<std::string> matchingWorldTerms(const std::string& value) {
-    static constexpr std::array<std::string_view,17> terms={
-        "dimension","world","level","startgame","change_dimension","changedimension",
-        "dimensiondata","respawn","transfer","disconnect","reconnect","networkhandler",
-        "network handler","session","packet","unload","playerdimension"};
+    // Deliberately match semantic names, not broad words such as "world",
+    // "level", "packet", or "session" which flooded the previous output.
+    static constexpr std::array<std::string_view,3> terms={
+        "minecraft::registerlevellistener","player changedimension","dimensionchangeprogresshandler"};
     std::string lower=value;
     std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
     std::vector<std::string> matches;
     for(const auto term:terms) if(lower.find(term)!=std::string::npos) matches.emplace_back(term);
+    return matches;
+}
+std::vector<std::string> matchingClientSendTerms(const std::string& value) {
+    std::string lower=value;
+    std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    std::vector<std::string> matches;
+    if(lower.find("packetsendbeforeevent")!=std::string::npos)
+        matches.emplace_back("packetsendbeforeevent");
+    if(lower.find("serverbound")!=std::string::npos&&lower.find("packet")!=std::string::npos)
+        matches.emplace_back("serverbound-packet-type");
     return matches;
 }
 const RuntimeFunction* findContainingRuntimeFunction(const std::vector<RuntimeFunction>& functions,uint32_t rva) {
@@ -566,68 +615,41 @@ const RuntimeFunction* findContainingRuntimeFunction(const std::vector<RuntimeFu
     const auto& candidate=*std::prev(it);
     return rva<candidate.end?&candidate:nullptr;
 }
-size_t ripRelativeDisplacementOffset(const uint8_t* bytes,size_t size,size_t offset) {
-    size_t pos=offset, prefixCount=0; bool addressOverride=false;
-    while(pos<size&&prefixCount<4) {
-        const uint8_t b=bytes[pos];
-        if((b>=0x40&&b<=0x4f)||b==0x66||b==0xf2||b==0xf3) { ++pos; ++prefixCount; continue; }
-        if(b==0x67) { addressOverride=true; ++pos; ++prefixCount; continue; }
-        break;
-    }
-    if(addressOverride||pos>=size) return 0;
-    const uint8_t opcode=bytes[pos++];
-    if(opcode==0x0f) {
-        if(pos>=size) return 0;
-        const uint8_t second=bytes[pos++];
-        switch(second) {
-        case 0x10: case 0x11: case 0x28: case 0x29: case 0x2e: case 0x2f:
-        case 0x40: case 0x41: case 0x42: case 0x43: case 0x44: case 0x45:
-        case 0x46: case 0x47: case 0xaf: case 0xb6: case 0xb7: case 0xbe: case 0xbf:
-            break;
-        default: return 0;
-        }
-    } else {
-        switch(opcode) {
-        case 0x01: case 0x03: case 0x08: case 0x09: case 0x0a: case 0x0b:
-        case 0x21: case 0x23: case 0x29: case 0x2b: case 0x31: case 0x33:
-        case 0x38: case 0x39: case 0x3a: case 0x3b: case 0x80: case 0x81:
-        case 0x83: case 0x84: case 0x85: case 0x86: case 0x87: case 0x88:
-        case 0x89: case 0x8a: case 0x8b: case 0x8d: case 0xc6: case 0xc7:
-        case 0xf6: case 0xf7: case 0xfe: case 0xff:
-            break;
-        default: return 0;
-        }
-    }
-    if(pos+5>size) return 0;
-    const uint8_t modrm=bytes[pos++];
-    if((modrm&0xc7)!=0x05) return 0; // mod=00, r/m=101: RIP-relative memory operand.
-    return pos;
-}
-void addFilteredString(const std::string& value,uint32_t rva,const char* encoding,json& strings,json& rtti) {
-    if(value.size()<5||value.size()>512||strings.size()>=kMaxFindings) return;
-    const auto matches=matchingWorldTerms(value);
-    if(matches.empty()) return;
-    strings.push_back({{"rva",hex(rva)},{"address",hex(g_moduleBase+rva)},
-        {"encoding",encoding},{"value",value},{"matched_terms",matches},{"status","observed-string"}});
+void addFilteredString(const std::string& value,uint32_t rva,const char* encoding,
+    json& worldStrings,json& clientSendStrings,json& rtti) {
+    if(value.size()<5||value.size()>512) return;
+    const auto worldMatches=matchingWorldTerms(value);
+    const auto sendMatches=matchingClientSendTerms(value);
+    auto append=[&](json& output,const std::vector<std::string>& matches,const char* domain) {
+        if(matches.empty()||output.size()>=kMaxFindings) return;
+        output.push_back({{"rva",hex(rva)},{"address",hex(g_moduleBase+rva)},
+            {"encoding",encoding},{"value",value},{"matched_terms",matches},
+            {"scan_domain",domain},{"status","observed-string"}});
+    };
+    append(worldStrings,worldMatches,"world-transition");
+    append(clientSendStrings,sendMatches,"client-to-server-packet");
+    if(worldMatches.empty()&&sendMatches.empty()) return;
     if(value.find(".?AV")!=std::string::npos||value.find(".?AU")!=std::string::npos||value.find(".?AT")!=std::string::npos) {
         if(rtti.size()<kMaxFindings) rtti.push_back({{"rva",hex(rva)},{"address",hex(g_moduleBase+rva)},
             {"value",value},{"status","RTTI-name-string-candidate; descriptor relationship unverified"}});
     }
 }
-void collectFilteredStrings(const std::vector<uint8_t>& data,const Section& section,json& strings,json& rtti) {
-    for(size_t i=0;i<data.size()&&strings.size()<kMaxFindings&&!g_stop.load();) {
+void collectFilteredStrings(const std::vector<uint8_t>& data,const Section& section,
+    json& worldStrings,json& clientSendStrings,json& rtti) {
+    for(size_t i=0;i<data.size()&&worldStrings.size()+clientSendStrings.size()<kMaxFindings&&!g_stop.load();) {
         if(data[i]>=0x20&&data[i]<=0x7e&&i+1<data.size()&&data[i+1]==0) {
             size_t j=i; std::string value;
             while(j+1<data.size()&&data[j]>=0x20&&data[j]<=0x7e&&data[j+1]==0&&value.size()<512) {
                 value.push_back(static_cast<char>(data[j])); j+=2;
             }
-            if(value.size()>=5) addFilteredString(value,section.rva+static_cast<uint32_t>(i),"utf-16le",strings,rtti);
+            if(value.size()>=5) addFilteredString(value,section.rva+static_cast<uint32_t>(i),"utf-16le",
+                worldStrings,clientSendStrings,rtti);
             i=std::max(j,i+1); continue;
         }
         if(data[i]>=0x20&&data[i]<=0x7e) {
             size_t j=i; while(j<data.size()&&data[j]>=0x20&&data[j]<=0x7e&&j-i<512) ++j;
             if(j-i>=5) addFilteredString(std::string(reinterpret_cast<const char*>(data.data()+i),j-i),
-                section.rva+static_cast<uint32_t>(i),"ascii",strings,rtti);
+                section.rva+static_cast<uint32_t>(i),"ascii",worldStrings,clientSendStrings,rtti);
             i=std::max(j,i+1); continue;
         }
         ++i;
@@ -691,81 +713,254 @@ void collectFunctionPointerTables(const std::vector<uint8_t>& data,const Section
             {"nearby_ascii_context",nearbyAsciiContext(data,tableStart)},{"entries",std::move(entries)}});
     }
 }
-json collectWorldTransitionReferences(const Section& text,
+json collectValidatedStringReferences(const Section& text,
     const std::vector<RuntimeFunction>& functions,const json& layout,const json& strings,
-    json& signatures,std::unordered_set<uint32_t>& emittedFunctions) {
+    json& signatures,std::unordered_set<uint32_t>& emittedFunctions,json& decodeStats) {
     std::unordered_map<uint32_t,size_t> stringByRva;
-    for(size_t i=0;i<strings.size();++i) stringByRva.emplace(parseHex32(strings[i].value("rva",std::string{})),i);
+    for(size_t i=0;i<strings.size();++i)
+        stringByRva.emplace(parseHex32(strings[i].value("rva",std::string{})),i);
     json references=json::array();
+    decodeStats={{"decoder","HDE64"},{"function_boundary",".pdata runtime-function start"},
+        {"functions_decoded",0},{"functions_too_large",0},{"decode_errors",0},
+        {"function_read_errors",0},{"instructions_decoded",0}};
     if(stringByRva.empty()||!layout.contains("sections")||!layout["sections"].is_array()) return references;
-    constexpr size_t chunkSize=1024*1024, overlap=16;
-    std::vector<uint8_t> buffer(chunkSize+overlap);
+
+    uint64_t functionsDecoded=0,functionsTooLarge=0,decodeErrors=0,functionReadErrors=0,instructionsDecoded=0;
     std::unordered_set<uint64_t> emittedReferences;
+    constexpr uint64_t maxLinearDecodeBytes=kMaxCandidateScanBytes;
+    constexpr size_t maxInstructionLength=15;
+    std::vector<uint8_t> code;
     for(const auto& sectionLayout:layout["sections"]) {
         if(sectionLayout.value("name",std::string{})!=".text"||!sectionLayout.contains("readable_extents")) continue;
         for(const auto& extent:sectionLayout["readable_extents"]) {
             if(!extent.value("dumped",false)) continue;
             const uint32_t extentRva=parseHex32(extent.value("rva",std::string{}));
             const uint64_t extentSize=extent.value("size",uint64_t{});
+            if(!extentSize||extentSize>UINT32_MAX||uint64_t(extentRva)+extentSize>UINT32_MAX) continue;
             std::ifstream file(g_out/extent.value("dump_file",std::string{}),std::ios::binary);
-            if(!file) { ++g_failures; continue; }
-            uint64_t consumed=0; size_t carry=0;
-            while(consumed<extentSize&&references.size()<kMaxFindings&&!g_stop.load()) {
+            if(!file) { ++g_failures; ++functionReadErrors; continue; }
+            const uint64_t extentEnd=uint64_t(extentRva)+extentSize;
+            for(const auto& fn:functions) {
+                if(g_stop.load()||references.size()>=kMaxFindings) break;
+                if(fn.begin<extentRva||fn.end>extentEnd) continue;
                 if(!waitWhilePaused()) break;
-                const size_t request=static_cast<size_t>(std::min<uint64_t>(chunkSize,extentSize-consumed));
-                file.read(reinterpret_cast<char*>(buffer.data()+carry),static_cast<std::streamsize>(request));
-                const size_t received=static_cast<size_t>(file.gcount());
-                if(received!=request) { ++g_failures; break; }
-                const size_t available=carry+received;
-                const uint64_t windowRva=uint64_t(extentRva)+consumed-carry;
-                for(size_t i=0;i<available&&references.size()<kMaxFindings;++i) {
-                    const size_t displacement=ripRelativeDisplacementOffset(buffer.data(),available,i);
-                    if(!displacement) continue;
-                    int32_t relative=0; memcpy(&relative,buffer.data()+displacement,sizeof(relative));
-                    const uint64_t nextRva=windowRva+displacement+sizeof(relative);
-                    const int64_t targetSigned=static_cast<int64_t>(nextRva)+relative;
-                    if(targetSigned<0||targetSigned>UINT32_MAX) continue;
-                    const uint32_t targetRva=static_cast<uint32_t>(targetSigned);
-                    const auto stringIt=stringByRva.find(targetRva);
-                    if(stringIt==stringByRva.end()) continue;
-                    const uint32_t instructionRva=static_cast<uint32_t>(windowRva+i);
-                    const uint64_t referenceKey=(uint64_t(instructionRva)<<32)|targetRva;
-                    if(!emittedReferences.insert(referenceKey).second) continue;
-                    const RuntimeFunction* fn=findContainingRuntimeFunction(functions,instructionRva);
-                    const size_t instructionSize=displacement+sizeof(relative)-i;
-                    const size_t sampleSize=std::min<size_t>(16,available-i);
-                    json item={{"instruction_rva",hex(instructionRva)},
-                        {"instruction_address",hex(g_moduleBase+instructionRva)},
-                        {"instruction_bytes",bytePattern(buffer.data()+i,sampleSize)},
-                        {"target_string_rva",hex(targetRva)},
-                        {"target_string",strings[stringIt->second].value("value",std::string{})},
-                        {"encoding",strings[stringIt->second].value("encoding",std::string{})},
-                        {"instruction_length_lower_bound",instructionSize},
-                        {"reference_kind","recognized x64 RIP-relative memory operand; decoder is intentionally partial"},
-                        {"function_rva",fn?hex(fn->begin):std::string{}},
-                        {"function_end_rva",fn?hex(fn->end):std::string{}},
-                        {"function_boundary_source",fn?".pdata runtime-function range":"unmatched"},
-                        {"status","static-reference candidate; call path and world-change semantics unverified"}};
-                    references.push_back(std::move(item));
-                    if(fn&&emittedFunctions.insert(fn->begin).second&&signatures.size()<kMaxFindings) {
-                        const auto prefix=readCapturedTextPrefix(text,layout,fn->begin,
-                            std::min<size_t>(48,fn->end-fn->begin));
-                        if(!prefix.empty()) signatures.push_back({{"rva",hex(fn->begin)},
-                            {"end_rva",hex(fn->end)},{"function_size",fn->end-fn->begin},
-                            {"sample_length",prefix.size()},{"byte_prefix",bytePattern(prefix.data(),prefix.size())},
-                            {"source","world-transition string reference"},
-                            {"status","exact-build function prefix; uniqueness and ABI unverified"}});
-                    }
+                const uint64_t functionSize=uint64_t(fn.end)-fn.begin;
+                if(!functionSize||functionSize>maxLinearDecodeBytes) {
+                    ++functionsTooLarge;
+                    continue;
                 }
-                consumed+=received;
-                carry=std::min(overlap,available);
-                memmove(buffer.data(),buffer.data()+available-carry,carry);
+                code.assign(static_cast<size_t>(functionSize)+maxInstructionLength,0);
+                file.clear();
+                file.seekg(static_cast<std::streamoff>(uint64_t(fn.begin)-extentRva));
+                file.read(reinterpret_cast<char*>(code.data()),static_cast<std::streamsize>(functionSize));
+                if(static_cast<uint64_t>(file.gcount())!=functionSize) {
+                    ++g_failures; ++functionReadErrors; continue;
+                }
+                ++functionsDecoded;
+                for(size_t offset=0;offset<functionSize;) {
+                    hde64s decoded{};
+                    const unsigned int decodedLength=scanclient_hde64_disasm(code.data()+offset,&decoded);
+                    const uint32_t invalidFlags=F_ERROR|F_ERROR_OPCODE|F_ERROR_LENGTH|F_ERROR_LOCK|F_ERROR_OPERAND;
+                    if(!decodedLength||decodedLength>maxInstructionLength||
+                       (decoded.flags&invalidFlags)||offset+decodedLength>functionSize) {
+                        ++decodeErrors;
+                        break;
+                    }
+                    ++instructionsDecoded;
+                    const bool ripRelative=(decoded.flags&F_MODRM)&&(decoded.flags&F_DISP32)&&
+                        !(decoded.flags&F_PREFIX_67)&&decoded.modrm_mod==0&&decoded.modrm_rm==5;
+                    if(ripRelative) {
+                        const uint64_t nextRva=uint64_t(fn.begin)+offset+decodedLength;
+                        const int64_t targetSigned=static_cast<int64_t>(nextRva)+
+                            static_cast<int32_t>(decoded.disp.disp32);
+                        if(targetSigned>=0&&targetSigned<=UINT32_MAX) {
+                            const uint32_t targetRva=static_cast<uint32_t>(targetSigned);
+                            const auto stringIt=stringByRva.find(targetRva);
+                            if(stringIt!=stringByRva.end()) {
+                                const uint32_t instructionRva=fn.begin+static_cast<uint32_t>(offset);
+                                const uint64_t referenceKey=(uint64_t(instructionRva)<<32)|targetRva;
+                                if(emittedReferences.insert(referenceKey).second) {
+                                    const auto& sourceString=strings[stringIt->second];
+                                    json item={{"instruction_rva",hex(instructionRva)},
+                                        {"instruction_address",hex(g_moduleBase+instructionRva)},
+                                        {"instruction_bytes",bytePattern(code.data()+offset,decodedLength)},
+                                        {"instruction_length",decodedLength},
+                                        {"target_string_rva",hex(targetRva)},
+                                        {"target_string",sourceString.value("value",std::string{})},
+                                        {"matched_terms",sourceString.value("matched_terms",json::array())},
+                                        {"scan_domain",sourceString.value("scan_domain",std::string("unclassified"))},
+                                        {"encoding",sourceString.value("encoding",std::string{})},
+                                        {"function_rva",hex(fn.begin)},{"function_end_rva",hex(fn.end)},
+                                        {"function_boundary_source",".pdata runtime-function start"},
+                                        {"reference_kind","HDE64-decoded RIP-relative memory operand; instruction boundary verified from function start"},
+                                        {"status","instruction-boundary-verified static reference; runtime call path and semantics unverified"}};
+                                    references.push_back(std::move(item));
+                                    if(emittedFunctions.insert(fn.begin).second&&signatures.size()<kMaxFindings) {
+                                        const size_t sampleSize=std::min<size_t>(48,static_cast<size_t>(functionSize));
+                                        signatures.push_back({{"rva",hex(fn.begin)},{"end_rva",hex(fn.end)},
+                                            {"function_size",functionSize},{"sample_length",sampleSize},
+                                            {"byte_prefix",bytePattern(code.data(),sampleSize)},
+                                            {"source","HDE64-validated .pdata function string reference"},
+                                            {"status","exact-build function prefix; uniqueness and ABI unverified"}});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    offset+=decodedLength;
+                }
             }
-            if(g_stop.load()||references.size()>=kMaxFindings) break;
         }
         break;
     }
+    decodeStats["functions_decoded"]=functionsDecoded;
+    decodeStats["functions_too_large"]=functionsTooLarge;
+    decodeStats["decode_errors"]=decodeErrors;
+    decodeStats["function_read_errors"]=functionReadErrors;
+    decodeStats["instructions_decoded"]=instructionsDecoded;
     return references;
+}
+struct CandidateRule {
+    const char* idPrefix;
+    const char* category;
+    const char* priority;
+    const char* confidence;
+    const char* assessment;
+};
+const CandidateRule* classifyCandidateString(std::string value) {
+    std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    static constexpr CandidateRule rules[]={
+        {"level-listener","world-transition","high","medium",
+            "Exact Minecraft::registerLevelListener signature string is referenced by this .pdata function; callback firing and lifetime are not verified."},
+        {"player-dimension-change","world-transition","high","medium",
+            "The function references the exact player changeDimension trace label; this is a strong transition candidate, but runtime invocation is not observed here."},
+        {"dimension-progress-type","transition-related-type","low","low",
+            "The function constructs a string containing DimensionChangeProgressHandler; this is type/name evidence, not proof of a progress callback."},
+        {"packet-send-event","client-send-event-api","medium","low",
+            "PacketSendBeforeEvent is referenced by this .pdata function. This is a send-event API clue, not proof of a client-usable native hook, raw packet access, or a network dispatch boundary."},
+        {"serverbound-packet","client-to-server-packet-type","medium","low",
+            "A Serverbound packet or payload type name is referenced by this .pdata function. This can locate serialization/dispatch code, but type-name evidence alone does not prove an actual send path or packet contents."}
+    };
+    if(value.find("minecraft::registerlevellistener")!=std::string::npos) return &rules[0];
+    if(value.find("player changedimension")!=std::string::npos) return &rules[1];
+    if(value.find("dimensionchangeprogresshandler")!=std::string::npos) return &rules[2];
+    if(value.find("packetsendbeforeevent")!=std::string::npos) return &rules[3];
+    if(value.find("serverbound")!=std::string::npos&&value.find("packet")!=std::string::npos) return &rules[4];
+    return nullptr;
+}
+json buildScanCandidates(const json& strings,json& references,json& exclusions) {
+    std::unordered_map<uint32_t,std::string> stringsByRva;
+    for(const auto& item:strings)
+        stringsByRva.emplace(parseHex32(item.value("rva",std::string{})),item.value("value",std::string{}));
+    std::vector<ScanCandidate> candidates;
+    std::unordered_map<std::string,size_t> candidateIndex;
+    json acceptedReferences=json::array();
+    for(auto& ref:references) {
+        const uint32_t stringRva=parseHex32(ref.value("target_string_rva",std::string{}));
+        const auto stringIt=stringsByRva.find(stringRva);
+        if(stringIt==stringsByRva.end()) continue;
+        const CandidateRule* rule=classifyCandidateString(stringIt->second);
+        if(!rule) {
+            ref["candidate_status"]="excluded";
+            ref["candidate_exclusion_reason"]="specific string was found, but no allowlisted candidate class matched";
+            exclusions.push_back(ref);
+            continue;
+        }
+        const uint32_t functionRva=parseHex32(ref.value("function_rva",std::string{}));
+        const uint32_t functionEnd=parseHex32(ref.value("function_end_rva",std::string{}));
+        const uint32_t instructionRva=parseHex32(ref.value("instruction_rva",std::string{}));
+        const bool hasFunction=functionRva&&functionEnd>functionRva;
+        if(!hasFunction) {
+            ref["candidate_status"]="excluded";
+            ref["candidate_exclusion_reason"]="no usable .pdata runtime-function range; no selectable scan range emitted";
+            exclusions.push_back(ref);
+            continue;
+        }
+        const uint32_t begin=functionRva;
+        const uint32_t end=functionEnd;
+        const uint32_t identityRva=functionRva;
+        const std::string id=candidateRvaId(rule->idPrefix,identityRva);
+        json evidence={{"target_string_rva",hex(stringRva)},{"target_string",stringIt->second},
+            {"instruction_rva",hex(instructionRva)},{"instruction_bytes",ref.value("instruction_bytes",std::string{})},
+            {"function_rva",hex(functionRva)},{"function_end_rva",hex(functionEnd)},
+            {"scan_domain",ref.value("scan_domain",std::string("unclassified"))},
+            {"instruction_boundary_verified",true},
+            {"function_boundary_source",".pdata runtime-function start + HDE64 linear decode"}};
+        auto found=candidateIndex.find(id);
+        if(found==candidateIndex.end()) {
+            const std::string scanScope="containing .pdata runtime-function range";
+            json details={{"id",id},{"category",rule->category},{"priority",rule->priority},
+                {"confidence",rule->confidence},{"rva",hex(begin)},{"end_rva",hex(end)},
+                {"scan_scope",scanScope},{"scan_bytes",uint64_t(end)-begin},
+                {"scan_eligible",end>begin&&uint64_t(end)-begin<=kMaxCandidateScanBytes},
+                {"assessment",rule->assessment},{"evidence",json::array()}};
+            details["evidence"].push_back(evidence);
+            candidateIndex.emplace(id,candidates.size());
+            candidates.push_back({id,begin,end,std::move(details)});
+        } else {
+            candidates[found->second].details["evidence"].push_back(std::move(evidence));
+        }
+        ref["candidate_id"]=id;
+        ref["candidate_category"]=rule->category;
+        ref["candidate_priority"]=rule->priority;
+        ref["candidate_status"]="selectable-candidate";
+        acceptedReferences.push_back(ref);
+    }
+    references=std::move(acceptedReferences);
+    std::sort(candidates.begin(),candidates.end(),[](const auto& a,const auto& b) {
+        const std::string pa=a.details.value("priority",std::string{});
+        const std::string pb=b.details.value("priority",std::string{});
+        if(pa!=pb) return pa=="high";
+        return a.beginRva<b.beginRva;
+    });
+    {
+        std::lock_guard lock(g_candidateMutex);
+        g_staticCandidates=std::move(candidates);
+    }
+    json items=json::array();
+    {
+        std::lock_guard lock(g_candidateMutex);
+        for(const auto& candidate:g_staticCandidates) items.push_back(candidate.details);
+    }
+    return items;
+}
+json candidateIndexDocument() {
+    json items=json::array();
+    size_t staticCount=0,dynamicCount=0;
+    {
+        std::lock_guard lock(g_candidateMutex);
+        staticCount=g_staticCandidates.size();
+        for(const auto& candidate:g_staticCandidates) items.push_back(candidate.details);
+        std::vector<std::pair<uint32_t,DynamicCandidateStats>> dynamic;
+        dynamic.reserve(g_dynamicCandidates.size());
+        for(const auto& entry:g_dynamicCandidates) dynamic.push_back(entry);
+        std::sort(dynamic.begin(),dynamic.end(),[](const auto& a,const auto& b) {
+            if(a.second.changes!=b.second.changes) return a.second.changes>b.second.changes;
+            return a.first<b.first;
+        });
+        dynamicCount=dynamic.size();
+        for(const auto& [rva,stats]:dynamic) {
+            const uint32_t end=static_cast<uint32_t>(std::min<uint64_t>(g_identity.imageSize,
+                uint64_t(rva)+kMonitorPageSize));
+            items.push_back({{"id",candidateRvaId("data-",rva)},{"category","runtime-mutating-page"},
+                {"priority","unclassified"},{"confidence","observed-change-only"},
+                {"section",stats.section},
+                {"rva",hex(rva)},{"end_rva",hex(end)},{"scan_scope","one observed writable-module page"},
+                {"scan_bytes",end-rva},{"scan_eligible",end>rva&&uint64_t(end)-rva<=kMaxCandidateScanBytes},
+                {"change_observations",stats.changes},{"changed_bytes_total",stats.changedBytes},
+                {"first_pass",stats.firstPass},{"last_pass",stats.lastPass},
+                {"assessment","This page changed during monitoring. Its semantic role and relation to a world transition are unknown."}});
+        }
+    }
+    return {{"schema",1},{"tool","ScanClient"},{"version",g_version},
+        {"module_sha256",g_identity.fileSha256},{"module_text_sha256",g_identity.textSha256},
+        {"static_candidate_count",staticCount},{"runtime_page_candidate_count",dynamicCount},
+        {"candidates",std::move(items)},
+        {"note","Static world-transition and client-to-server packet candidates are ranked from HDE64-validated instruction references to specific strings. Serverbound type names do not prove a send path. Runtime pages are only observed changes; no candidate proves runtime semantics or ABI."}};
+}
+void saveCandidateIndex() {
+    if(g_out.empty()) return;
+    atomicWrite(g_out/"scan_candidates.json",candidateIndexDocument().dump(2));
 }
 std::string sha256(std::string_view data) {
     BCRYPT_ALG_HANDLE algorithm=nullptr; BCRYPT_HASH_HANDLE hash=nullptr;
@@ -781,11 +976,110 @@ done:
     if(hash) BCryptDestroyHash(hash); if(algorithm) BCryptCloseAlgorithmProvider(algorithm,0);
     return digest;
 }
+void listScanCandidates(bool runtimeOnly=false) {
+    std::vector<ScanCandidate> statics;
+    std::vector<std::pair<uint32_t,DynamicCandidateStats>> dynamic;
+    {
+        std::lock_guard lock(g_candidateMutex);
+        statics=g_staticCandidates;
+        dynamic.reserve(g_dynamicCandidates.size());
+        for(const auto& entry:g_dynamicCandidates) dynamic.push_back(entry);
+    }
+    std::sort(dynamic.begin(),dynamic.end(),[](const auto& a,const auto& b) {
+        if(a.second.changes!=b.second.changes) return a.second.changes>b.second.changes;
+        return a.first<b.first;
+    });
+    std::ostringstream out;
+    out<<"[ScanClient] Static candidates="<<statics.size()<<", runtime-changing pages="<<dynamic.size()<<".";
+    if(!runtimeOnly) for(const auto& candidate:statics) {
+        out<<"\n  "<<candidate.id<<" | "<<candidate.details.value("priority",std::string("?"))
+           <<" | "<<candidate.details.value("category",std::string("candidate"))
+           <<" | RVA "<<hex(candidate.beginRva)<<"-"<<hex(candidate.endRva);
+    }
+    if(runtimeOnly) out<<"\n[ScanClient] Dynamic pages are ranked by change count; their meaning is unknown.";
+    const size_t limit=std::min<size_t>(dynamic.size(),runtimeOnly?50:10);
+    for(size_t i=0;i<limit;++i) {
+        const auto& [rva,stats]=dynamic[i];
+        out<<"\n  "<<candidateRvaId("data-",rva)<<" | runtime-change-only"
+           <<" | changes="<<stats.changes<<" | changed_bytes="<<stats.changedBytes;
+    }
+    if(dynamic.size()>limit) out<<"\n  ... "<<(dynamic.size()-limit)<<" more runtime pages; use 'candidates dynamic' to list them.";
+    out<<"\n[ScanClient] Capture one candidate with: scan candidate <id>";
+    log(out.str());
+}
+void scanCandidate(const std::string& id) {
+    if(!g_outputReady.load(std::memory_order_acquire)||id.empty()) {
+        log("[ScanClient] Candidate scan unavailable until the output folder is ready."); return;
+    }
+    ScanCandidate selected; bool found=false;
+    {
+        std::lock_guard lock(g_candidateMutex);
+        const auto it=std::find_if(g_staticCandidates.begin(),g_staticCandidates.end(),[&](const auto& c){return c.id==id;});
+        if(it!=g_staticCandidates.end()) { selected=*it; found=true; }
+        if(!found) for(const auto& [rva,stats]:g_dynamicCandidates) {
+            if(candidateRvaId("data-",rva)!=id) continue;
+            const uint32_t end=static_cast<uint32_t>(std::min<uint64_t>(g_identity.imageSize,
+                uint64_t(rva)+kMonitorPageSize));
+            selected={id,rva,end,{{"id",id},{"category","runtime-mutating-page"},
+                {"priority","unclassified"},{"confidence","observed-change-only"},
+                {"section",stats.section},
+                {"change_observations",stats.changes},{"changed_bytes_total",stats.changedBytes},
+                {"first_pass",stats.firstPass},{"last_pass",stats.lastPass},
+                {"assessment","This page changed during monitoring; its relation to a world transition is unknown."}}};
+            found=true; break;
+        }
+    }
+    if(!found) { log("[ScanClient] Unknown candidate ID. Use 'candidates' or 'candidates dynamic'."); return; }
+    if(selected.endRva<=selected.beginRva||selected.endRva>g_identity.imageSize||
+       uint64_t(selected.endRva)-selected.beginRva>kMaxCandidateScanBytes) {
+        log("[ScanClient] Candidate range failed bounds checks; no bytes were read."); return;
+    }
+    const size_t length=selected.endRva-selected.beginRva;
+    std::vector<uint8_t> bytes(length);
+    for(size_t offset=0;offset<length;) {
+        const size_t amount=std::min<size_t>(kChunk,length-offset);
+        const uintptr_t address=g_moduleBase+selected.beginRva+offset;
+        if(address<g_moduleBase||!safeRead(address,bytes.data()+offset,amount)) {
+            log("[ScanClient] Candidate read failed safely; partial bytes were discarded."); return;
+        }
+        offset+=amount;
+    }
+    std::string stamp=utcTimestamp();
+    stamp.erase(std::remove_if(stamp.begin(),stamp.end(),[](char c){return c=='-'||c==':'||c=='.';}),stamp.end());
+    const fs::path directory=g_out/"candidate_scans"/selected.id;
+    std::error_code ec; fs::create_directories(directory,ec);
+    if(ec) { log("[ScanClient] Could not create the candidate output folder."); return; }
+    const std::string basename=stamp+"-rva-"+hex(selected.beginRva).substr(2);
+    const fs::path binaryPath=directory/(basename+".bin");
+    const fs::path jsonPath=directory/(basename+".json");
+    const std::string binary(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+    const std::string binaryHash=sha256(binary);
+    atomicWrite(binaryPath,binary);
+    if(!fs::exists(binaryPath,ec)||ec) { log("[ScanClient] Candidate snapshot could not be saved."); return; }
+    json snapshot={{"schema",1},{"type","targeted-read-only-candidate-snapshot"},
+        {"utc",utcTimestamp()},{"version",g_version},{"module_sha256",g_identity.fileSha256},
+        {"module_text_sha256",g_identity.textSha256},{"loaded_base",hex(g_moduleBase)},
+        {"candidate",selected.details},{"rva",hex(selected.beginRva)},
+        {"address",hex(g_moduleBase+selected.beginRva)},{"end_rva",hex(selected.endRva)},
+        {"bytes",bytes.size()},{"sha256",binaryHash},
+        {"first_64_bytes_hex",bytePattern(bytes.data(),std::min<size_t>(bytes.size(),64))},
+        {"binary_file",binaryPath.lexically_relative(g_out).generic_string()},
+        {"status","guarded read completed; bytes are a point-in-time sample, not proof of event behavior"}};
+    atomicWrite(jsonPath,snapshot.dump(2));
+    log("[ScanClient] Candidate snapshot saved: "+jsonPath.lexically_relative(g_out).generic_string()+
+        " | bytes="+std::to_string(bytes.size())+" | sha256="+binaryHash.substr(0,16));
+}
 void scan() {
     SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
+    g_outputReady.store(false,std::memory_order_release);
     g_done.store(0); g_saved.store(0); g_skipped.store(0); g_failures.store(0);
     g_monitorPasses.store(0); g_monitorPagesChanged.store(0); g_monitorBytesChanged.store(0);
     g_monitorReadFailures.store(0); g_monitorState.store(0);
+    {
+        std::lock_guard lock(g_candidateMutex);
+        g_staticCandidates.clear();
+        g_dynamicCandidates.clear();
+    }
     g_identity={};
     log("[ScanClient] Fingerprinting Minecraft headers and .text; unrelated process memory is excluded.");
     const auto sections=readSections();
@@ -803,6 +1097,7 @@ void scan() {
     g_out=documentsRoot()/L"PEXData"/L"ScanClient"/fs::path(g_version)/L"windows-x64";
     std::error_code ec; fs::create_directories(g_out,ec);
     if(ec) { log("[ScanClient] Could not create the output folder; scan cancelled."); return; }
+    g_outputReady.store(true,std::memory_order_release);
     log("[ScanClient] Minecraft "+g_version+" | fingerprint "+g_identity.textSha256.substr(0,16));
     log("[ScanClient] Output: "+g_out.string());
     g_total.store(focusedCaptureSize(sections));
@@ -834,11 +1129,23 @@ void scan() {
     const auto runtimeFunctions=parseRuntimeFunctions(pdataBytes,*textSection);
     std::vector<uint8_t>().swap(pdataBytes);
     const auto rdataBytes=readCapturedSection(*rdataSection,moduleLayout);
-    json strings=json::array(), rtti=json::array(), tables=json::array(), signatures=json::array();
-    collectFilteredStrings(rdataBytes,*rdataSection,strings,rtti);
+    json worldStrings=json::array(), clientSendStrings=json::array();
+    json rtti=json::array(), tables=json::array(), signatures=json::array();
+    collectFilteredStrings(rdataBytes,*rdataSection,worldStrings,clientSendStrings,rtti);
+    json allStrings=worldStrings;
+    for(const auto& item:clientSendStrings) allStrings.push_back(item);
     std::unordered_set<uint32_t> emittedFunctions;
-    const auto references=collectWorldTransitionReferences(*textSection,runtimeFunctions,moduleLayout,
-        strings,signatures,emittedFunctions);
+    json decoderStats;
+    auto references=collectValidatedStringReferences(*textSection,runtimeFunctions,moduleLayout,
+        allStrings,signatures,emittedFunctions,decoderStats);
+    json candidateExclusions=json::array();
+    const json scanCandidates=buildScanCandidates(allStrings,references,candidateExclusions);
+    json worldReferences=json::array(), clientSendReferences=json::array();
+    for(const auto& ref:references) {
+        const std::string domain=ref.value("scan_domain",std::string{});
+        if(domain=="world-transition") worldReferences.push_back(ref);
+        else if(domain=="client-to-server-packet") clientSendReferences.push_back(ref);
+    }
     collectFunctionPointerTables(rdataBytes,*rdataSection,*textSection,runtimeFunctions,moduleLayout,
         tables,signatures,emittedFunctions);
     if(g_stop.load()) {
@@ -849,13 +1156,26 @@ void scan() {
     const json provenance={{"schema",2},{"scope","Minecraft.Windows.exe .rdata/.pdata only"},
         {"version",g_version},{"module_sha256",g_identity.fileSha256},
         {"module_text_sha256",g_identity.textSha256}};
-    auto stringsDoc=provenance; stringsDoc["status"]="filtered-observations"; stringsDoc["items"]=strings;
+    auto stringsDoc=provenance; stringsDoc["status"]="filtered-world-transition-observations"; stringsDoc["items"]=worldStrings;
+    auto clientSendStringsDoc=provenance;
+    clientSendStringsDoc["status"]="serverbound-packet-and-send-event-name-observations";
+    clientSendStringsDoc["items"]=clientSendStrings;
     auto rttiDoc=provenance; rttiDoc["status"]="name-candidates-only"; rttiDoc["items"]=rtti;
     auto tablesDoc=provenance; tablesDoc["status"]="function-pointer-table-candidates"; tablesDoc["items"]=tables;
-    auto referencesDoc=provenance; referencesDoc["status"]="static-reference-candidates"; referencesDoc["items"]=references;
+    auto referencesDoc=provenance; referencesDoc["status"]="instruction-boundary-verified-world-transition-references";
+    referencesDoc["items"]=worldReferences;
+    auto clientSendReferencesDoc=provenance;
+    clientSendReferencesDoc["status"]="instruction-boundary-verified-client-send-candidates";
+    clientSendReferencesDoc["items"]=clientSendReferences;
+    auto exclusionsDoc=provenance; exclusionsDoc["status"]="excluded-low-confidence-references";
+    exclusionsDoc["items"]=candidateExclusions;
     auto signaturesDoc=provenance; signaturesDoc["status"]="exact-build-prefix-candidates"; signaturesDoc["items"]=signatures;
     atomicWrite(g_out/"world_transition_strings.json",stringsDoc.dump(2));
     atomicWrite(g_out/"world_transition_references.json",referencesDoc.dump(2));
+    atomicWrite(g_out/"client_send_packet_strings.json",clientSendStringsDoc.dump(2));
+    atomicWrite(g_out/"client_send_packet_references.json",clientSendReferencesDoc.dump(2));
+    atomicWrite(g_out/"scan_candidates.json",candidateIndexDocument().dump(2));
+    atomicWrite(g_out/"candidate_exclusions.json",exclusionsDoc.dump(2));
     atomicWrite(g_out/"rtti_name_candidates.json",rttiDoc.dump(2));
     atomicWrite(g_out/"function_pointer_tables.json",tablesDoc.dump(2));
     atomicWrite(g_out/"signatures.json",signaturesDoc.dump(2));
@@ -871,11 +1191,21 @@ void scan() {
             {"bytes_read",g_done.load()},{"bytes_total",g_total.load()},{"read_failures",g_failures.load()},
             {"bytes_saved",g_saved.load()},{"bytes_skipped",g_skipped.load()},
             {"runtime_functions_from_pdata",runtimeFunctions.size()},
-            {"candidate_counts",{{"world_transition_strings",strings.size()},{"rtti_name_candidates",rtti.size()},
-                {"world_transition_references",references.size()},
-                {"function_pointer_tables",tables.size()},{"function_prefixes",signatures.size()}}},
+            {"candidate_counts",{{"world_transition_strings",worldStrings.size()},
+                {"client_send_packet_strings",clientSendStrings.size()},
+                {"rtti_name_candidates",rtti.size()},
+                {"world_transition_references",worldReferences.size()},
+                {"client_send_packet_references",clientSendReferences.size()},
+                {"function_pointer_tables",tables.size()},{"function_prefixes",signatures.size()},
+                {"ranked_scan_candidates",scanCandidates.size()},
+                {"excluded_candidate_references",candidateExclusions.size()}}},
+            {"reference_decoder",decoderStats},
             {"candidate_files",{{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
                 {"world_transition_references","world_transition_references.json"},
+                {"client_send_packet_strings","client_send_packet_strings.json"},
+                {"client_send_packet_references","client_send_packet_references.json"},
+                {"scan_candidates","scan_candidates.json"},{"candidate_scans","candidate_scans/"},
+                {"candidate_exclusions","candidate_exclusions.json"},
                 {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
                 {"dynamic_changes","dynamic_changes.jsonl"},
                 {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
@@ -883,7 +1213,7 @@ void scan() {
             {"dynamic_monitor",{{"scope","writable PE sections of Minecraft.Windows.exe only"},
                 {"poll_interval_after_each_pass_ms",250},{"max_baseline_bytes",kMaxDynamicMonitorBytes},
                 {"private_heaps_and_other_modules_scanned",false}}},
-            {"note","The process-wide scan was removed. World-transition string references use a partial x64 RIP-relative decoder; dynamic records are changed-page observations, not semantically identified events. All strings, references, function-pointer tables, signatures, RTTI names, and ABI remain candidates until static/runtime verification."}}}}}};
+            {"note","World-transition and client-to-server packet clues are written separately. Static references are accepted only when HDE64 reaches the RIP-relative instruction by linear decoding from a .pdata function start. Serverbound names and PacketSendBeforeEvent remain clues: they do not prove a native send boundary, packet contents, runtime execution, or ABI. Functions larger than 1 MiB and functions with undecodable bytes are reported in reference_decoder and may have missing references."}}}}}};
     const std::string profileText=profile.dump(2);
     atomicWrite(g_out/"windows-x64.json",profileText);
     const std::string profileHash=sha256(profileText);
@@ -896,6 +1226,10 @@ void scan() {
     json versions={{g_version,versionProfiles}};
     json files={{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
         {"world_transition_references","world_transition_references.json"},
+        {"client_send_packet_strings","client_send_packet_strings.json"},
+        {"client_send_packet_references","client_send_packet_references.json"},
+        {"scan_candidates","scan_candidates.json"},{"candidate_scans","candidate_scans/"},
+        {"candidate_exclusions","candidate_exclusions.json"},
         {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
         {"dynamic_changes","dynamic_changes.jsonl"},
         {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
@@ -903,12 +1237,15 @@ void scan() {
     json manifest={{"schema",2},{"tool","ScanClient"},{"versions",versions},{"files",files}};
     atomicWrite(g_out/"manifest.json",manifest.dump(2));
     saveProgress(complete?"complete":"partial");
-    log(std::string("[ScanClient] Static focused scan ")+(complete?"complete.":"partial.")+" Findings: transition strings="+
-        std::to_string(strings.size())+", RTTI names="+std::to_string(rtti.size())+", function tables="+
-        std::to_string(tables.size())+", transition references="+std::to_string(references.size())+
+    log(std::string("[ScanClient] Static focused scan ")+(complete?"complete.":"partial.")+" Findings: world strings="+
+        std::to_string(worldStrings.size())+", serverbound strings="+std::to_string(clientSendStrings.size())+
+        ", world references="+std::to_string(worldReferences.size())+
+        ", client-send references="+std::to_string(clientSendReferences.size())+
+        ", HDE64 decode errors="+std::to_string(decoderStats.value("decode_errors",uint64_t{}))+
         ", function prefixes="+std::to_string(signatures.size()));
     log("[ScanClient] Static capture finished. Dynamic monitoring continues until the stop command.");
     monitorThread.join();
+    saveCandidateIndex();
     saveProgress(complete?"complete":"partial");
 }
 
@@ -925,7 +1262,7 @@ DWORD WINAPI boot(void*) {
     try { worker=std::thread(scanEntry); }
     catch(const std::exception& e) { log(std::string("[ScanClient] Could not start scan thread: ")+e.what()); return 0; }
     catch(...) { log("[ScanClient] Could not start scan thread."); return 0; }
-    log("[ScanClient] Commands: pause | resume | status | stop | restart | exit");
+    log("[ScanClient] Commands: pause | resume | status | candidates | candidates dynamic | scan candidate <id> | stop | restart | exit");
     std::string command;
     while(std::getline(std::cin,command)) {
         if(command=="pause") { g_pause.store(true); log("[ScanClient] Pause requested."); }
@@ -937,7 +1274,19 @@ DWORD WINAPI boot(void*) {
             " | monitor passes="+std::to_string(g_monitorPasses.load())+
             " changed pages="+std::to_string(g_monitorPagesChanged.load())+
             " dynamic read failures="+std::to_string(g_monitorReadFailures.load())); }
+        else if(command=="candidates"||command=="candidates dynamic"||command.rfind("scan candidate ",0)==0) {
+            try {
+                if(command=="candidates") listScanCandidates(false);
+                else if(command=="candidates dynamic") listScanCandidates(true);
+                else scanCandidate(command.substr(15));
+            } catch(const std::exception& e) {
+                log(std::string("[ScanClient] Candidate operation failed safely: ")+e.what());
+            } catch(...) {
+                log("[ScanClient] Candidate operation failed safely.");
+            }
+        }
         else if(command=="restart") {
+            g_outputReady.store(false,std::memory_order_release);
             g_stop.store(true); g_pause.store(false);
             if(worker.joinable()) worker.join();
             g_done.store(0); g_saved.store(0); g_skipped.store(0); g_total.store(0); g_failures.store(0);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(BedrockScanClient LANGUAGES CXX)
+project(BedrockScanClient LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
@@ -17,8 +17,14 @@ if(WIN32)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tools/ScanClientImport.py" SCANCLIENT_GHIDRA_SCRIPT)
     configure_file(src/ghidra_import_script.hpp.in
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ghidra_import_script.hpp" @ONLY)
-    add_library(ScanClient SHARED src/scan_client.cpp)
+    add_library(ScanClient SHARED
+        src/scan_client.cpp
+        ../../third_party/minhook-vendor/src/hde/hde64.c)
     target_include_directories(ScanClient PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_include_directories(ScanClient PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/minhook-vendor/src/hde")
+    # Use a private symbol so the SDK's bundled MinHook copy can coexist.
+    set_source_files_properties(../../third_party/minhook-vendor/src/hde/hde64.c
+        PROPERTIES COMPILE_DEFINITIONS "hde64_disasm=scanclient_hde64_disasm")
     set_target_properties(ScanClient PROPERTIES PREFIX "" OUTPUT_NAME "ScanClient")
     target_link_libraries(ScanClient PRIVATE bedrock::sdk version bcrypt)
     target_compile_definitions(ScanClient PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
