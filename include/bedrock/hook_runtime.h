@@ -30,7 +30,12 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_GET_FOV = 5,
     BDS_HOOK_LEVEL_SUB_TICK = 6,
     BDS_HOOK_ACTOR_GET_NAME_TAG = 7,
-    BDS_HOOK_GAMECORE_KEYBOARD_EVENT = 8
+    BDS_HOOK_GAMECORE_KEYBOARD_EVENT = 8,
+    BDS_HOOK_CLIENT_PLAYER_LOADED = 9,
+    BDS_HOOK_CLIENT_LEVEL_EXIT = 10,
+    BDS_HOOK_CLIENT_DIMENSION_CHANGED = 11,
+    BDS_HOOK_CLIENT_JOIN_CANCELLED = 12,
+    BDS_HOOK_RENDER_LEVEL = 13
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -42,7 +47,12 @@ typedef struct BDS_MouseArgs {
 #define BDS_MOUSE_FLAG_SYNTHETIC 0x40000000
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
+typedef struct BDS_RenderLevelArgs { void* renderer; void* screen; void* context; } BDS_RenderLevelArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
+typedef struct BDS_ClientPlayerLoadedArgs { void* self; void* player; } BDS_ClientPlayerLoadedArgs;
+// For LEVEL_EXIT, self is the GameCallbacks subobject, not ClientInstance.
+// Normalize it using the exact-build native_world_events profile layout.
+typedef struct BDS_ClientWorldArgs { void* self; } BDS_ClientWorldArgs;
 typedef struct BDS_ActorNameTagArgs { void* actor; const void* name_tag; } BDS_ActorNameTagArgs;
 typedef struct BDS_GameCoreKeyboardEventArgs {
     void* self; void* output; void* context; void* result;

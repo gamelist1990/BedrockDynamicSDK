@@ -468,6 +468,54 @@
         }
       ],
       "signature_length": 34
+    },
+    "ClientInstance::onPlayerLoaded": {
+      "rva": "0x5dd06f0",
+      "signature": "49 89 D0 48 89 CA 48 8B 89 A8 01 00 00 48 8B 01 48 8B 80 70 04 00 00 4C",
+      "entry_check": "49 89 D0 48 89 CA 48 8B 89 A8 01 00 00 48 8B 01 48 8B 80 70 04 00 00 4C",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "runtime_verified": false,
+      "source": "LeviLamina@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 327; REA/Ghidra ev_622de34172a5e3a8e479640ebd3f302fb6d37c7ea8c46c381aa827812dd01962. Native runtime invocation remains unverified.",
+      "abi": "void __fastcall(ClientInstance*, Player*)"
+    },
+    "ClientInstance::onLevelExit": {
+      "rva": "0x5db42f0",
+      "signature": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 CF",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 CF",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "runtime_verified": false,
+      "source": "LeviLamina@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable GameCallbacks 0xE973F20 slot 7; REA/Ghidra ev_7b03e9eeb4ba609550569d2e257d863ae29dc50167edbb751b29fcc757acc096. Native runtime invocation remains unverified.",
+      "abi": "void __fastcall(GameCallbacks* client_plus_0x88)"
+    },
+    "ClientInstance::onDimensionChangedEvent": {
+      "rva": "0x5dbe5d0",
+      "signature": "56 48 83 EC 40 48 89 CE 48 8D 91 48 02 00 00 48 8D 4C 24 20 E8 97 1D 80",
+      "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 48 02 00 00 48 8D 4C 24 20 E8 97 1D 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "runtime_verified": false,
+      "source": "LeviLamina@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 134; REA/Ghidra ev_27d5015c85c5e0c8b4740f32926e7512c8c43ad585d894bb64cff23b06ec5e7a. Native runtime invocation remains unverified.",
+      "abi": "void __fastcall(ClientInstance*)"
+    },
+    "ClientInstance::onCancelJoinGame": {
+      "rva": "0x5da38f0",
+      "signature": "56 57 48 83 EC 28 48 89 CE C6 81 D7 06 00 00 01 48 8B 89 A8 01 00 00 48",
+      "entry_check": "56 57 48 83 EC 28 48 89 CE C6 81 D7 06 00 00 01 48 8B 89 A8 01 00 00 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "runtime_verified": false,
+      "source": "LeviLamina@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 13; REA/Ghidra ev_f412fe40a7569c670e78130b19f4765c0f2712608162e58b2c70cf46426e0cf3. Native runtime invocation remains unverified.",
+      "abi": "void __fastcall(ClientInstance*)"
     }
   },
   "native_world_render": {
@@ -518,5 +566,35 @@
       "shader_color_dirty": 16
     },
     "common_material_group_rva": "0x11e3b308"
+  },
+  "native_world_events": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "runtime_verified": false,
+    "exit_client_offset": 136,
+    "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+  },
+  "native_freecam": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "runtime_verified": false,
+    "evidence": "docs/freecam-native.md; exact EXE Latite _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation.",
+    "update_player": {
+      "rva": "0x6733360",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 ec d8 00 00 00 44 0f 29 94 24 c0 00 00 00 44 0f 29 8c",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+      "abi": "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)"
+    },
+    "camera_position_offset": 64,
+    "camera_orientation_offset": 48,
+    "hurt_time_component_hash": "0xD7A3585C",
+    "hurt_time_value_offset": 0,
+    "hurt_time_value_size": 4,
+    "actor_type_offset": 0,
+    "player_type_id": 319,
+    "renderer_player_offset": 1128,
+    "render_origin_offset": 1632
   }
 }
