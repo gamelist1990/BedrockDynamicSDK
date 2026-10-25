@@ -49,3 +49,42 @@ The Windows CI builds two separate test client DLLs, each containing its own
 static runtime copy, then loads both into one process and verifies they share
 the same hook chain. That is the key co-load guarantee; an in-game Windows test
 is still advisable after SDK changes.
+
+## Runtime 4.0.0
+
+Capability ABI 4 adds `BDS_HOOK_RENDER_LEVEL` with `BDS_RenderLevelArgs`
+(renderer, screen, context). Subscribers call the continuation before drawing.
+Updated HitBox and Freecam share this hook; all co-loaded consumers require
+a rebuild and a complete Minecraft restart after a runtime upgrade.
+
+## Runtime 4.1.0: compatible owners and preferred bootstrap DLL
+
+Runtime version is independent of the table capability ABI. Version 4.1 keeps
+the ABI 4 table byte-for-byte, including existing argument records. A new
+consumer accepts the inspected ABI 3/4 prefixes and checks points individually:
+ABI 3 supports 1..12; ABI 4 supports 1..13. `BDS_HookRuntimeSupports(point)` and
+`BDS_HookRuntimeAbi()` report the **active owner**, not the caller's embedded
+version. All point-taking exports gate unsupported points before dispatch.
+Unknown incompatible ABIs are rejected; a larger integer is not proof of compatibility.
+
+An optional `BedrockHookRuntime.dll` is built by the SDK tools job. Place the
+newest compatible release beside the Mod DLLs. Updated consumers load that
+exact directory's sidecar, check its side-effect-free BuildVersion/BuildAbi exports,
+and synchronously invoke `BedrockHookRuntime_Start`
+before first owner election only if it is ABI-compatible and at least as new
+as the embedded version. An older sidecar is not activated. No CWD/PATH search is used. Without a sidecar,
+the embedded copy remains the fallback. Startup happens outside DllMain and
+outside the consumer's shared-API mutex. The owner remains pinned.
+
+For an unrecompiled legacy Mod, a loader can load the sidecar and call
+`BedrockHookRuntime_Start` before loading that Mod. Existing ABI 4 consumers
+accept the newer ABI 4 owner unchanged. Legacy ABI 3 strict-equality consumers
+still reject an ABI 4 owner: modifying a new DLL cannot rewrite their old check.
+For those consumers a rebuild is required once.
+
+This chooses the installed sidecar at startup. It neither scans arbitrary
+unloaded DLLs for a speculative newer runtime nor replaces an owner after hooks
+are active. If an older owner is already active, supported existing features
+continue through it and unsupported features fail locally. Restart after
+updating the preferred sidecar. Custom loaders which copy DLLs elsewhere must
+copy the sidecar too or explicitly load/start it first.

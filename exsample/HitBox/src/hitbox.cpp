@@ -24,6 +24,7 @@
 
 #include <nlohmann/json.hpp>
 #include "hitbox/box_cache.hpp"
+#include "hitbox/latest_pose.hpp"
 #include "hitbox/batch_queue.hpp"
 #include "hitbox/world_render_profile.hpp"
 #include "hitbox/name_tags.hpp"
@@ -99,6 +100,7 @@ struct Config {
 };
 
 using BoxRecord = hitbox::BoxRecord;
+hitbox::LatestPoseMailbox latestPoses;
 struct CameraState {
     std::uint64_t epoch{};
     bedrock::Vec3 cameraPosition{};
@@ -923,6 +925,10 @@ void processingLoop(std::size_t shard) noexcept {
                 config.nearbyDistance, config.retainLastPosition,
                 batch->liveLifetime, config.showAllActors, config.playersOnly,
                 std::chrono::minutes(config.retentionMinutes));
+            for(auto& box:snapshot->boxes) {
+                box.blendDuration=std::chrono::milliseconds(0);
+                box.blendFrom=box.bounds;
+            }
             if(snapshot->boxes.empty() && publishedEmpty) continue;
             const auto revision=nameMailbox.revision();
             const bool mailboxChanged=revision!=mailboxRevision;
@@ -1182,6 +1188,8 @@ void refreshGameTickSnapshot() {
         loggedNativeFailure=false;
         log("Actor capture recovered: pool=", batch.population, " copied=", batch.count);
     }
+    // Publish copied poses before optional name work or worker delivery.
+    latestPoses.publish(batch.camera.epoch,batch.samples.data(),batch.count);
     fillMissingName(batch);
     const auto actorsReadyAt = Clock::now();
     const std::array<std::size_t,9> counts{visited,batch.count,batch.nativePlayers,
@@ -1287,7 +1295,8 @@ constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visi
 struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
     const std::uint8_t* visible{};
     const hitbox::PreparedNames* names{};
-    std::chrono::milliseconds liveLifetime{}; };
+    std::chrono::milliseconds liveLifetime{};
+    const BoxRecord* preparedBoxes{}; };
 struct NativeDrawInput {
     std::array<NativeDrawRange, workerCapacity> ranges{};
     std::array<std::uint8_t,hitbox::TrackingBudget::maximumActors> visible{};
@@ -1364,6 +1373,17 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                     label.vertexCount>prepared.vertices.size()-label.firstVertex) continue;
                 const auto& box=range.boxes[label.boxIndex];
                 if(box.retained!=(pass==1) || !range.visible[label.boxIndex]) continue;
+                // Text glyphs stay cached, but their anchor follows the same
+                // newest copied AABB as the outline, without font rebuilds.
+                bedrock::Vec3 translation=delta;
+                if(range.preparedBoxes) {
+                    const auto before=hitbox::interpolatedBounds(range.preparedBoxes[label.boxIndex],prepared.preparedAt);
+                    const auto after=box.bounds;
+                    translation.x+=(after.minimum.x+after.maximum.x-before.minimum.x-before.maximum.x)*0.5f;
+                    translation.y+=after.maximum.y-before.maximum.y;
+                    translation.z+=(after.minimum.z+after.maximum.z-before.minimum.z-before.maximum.z)*0.5f;
+                }
+                if(!safeWrite(tess,worldRenderProfile.translation,translation)) return false;
                 for(std::size_t p=label.firstVertex;p<label.firstVertex+label.vertexCount;p+=4)
                     batch.quad({prepared.vertices[p],prepared.vertices[p+1],prepared.vertices[p+2],prepared.vertices[p+3]});
                 ++submitted;
@@ -1462,20 +1482,24 @@ void drawWorldBoxes(void* renderer, void* screen) {
     std::array<std::shared_ptr<const RenderSnapshot>,workerCapacity> snapshots;
     NativeDrawInput input; input.config=*config; input.now=now;
     input.localActor=localActorIdentity.load(std::memory_order_acquire);
+    // Fixed TLS storage: no per-frame allocation and no native Actor reads.
+    static thread_local std::array<BoxRecord,hitbox::TrackingBudget::maximumActors> frameBoxes;
     std::size_t count=0;
     for (std::size_t i=0;i<workerCount;++i) {
         snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
         if (!snapshots[i] || snapshots[i]->epoch!=epoch) continue;
         // Old and new worker snapshots can overlap during slot handover.
         // Bound the combined frame even during that asynchronous transition.
-        input.ranges[i]={snapshots[i]->boxes.data(),
-            std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
-            input.visible.data()+count,
-            snapshots[i]->preparedNames.get(),
-            snapshots[i]->liveLifetime};
+        const auto size=std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count);
+        auto* current=frameBoxes.data()+count;
+        std::copy_n(snapshots[i]->boxes.data(),size,current);
+        latestPoses.apply(epoch,current,size);
+        for(std::size_t j=0;j<size;++j) current[j].blendDuration=std::chrono::milliseconds(0);
+        input.ranges[i]={current,size,input.visible.data()+count,
+            snapshots[i]->preparedNames.get(),snapshots[i]->liveLifetime,snapshots[i]->boxes.data()};
         // Evaluate identity/expiry once, shared by line and both text passes.
         for(std::size_t j=0;j<input.ranges[i].count;++j) {
-            const auto& box=snapshots[i]->boxes[j];
+            const auto& box=input.ranges[i].boxes[j];
             input.visible[count+j]=box.actorKey!=input.localActor &&
                 hitbox::visibleInFrame(box,now,snapshots[i]->liveLifetime,config->retainLastPosition,
                     config->playersOnly,std::chrono::minutes(config->retentionMinutes));

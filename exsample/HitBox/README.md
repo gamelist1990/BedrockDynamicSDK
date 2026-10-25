@@ -268,3 +268,15 @@ Latiteは `PacketHooks.cpp` で `CHANGE_DIMENSION` を検知して名前キャ�
 - DirectWrite outline triangles that share an edge are merged only when their union is convex. The double-sided native quad rendering preserves the filled shape, including holes. Each merged pair reduces native vertex calls from 16 to 8. Actual savings depend on the font/name.
 - The `HitBox render cost [5s]` log reports average and peak native submission time in microseconds. These timings exclude worker processing and are not an FPS measurement.
 - Native Actor access remains on the game thread with the existing bounded read budget. Workers use copied scalar data. The moved → within one block for one second → disappears retention rule is preserved.
+
+
+## 最新座標への追従
+
+取得済みAABBへの50～1000msの追従補間を除去しました。
+ゲームスレッドでコピーした最新のRuntimeID/AABBを固定容量メールボックスに保存し、
+描画時にワーカーの名前・保持位置処理を待たずに反映します。
+名前の文字形状はキャッシュを使い、アンカーだけ同じAABBへ移動します。
+描画スレッドからActorやEnTTストレージへアクセスしません。
+
+これは最後に取得できたAABBへの一致です。サーバーから未受信の座標、分散取得の間隔、
+ゲーム本来のモデル補間とは区別され、モデルとのフレーム単位の完全一致は未検証です。

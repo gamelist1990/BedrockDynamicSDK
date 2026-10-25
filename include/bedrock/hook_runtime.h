@@ -73,6 +73,9 @@ BDS_HOOK_API int BDS_HOOK_CALL BDS_HookOwnsTarget(BDS_HookPoint point, void* tar
 BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookDispatch(BDS_HookPoint point, void* args);
 BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookCallOriginal(BDS_HookPoint point, void* args);
 BDS_HOOK_API const char* BDS_HOOK_CALL BDS_HookRuntimeVersion(void);
+// Returns owner capabilities, not the version embedded in the calling DLL.
+BDS_HOOK_API int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point);
+BDS_HOOK_API unsigned BDS_HOOK_CALL BDS_HookRuntimeAbi(void);
 
 // Escape hatch for hook points not covered by the middleware API. This still
 // uses the SDK's single process-wide MinHook owner and rejects targets already
