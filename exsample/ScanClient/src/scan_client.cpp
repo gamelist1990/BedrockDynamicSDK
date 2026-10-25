@@ -465,7 +465,6 @@ void monitorWritableSections(const std::vector<Section>& sections,std::stop_toke
         const uint64_t changedBytes=g_monitorBytesChanged.load()-changedBytesBefore;
         if(changedPages) log("[ScanClient] Dynamic changes: pass="+std::to_string(pass)+
             " changed_pages="+std::to_string(changedPages)+" changed_bytes="+std::to_string(changedBytes));
-        if(pass%20==0) saveProgress(captureComplete?"complete":"partial");
         for(unsigned waited=0;waited<250&&!g_stop.load()&&!g_pause.load()&&!stopToken.stop_requested();waited+=25)
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
