@@ -86,12 +86,14 @@ the target from the observed local client's sender vtable slot 4, only within
 the exact main module's .text and at a .pdata function start. It logs the actual
 RVA. The send target is still a **runtime-derived candidate**, not a statically
 verified RVA/ABI. Sender observation occurs in native callbacks; the worker
-only registers hooks using copied pointer identities. The middleware recognizes
-constant native `getId` leaves, blocking MovePlayer (19) and PlayerAuthInput
-(144) only while the proxy needs suppression. No movement packets are queued,
-modified or replayed. Before enabling, it must observe a recognized movement
-packet. An unrecognized packet getter while active requests restoration and
-does not forward that unknown packet until the proxy is restored.
+only registers hooks using copied pointer identities. The current middleware
+recognizes the exact-build movement packet vtables, captures recent inactive
+send positions and requires a fresh copied position before activation. During
+flight it anchors packet positions to that pre-flight pose, clears movement
+delta/control vectors and movement flags, and forwards the packet. Item action
+flags, transactions, tick numbers, acknowledgements and other packet types are
+preserved. No packet is stored for replay after M. Native layout failures request
+restoration and withhold the affected movement packet.
 
 `IClientInstance::getPacketSender` is slot 293 of the anchored exact client
 table. RVA 0x80B340 is exactly `mov rax,[rcx+0x1D0]; ret`:
@@ -121,3 +123,33 @@ Workers prepare paired previous/current line vertices from copied AABBs. Render
 callbacks interpolate these scalar vertices over 50ms from the capture timestamp.
 Gaps above 250ms and jumps above 8 blocks snap. Missing Actors are removed on
 the next valid capture; stale snapshots expire after 250ms.
+
+## Interaction forwarding investigation
+
+Exact EXE SHA-256 is recorded above. Static packet candidates and original PE
+slices/evidence are in `~/Documents/PEXData/REA/freecam-interaction-1.26.52.3/`.
+The active symbol table is unchanged; layouts remain `candidate`, runtime unverified.
+
+- PlayerAuthInput vtable RVA `0xE83A360`, getId `0xB26A00`, validation `0x3C8BA90`.
+  REA/Ghidra `ev_0b98d57e71d487b6113586c65b50b93de981c7c1a89563912ddc072c77a676f8`.
+  Validation branches refer to original `Validate PlayerAuthInputPacketPayload::mPos`
+  at `0xEBE93DA`, `mPosDelta` at `0xECA0828`, `mAnalogMoveVector` at `0xEBFC405`,
+  `mMove` at `0xEC53FF3`, and `mRawMoveVector` at `0xEBFC3CF`. These correlate with
+  packet offsets `0x38`, `0x48`, `0x5C`, `0x64`, `0x80`. Flags at `0x88` occupy
+  16 bytes; bits 34/35/36 are checked against owned data at `0xB0`/`0xC0`/`0xB8`.
+  Those flags and owning data must remain paired. The implementation never
+  copies/destroys/rebuilds the native transaction, request or block-action objects.
+- MovePlayer vtable RVA `0xE85BFC0`, getId `0x2ECD950`, validation `0x2ECE550`.
+  REA/Ghidra `ev_9905a373c2eddd0de8ff5f3f373e0ad3cac2f2ab232817382ca317e5b25095e9`.
+  Position is validated at `0x38`; normal mode at `0x50` is required for rewriting.
+- Field names and flag definitions are corroborated by LeviLamina's
+  `PlayerAuthInputPacketPayload.h` and `MovePlayerPacketPayload.h`; they alone
+  were not treated as exact-build offset verification. Entry guards and vtable
+  getter identity are checked before use. No new native ABI call is introduced.
+
+The reported delayed chest opening is consistent with suppressing the complete
+auth-input tick. This host cannot establish the in-game cause or prove that
+the new forwarding fixes every case without live logs. Server reach checks and
+server inventory authority continue to apply. Nested transaction positions are
+left unchanged. The baseline is cleared by world/sender identity and age checks;
+vehicle packets and unsupported movement classes cause restoration.

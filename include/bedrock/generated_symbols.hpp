@@ -621,7 +621,49 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "entry_check": "48 8b 81 d0 01 00 00 c3 cc cc cc cc cc cc cc cc",
         "abi": "PacketSender& __fastcall(ClientInstance*)"
       },
-      "evidence": "Borion Freecam + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and LeviLamina declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes)."
+      "evidence": "Borion Freecam + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and LeviLamina declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes).",
+      "packet_motion": {
+        "schema": 1,
+        "status": "candidate",
+        "runtime_verified": false,
+        "auth_input": {
+          "vtable_rva": "0xE83A360",
+          "position_offset": 56,
+          "delta_offset": 72,
+          "analog_move_offset": 92,
+          "move_offset": 100,
+          "raw_move_offset": 128,
+          "input_flags_offset": 136,
+          "input_flags_size": 16,
+          "vehicle_offset": 216,
+          "get_id": {
+            "rva": "0xb26a00",
+            "entry_check": "B8 90 00 00 00 C3 CC CC"
+          },
+          "is_valid": {
+            "rva": "0x3c8ba90",
+            "entry_check": "56 57 48 83 EC 38 48 8B 05 E3 E5 B4 0D 48 31 E0 48 89 44 24 30 B8 FF FF"
+          }
+        },
+        "move_player": {
+          "vtable_rva": "0xE85BFC0",
+          "position_offset": 56,
+          "vehicle_offset": 88,
+          "get_id": {
+            "rva": "0x2ecd950",
+            "entry_check": "B8 13 00 00 00 C3 CC CC"
+          },
+          "is_valid": {
+            "rva": "0x2ece550",
+            "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05 20 7E 6F 0B 0F 28 D1 0F 54 D0 0F 2E"
+          }
+        },
+        "evidence": [
+          "REA/Ghidra ev_0b98d57e71d487b6113586c65b50b93de981c7c1a89563912ddc072c77a676f8: exact-build auth input validation + Validate PlayerAuthInputPacketPayload field-name strings; transaction flags34/35/36 paired with owning payloads at0xB0/0xC0/0xB8",
+          "REA/Ghidra ev_9905a373c2eddd0de8ff5f3f373e0ad3cac2f2ab232817382ca317e5b25095e9: MovePlayer position at0x38 and mode at0x50; LeviLamina payload declarations corroborate field names",
+          "Static evidence only; packet serialization timing, transaction handling and live server acceptance remain unverified"
+        ]
+      }
     },
     "backend": "borion_local_proxy"
   },

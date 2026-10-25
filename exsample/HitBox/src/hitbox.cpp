@@ -1849,6 +1849,7 @@ DWORD WINAPI startClient(void*) {
         return 1;
     }
     log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 1-tick target sweep; exact-build guards; runtime candidate]");
+    log(BDS_HookRuntimeDiagnostic());
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 

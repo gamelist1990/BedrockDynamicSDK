@@ -16,7 +16,9 @@ WASDで移動、Spaceで上昇、Shiftで下降、Ctrlで高速移動、マウ�
 メニュー表示、ワールド/ディメンション変更、被弾、必要なネイティブ値の取得失敗で解除します。
 Borion方式でクライアント側Playerを移動し、使用中は速度・落下距離をゼロ化してAABBを縮小します。
 解除時はゲームスレッドで開始位置とAABBを復元します。ワールド変更後に旧座標を書き戻しません。
-移動パケット（MovePlayer / PlayerAuthInput）の送信を抑止し、識別できるまでは移動を開始しません。
+移動パケット（MovePlayer / PlayerAuthInput）は開始直前に観測した送信位置へ固定して転送します。
+PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム操作・取引・tick番号は維持します。
+新鮮な送信位置を取得できるまでは移動を開始しません。
 上昇・下降は0.5ブロック/tick、水平移動は設定速度を使います。
 
 設定とログはWindowsのDocuments既知フォルダ内の`PEXData/Freecam/`です。
@@ -37,8 +39,9 @@ Borion方式でクライアント側Playerを移動し、使用中は速度・�
 | `capture_rows_per_update` | 8 | 1tick当たりの新Player発見走査上限（1～16） |
 | `keys` | WASD/Space/Shift/Ctrl | 各InputKeyを数値で変更可能 |
 
-インタラクション有効化は通常の手動入力を通す設定です。PlayerAuthInputに含まれる操作は、
-そのパケットの送信抑止中はサーバーへ届きません。サーバー側のリーチ判定は変更しません。
+`allow_interaction=true`で通常の手動入力を通し、PlayerAuthInput内の操作情報もそのまま送ります。
+パケットをMod側で保留・後送りしません。サーバー側のリーチ判定は変更しません。
+カメラ位置だけから、Player本体の通常の操作範囲外にあるチェストを開ける保証はありません。
 クライアントが受信していない範囲のPlayerは表示できません。
 簡易枠はRuntimeIDとEnTT世代で追跡します。発見済みPlayerの座標を毎LevelTick取得し、
 描画時に50ms（1tick）で補間します。テレポート・250ms超の取得中断では補間をリセットします。
@@ -48,9 +51,10 @@ Actor消失時は次の取得で枠を除去し、取得全体が停止したス
 
 ## ランタイム
 
-Runtime **4.2.0**を内蔵します。互換性のある既存所有者へ接続できます。
+Runtime **4.3.0**を内蔵します。互換性のある既存所有者へ接続できます。
 配布セットの`BedrockHookRuntime.dll`をMod DLLと同じフォルダに置くと、
-新しいSDKのModは初回API利用前にそれを優先起動します。
+新しいSDKのModは初回API利用前に、ロード済みDLLの埋め込みランタイムと
+同じフォルダの任意のRuntime DLLを比較し、ABI 4互換の最も新しいものを選択します。
 既存Runtime 4.0のDLLも、先に起動したABI 4の上位所有者へ接続できます。
 既に設置したHookの所有者は途中交換しないため、更新時はMinecraftを再起動してください。
 Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では起動できません。
@@ -64,3 +68,11 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 
 参考：[Borion Freecam](https://github.com/Borion-Updated/Borion-OSS/blob/master/Horion/Module/Modules/Freecam.cpp)。
 ネイティブ書き込みと送信経路の実機動作は未確認です。
+
+### インタラクション診断
+
+`Freecam packet flow`の`anchored`は位置固定して転送した移動パケット数、
+`item_inputs`は操作フラグを残して転送したPlayerAuthInput数、`rejected`は検証失敗数です。
+`BedrockHookRuntime:`行には任意DLLの探索パス・LoadLibraryExのエラー番号・
+選択プロバイダと実際の所有者のバージョン・パスが出ます。
+パケット配置とライブ通信・サーバーでの操作受理は実機未確認です。

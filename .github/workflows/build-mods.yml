@@ -1,7 +1,7 @@
 name: All mod DLLs
 on:
   push:
-    branches: [codex/borion-hitbox-smooth-cache]
+    branches: [codex/runtime43-interaction]
   workflow_dispatch:
 jobs:
   mods:

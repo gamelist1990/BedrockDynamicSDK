@@ -176,6 +176,77 @@ std::uintptr_t moduleTextBegin{},moduleTextEnd{};
 bool inText(void* pointer) noexcept {
     const auto p=reinterpret_cast<std::uintptr_t>(pointer);return p>=moduleTextBegin&&p+16>=p&&p+16<moduleTextEnd;
 }
+
+struct MotionPacketLayout {
+    std::uintptr_t vtable{};
+    std::size_t position{},delta{},analog{},move{},rawMove{},flags{},vehicle{};
+};
+MotionPacketLayout authPacket,movePacket;
+struct PacketPose {Vec position{};Clock::time_point seen{};std::uint64_t runtime{};std::uint8_t onGround{};};
+struct MovementAnchor {std::uint64_t epoch{},runtime{};std::array<PacketPose,2> poses{};};
+std::mutex packetPoseMutex;
+MovementAnchor observedPacketPoses;
+std::atomic<std::shared_ptr<const MovementAnchor>> movementAnchor;
+std::atomic<unsigned> anchoredPackets{},interactionPackets{};
+
+bool packetMatches(void* packet,const MotionPacketLayout& layout) noexcept {
+    void* table{};return read(packet,0,table)&&reinterpret_cast<std::uintptr_t>(table)==layout.vtable;
+}
+void observeMotionPose(void* packet,bool auth) noexcept {
+    PacketPose pose;const auto& layout=auth?authPacket:movePacket;
+    if(!read(packet,layout.position,pose.position)||!finite(pose.position))return;
+    std::uint64_t vehicle{};
+    if(!read(packet,layout.vehicle,vehicle)||vehicle!=(auth?UINT64_MAX:0))return;
+    if(!auth){std::uint8_t mode{};
+        if(!read(packet,0x30,pose.runtime)||!read(packet,0x50,mode)||mode!=0||
+           !read(packet,0x51,pose.onGround)||pose.onGround>1)return;
+    }
+    pose.seen=Clock::now();const auto e=epoch.load();
+    std::unique_lock lock(packetPoseMutex,std::try_to_lock);if(!lock)return;
+    if(observedPacketPoses.epoch!=e){observedPacketPoses={};observedPacketPoses.epoch=e;}
+    observedPacketPoses.poses[auth?0:1]=pose;
+    movementPacketsSeen.fetch_or(auth?2u:1u);
+}
+bool prepareMovementAnchor(std::uint64_t runtime,Vec position) {
+    MovementAnchor anchor;
+    {std::unique_lock lock(packetPoseMutex,std::try_to_lock);if(!lock)return false;anchor=observedPacketPoses;}
+    if(anchor.epoch!=epoch.load())return false;
+    bool ready=false;const auto now=Clock::now();
+    for(std::size_t i=0;i<anchor.poses.size();++i){auto& pose=anchor.poses[i];
+        const float dx=pose.position.x-position.x,dy=pose.position.y-position.y,dz=pose.position.z-position.z;
+        if(pose.seen==Clock::time_point{}||now-pose.seen>std::chrono::milliseconds(500)||
+           dx*dx+dy*dy+dz*dz>16.f||(i==1&&pose.runtime!=runtime)){pose={};continue;}
+        ready=true;
+    }
+    if(!ready)return false;
+    anchor.runtime=runtime;movementAnchor.store(std::make_shared<const MovementAnchor>(anchor));return true;
+}
+bool anchorMotionPacket(void* packet,bool auth,const MovementAnchor& anchor) noexcept {
+    const auto& layout=auth?authPacket:movePacket;const auto& pose=anchor.poses[auth?0:1];
+    if(anchor.epoch!=epoch.load()||pose.seen==Clock::time_point{})return false;
+    Vec position{};if(!read(packet,layout.position,position)||!finite(position))return false;
+    if(!auth){std::uint64_t runtime{},vehicle{};std::uint8_t mode{};
+        if(!read(packet,0x30,runtime)||runtime!=anchor.runtime||!read(packet,layout.vehicle,vehicle)||vehicle||
+           !read(packet,0x50,mode)||mode!=0)return false;
+        return write(packet,layout.position,pose.position)&&write(packet,0x51,pose.onGround);
+    }
+    std::array<std::uint64_t,2> flags{};std::uint64_t vehicle{};
+    if(!read(packet,layout.flags,flags)||!read(packet,layout.vehicle,vehicle)||vehicle!=UINT64_MAX)return false;
+    // Keep tick, acknowledgements, item/block actions and their owning payloads.
+    // Strip only movement controls. Flags 34/35/36 must remain paired with the
+    // transaction/request/action data checked by the game's isValid method.
+    std::uint64_t controls=(std::uint64_t{1}<<34)-1;
+    for(unsigned bit:{40u,41u,42u,43u,45u,46u,47u,51u,52u,54u,55u,56u,57u,59u,60u,61u,62u,63u})controls|=std::uint64_t{1}<<bit;
+    const bool interaction=(flags[0]&((std::uint64_t{7}<<34)|(std::uint64_t{1}<<53)))!=0;
+    flags[0]&=~controls;flags[1]&=~std::uint64_t{1}; // SneakCurrentRaw is bit 64.
+    const std::array<float,2> zero{};
+    if(!write(packet,layout.position,pose.position)||!write(packet,layout.delta,Vec{})||
+       !write(packet,layout.analog,zero)||!write(packet,layout.move,zero)||
+       !write(packet,layout.rawMove,zero)||!write(packet,layout.flags,flags))return false;
+    if(interaction)interactionPackets.fetch_add(1);
+    return true;
+}
+
 int packetId(void* packet) noexcept {
     void* table{};void* getter{};
     if(!read(packet,0,table)||!read(table,packetIdSlot*sizeof(void*),getter)||!inText(getter))return -1;
@@ -188,13 +259,17 @@ int packetId(void* packet) noexcept {
 void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
     auto& args=*static_cast<BDS_PacketSendArgs*>(raw);
     if(args.sender!=observedSender.load()){next(frame,raw);return;}
-    const int id=packetId(args.packet);
-    if(id<0 && suppressMovement.load()) {disable(ReadFailed);return;}
-    if(id==19||id==144) {
-        movementPacketsSeen.fetch_or(id==19?1u:2u);
-        if(suppressMovement.load()){blockedPackets.fetch_add(1);return;}
+    const bool auth=packetMatches(args.packet,authPacket),move=packetMatches(args.packet,movePacket);
+    if(!auth&&!move){
+        // Other traffic is unrelated to movement and must not wait for M.
+        const int id=packetId(args.packet);
+        if(suppressMovement.load()&&(id==19||id==144)){disable(ReadFailed);return;}
+        next(frame,raw);return;
     }
-    next(frame,raw);
+    if(!suppressMovement.load()) {observeMotionPose(args.packet,auth);next(frame,raw);return;}
+    const auto anchor=movementAnchor.load();
+    if(!anchor||!anchorMotionPacket(args.packet,auth,*anchor)) {disable(ReadFailed);blockedPackets.fetch_add(1);return;}
+    anchoredPackets.fetch_add(1);next(frame,raw);
 }
 void observePacketSender(void* instance) noexcept {
     if(stop.load())return;
@@ -235,7 +310,7 @@ bool restoreBorionLocked() noexcept {
     if(borion.epoch!=epoch.load()||borion.actor!=local.load()||actorRuntime(borion.actor)!=borion.runtime||
        !read(borion.actor,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||registry!=borion.registry||
        !read(borion.actor,actors.actorEntityContextOffset+actors.contextEntityIdOffset,entity)||entity!=borion.entity) {
-        borion.saved=false;suppressMovement.store(false);active.store(false);return true;
+        borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);return true;
     }
     auto* state=component(borion.actor,actors.stateVectorComponentHash);
     auto* shape=component(borion.actor,actors.aabbShapeComponentHash);
@@ -247,7 +322,7 @@ bool restoreBorionLocked() noexcept {
         write(state,statePreviousOffset,borion.oldPosition)&&write(state,stateVelocityOffset,Vec{})&&
         write(shape,actors.aabbMinimumOffset,borion.oldBounds.minimum)&&
         write(shape,actors.aabbMaximumOffset,borion.oldBounds.maximum)&&write(fall,fallOffset,0.f);
-    if(ok){borion.saved=false;suppressMovement.store(false);active.store(false);}
+    if(ok){borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);}
     return ok;
 }
 void restoreBorionBeforeBoundary() noexcept {
@@ -280,6 +355,7 @@ void borionTick(const bedrock::LevelTickEvent&) {
         void* registry{};std::uint32_t entity{};
         if(!read(player,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||
            !read(player,actors.actorEntityContextOffset+actors.contextEntityIdOffset,entity)){disable(ReadFailed);return;}
+        if(!prepareMovementAnchor(runtime,position)){note(Waiting);return;}
         borion={true,player,epoch.load(),runtime,registry,entity,position,previous,velocity,position,bounds,fallDistance};
         suppressMovement.store(true);active.store(true);note(Activated);
     }
@@ -379,6 +455,25 @@ void prepareProfile(const std::string& profile){
     if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||senderOffset!=0x1d0||sendSlot!=4||packetIdSlot!=1)
         throw std::runtime_error("unsupported Borion native layout");
     checkedFunction(b.at("packet_sender_getter"));
+    const auto packetBase=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    const auto& motion=b.at("packet_motion");
+    if(motion.at("schema")!=1)throw std::runtime_error("unsupported packet motion schema");
+    const auto loadPacket=[&](const nlohmann::json& data,MotionPacketLayout& layout,bool auth){
+        layout.vtable=packetBase+number(data.at("vtable_rva"));layout.position=number(data.at("position_offset"));
+        layout.vehicle=number(data.at("vehicle_offset"));
+        if(layout.position!=0x38||layout.vehicle!=(auth?0xd8:0x58))throw std::runtime_error("unsupported movement packet layout");
+        void* getter{};
+        if(!read(reinterpret_cast<void*>(layout.vtable),sizeof(void*),getter)||getter!=checkedFunction(data.at("get_id")))
+            throw std::runtime_error("movement packet vtable mismatch");
+        checkedFunction(data.at("is_valid"));
+        if(auth){layout.delta=number(data.at("delta_offset"));layout.analog=number(data.at("analog_move_offset"));
+            layout.move=number(data.at("move_offset"));layout.rawMove=number(data.at("raw_move_offset"));layout.flags=number(data.at("input_flags_offset"));
+            if(layout.delta!=0x48||layout.analog!=0x5c||layout.move!=0x64||layout.rawMove!=0x80||layout.flags!=0x88||data.at("input_flags_size")!=16)
+                throw std::runtime_error("unsupported auth input controls layout");
+        }
+    };
+    loadPacket(motion.at("auth_input"),authPacket,true);loadPacket(motion.at("move_player"),movePacket,false);
+
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     moduleTextBegin=base+number(j.at("target").at("text_rva"));moduleTextEnd=moduleTextBegin+number(j.at("target").at("text_size"));
     std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error)||
@@ -402,7 +497,7 @@ bool loadConfig(const std::filesystem::path& path){
     }catch(const std::exception& e){log(std::string("config rejected: ")+e.what());return false;}
 }
 void worker(const std::filesystem::path& path){
-    std::uint64_t generation{};auto lastReload=Clock::now();Clock::time_point nextWaitingLog{};std::error_code ec;auto modified=std::filesystem::last_write_time(path,ec);
+    std::uint64_t generation{};auto lastReload=Clock::now();Clock::time_point nextWaitingLog{},nextPacketLog{};std::error_code ec;auto modified=std::filesystem::last_write_time(path,ec);
     constexpr std::array<std::array<unsigned,2>,12> edges{{{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}}};
     while(!stop.load()){
         const auto now=Clock::now();
@@ -424,11 +519,14 @@ void worker(const std::filesystem::path& path){
             if(active.load()&&generation==epoch.load())mesh.store(result);
         }
         if(!active.load())mesh.store(nullptr);
+        if(active.load()&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
+            log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
+        }
         const auto bits=logBits.exchange(0);
-        if(bits&Activated)log("Freecam active [Borion local Player proxy; movement packets suppressed; Player boxes: every tick + 50ms interpolation]");
-        if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / recognized movement packet required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
+        if(bits&Activated)log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
+        if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
-        if(bits&ReadFailed)log("Freecam disabled: native camera/Player read failed");
+        if(bits&ReadFailed)log("Freecam disabled: native Player / movement packet validation failed");
         if(bits&World)log("world changed: Freecam and Player boxes reset");if(bits&RenderFault)log("Freecam disabled: native render fault");
         if(now-lastReload>std::chrono::milliseconds(500)){
             lastReload=now;const auto current=std::filesystem::last_write_time(path,ec);
@@ -448,7 +546,7 @@ DWORD WINAPI start(void*){
         if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion"))profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
@@ -477,7 +575,7 @@ DWORD WINAPI start(void*){
         if(!hooks->installInput(resolver,error)||!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
         if(!BDS_HookDirectInstall(localTarget,reinterpret_cast<void*>(&localDetour),reinterpret_cast<void**>(&originalLocal),&localToken)||
            !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,functions[0],renderSubscriber,nullptr,&renderToken))throw std::runtime_error("native hook conflict/install failure; restart Minecraft with matching runtime DLLs");
-        log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());status.store(2);worker(path);
+        log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());log(BDS_HookRuntimeDiagnostic());status.store(2);worker(path);
     }catch(const std::exception& e){log(std::string("startup failed: ")+e.what());status.store(4);}
     disable();if(renderToken)BDS_HookUnsubscribe(renderToken);
     // The local-Player direct detour is a lifetime-pinned pass-through after stop.

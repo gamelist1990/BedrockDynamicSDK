@@ -78,6 +78,10 @@ BDS_HOOK_API const char* BDS_HOOK_CALL BDS_HookRuntimeVersion(void);
 // Returns owner capabilities, not the version embedded in the calling DLL.
 BDS_HOOK_API int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point);
 BDS_HOOK_API unsigned BDS_HOOK_CALL BDS_HookRuntimeAbi(void);
+// Initializes discovery if needed; UTF-8 snapshot valid until this thread's
+// next diagnostic call. No disk logging or background thread is created.
+BDS_HOOK_API const char* BDS_HOOK_CALL BDS_HookRuntimeDiagnostic(void);
+
 
 // Escape hatch for hook points not covered by the middleware API. This still
 // uses the SDK's single process-wide MinHook owner and rejects targets already

@@ -423,6 +423,6 @@ CMakeサンプルは [BedrockAutoSprint](https://github.com/gamelist1990/Bedrock
 
 [Freecam](exsample/Freecam/README.md) adds configurable detached camera movement,
 damage auto-disable, and bounded nearby Player boxes for Windows x64.
-The current Borion backend moves a local Player proxy and suppresses movement packets; live validation is pending.
-Runtime 4.2.0 shares renderLevel and sendToServer middleware. Place the compatible optional
+The current Borion backend moves a local Player proxy and anchors outgoing movement to its pre-flight pose while forwarding interactions; live validation is pending.
+Runtime 4.3.0 compares compatible runtime providers in loaded Mod DLLs and shares renderLevel/sendToServer middleware. Place the compatible optional
 `BedrockHookRuntime.dll` beside the mods and restart the game when upgrading the owner.

@@ -2,10 +2,13 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <tlhelp32.h>
 #include <MinHook.h>
 #include <bedrock/hook_runtime.h>
 
 #include <array>
+#include <atomic>
+#include <cstdio>
 #include <algorithm>
 #include <condition_variable>
 #include <cstdint>
@@ -100,36 +103,23 @@ struct SharedApi {
 // stable for additive releases; runtime version and supported points are separate.
 constexpr DWORD kSharedAbiVersion = 4;
 constexpr DWORD kMinimumCompatibleAbi = 3;
-constexpr unsigned kBuildVersion = 0x00040200u; // major/minor/patch: 4.2.0
-void bootstrapPreferredRuntime() {
-    static std::once_flag once;
-    std::call_once(once, [] {
-        HMODULE consumer{};
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                reinterpret_cast<LPCWSTR>(&BDS_HookSubscribe), &consumer)) return;
-        wchar_t path[32768]{};
-        const DWORD length=GetModuleFileNameW(consumer,path,32768);
-        if(!length || length>=32768) return;
-        auto* separator=wcsrchr(path,L'\\');
-        if(!separator || _wcsicmp(separator+1,L"BedrockHookRuntime.dll")==0) return;
-        constexpr wchar_t filename[]=L"BedrockHookRuntime.dll";
-        if(static_cast<std::size_t>(separator-path)+1+std::size(filename)>32768) return;
-        wcscpy_s(separator+1,32768-static_cast<std::size_t>(separator-path)-1,filename);
-        // Optional sidecar in the consumer's own directory only. Never search
-        // CWD/PATH and never unload an owner whose function table is published.
-        const auto preferred=LoadLibraryExW(path,nullptr,
-            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if(!preferred) return;
-        using Query=unsigned(__cdecl*)();
-        using Start=int(__cdecl*)();
-        const auto version=reinterpret_cast<Query>(GetProcAddress(preferred,"BedrockHookRuntime_BuildVersion"));
-        const auto abi=reinterpret_cast<Query>(GetProcAddress(preferred,"BedrockHookRuntime_BuildAbi"));
-        const auto start=reinterpret_cast<Start>(GetProcAddress(preferred,"BedrockHookRuntime_Start"));
-        if(version && abi && start && version()>=kBuildVersion && abi()==kSharedAbiVersion)
-            start();
-        else FreeLibrary(preferred); // Not activated; no owner pointers published.
-    });
+constexpr unsigned kBuildVersion = 0x00040300u; // major/minor/patch: 4.3.0
+SharedApi* getSharedApi(bool discover = true);
+SharedApi* bootstrapPreferredRuntime();
+std::mutex diagnosticMutex;
+std::string diagnosticText = "Hook runtime has not initialized.";
+
+std::wstring modulePath(HMODULE module) {
+    wchar_t path[32768]{};
+    const auto length = GetModuleFileNameW(module, path, 32768);
+    return length && length < 32768 ? std::wstring(path, length) : std::wstring{};
+}
+HMODULE localModule() {
+    HMODULE module{};
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&BDS_HookSubscribe), &module);
+    return module;
 }
 // Separate, versioned metadata leaves the legacy SharedApi allocation and
 // function-table prefix unchanged. Future additive hooks change only the mask.
@@ -186,10 +176,12 @@ const Capabilities* ownerCapabilities(const SharedApi* owner) {
 HANDLE sharedMapping{};
 SharedApi* sharedApi{};
 std::mutex sharedApiMutex;
+std::atomic<SharedApi*> readyApi{};
 
-SharedApi* getSharedApi() {
-    // Outside the per-copy mutex: the sidecar initializes its own copy.
-    bootstrapPreferredRuntime();
+SharedApi* getSharedApi(bool discover) {
+    if (auto* ready = readyApi.load(std::memory_order_acquire)) return ready;
+    // Start(false) never enters discovery or another provider's bootstrap lock.
+    if (discover) return bootstrapPreferredRuntime();
     std::lock_guard lock(sharedApiMutex);
     if (sharedApi) return sharedApi;
     if (!clientModulePinned) {
@@ -217,6 +209,8 @@ SharedApi* getSharedApi() {
                 GET_MODULE_HANDLE_EX_FLAG_PIN,
                 reinterpret_cast<LPCWSTR>(&leaderSubscribe), &pinned)) {
             InterlockedExchange(&sharedApi->state, -1);
+            UnmapViewOfFile(sharedApi); sharedApi = nullptr;
+            CloseHandle(sharedMapping); sharedMapping = nullptr;
             return nullptr;
         }
         modulePinned = true;
@@ -248,7 +242,135 @@ SharedApi* getSharedApi() {
             return nullptr;
         }
     }
+    readyApi.store(sharedApi, std::memory_order_release);
     return sharedApi;
+}
+
+// Only initialization and explicit diagnostic queries format/output text.
+void reportRuntime(const SharedApi* owner, unsigned selectedVersion,
+    const std::wstring& selectedPath, const std::wstring& discovery) {
+    std::wstring text = L"BedrockHookRuntime: " + discovery + L"; selected provider=" +
+        std::to_wstring((selectedVersion >> 16) & 255) + L"." +
+        std::to_wstring((selectedVersion >> 8) & 255) + L"." +
+        std::to_wstring(selectedVersion & 255) + L" path=" + selectedPath;
+    if (owner) {
+        HMODULE module{};
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(owner->subscribe), &module);
+        const char* version = owner->version ? owner->version() : "unknown";
+        std::wstring wideVersion;
+        for (const char* c = version; *c; ++c) wideVersion += static_cast<unsigned char>(*c);
+        text += L"; actual owner=" + wideVersion + L" ABI=" +
+            std::to_wstring(owner->abiVersion) + L" path=" +
+            (module ? modulePath(module) : L"unknown");
+        unsigned actual{}, major{}, minor{}, patch{};
+        if (const auto* info = ownerCapabilities(owner)) actual = info->buildVersion;
+        else if (sscanf_s(version, "%u.%u.%u", &major, &minor, &patch) == 3)
+            actual = (major << 16) | (minor << 8) | patch;
+        if (!actual || actual < selectedVersion || owner->abiVersion != kSharedAbiVersion)
+            text += L"; existing older/unknown owner retained: restart Minecraft with the newest provider loaded before first runtime use";
+    } else text += L"; owner unavailable (existing mapping retained; no competing broker); initialization may be retried; an incompatible active owner requires a Minecraft restart";
+    text += L"\n";
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(),
+        static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string utf8(size > 0 ? size : 0, '\0');
+    if (size > 0) WideCharToMultiByte(CP_UTF8, 0, text.data(),
+        static_cast<int>(text.size()), utf8.data(), size, nullptr, nullptr);
+    { std::lock_guard lock(diagnosticMutex); diagnosticText = std::move(utf8); }
+    OutputDebugStringW(text.c_str());
+}
+
+SharedApi* bootstrapPreferredRuntime() {
+    static std::mutex bootstrapMutex;
+    std::lock_guard lock(bootstrapMutex);
+    if (auto* ready = readyApi.load(std::memory_order_acquire)) return ready;
+    using Query = unsigned(__cdecl*)();
+    using Start = int(__cdecl*)();
+    struct Provider {
+        std::shared_ptr<void> reference;
+        std::wstring path;
+        unsigned version;
+        Start start;
+        bool sidecar;
+    };
+    std::vector<Provider> providers;
+    auto inspect = [&](HMODULE module) {
+        // Own this reference until selection and synchronous Start finish.
+        std::shared_ptr<void> reference(module, [](void* value) {
+            if (value) FreeLibrary(static_cast<HMODULE>(value));
+        });
+        if (!module) return;
+        const auto version = reinterpret_cast<Query>(GetProcAddress(module, "BedrockHookRuntime_BuildVersion"));
+        const auto abi = reinterpret_cast<Query>(GetProcAddress(module, "BedrockHookRuntime_BuildAbi"));
+        const auto start = reinterpret_cast<Start>(GetProcAddress(module, "BedrockHookRuntime_Start"));
+        if (!version || !abi || !start || abi() != kSharedAbiVersion) return;
+        const unsigned build = version();
+        if (build < kBuildVersion) return; // The caller is always a compatible baseline.
+        auto path = modulePath(module);
+        if (path.empty()) return;
+        const auto separator = path.find_last_of(L"\\/");
+        const bool sidecar = _wcsicmp(path.c_str() +
+            (separator == std::wstring::npos ? 0 : separator + 1), L"BedrockHookRuntime.dll") == 0;
+        providers.push_back({std::move(reference), std::move(path), build, start, sidecar});
+    };
+    const auto selfPath = modulePath(localModule());
+    std::wstring discovery;
+    const auto separator = selfPath.find_last_of(L"\\/");
+    if (separator != std::wstring::npos &&
+        _wcsicmp(selfPath.c_str() + separator + 1, L"BedrockHookRuntime.dll") != 0) {
+        const auto sidecarPath = selfPath.substr(0, separator + 1) + L"BedrockHookRuntime.dll";
+        const auto sidecar = LoadLibraryExW(sidecarPath.c_str(), nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        const DWORD error = sidecar ? ERROR_SUCCESS : GetLastError();
+        discovery = L"sidecar path=" + sidecarPath + L" LoadLibraryEx GetLastError=" + std::to_wstring(error);
+        inspect(sidecar);
+    } else discovery = L"sidecar probe skipped (self is sidecar or path unavailable)";
+
+    HANDLE snapshot = INVALID_HANDLE_VALUE;
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
+            GetCurrentProcessId());
+        if (snapshot != INVALID_HANDLE_VALUE || GetLastError() != ERROR_BAD_LENGTH) break;
+    }
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Module32FirstW(snapshot, &entry)) do {
+            HMODULE referenced{};
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                    reinterpret_cast<LPCWSTR>(entry.modBaseAddr), &referenced)) {
+                // A snapshot does not hold references: reject unload/address reuse.
+                if (_wcsicmp(modulePath(referenced).c_str(), entry.szExePath) == 0)
+                    inspect(referenced);
+                else FreeLibrary(referenced);
+            }
+        } while (Module32NextW(snapshot, &entry));
+        else discovery += L"; Module32First GetLastError=" + std::to_wstring(GetLastError());
+        CloseHandle(snapshot);
+    } else discovery += L"; module snapshot GetLastError=" + std::to_wstring(GetLastError());
+    std::sort(providers.begin(), providers.end(), [](const Provider& a, const Provider& b) {
+        if (a.version != b.version) return a.version > b.version;
+        if (a.sidecar != b.sidecar) return a.sidecar;
+        const int order = _wcsicmp(a.path.c_str(), b.path.c_str());
+        if (order) return order < 0;
+        return a.path < b.path;
+    });
+    unsigned selectedVersion = kBuildVersion;
+    std::wstring selectedPath = selfPath;
+    if (!providers.empty()) {
+        const auto& selected = providers.front();
+        selectedVersion = selected.version;
+        selectedPath = selected.path;
+        // 4.3 providers use getSharedApi(false), so A -> B -> A cannot occur.
+        discovery += L"; selected Start=" + std::to_wstring(selected.start());
+    } else discovery += L"; using local provider";
+    // Attach to the one published table, even if Start failed or an older mod
+    // won election. Never replace/reset that table or create another namespace.
+    auto* owner = getSharedApi(false);
+    reportRuntime(owner, selectedVersion, selectedPath, discovery);
+    // Failure leaves readyApi null, allowing the next API call to retry.
+    return owner;
 }
 
 bool pinOwnerModule() {
@@ -534,7 +656,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "4.2.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "4.3.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {
@@ -588,6 +710,27 @@ bool ownerSupports(const SharedApi* api,BDS_HookPoint point) {
     const unsigned maximum=api->abiVersion==3 ? 12u : 13u;
     return index<=maximum;
 }
+}
+extern "C" __declspec(dllexport) unsigned __cdecl BedrockHookRuntime_BuildVersion() { return kBuildVersion; }
+extern "C" __declspec(dllexport) unsigned __cdecl BedrockHookRuntime_BuildAbi() { return kSharedAbiVersion; }
+extern "C" __declspec(dllexport) int __cdecl BedrockHookRuntime_Start() {
+    auto* owner = getSharedApi(false);
+    reportRuntime(owner, kBuildVersion, modulePath(localModule()), L"explicit provider Start (discovery bypassed)");
+    return owner != nullptr;
+}
+extern "C" __declspec(dllexport) const char* __cdecl BedrockHookRuntime_Version() {
+    return BDS_HookRuntimeVersion();
+}
+extern "C" __declspec(dllexport) int __cdecl BedrockHookRuntime_Supports(unsigned point) {
+    return BDS_HookRuntimeSupports(static_cast<BDS_HookPoint>(point));
+}
+extern "C" const char* BDS_HOOK_CALL BDS_HookRuntimeDiagnostic(void) {
+    getSharedApi();
+    // A snapshot stays valid on this thread until its next diagnostic call.
+    thread_local std::string snapshot;
+    std::lock_guard lock(diagnosticMutex);
+    snapshot = diagnosticText;
+    return snapshot.c_str();
 }
 extern "C" int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point) {
     return ownerSupports(getSharedApi(),point) ? 1 : 0;
