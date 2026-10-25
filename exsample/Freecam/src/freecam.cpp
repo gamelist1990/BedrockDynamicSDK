@@ -613,6 +613,9 @@ DWORD WINAPI start(void*){
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
+        // Include selection/load errors even when an old owner's capabilities
+        // stop startup before the normal ready message.
+        log(BDS_HookRuntimeDiagnostic());
         if(!BDS_HookRuntimeSupports(BDS_HOOK_PACKET_SEND_TO_SERVER))
             throw std::runtime_error("active runtime lacks packet send capability; restart with Runtime 4.2 DLL");
         void* localTarget=checkedFunction(f.at("local_player"));
@@ -644,7 +647,7 @@ DWORD WINAPI start(void*){
         if(!hooks->installInput(resolver,error)||!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
         if(!BDS_HookDirectInstall(localTarget,reinterpret_cast<void*>(&localDetour),reinterpret_cast<void**>(&originalLocal),&localToken)||
            !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,functions[0],renderSubscriber,nullptr,&renderToken))throw std::runtime_error("native hook conflict/install failure; restart Minecraft with matching runtime DLLs");
-        log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());log(BDS_HookRuntimeDiagnostic());status.store(2);worker(path);
+        log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());status.store(2);worker(path);
     }catch(const std::exception& e){log(std::string("startup failed: ")+e.what());status.store(4);}
     disable();if(renderToken)BDS_HookUnsubscribe(renderToken);
     // The local-Player direct detour is a lifetime-pinned pass-through after stop.
