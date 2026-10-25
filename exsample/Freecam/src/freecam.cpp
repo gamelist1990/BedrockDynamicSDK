@@ -309,6 +309,8 @@ DWORD WINAPI start(void*){
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
+        if(!BDS_HookRuntimeSupports(BDS_HOOK_RENDER_LEVEL))
+            throw std::runtime_error("active runtime lacks world rendering; restart with preferred runtime DLL");
         void* cameraTarget=checkedFunction(f.at("update_player"));void* localTarget=checkedFunction(f.at("local_player"));
         const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));std::array<void*,7> functions{};
         for(unsigned i=0;i<7;++i){const auto& fn=render.functions[i];auto* target=reinterpret_cast<void*>(base+fn.rva);

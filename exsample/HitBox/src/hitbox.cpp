@@ -1158,7 +1158,7 @@ void refreshGameTickSnapshot() {
     snapshotLocal=local; snapshotEntity=entity;
     localActorIdentity.store(reinterpret_cast<std::uintptr_t>(local),std::memory_order_release);
     // Validate the world before delivering any previously captured rows.
-    if(!delivery.flush(sendBatch)) return;
+    const bool workerReady=delivery.flush(sendBatch);
     // All-Actor mode does not need local position for distance filtering.
     const auto cameraPosition = config->showAllActors
         ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
@@ -1207,8 +1207,8 @@ void refreshGameTickSnapshot() {
     batch.liveLifetime = std::chrono::milliseconds(std::clamp<std::size_t>(
         batch.population * 100 / std::max<std::size_t>(1, static_cast<std::size_t>(averageVisited)),
         750, 30000));
-    delivery.begin(batch);
-    delivery.flush(sendBatch);
+    if(workerReady) { delivery.begin(batch); delivery.flush(sendBatch); }
+    // Worker backpressure may defer retention/name work, never fresh poses.
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-now).count();
     if ((config->debug || elapsed >= 2000) && now >= nextReport) {
         nextReport = now + std::chrono::seconds(10);
