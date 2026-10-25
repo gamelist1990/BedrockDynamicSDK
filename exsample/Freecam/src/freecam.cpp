@@ -270,8 +270,9 @@ void borionTick(const bedrock::LevelTickEvent&) {
     const float length=std::max(1.f,std::sqrt(forward*forward+side*side));
     const float speed=c->speed/20.f*(keys[c->fast].load()?c->fastMultiplier:1.f);
     const Vec old=borion.position;
-    borion.position.x+=(-std::sin(radians)*forward+std::cos(radians)*side)*speed/length;
-    borion.position.z+=(std::cos(radians)*forward+std::sin(radians)*side)*speed/length;
+    // Bedrock yaw: right is the forward vector rotated +90 degrees.
+    borion.position.x+=(-std::sin(radians)*forward-std::cos(radians)*side)*speed/length;
+    borion.position.z+=(std::cos(radians)*forward-std::sin(radians)*side)*speed/length;
     borion.position.y+=(down(c->up)-down(c->down))*0.5f;
     if(!finite(borion.position)){disable(ReadFailed);restoreBorionLocked();return;}
     const Vec lower{borion.oldBounds.minimum.x+borion.position.x-borion.oldPosition.x,
