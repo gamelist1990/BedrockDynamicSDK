@@ -53,7 +53,7 @@ int main() {
         assert(hitbox::normalizedName(std::string("A\xc0\xaf",3))=="A");
         assert(hitbox::normalizedName(std::string(200,'x')).size()==96);
         auto mailbox=std::make_unique<hitbox::NameMailbox>();
-        const hitbox::NameKey key{1,0x10000,42};
+        const hitbox::NameKey key{1,99,0x10000,42};
         assert(!mailbox->read(key));
         assert(mailbox->observe(key,"Player"));
         const auto first=mailbox->read(key);
@@ -61,14 +61,16 @@ int main() {
         assert(!mailbox->observe(key,""));
         assert(!mailbox->observe(key,"Player"));
         assert(mailbox->read(key)->revision==first->revision);
-        assert(!mailbox->read({2,key.actor,key.entity})); // World change cannot reuse the name.
-        assert(!mailbox->read({1,key.actor,key.entity+0x40000})); // New EnTT generation at same pointer.
-        assert(!mailbox->read({1,key.actor+8,key.entity}));
+        assert(!mailbox->read({2,key.runtimeId,key.actor,key.entity})); // World change cannot reuse the name.
+        assert(!mailbox->read({1,key.runtimeId,key.actor,key.entity+0x40000})); // New EnTT generation at same pointer.
+        assert(!mailbox->read({1,key.runtimeId,key.actor+8,key.entity}));
+        assert(mailbox->readForRuntime({1,key.runtimeId,key.actor+8,key.entity}));
+        assert(!mailbox->readForRuntime({1,key.runtimeId+1,key.actor+8,key.entity}));
         assert(mailbox->observe(key,japanese));
         const auto updated=mailbox->read(key);
         assert(updated && updated->revision>first->revision);
         assert(hitbox::normalizedName(std::string_view(updated->bytes.data(),updated->size))==japanese);
-        assert(mailbox->observe({2,key.actor,key.entity},"NewWorld"));
+        assert(mailbox->observe({2,key.runtimeId,key.actor,key.entity},"NewWorld"));
         assert(std::string(mailbox->read(key)->bytes.data(),mailbox->read(key)->size)==japanese);
         const bedrock::ActorBounds bounds{{-0.5f,0,-0.5f},{0.5f,2,0.5f}};
         const auto label=hitbox::nameBillboard(bounds,{0,5,5});

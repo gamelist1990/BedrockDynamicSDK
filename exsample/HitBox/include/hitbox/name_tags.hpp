@@ -11,6 +11,7 @@ namespace hitbox {
 // Copied identity only. Workers never dereference an Actor handle.
 struct NameKey {
     std::uint64_t epoch{};
+    std::uint64_t runtimeId{};
     std::uintptr_t actor{};
     std::uint32_t entity{}; // Includes EnTT generation, preventing pointer-reuse matches.
     bool operator==(const NameKey&) const = default;
@@ -57,7 +58,7 @@ public:
     static constexpr std::size_t maximumBytes=384;
     struct Value { std::array<char,maximumBytes> bytes{}; std::size_t size{}; std::uint64_t revision{}; };
     bool observe(NameKey key,std::string_view text) noexcept {
-        if(!key.epoch || !key.actor || text.empty()) return false;
+        if(!key.epoch || !key.runtimeId || !key.actor || text.empty()) return false;
         std::unique_lock lock(mutex_,std::try_to_lock);
         if(!lock) return false;
         auto* slot=&slots_[bucket(key)];
@@ -92,11 +93,26 @@ public:
             if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return slots_[begin+i].value;
         return std::nullopt;
     }
+    // Actor pointers and EnTT generations can change while Bedrock keeps the
+    // same RuntimeID. Reuse the last observed name in that case.
+    std::optional<Value> readForRuntime(NameKey key) const {
+        std::lock_guard lock(mutex_);
+        const auto begin=bucket(key);
+        for(std::size_t i=0;i<ways;++i)
+            if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return slots_[begin+i].value;
+        const Slot* match=nullptr;
+        for(const auto& slot:slots_) {
+            if(slot.value.revision && slot.key.epoch==key.epoch &&
+               slot.key.runtimeId==key.runtimeId &&
+               (!match || slot.value.revision>match->value.revision)) match=&slot;
+        }
+        return match ? std::optional<Value>{match->value} : std::nullopt;
+    }
 private:
     static constexpr std::size_t ways=4,capacity=2048;
     struct Slot { NameKey key; Value value; };
     static std::size_t bucket(NameKey key) noexcept {
-        auto hash=static_cast<std::uint64_t>(key.actor)^(std::uint64_t(key.entity)<<32)^key.epoch;
+        auto hash=static_cast<std::uint64_t>(key.actor)^(std::uint64_t(key.entity)<<32)^key.epoch^key.runtimeId;
         hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ULL;
         hash=(hash^(hash>>27))*0x94d049bb133111ebULL;
         return static_cast<std::size_t>(hash^(hash>>31))%(capacity/ways)*ways;

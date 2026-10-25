@@ -762,11 +762,12 @@ void BDS_HOOK_CALL observeNameTag(void*,void* raw,BDS_HookNext next,void* frame)
         std::uint32_t entity=0;
         std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
         std::size_t count=0;
-        if(!args.actor || !access.copyNameEntityId(args.actor,entity) ||
+        const auto runtimeId=args.actor ? access.runtimeIdentity(args.actor) : 0;
+        if(!args.actor || !runtimeId || !access.copyNameEntityId(args.actor,entity) ||
             !copyObservedName(args.name_tag,bytes.data(),&count) ||
             epoch!=worldEpoch.load(std::memory_order_acquire)) { ++nameDiagnostics.hookRejected; return; }
         ++nameDiagnostics.hookCopied;
-        nameMailbox.observe({epoch,reinterpret_cast<std::uintptr_t>(args.actor),entity},
+        nameMailbox.observe({epoch,runtimeId,reinterpret_cast<std::uintptr_t>(args.actor),entity},
             std::string_view(bytes.data(),count));
     } catch(...) {}
 }
@@ -799,7 +800,7 @@ void fillMissingName(const CaptureBatch& batch) {
         const auto i=(start+n)%batch.count;
         const auto& sample=batch.samples[i];
         if(sample.isPlayer!=(pass==0)) continue;
-        const hitbox::NameKey key{batch.camera.epoch,sample.actorKey,sample.entityId};
+        const hitbox::NameKey key{batch.camera.epoch,sample.runtimeId,sample.actorKey,sample.entityId};
         if(nameMailbox.cachedOrBusy(key)) continue;
         auto& attempt=attempts[(sample.runtimeId^(sample.runtimeId>>32))%attempts.size()];
         if(attempt.key==key && now<attempt.next) continue;
@@ -933,10 +934,10 @@ void processingLoop(std::size_t shard) noexcept {
                 const auto fontBegin=Clock::now();
                 for(const auto& box:snapshot->boxes) {
                     if(box.retained) ++savedBoxes;
-                    const hitbox::NameKey key{batch->camera.epoch,box.actorKey,box.entityId};
+                    const hitbox::NameKey key{batch->camera.epoch,box.runtimeId,box.actorKey,box.entityId};
                     auto found=names.find(box.runtimeId);
                     const auto observed=(mailboxChanged || found==names.end() || found->second.key!=key)
-                        ? nameMailbox.read(key) : std::optional<hitbox::NameMailbox::Value>{};
+                        ? nameMailbox.readForRuntime(key) : std::optional<hitbox::NameMailbox::Value>{};
                     if(observed || (found!=names.end() && !found->second.text.empty())) ++observedNames; else ++misses;
                     if(observed && (found==names.end() || found->second.key!=key ||
                         found->second.revision!=observed->revision)) {
@@ -1516,8 +1517,10 @@ void observeRenderContext(void* renderer) {
     previousRenderer=renderer; previousPlayer=player;
     renderCamera.publish(worldEpoch.load(std::memory_order_acquire),origin);
 }
-void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
-    originalRenderLevel(renderer,screen,context);
+void BDS_HOOK_CALL renderLevelSubscriber(void*, void* raw, BDS_HookNext next, void* frame) {
+    auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);
+    next(frame,raw);
+    void* renderer=args.renderer; void* screen=args.screen;
     // The native world pass supplies view/projection matrices, origin and depth.
     static thread_local bool drawing=false;
     if (drawing) return;
@@ -1533,6 +1536,9 @@ bool installWorldRenderer(std::string& error) {
         const auto& f=worldRenderProfile.functions[i];
         auto* target=reinterpret_cast<const std::byte*>(base+f.rva);
         if (!isExecutable(target)) { error="world render target is not executable"; return false; }
+        if (i==0 && BDS_HookOwnsTarget(BDS_HOOK_RENDER_LEVEL,const_cast<std::byte*>(target))) {
+            addresses[i]=const_cast<std::byte*>(target); continue;
+        }
         for (std::size_t j=0;j<f.guard.size();++j) {
             std::uint8_t value{};
             if(!safeRead(target,j,value) || value!=f.guard[j]) {
@@ -1546,8 +1552,7 @@ bool installWorldRenderer(std::string& error) {
     hashedNameCtor=reinterpret_cast<HashedNameCtorFn>(addresses[5]);
     materialCtor=reinterpret_cast<MaterialCtorFn>(addresses[6]);
     commonMaterialGroup=reinterpret_cast<void*>(base+worldRenderProfile.commonMaterialGroup);
-    return BDS_HookDirectInstall(addresses[0],reinterpret_cast<void*>(&renderLevelDetour),
-        reinterpret_cast<void**>(&originalRenderLevel),&renderHookToken)!=0 ||
+    return BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,addresses[0],&renderLevelSubscriber,nullptr,&renderHookToken)!=0 ||
         (error="world render direct hook conflict/install failure",false);
 }
 
@@ -1612,6 +1617,7 @@ DWORD WINAPI startClient(void*) {
         }
         hitbox::WorldRenderProfile candidateRender;
         if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
+        if (!bedrock::parseNativeWorldEventsLayout(candidate, error)) return false;
         worldRenderProfile = std::move(candidateRender);
         resolver = std::move(candidateResolver);
         itemLayout = std::move(candidateItems);
@@ -1638,6 +1644,7 @@ DWORD WINAPI startClient(void*) {
         // Reuse the original live fingerprint. A bundled profile from another
         // executable/build is rejected by attachWindowsMainModule above.
         choice.source = bedrock::ProfileSource::Embedded;
+        profile = bedrock::generated::kSymbolDatabase;
         profileReady = true;
         log("native layouts recovered from embedded exact-build profile");
     }
@@ -1658,8 +1665,18 @@ DWORD WINAPI startClient(void*) {
         if (event.clientInstance) access.setClient(event.clientInstance);
     });
     gameApi.Event.Enum.LevelTick.then(&observeWorld);
+    gameApi.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event) {
+        // Workers/renderers already fence their snapshots by this generation.
+        // Advancing it immediately hides old boxes, retained positions and text.
+        worldEpoch.fetch_add(1, std::memory_order_acq_rel);
+        currentWorld.store(nullptr, std::memory_order_release);
+        access.setClient(event.clientInstance);
+        log("world lifecycle event: reason=", static_cast<unsigned>(event.reason),
+            " sdk_epoch=", event.epoch, " [old-world snapshots invalidated]");
+    });
     if (!gameHooks->installGameplay(resolver, error) ||
-        !gameHooks->installLevelTick(resolver, error)) {
+        !gameHooks->installLevelTick(resolver, error) ||
+        !gameHooks->installWorldEvents(resolver, profile, error)) {
         log("SDK hook registration failed: ", error);
         gameHooks.reset();
         status.store(Status::Failed, std::memory_order_release);
