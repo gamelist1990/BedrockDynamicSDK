@@ -1,0 +1,30 @@
+name: All mod DLLs
+on:
+  push:
+    branches: [codex/borion-hitbox-smooth-cache]
+  workflow_dispatch:
+jobs:
+  mods:
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: [Freecam, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure MSVC x64 Release
+        shell: pwsh
+        run: |
+          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build
+        run: cmake --build build-mod --config Release --parallel 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.mod }}-windows-x64
+          path: |
+            build-mod/Release/*.dll
+            build-mod/Release/BedrockHitBoxLoader.exe
+          if-no-files-found: error

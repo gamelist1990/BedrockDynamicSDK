@@ -577,6 +577,64 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "runtime_verified": false,
     "exit_client_offset": 136,
     "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+  },
+  "native_freecam": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "runtime_verified": false,
+    "evidence": "docs/freecam-native.md; exact EXE Latite _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation.",
+    "update_player": {
+      "rva": "0x6733360",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 ec d8 00 00 00 44 0f 29 94 24 c0 00 00 00 44 0f 29 8c",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+      "abi": "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)"
+    },
+    "camera_position_offset": 64,
+    "camera_orientation_offset": 48,
+    "hurt_time_component_hash": "0xD7A3585C",
+    "hurt_time_value_offset": 0,
+    "hurt_time_value_size": 4,
+    "actor_type_offset": 0,
+    "player_type_id": 319,
+    "renderer_player_offset": 1128,
+    "render_origin_offset": 1632,
+    "local_player": {
+      "rva": "0x5DAED30",
+      "entry_check": "48 83 ec 48 48 8b 05 45 b3 a2 0b 48 31 e0 48 89 44 24 40 48 8d 91 48 02",
+      "abi": "Actor* __fastcall(ClientInstance*)",
+      "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration"
+    },
+    "borion": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "state_position_offset": 0,
+      "state_previous_position_offset": 12,
+      "state_velocity_offset": 24,
+      "fall_distance_component_hash": "0xce6b34f6",
+      "fall_distance_value_offset": 0,
+      "client_packet_sender_offset": 464,
+      "sender_send_to_server_slot": 4,
+      "packet_id_slot": 1,
+      "packet_sender_getter": {
+        "rva": "0x80B340",
+        "entry_check": "48 8b 81 d0 01 00 00 c3 cc cc cc cc cc cc cc cc",
+        "abi": "PacketSender& __fastcall(ClientInstance*)"
+      },
+      "evidence": "Borion Freecam + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and LeviLamina declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes)."
+    },
+    "backend": "borion_local_proxy"
+  },
+  "native_player_identity": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "level_player_list_offset": 1248,
+    "entry_size": 168,
+    "actor_unique_id_offset": 0,
+    "uuid_offset": 8,
+    "name_offset": 24,
+    "evidence": "Existing exact-build TabList player roster layout; LeviLamina PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped."
   }
 }
 )BDK_SYM_V1";

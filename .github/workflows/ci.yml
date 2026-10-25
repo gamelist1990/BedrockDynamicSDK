@@ -39,6 +39,7 @@ jobs:
         with:
           name: BedrockDynamicSDK-windows-x64
           path: |
+            build/Release/BedrockHookRuntime.dll
             build/Release/BedrockSymbolProbe.dll
             build/Release/BedrockClientLocator.dll
           if-no-files-found: error

@@ -58,7 +58,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 14> states{};
+std::array<State, 15> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -96,12 +96,100 @@ struct SharedApi {
 };
 // New points require a new owner capability version. An older process owner
 // must reject them, rather than silently installing a second hook broker.
+// The v3/v4 table prefix and argument records are binary-identical. Keep ABI
+// stable for additive releases; runtime version and supported points are separate.
 constexpr DWORD kSharedAbiVersion = 4;
+constexpr DWORD kMinimumCompatibleAbi = 3;
+constexpr unsigned kBuildVersion = 0x00040200u; // major/minor/patch: 4.2.0
+void bootstrapPreferredRuntime() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        HMODULE consumer{};
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&BDS_HookSubscribe), &consumer)) return;
+        wchar_t path[32768]{};
+        const DWORD length=GetModuleFileNameW(consumer,path,32768);
+        if(!length || length>=32768) return;
+        auto* separator=wcsrchr(path,L'\\');
+        if(!separator || _wcsicmp(separator+1,L"BedrockHookRuntime.dll")==0) return;
+        constexpr wchar_t filename[]=L"BedrockHookRuntime.dll";
+        if(static_cast<std::size_t>(separator-path)+1+std::size(filename)>32768) return;
+        wcscpy_s(separator+1,32768-static_cast<std::size_t>(separator-path)-1,filename);
+        // Optional sidecar in the consumer's own directory only. Never search
+        // CWD/PATH and never unload an owner whose function table is published.
+        const auto preferred=LoadLibraryExW(path,nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        if(!preferred) return;
+        using Query=unsigned(__cdecl*)();
+        using Start=int(__cdecl*)();
+        const auto version=reinterpret_cast<Query>(GetProcAddress(preferred,"BedrockHookRuntime_BuildVersion"));
+        const auto abi=reinterpret_cast<Query>(GetProcAddress(preferred,"BedrockHookRuntime_BuildAbi"));
+        const auto start=reinterpret_cast<Start>(GetProcAddress(preferred,"BedrockHookRuntime_Start"));
+        if(version && abi && start && version()>=kBuildVersion && abi()==kSharedAbiVersion)
+            start();
+        else FreeLibrary(preferred); // Not activated; no owner pointers published.
+    });
+}
+// Separate, versioned metadata leaves the legacy SharedApi allocation and
+// function-table prefix unchanged. Future additive hooks change only the mask.
+struct Capabilities {
+    volatile LONG state;
+    DWORD magic;
+    DWORD size;
+    DWORD pid;
+    DWORD abi;
+    unsigned buildVersion;
+    std::uintptr_t ownerSubscribe;
+    std::uint64_t points;
+};
+constexpr DWORD kCapabilitiesMagic=0x42444331; // BDC1
+HANDLE capabilitiesMapping{};
+Capabilities* capabilities{};
+void capabilitiesName(wchar_t* name,std::size_t size) {
+    swprintf_s(name,size,L"Local\\BedrockDynamicSDK.HookCapabilities.%lu",GetCurrentProcessId());
+}
+void publishCapabilities(const SharedApi* owner) {
+    wchar_t name[96]{};capabilitiesName(name,96);
+    capabilitiesMapping=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,
+        0,sizeof(Capabilities),name);
+    if(!capabilitiesMapping) return;
+    capabilities=static_cast<Capabilities*>(MapViewOfFile(capabilitiesMapping,
+        FILE_MAP_READ|FILE_MAP_WRITE,0,0,sizeof(Capabilities)));
+    if(!capabilities)return;
+    InterlockedExchange(&capabilities->state,1);
+    capabilities->magic=kCapabilitiesMagic;capabilities->size=sizeof(Capabilities);
+    capabilities->pid=GetCurrentProcessId();capabilities->abi=owner->abiVersion;
+    capabilities->buildVersion=kBuildVersion;
+    capabilities->ownerSubscribe=reinterpret_cast<std::uintptr_t>(owner->subscribe);
+    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_PACKET_SEND_TO_SERVER+1))-2;
+    MemoryBarrier();InterlockedExchange(&capabilities->state,2);
+}
+const Capabilities* ownerCapabilities(const SharedApi* owner) {
+    static std::once_flag once;
+    std::call_once(once,[]{
+        // Main owner initialization completed before capability lookup. An old
+        // owner has no metadata; do not create a misleading new descriptor.
+        if(capabilities)return;
+        wchar_t name[96]{};capabilitiesName(name,96);
+        capabilitiesMapping=OpenFileMappingW(FILE_MAP_READ,FALSE,name);
+        if(capabilitiesMapping) capabilities=static_cast<Capabilities*>(
+            MapViewOfFile(capabilitiesMapping,FILE_MAP_READ,0,0,sizeof(Capabilities)));
+    });
+    const auto* value=capabilities;
+    if(!value || value->state!=2)return nullptr;
+    MemoryBarrier();
+    return value->magic==kCapabilitiesMagic && value->size==sizeof(Capabilities) &&
+        value->pid==GetCurrentProcessId() && value->abi==owner->abiVersion &&
+        value->ownerSubscribe==reinterpret_cast<std::uintptr_t>(owner->subscribe) ? value : nullptr;
+}
 HANDLE sharedMapping{};
 SharedApi* sharedApi{};
 std::mutex sharedApiMutex;
 
 SharedApi* getSharedApi() {
+    // Outside the per-copy mutex: the sidecar initializes its own copy.
+    bootstrapPreferredRuntime();
     std::lock_guard lock(sharedApiMutex);
     if (sharedApi) return sharedApi;
     if (!clientModulePinned) {
@@ -142,6 +230,7 @@ SharedApi* getSharedApi() {
         sharedApi->version = &leaderVersion;
         sharedApi->directInstall = &leaderDirectInstall;
         sharedApi->directRemove = &leaderDirectRemove;
+        publishCapabilities(sharedApi);
         MemoryBarrier();
         InterlockedExchange(&sharedApi->state, 2);
     } else {
@@ -151,7 +240,8 @@ SharedApi* getSharedApi() {
             Sleep(10);
         }
         if (InterlockedCompareExchange(&sharedApi->state, 0, 0) != 2 ||
-            sharedApi->abiVersion != kSharedAbiVersion ||
+            (sharedApi->abiVersion < kMinimumCompatibleAbi ||
+             sharedApi->abiVersion > kSharedAbiVersion) ||
             sharedApi->ownerPid != GetCurrentProcessId()) {
             UnmapViewOfFile(sharedApi); sharedApi = nullptr;
             CloseHandle(sharedMapping); sharedMapping = nullptr;
@@ -223,6 +313,11 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
         auto& a = *static_cast<BDS_FovArgs*>(args);
         a.result = original ? reinterpret_cast<FovFn>(original)(a.self, a.input_fov, a.a3, a.a4)
                             : a.input_fov;
+        return 0;
+    }
+    case BDS_HOOK_PACKET_SEND_TO_SERVER: {
+        auto& a=*static_cast<BDS_PacketSendArgs*>(args);
+        if(original) reinterpret_cast<ClientPlayerLoadedFn>(original)(a.sender,a.packet);
         return 0;
     }
     case BDS_HOOK_RENDER_LEVEL: {
@@ -333,8 +428,12 @@ void* __fastcall gameCoreKeyboardEventDetour(void* self, void* output, void* con
 void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
     BDS_RenderLevelArgs args{renderer, screen, context}; invoke(BDS_HOOK_RENDER_LEVEL, &args);
 }
+void __fastcall packetSendDetour(void* sender,void* packet) {
+    BDS_PacketSendArgs args{sender,packet};invoke(BDS_HOOK_PACKET_SEND_TO_SERVER,&args);
+}
 void* detourFor(BDS_HookPoint point) {
     switch (point) {
+    case BDS_HOOK_PACKET_SEND_TO_SERVER: return reinterpret_cast<void*>(&packetSendDetour);
     case BDS_HOOK_RENDER_LEVEL: return reinterpret_cast<void*>(&renderLevelDetour);
     case BDS_HOOK_KEYBOARD_FEED: return reinterpret_cast<void*>(&keyboardDetour);
     case BDS_HOOK_MOUSE_FEED: return reinterpret_cast<void*>(&mouseDetour);
@@ -353,7 +452,7 @@ void* detourFor(BDS_HookPoint point) {
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_RENDER_LEVEL;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_PACKET_SEND_TO_SERVER;
 }
 } // namespace
 
@@ -417,7 +516,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_RENDER_LEVEL; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_PACKET_SEND_TO_SERVER; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -435,7 +534,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "4.0.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "4.2.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {
@@ -479,22 +578,39 @@ int BDS_HOOK_CALL leaderDirectRemove(BDS_HookToken token) {
     return 1;
 }
 
+namespace {
+bool ownerSupports(const SharedApi* api,BDS_HookPoint point) {
+    if(!api)return false;
+    const auto index=static_cast<unsigned>(point);
+    if(index==0 || index>=64)return false;
+    if(const auto* info=ownerCapabilities(api))return (info->points & (std::uint64_t{1}<<index))!=0;
+    // Legacy owners predate metadata; their published ABI is a known ceiling.
+    const unsigned maximum=api->abiVersion==3 ? 12u : 13u;
+    return index<=maximum;
+}
+}
+extern "C" int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point) {
+    return ownerSupports(getSharedApi(),point) ? 1 : 0;
+}
+extern "C" unsigned BDS_HOOK_CALL BDS_HookRuntimeAbi(void) {
+    const auto* api=getSharedApi(); return api ? api->abiVersion : 0;
+}
 extern "C" int BDS_HOOK_CALL BDS_HookSubscribe(BDS_HookPoint point, void* target,
     BDS_HookCallback callback, void* user, BDS_HookToken* tokenOut) {
-    auto* api = getSharedApi(); return api && api->subscribe
+    auto* api = getSharedApi(); return ownerSupports(api,point) && api->subscribe
         ? api->subscribe(point, target, callback, user, tokenOut) : 0;
 }
 extern "C" void BDS_HOOK_CALL BDS_HookUnsubscribe(BDS_HookToken token) {
     auto* api = getSharedApi(); if (api && api->unsubscribe) api->unsubscribe(token);
 }
 extern "C" int BDS_HOOK_CALL BDS_HookOwnsTarget(BDS_HookPoint point, void* target) {
-    auto* api = getSharedApi(); return api && api->owns ? api->owns(point, target) : 0;
+    auto* api = getSharedApi(); return ownerSupports(api,point) && api->owns ? api->owns(point, target) : 0;
 }
 extern "C" uintptr_t BDS_HOOK_CALL BDS_HookDispatch(BDS_HookPoint point, void* args) {
-    auto* api = getSharedApi(); return api && api->dispatch ? api->dispatch(point, args) : 0;
+    auto* api = getSharedApi(); return ownerSupports(api,point) && api->dispatch ? api->dispatch(point, args) : 0;
 }
 extern "C" uintptr_t BDS_HOOK_CALL BDS_HookCallOriginal(BDS_HookPoint point, void* args) {
-    auto* api = getSharedApi(); return api && api->original ? api->original(point, args) : 0;
+    auto* api = getSharedApi(); return ownerSupports(api,point) && api->original ? api->original(point, args) : 0;
 }
 extern "C" const char* BDS_HOOK_CALL BDS_HookRuntimeVersion(void) {
     auto* api = getSharedApi(); return api && api->version ? api->version() : "unavailable";

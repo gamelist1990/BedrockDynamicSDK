@@ -7,12 +7,12 @@
 namespace freecam {
 struct Config {
     bool enabled=true, allowInteraction=false, disableOnDamage=true, playerHitboxes=true;
-    unsigned toggleKey=86, forward=87, back=83, left=65, right=68, up=32, down=16, fast=17;
+    unsigned toggleKey=77, forward=87, back=83, left=65, right=68, up=32, down=16, fast=17;
     float speed=8.f, fastMultiplier=3.f, sensitivity=0.15f, radius=32.f;
     unsigned maxPlayers=64, captureRows=8;
 };
 inline nlohmann::json configJson(const Config& c) {
-    return {{"enabled",c.enabled},{"toggle_key",c.toggleKey},{"allow_interaction",c.allowInteraction},
+    return {{"config_revision",2},{"enabled",c.enabled},{"toggle_key",c.toggleKey},{"allow_interaction",c.allowInteraction},
         {"disable_on_damage",c.disableOnDamage},{"player_hitboxes",c.playerHitboxes},
         {"speed_blocks_per_second",c.speed},{"fast_multiplier",c.fastMultiplier},
         {"mouse_sensitivity",c.sensitivity},{"hitbox_radius",c.radius},{"max_players",c.maxPlayers},

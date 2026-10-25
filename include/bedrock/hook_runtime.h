@@ -35,7 +35,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_CLIENT_LEVEL_EXIT = 10,
     BDS_HOOK_CLIENT_DIMENSION_CHANGED = 11,
     BDS_HOOK_CLIENT_JOIN_CANCELLED = 12,
-    BDS_HOOK_RENDER_LEVEL = 13
+    BDS_HOOK_RENDER_LEVEL = 13,
+    BDS_HOOK_PACKET_SEND_TO_SERVER = 14
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -47,6 +48,7 @@ typedef struct BDS_MouseArgs {
 #define BDS_MOUSE_FLAG_SYNTHETIC 0x40000000
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
+typedef struct BDS_PacketSendArgs { void* sender; void* packet; } BDS_PacketSendArgs;
 typedef struct BDS_RenderLevelArgs { void* renderer; void* screen; void* context; } BDS_RenderLevelArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
 typedef struct BDS_ClientPlayerLoadedArgs { void* self; void* player; } BDS_ClientPlayerLoadedArgs;
@@ -73,6 +75,9 @@ BDS_HOOK_API int BDS_HOOK_CALL BDS_HookOwnsTarget(BDS_HookPoint point, void* tar
 BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookDispatch(BDS_HookPoint point, void* args);
 BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookCallOriginal(BDS_HookPoint point, void* args);
 BDS_HOOK_API const char* BDS_HOOK_CALL BDS_HookRuntimeVersion(void);
+// Returns owner capabilities, not the version embedded in the calling DLL.
+BDS_HOOK_API int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point);
+BDS_HOOK_API unsigned BDS_HOOK_CALL BDS_HookRuntimeAbi(void);
 
 // Escape hatch for hook points not covered by the middleware API. This still
 // uses the SDK's single process-wide MinHook owner and rejects targets already

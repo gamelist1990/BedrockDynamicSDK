@@ -59,7 +59,7 @@ Player判定履歴も最大1000件に制限し、ワールド変更時に消し�
 
 `debug=true` では、Nativeコピーの所要時間・走査数と、各ワーカーの保持数を10秒間隔で記録します。
 Nativeコピーが2ms以上かかった場合はdebug無効でも最大10秒に1回記録します。表示の追跡キーにはcomponentからコピーした64-bit RuntimeIDを使います。
-名前は共有NameTag Hookが返した結果だけを利用し、名前getterを周期的に呼び出しません。
+名前は共有NameTag Hookと、取得済みActorへの上限付き補完取得、PlayerListのコピーから補います。
 
 ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標に取得します。
 1tickの上限は32件、Native読み取りループの処理予算は250µsです。予算を超えた場合は続きから次のtickへ回します。
@@ -82,7 +82,7 @@ ActorOwnerのエントリは毎tick確認し、1tickで1周することを目標
 描画もワーカーのスナップショット切替中を含め合計1000枠を上限にします。
 距離制限をOFFにしている場合は、保存枠も距離で除外しません。
 
-読み取り回数を減らすため、各Actorの位置が表示に反映されるまでの時間は以前より長くなります。
+新しいActorの発見は分散走査です。発見済みActorの座標は毎tickコピーします。
 有効期間はActor数と実際に走査できた件数に応じて調整し、分割走査中に枠がすぐ消えないようにします。
 ### 名前表示とキャッシュ
 
@@ -103,7 +103,9 @@ HitBox上端から0.2ブロック上に、背景なしの両面描画・白い�
 自分自身のActorは取得対象から除外し、枠・保存位置・名前ラベルを表示しません。描画時にもローカルActorを除外します。黒い背景の矩形は描画せず、分割した各メッシュの送信直前に文字色を設定します。
 
 名前キャッシュは各ワーカー最大1000 RuntimeID、観測メールボックスは固定2048スロットです。
-上限時には古いキャッシュを入れ替えます。ワールド変更時はキャッシュを消し、旧世代の観測も受け付けません。
+上限時には古いキャッシュを入れ替えます。ワールド変更時は枠・文字形状・RuntimeIDの対応を消し、旧世代の観測も受け付けません。
+名前自体はUUID別の期限付きアーカイブで保持します。現在のPlayerListでActorUniqueIDとUUIDを確認し、新ワールドのRuntimeIDへ結び直します。
+`name_cache_minutes`（既定10分、1～120分）が過ぎた名前は実取得がなければ表示しません。
 位置保存が有効なら保存枠にも名前を表示します。取得済み文字列と文字形状はワールド内のRuntimeIDに保持し、Actor消失後もネイティブActorを読み直さず利用します。頂点予算内で保存枠・Player・近い枠の名前を優先します。取得していない名前は表示しません。
 NameTag Hookを登録できない場合も枠の表示は継続します。
 
@@ -255,7 +257,7 @@ Latiteは `PacketHooks.cpp` で `CHANGE_DIMENSION` を検知して名前キャ�
 処理ワーカーはCPU論理数から自動で1〜3本を選びます（論理数からゲーム等のため2枠を空け、上限3本）。
 別にログ書き込み用を1本使います。RuntimeIDをハッシュして分配し、IDの偏りによる負荷集中を減らします。
 ゲーム・描画APIは対応するスレッドで呼び、ワーカーはコピー済みデータだけを処理します。
-名前キャッシュの更新世代が変わらなければ、既知の名前を毎回ロックしてコピーしません。
+名前の有効期限とUUIDの対応はワーカーで確認し、同じ名前の文字形状は再利用します。
 名前・枠・表示条件が変わらず、準備時からの枠の差が1mm以内・カメラ移動が1cm以内なら、準備済み文字頂点を共有します。
 比較基準は最後に作成した頂点の位置なので、再利用を繰り返して誤差が積み重なることはありません。
 全体の文字頂点予算98,304とActor上限1000は増やしません。
@@ -268,3 +270,29 @@ Latiteは `PacketHooks.cpp` で `CHANGE_DIMENSION` を検知して名前キャ�
 - DirectWrite outline triangles that share an edge are merged only when their union is convex. The double-sided native quad rendering preserves the filled shape, including holes. Each merged pair reduces native vertex calls from 16 to 8. Actual savings depend on the font/name.
 - The `HitBox render cost [5s]` log reports average and peak native submission time in microseconds. These timings exclude worker processing and are not an FPS measurement.
 - Native Actor access remains on the game thread with the existing bounded read budget. Workers use copied scalar data. The moved → within one block for one second → disappears retention rule is preserved.
+
+
+## 最新座標への追従
+
+長い追従補間を除去し、毎tick取得したAABBを50msで短く補間します。
+ゲームスレッドでコピーした最新のRuntimeID/AABBを固定容量メールボックスに保存し、
+描画時にワーカーの名前・保持位置処理を待たずに反映します。
+名前の文字形状はキャッシュを使い、アンカーだけ同じAABBへ移動します。
+描画スレッドからActorやEnTTストレージへアクセスしません。
+
+これは最後に取得できたAABBへの一致です。サーバーから未受信の座標、分散取得の間隔、
+ゲーム本来のモデル補間とは区別され、モデルとのフレーム単位の完全一致は未検証です。
+
+## 1tick取得・短い補間・マップ移動後の名前
+
+発見済みActorの位置は、毎LevelTickでEnTT世代とRuntimeIDを再確認してコピーします
+（追跡上限1000）。新しいActorの発見処理は従来の分散取得を維持します。
+描画は50ms（1tick）の短い補間を使い、名前のアンカーも同じ補間位置に合わせます。
+テレポートや250msを超える取得中断は補間を持ち越しません。
+`tick_poses` / `tick_pose_us`ログで毎tickの取得数・時間を確認できます。
+
+`name_cache_minutes`（既定10、1～120）で名前キャッシュ期限を設定できます。
+UUID別の名前アーカイブはワールド変更時も維持し、現在のPlayerListに同じUUIDが
+存在することを確認して、ActorUniqueIDから新しいRuntimeIDへ結び直します。
+RuntimeIDの数値だけをワールド越しに再利用しません。古い枠・保存位置は従来通りリセットします。
+名前の実取得がない間は期限を延長せず、期限切れ後は表示しません。
