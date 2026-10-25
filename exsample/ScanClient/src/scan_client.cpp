@@ -31,6 +31,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <stop_token>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -42,10 +43,15 @@ using json = nlohmann::json;
 namespace {
 constexpr SIZE_T kChunk = 64 * 1024;
 constexpr uint64_t kMaxAnalysisSection = 256ull * 1024 * 1024;
+constexpr uint64_t kMaxDynamicMonitorBytes = 128ull * 1024 * 1024;
+constexpr uint64_t kMaxDynamicLogBytes = 64ull * 1024 * 1024;
+constexpr size_t kMonitorPageSize = 4096;
 constexpr size_t kMaxFindings = 4096;
 constexpr size_t kMaxTableEntries = 256;
 std::atomic<bool> g_pause{false}, g_stop{false};
 std::atomic<uint64_t> g_done{0}, g_saved{0}, g_skipped{0}, g_total{0}, g_failures{0};
+std::atomic<uint64_t> g_monitorPasses{0}, g_monitorPagesChanged{0}, g_monitorBytesChanged{0}, g_monitorReadFailures{0};
+std::atomic<unsigned> g_monitorState{0}; // 0=not started, 1=running, 2=stopped
 std::mutex g_console;
 fs::path g_out;
 std::string g_version="unknown";
@@ -104,6 +110,13 @@ done:
 
 void log(const std::string& s) { std::lock_guard lock(g_console); std::printf("%s\n",s.c_str()); std::fflush(stdout); }
 std::string hex(uint64_t v) { std::ostringstream o; o<<"0x"<<std::hex<<std::uppercase<<v; return o.str(); }
+std::string utcTimestamp() {
+    SYSTEMTIME now{}; GetSystemTime(&now);
+    char value[32]{};
+    std::snprintf(value,sizeof(value),"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ",
+        now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond,now.wMilliseconds);
+    return value;
+}
 void atomicWrite(const fs::path& p,const std::string& data) {
     std::error_code ec; fs::create_directories(p.parent_path(),ec);
     auto tmp=p; tmp += L".part";
@@ -291,12 +304,17 @@ void writeGhidraImportScript() {
     atomicWrite(g_out/"ghidra_import.py",kGhidraImportScript);
 }
 void saveProgress(const char* state) {
-    json p={{"schema",2},{"scope","Minecraft.Windows.exe PE sections only"},
+    const unsigned monitorState=g_monitorState.load();
+    const char* monitorText=monitorState==1?"running":monitorState==2?"stopped":"not-started";
+    json p={{"schema",3},{"scope","Minecraft.Windows.exe PE sections only"},
         {"state",state},{"version",g_version},{"pid",GetCurrentProcessId()},
         {"module_sha256",g_identity.fileSha256},{"module_text_sha256",g_identity.textSha256},
         {"bytes_read",g_done.load()},{"bytes_saved",g_saved.load()},{"bytes_skipped",g_skipped.load()},
         {"bytes_total",g_total.load()},
-        {"read_failures",g_failures.load()}};
+        {"read_failures",g_failures.load()},
+        {"dynamic_monitor",{{"state",monitorText},{"passes",g_monitorPasses.load()},
+            {"changed_pages",g_monitorPagesChanged.load()},{"changed_bytes",g_monitorBytesChanged.load()},
+            {"read_failures",g_monitorReadFailures.load()}}}};
     atomicWrite(g_out/"progress.json",p.dump(2));
 }
 std::string bytePattern(const uint8_t* p,size_t n) {
@@ -306,6 +324,162 @@ std::string bytePattern(const uint8_t* p,size_t n) {
 }
 uint32_t parseHex32(const std::string& value) {
     try { return static_cast<uint32_t>(std::stoul(value,nullptr,0)); } catch(...) { return 0; }
+}
+struct MonitorSection {
+    Section section;
+    std::vector<uint8_t> previous;
+    std::vector<uint8_t> validPages;
+};
+void recordMonitorPage(MonitorSection& monitored,size_t pageIndex,size_t pageOffset,
+    const uint8_t* current,size_t length,uint64_t pass,std::ofstream& output,
+    uint64_t& outputBytes,bool& outputEnabled) {
+    if(pageIndex>=monitored.validPages.size()||pageOffset>monitored.previous.size()||
+       length>monitored.previous.size()-pageOffset) return;
+    auto* previous=monitored.previous.data()+pageOffset;
+    if(!monitored.validPages[pageIndex]) {
+        memcpy(previous,current,length); monitored.validPages[pageIndex]=1; return;
+    }
+    std::vector<uint16_t> changedOffsets; changedOffsets.reserve(128);
+    size_t changed=0;
+    for(size_t i=0;i<length;++i) if(previous[i]!=current[i]) {
+        ++changed;
+        if(changedOffsets.size()<128) changedOffsets.push_back(static_cast<uint16_t>(i));
+    }
+    if(changed) {
+        const uint32_t pageRva=monitored.section.rva+static_cast<uint32_t>(pageOffset);
+        json offsets=changedOffsets;
+        json event={{"type","changed-page"},{"utc",utcTimestamp()},{"pass",pass},
+            {"section",monitored.section.name},{"rva",hex(pageRva)},
+            {"address",hex(g_moduleBase+pageRva)},{"page_size",length},
+            {"changed_bytes",changed},{"changed_offsets_first_128",std::move(offsets)},
+            {"offset_list_truncated",changed>changedOffsets.size()},
+            {"before_prefix_hex",bytePattern(previous,std::min<size_t>(64,length))},
+            {"after_prefix_hex",bytePattern(current,std::min<size_t>(64,length))},
+            {"status","writable-main-module memory changed; semantic meaning unclassified"}};
+        const std::string line=event.dump()+"\n";
+        if(outputEnabled&&outputBytes+line.size()<=kMaxDynamicLogBytes) {
+            output.write(line.data(),static_cast<std::streamsize>(line.size()));
+            if(output) outputBytes+=line.size();
+            else outputEnabled=false;
+        } else if(outputEnabled) {
+            outputEnabled=false;
+            log("[ScanClient] Dynamic change log reached its 64 MiB cap; monitoring continues without further file records.");
+        }
+        g_monitorPagesChanged.fetch_add(1);
+        g_monitorBytesChanged.fetch_add(changed);
+    }
+    memcpy(previous,current,length);
+}
+bool waitWhileMonitoringPaused(std::stop_token stopToken) {
+    while(g_pause.load()&&!g_stop.load()&&!stopToken.stop_requested())
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    return !g_stop.load()&&!stopToken.stop_requested();
+}
+void monitorWritableSections(const std::vector<Section>& sections,std::stop_token stopToken) {
+    std::vector<MonitorSection> monitored;
+    uint64_t selectedBytes=0;
+    for(const auto& section:sections) {
+        if((section.characteristics&IMAGE_SCN_MEM_WRITE)==0) continue;
+        const uint64_t size=section.virtualSize?section.virtualSize:section.rawSize;
+        if(!size||size>g_identity.imageSize-section.rva||size>kMaxDynamicMonitorBytes-selectedBytes) {
+            log("[ScanClient] Dynamic monitor skipped oversized writable section: "+section.name);
+            continue;
+        }
+        MonitorSection entry; entry.section=section;
+        try {
+            entry.previous.resize(static_cast<size_t>(size));
+            entry.validPages.resize(static_cast<size_t>((size+kMonitorPageSize-1)/kMonitorPageSize));
+        } catch(...) {
+            log("[ScanClient] Dynamic monitor could not allocate a bounded page baseline for: "+section.name);
+            continue;
+        }
+        selectedBytes+=size; monitored.push_back(std::move(entry));
+    }
+    const fs::path logPath=g_out/"dynamic_changes.jsonl";
+    std::error_code ec;
+    uint64_t outputBytes=fs::exists(logPath,ec)?fs::file_size(logPath,ec):0;
+    bool outputEnabled=!ec&&outputBytes<kMaxDynamicLogBytes;
+    std::ofstream output;
+    if(outputEnabled) {
+        output.open(logPath,std::ios::binary|std::ios::app);
+        outputEnabled=static_cast<bool>(output);
+    }
+    if(!outputEnabled) log("[ScanClient] Dynamic event file is unavailable or reached its 64 MiB cap; monitoring continues without further file records.");
+    if(outputEnabled) {
+        json start={{"type","monitor-start"},{"utc",utcTimestamp()},{"version",g_version},
+            {"module_text_sha256",g_identity.textSha256},{"scope","writable sections of Minecraft.Windows.exe only"},
+            {"selected_bytes",selectedBytes},{"poll_interval_after_each_pass_ms",250},
+            {"sections",json::array()}};
+        for(const auto& entry:monitored) start["sections"].push_back(entry.section.name);
+        const std::string line=start.dump()+"\n";
+        if(outputBytes+line.size()<=kMaxDynamicLogBytes) {
+            output.write(line.data(),static_cast<std::streamsize>(line.size())); outputBytes+=line.size();
+        } else outputEnabled=false;
+    }
+    g_monitorState.store(1);
+    log("[ScanClient] Dynamic monitor running: writable Minecraft image sections="+
+        std::to_string(monitored.size())+", baseline bytes="+std::to_string(selectedBytes/1024/1024)+
+        " MiB; polling repeats until stop. Private heaps and other modules are excluded.");
+    std::array<uint8_t,kChunk> buffer{};
+    while(!g_stop.load()&&!stopToken.stop_requested()) {
+        if(!waitWhileMonitoringPaused(stopToken)) break;
+        const uint64_t pass=g_monitorPasses.load()+1;
+        const uint64_t changedPagesBefore=g_monitorPagesChanged.load();
+        const uint64_t changedBytesBefore=g_monitorBytesChanged.load();
+        for(auto& entry:monitored) {
+            const uint64_t size=entry.previous.size();
+            for(uint64_t offset=0;offset<size&&!g_stop.load()&&!stopToken.stop_requested();) {
+                if(!waitWhileMonitoringPaused(stopToken)) break;
+                const size_t amount=static_cast<size_t>(std::min<uint64_t>(buffer.size(),size-offset));
+                const uintptr_t address=g_moduleBase+entry.section.rva+static_cast<uintptr_t>(offset);
+                if(safeRead(address,buffer.data(),amount)) {
+                    for(size_t local=0;local<amount;local+=kMonitorPageSize) {
+                        const size_t pageBytes=std::min(kMonitorPageSize,amount-local);
+                        const size_t pageOffset=static_cast<size_t>(offset)+local;
+                        recordMonitorPage(entry,pageOffset/kMonitorPageSize,pageOffset,
+                            buffer.data()+local,pageBytes,pass,output,outputBytes,outputEnabled);
+                    }
+                } else {
+                    ++g_monitorReadFailures;
+                    for(size_t local=0;local<amount;local+=kMonitorPageSize) {
+                        const size_t pageBytes=std::min(kMonitorPageSize,amount-local);
+                        const size_t pageOffset=static_cast<size_t>(offset)+local;
+                        if(safeRead(address+local,buffer.data()+local,pageBytes)) {
+                            recordMonitorPage(entry,pageOffset/kMonitorPageSize,pageOffset,
+                                buffer.data()+local,pageBytes,pass,output,outputBytes,outputEnabled);
+                        } else {
+                            ++g_monitorReadFailures;
+                            const size_t page=pageOffset/kMonitorPageSize;
+                            if(page<entry.validPages.size()) entry.validPages[page]=0;
+                        }
+                    }
+                }
+                offset+=amount;
+                Sleep(0);
+            }
+            if(g_stop.load()) break;
+        }
+        if(outputEnabled) output.flush();
+        g_monitorPasses.store(pass);
+        const uint64_t changedPages=g_monitorPagesChanged.load()-changedPagesBefore;
+        const uint64_t changedBytes=g_monitorBytesChanged.load()-changedBytesBefore;
+        if(changedPages) log("[ScanClient] Dynamic changes: pass="+std::to_string(pass)+
+            " changed_pages="+std::to_string(changedPages)+" changed_bytes="+std::to_string(changedBytes));
+        if(pass%20==0) saveProgress(captureComplete?"complete":"partial");
+        for(unsigned waited=0;waited<250&&!g_stop.load()&&!g_pause.load()&&!stopToken.stop_requested();waited+=25)
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    if(outputEnabled) {
+        const std::string line=json{{"type","monitor-stop"},{"utc",utcTimestamp()},
+            {"passes",g_monitorPasses.load()},{"changed_pages",g_monitorPagesChanged.load()},
+            {"changed_bytes",g_monitorBytesChanged.load()}}.dump()+"\n";
+        if(outputBytes+line.size()<=kMaxDynamicLogBytes) output.write(line.data(),static_cast<std::streamsize>(line.size()));
+        output.flush();
+    }
+    g_monitorState.store(2);
+    log("[ScanClient] Dynamic monitor stopped: passes="+std::to_string(g_monitorPasses.load())+
+        ", changed pages="+std::to_string(g_monitorPagesChanged.load())+
+        ", changed bytes="+std::to_string(g_monitorBytesChanged.load()));
 }
 std::vector<uint8_t> readCapturedSection(const Section& section,const json& layout) {
     const uint64_t size=section.virtualSize?section.virtualSize:section.rawSize;
@@ -611,27 +785,12 @@ done:
 void scan() {
     SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
     g_done.store(0); g_saved.store(0); g_skipped.store(0); g_failures.store(0);
+    g_monitorPasses.store(0); g_monitorPagesChanged.store(0); g_monitorBytesChanged.store(0);
+    g_monitorReadFailures.store(0); g_monitorState.store(0);
     g_identity={};
     log("[ScanClient] Fingerprinting Minecraft headers and .text; unrelated process memory is excluded.");
     const auto sections=readSections();
     if(sections.empty()||g_identity.textSha256.empty()) { log("[ScanClient] Safe PE inspection failed; scan cancelled."); return; }
-    g_version=detectVersion();
-    g_out=documentsRoot()/L"PEXData"/L"ScanClient"/fs::path(g_version)/L"windows-x64";
-    std::error_code ec; fs::create_directories(g_out,ec);
-    log("[ScanClient] Minecraft "+g_version+" | fingerprint "+g_identity.textSha256.substr(0,16));
-    log("[ScanClient] Output: "+g_out.string());
-    g_total.store(focusedCaptureSize(sections));
-    log("[ScanClient] Scope: Minecraft .text/.rdata/.pdata only; private and unrelated process memory is excluded.");
-    auto moduleLayout=exportModuleLayout(sections);
-    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
-    const bool captureFinished=dumpSectionMemory(moduleLayout,sections);
-    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
-    writeGhidraImportScript();
-    if(!captureFinished||g_stop.load()) {
-        saveProgress("stopped");
-        log("[ScanClient] Focused capture stopped. Use restart to begin it again from the start.");
-        return;
-    }
     const Section* textSection=nullptr; const Section* rdataSection=nullptr; const Section* pdataSection=nullptr;
     for(const auto& section:sections) {
         if(section.name==".text") textSection=&section;
@@ -639,7 +798,37 @@ void scan() {
         else if(section.name==".pdata") pdataSection=&section;
     }
     if(!textSection||!rdataSection||!pdataSection) {
-        saveProgress("incomplete"); log("[ScanClient] Required PE sections were not present."); return;
+        log("[ScanClient] Required PE sections were not present; scan cancelled."); return;
+    }
+    g_version=detectVersion();
+    g_out=documentsRoot()/L"PEXData"/L"ScanClient"/fs::path(g_version)/L"windows-x64";
+    std::error_code ec; fs::create_directories(g_out,ec);
+    if(ec) { log("[ScanClient] Could not create the output folder; scan cancelled."); return; }
+    log("[ScanClient] Minecraft "+g_version+" | fingerprint "+g_identity.textSha256.substr(0,16));
+    log("[ScanClient] Output: "+g_out.string());
+    g_total.store(focusedCaptureSize(sections));
+    log("[ScanClient] Scope: Minecraft .text/.rdata/.pdata only; private and unrelated process memory is excluded.");
+    std::jthread monitorThread([&sections](std::stop_token stopToken) {
+        try { monitorWritableSections(sections,stopToken); }
+        catch(const std::exception& e) {
+            g_monitorState.store(2);
+            log(std::string("[ScanClient] Dynamic monitor stopped safely: ")+e.what());
+        } catch(...) {
+            g_monitorState.store(2);
+            log("[ScanClient] Dynamic monitor stopped safely after an unknown error.");
+        }
+    });
+    saveProgress("capturing");
+    auto moduleLayout=exportModuleLayout(sections);
+    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
+    const bool captureFinished=dumpSectionMemory(moduleLayout,sections);
+    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
+    writeGhidraImportScript();
+    if(!captureFinished||g_stop.load()) {
+        monitorThread.join();
+        saveProgress("stopped");
+        log("[ScanClient] Focused capture stopped. Use restart to begin it again from the start.");
+        return;
     }
     log("[ScanClient] Indexing .pdata function ranges and filtering .rdata strings/pointer tables.");
     auto pdataBytes=readCapturedSection(*pdataSection,moduleLayout);
@@ -653,7 +842,10 @@ void scan() {
         strings,signatures,emittedFunctions);
     collectFunctionPointerTables(rdataBytes,*rdataSection,*textSection,runtimeFunctions,moduleLayout,
         tables,signatures,emittedFunctions);
-    if(g_stop.load()) { saveProgress("stopped"); log("[ScanClient] Focused analysis stopped."); return; }
+    if(g_stop.load()) {
+        monitorThread.join(); saveProgress("stopped");
+        log("[ScanClient] Focused analysis stopped."); return;
+    }
 
     const json provenance={{"schema",2},{"scope","Minecraft.Windows.exe .rdata/.pdata only"},
         {"version",g_version},{"module_sha256",g_identity.fileSha256},
@@ -686,9 +878,13 @@ void scan() {
             {"candidate_files",{{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
                 {"world_transition_references","world_transition_references.json"},
                 {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
+                {"dynamic_changes","dynamic_changes.jsonl"},
                 {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
                 {"ghidra_import","ghidra_import.py"}}},
-            {"note","The process-wide scan was removed. World-transition string references use a partial x64 RIP-relative decoder; strings, references, function-pointer tables, signatures, RTTI names, and ABI remain candidates until static/runtime verification."}}}}}};
+            {"dynamic_monitor",{{"scope","writable PE sections of Minecraft.Windows.exe only"},
+                {"poll_interval_after_each_pass_ms",250},{"max_baseline_bytes",kMaxDynamicMonitorBytes},
+                {"private_heaps_and_other_modules_scanned",false}}},
+            {"note","The process-wide scan was removed. World-transition string references use a partial x64 RIP-relative decoder; dynamic records are changed-page observations, not semantically identified events. All strings, references, function-pointer tables, signatures, RTTI names, and ABI remain candidates until static/runtime verification."}}}}}};
     const std::string profileText=profile.dump(2);
     atomicWrite(g_out/"windows-x64.json",profileText);
     const std::string profileHash=sha256(profileText);
@@ -702,14 +898,19 @@ void scan() {
     json files={{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
         {"world_transition_references","world_transition_references.json"},
         {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
+        {"dynamic_changes","dynamic_changes.jsonl"},
         {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
         {"ghidra_import","ghidra_import.py"}};
     json manifest={{"schema",2},{"tool","ScanClient"},{"versions",versions},{"files",files}};
     atomicWrite(g_out/"manifest.json",manifest.dump(2));
     saveProgress(complete?"complete":"partial");
-    log(std::string("[ScanClient] Focused scan ")+(complete?"complete.":"partial.")+" Findings: transition strings="+
+    log(std::string("[ScanClient] Static focused scan ")+(complete?"complete.":"partial.")+" Findings: transition strings="+
         std::to_string(strings.size())+", RTTI names="+std::to_string(rtti.size())+", function tables="+
-        std::to_string(tables.size())+", function prefixes="+std::to_string(signatures.size()));
+        std::to_string(tables.size())+", transition references="+std::to_string(references.size())+
+        ", function prefixes="+std::to_string(signatures.size()));
+    log("[ScanClient] Static capture finished. Dynamic monitoring continues until the stop command.");
+    monitorThread.join();
+    saveProgress(complete?"complete":"partial");
 }
 
 DWORD WINAPI boot(void*) {
@@ -733,7 +934,10 @@ DWORD WINAPI boot(void*) {
         else if(command=="stop") { g_stop.store(true); g_pause.store(false); log("[ScanClient] Stop requested; completed extents are retained in the output bundle."); }
         else if(command=="status") { log("[ScanClient] read="+std::to_string(g_done.load()/1024/1024)+" MiB | saved="+
             std::to_string(g_saved.load()/1024/1024)+" / "+std::to_string(g_total.load()/1024/1024)+
-            " MiB | skipped="+std::to_string(g_skipped.load()/1024/1024)+" MiB | failures="+std::to_string(g_failures.load())); }
+            " MiB | skipped="+std::to_string(g_skipped.load()/1024/1024)+" MiB | failures="+std::to_string(g_failures.load())+
+            " | monitor passes="+std::to_string(g_monitorPasses.load())+
+            " changed pages="+std::to_string(g_monitorPagesChanged.load())+
+            " dynamic read failures="+std::to_string(g_monitorReadFailures.load())); }
         else if(command=="restart") {
             g_stop.store(true); g_pause.store(false);
             if(worker.joinable()) worker.join();

@@ -33,6 +33,9 @@ There is no duplicate `mapped_image.bin`.
 - `ghidra_import.py`: imports captured section extents at their observed loaded
   addresses while preserving unreadable gaps.
 - `progress.json`: state, bytes read/saved/skipped, and read-failure counts.
+- `dynamic_changes.jsonl`: timestamped changed-page observations from the
+  repeated runtime monitor, including section RVA, changed byte offsets, and
+  before/after prefixes.
 
 The former process-wide scan and generic capped byte/string findings were
 removed. Capture is limited to the three executable sections and relevant
@@ -42,6 +45,17 @@ skipped, and the bundle is marked partial unless every selected section byte
 was saved. Pause/resume/stop/status commands are available in the console.
 Stopping records completed extents in `module_layout.json`; `restart` begins a
 fresh pass and does not resume from an old cursor.
+
+At startup, a second low-priority worker begins monitoring in parallel with
+the one-time static capture and continues until `stop`. It repeatedly reads
+writable PE sections belonging to `Minecraft.Windows.exe`, keeps a bounded
+128 MiB baseline, and checks them again after each pass. Only changed pages are
+appended to `dynamic_changes.jsonl`; the console `status` command reports pass
+and change counts. `pause` and `resume` suspend and continue both capture and
+monitoring. This focused monitor does not repeatedly read immutable code/data
+or private heaps, which would add substantial load and noise. It records byte
+changes, not semantic game events, and can miss changes that begin and end
+between samples.
 
 The string-reference decoder intentionally recognizes only common x64
 RIP-relative memory operands. It can miss other encodings and can produce
