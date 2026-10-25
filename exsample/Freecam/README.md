@@ -31,7 +31,7 @@ PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム�
 | `allow_interaction` | false | 手動の攻撃・使用・ホイール等の入力をゲームに渡す |
 | `disable_on_damage` | true | 自身のhurt time増加で解除。取得不能時も解除 |
 | `player_hitboxes` | true | Freecam中のみ付近のPlayerに簡易枠を表示 |
-| `spectator_mode` | false | Freecam中だけローカルActorのGameTypeを6へ変更し、解除時に復元 |
+| `spectator_mode` | false | Freecam中だけブロック内の視界を覆う描画を抑制（ゲームモード変更なし） |
 | `full_bright` | true | Freecam中だけガンマを25へ上書き。解除時は本来の取得値 |
 | `speed_blocks_per_second` | 8 | 移動速度 |
 | `fast_multiplier` | 3 | 高速移動倍率 |
@@ -90,13 +90,13 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 ```
 
 既存のconfig.jsonにも不足している新設定を追記します。`spectator_mode`の既定はfalseです。
-ローカルActorGameTypeComponentの値6でクライアントのスペクテイター判定を有効にし、
-地中の表示を改善するための候補実装です。サーバーのゲームモード・権限は変更しません。
-能力更新やサーバー側ゲームモード変更を行うsetter／コマンドは呼びません。
-通常終了時は元の値へ戻し、サーバーや他Modが途中で別の値へ変更した場合は上書きしません。
-ワールド世代／RuntimeIDが変わった古いActorへは書き戻しません。
-スペクテイター判定によってゲーム側の操作制限が変わる可能性があるため、
-チェスト操作の問題を切り分ける際は`spectator_mode=false`でも確認してください。
+ゲームモードを変えず、カメラがブロック内にあるときのブロックテクスチャ表示を抑制します。
+現在のClientInstanceでFreecamが有効な間だけ、カメラのブロック内表示許可判定をfalseにします。
+解除・被弾・ワールド移動・停止で通常の判定へ戻ります。ActorのGameTypeは読み書きしません。
+入口のバイト不一致・Hook競合時は無効化し、ログに理由を出します。
+`Freecam inside-block overlay suppressed=N` は描画抑制した回数です（5秒ごと）。
+地形の深度やカリングを一括無効化する機能ではなく、描画方式による見え方は実機確認が必要です。
+古いDLLのGameType変更が残らないよう、差し替え時はMinecraftを再起動してください。
 
 `full_bright`はOptionsのガンマ取得Hookだけで上書きし、options.txtの値は保存変更しません。
 Hook競合や入口不一致の場合は、明るさ機能を使用せず理由をログへ出します。
