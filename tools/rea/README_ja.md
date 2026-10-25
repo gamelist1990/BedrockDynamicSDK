@@ -60,4 +60,4 @@ tools/rea/analyze.sh xrefs /path/to/Minecraft.Windows.exe 0x140123456
 
 まず `analyze` で全体像を取り、既知の文字列や関数名を検索します。候補の関数を `function` または `decompile` で確認し、`xrefs` から呼び出し元や参照先を追います。結果にはゲームバージョン、実行ファイルのSHA-256、プロバイダー、アドレス/RVA、確度を記録してください。REAの疑似コードや名前は解析根拠であり、SDKの検証済み定義ではありません。ABIと構造体レイアウトは対象ビルドおよび実行時情報で確認します。
 
-ScanClientの `mapped_image.bin` はRVA順のメモリイメージであり、PE形式のEXEではありません。REAのPE解析には元の `Minecraft.Windows.exe` を指定してください。ScanClientの結果は実行中の値やロードアドレスの照合に使い、ゼロ埋めされた読み取り不能ページを実測データとして扱わないでください。
+ScanClientはMinecraftイメージの`.text`・`.rdata`・`.pdata`だけを読み取り可能な範囲ごとに保存します。ワールド関連文字列への参照や関数範囲は実行時アドレスの候補であり、検証済みシンボルではありません。REAのPE解析には元の`Minecraft.Windows.exe`を指定し、ScanClient出力は取得バイト列とロードアドレスの照合に使ってください。スキップまたは読み取り不能な範囲は実測データとして扱わないでください。

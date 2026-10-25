@@ -1,66 +1,65 @@
 # Bedrock ScanClient
 
-ScanClient is a developer-only Windows x64 DLL that inspects the current
-Minecraft Bedrock process and writes a versioned analysis bundle under
+ScanClient is a developer-only Windows x64 DLL for read-only inspection of the
+current Minecraft Bedrock executable. It writes a versioned bundle to
 `%USERPROFILE%/Documents/PEXData/ScanClient/<version>/windows-x64/`.
 
-It uses the SDK's loaded-game fingerprint (`inspectLoadedGame`) and profile
-format. Scanning runs on a dedicated worker and never calls game functions or
-hooks/modifies game memory. Each candidate is marked `candidate` / unverified;
-discovery is not ABI verification and the generated profile must not be used
-to call functions until independently checked.
+The scanner does not call game functions or modify game memory. It uses guarded
+`ReadProcessMemory` reads on a low-priority worker. It captures only the
+Minecraft image's `.text`, `.rdata`, and `.pdata` PE sections; private heaps,
+other modules, and unrelated process mappings are excluded. The `.text` bytes
+are streamed to disk in chunks instead of being loaded as one large buffer.
+There is no duplicate `mapped_image.bin`.
 
 ## Output
 
-- `manifest.json`: SDK-style index with build fingerprint and output files.
-- `windows-x64.json`: profile-compatible target metadata and candidate groups.
-- `module_layout.json`: PE headers and section table, including section name,
-  RVA, loaded VA, raw file offset/size, virtual size, and characteristics.
-- `module_sections/`: exact readable bytes copied from each mapped PE section,
-  split into files with the RVA in each filename. These are loaded-memory bytes,
-  not reconstructed on-disk PE files. The `.text` dump can be hundreds of MiB.
-- `mapped_image.bin`: `SizeOfImage` bytes in RVA order, with each byte stored at
-  its RVA offset. Unreadable 4 KiB pages are zero-filled and counted in
-  `module_layout.json`; this is a mapped image, not a valid on-disk PE file.
-- `ghidra_import.py`: Ghidra script that imports every successfully captured
-  section extent at its loaded virtual address and applies the PE section
-  read/write/execute attributes. It uses `module_sections/` so unreadable gaps
-  do not become fabricated code/data blocks.
-- `memory_regions.json`: base/end/size, protection and memory type for every
-  readable committed region included in the process scan, with module RVAs
-  where a region overlaps Minecraft's image.
-- `signatures.json`, `strings.json`, `paths.json`, `rtti_candidates.json`,
-  `vtable_candidates.json`: bounded observations with source addresses and
-  evidence notes.
-- `checkpoint.json`: periodic scan cursor and process/build identity.
-- `progress.json`: latest progress and skipped/read-failure counts.
+- `manifest.json`: version, executable fingerprints, and bundle file index.
+- `windows-x64.json`: profile-compatible target metadata and candidate counts.
+- `module_layout.json`: PE section table and the exact readable extents captured
+  from each selected section, including loaded VA and RVA.
+- `module_sections/`: captured section extents as `.bin` files. These are
+  loaded-memory bytes, not a reconstructed PE executable.
+- `world_transition_strings.json`: `.rdata` strings matching world, level,
+  dimension, session, packet, transfer, respawn, and unload terms.
+- `world_transition_references.json`: recognized x64 RIP-relative references
+  from `.text` to those strings, with the nearby instruction bytes and the
+  containing `.pdata` function range when available.
+- `function_pointer_tables.json`: `.rdata` pointer runs whose targets fall on
+  `.pdata` function starts. They are table candidates, not verified vtables.
+- `signatures.json`: short exact-build function prefixes associated with
+  string references or pointer tables. Uniqueness and ABI are unverified.
+- `rtti_name_candidates.json`: matching strings that resemble MSVC RTTI names;
+  the required descriptor/type relationships are not established.
+- `ghidra_import.py`: imports captured section extents at their observed loaded
+  addresses while preserving unreadable gaps.
+- `progress.json`: state, bytes read/saved/skipped, and read-failure counts.
 
-The scanner walks committed readable regions discovered by `VirtualQuery`,
-reads at most 64 KiB per operation through `ReadProcessMemory`, skips guard
-and inaccessible pages, and yields between chunks. PE headers and the `.text`
-fingerprint are also copied and hashed through guarded process-memory reads;
-the scanner does not directly dereference addresses from the game. Read errors
-cancel or skip the affected extent. This substantially reduces access-violation
-risk, though no in-process DLL can guarantee that the host game will never
-crash. Pause/resume/stop/status
-commands are available in its console. `restart` stops the current pass and
-starts again from the saved cursor. A checkpoint is resumable only in the same
-running process, with the same executable fingerprint and matching memory
-region layout; if those checks fail, it safely starts a fresh pass.
+The former process-wide scan and generic capped byte/string findings were
+removed. Capture is limited to the three executable sections and relevant
+candidate output. Analysis buffers are capped at 256 MiB per section; `.text`
+is scanned from disk in chunks. Unreadable or uncommitted bytes are recorded as
+skipped, and the bundle is marked partial unless every selected section byte
+was saved. Pause/resume/stop/status commands are available in the console.
+Stopping records completed extents in `module_layout.json`; `restart` begins a
+fresh pass and does not resume from an old cursor.
 
-Load the DLL into the Minecraft process using the same development loader used
-for the other SDK examples. A console is opened for scan progress and commands.
-Commands: `pause`, `resume`, `status`, `stop`, `restart`, `exit` (`exit` closes only the
-console). This tool is intended for local SDK research and does not include a
-DLL injector.
+The string-reference decoder intentionally recognizes only common x64
+RIP-relative memory operands. It can miss other encodings and can produce
+false-positive references. A string reference or `.pdata` boundary does not
+prove that a function is called only during a world change. Verify each
+candidate against the exact executable in REA/Ghidra and with runtime evidence
+before adding an SDK symbol or relying on its ABI.
+
+No in-process DLL can guarantee that the host game will never crash, but the
+scanner avoids direct dereferences, checks PE bounds, uses guarded reads, and
+does not invoke game code. It is a local SDK research tool and does not include
+a DLL injector.
 
 ## Ghidra import
 
-Create a new empty `x86:LE:64:default` program, then run `ghidra_import.py` from
-Ghidra's Script Manager and select the `windows-x64` output folder. The script
-sets the image base to the address observed in the running process, imports the
-captured readable extents, and labels each block with its PE section and RVA.
-Ghidra can then perform its normal analysis. Keep `mapped_image.bin` alongside
-the bundle as a convenient RVA-indexed reference; the importer intentionally
-uses the individual extents to preserve section permissions and omit unreadable
-pages.
+Create an `x86:LE:64:default` program, run `ghidra_import.py` from Ghidra's
+Script Manager, and select the `windows-x64` output folder. The script imports
+captured extents individually, so unreadable pages do not become fabricated
+code or data blocks. Use the original `Minecraft.Windows.exe` for static PE
+analysis; the ScanClient bundle supplies runtime bytes and loaded addresses for
+cross-checking.

@@ -16,7 +16,7 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 ネイティブ実行ファイルの調査は[REA + Ghidra](tools/rea/README_ja.md)を標準ツールとして使用します。REA MCPは関数・文字列・参照先の解析と根拠付き出力を提供し、ScanClientの実行時観測とMinecraftの正確なビルド識別子で照合します。
 
-ScanClientはWindows x64の開発用DLLです。Minecraftプロセス内の読み取り可能な領域を低優先度の別スレッドから走査し、進捗・チェックポイント・候補JSONを `%USERPROFILE%\\Documents\\PEXData\\ScanClient\\<version>\\windows-x64` に保存します。PEセクション表・RVA配置の`mapped_image.bin`・Ghidra用インポートスクリプトに加え、読み取り可能なセクション範囲を個別の`.bin`へ保存します。読み取れないページはRVAイメージ内でゼロ埋めされ、メタデータに記録されます。発見したシグネチャやvtableは候補情報であり、ABI検証済みのSDK定義としては扱いません。詳細は[ScanClient README](exsample/ScanClient/README.md)を参照してください。
+ScanClientはWindows x64の開発用DLLです。Minecraft実行ファイルの`.text`・`.rdata`・`.pdata`だけを低優先度の別スレッドで読み取り、関係の薄いヒープや他モジュールは走査しません。ワールド／ディメンション関連文字列、その`.text`からのRIP相対参照候補、`.pdata`関数範囲、関数ポインタ表候補を`%USERPROFILE%\\Documents\\PEXData\\ScanClient\\<version>\\windows-x64`へ保存します。読み取り不能範囲はスキップ量とともに記録し、全選択セクションを保存できなければ出力をpartial扱いにします。候補はABI検証済みのSDK定義ではありません。詳細は[ScanClient README](exsample/ScanClient/README.md)を参照してください。
 
 ## Console / Logger API（必要なModだけ使用）
 

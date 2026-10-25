@@ -43,6 +43,29 @@ jobs:
             build/Release/BedrockClientLocator.dll
           if-no-files-found: error
 
+  scanclient-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ScanClient DLL
+        shell: pwsh
+        run: |
+          cmake -S exsample/ScanClient -B build-scanclient -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build ScanClient DLL
+        shell: pwsh
+        run: |
+          cmake --build build-scanclient --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path "build-scanclient/Release/ScanClient.dll")) {
+            throw "ScanClient.dll was not produced"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BedrockScanClient-windows-x64
+          path: build-scanclient/Release/ScanClient.dll
+          if-no-files-found: error
+
   gui-windows:
     runs-on: windows-latest
     steps:

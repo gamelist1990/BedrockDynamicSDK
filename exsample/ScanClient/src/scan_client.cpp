@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -25,11 +26,14 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -37,9 +41,11 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 namespace {
 constexpr SIZE_T kChunk = 64 * 1024;
-constexpr size_t kMaxFindings = 1500;
+constexpr uint64_t kMaxAnalysisSection = 256ull * 1024 * 1024;
+constexpr size_t kMaxFindings = 4096;
+constexpr size_t kMaxTableEntries = 256;
 std::atomic<bool> g_pause{false}, g_stop{false};
-std::atomic<uint64_t> g_done{0}, g_total{0}, g_failures{0}, g_regionsDone{0};
+std::atomic<uint64_t> g_done{0}, g_saved{0}, g_skipped{0}, g_total{0}, g_failures{0};
 std::mutex g_console;
 fs::path g_out;
 std::string g_version="unknown";
@@ -127,7 +133,6 @@ fs::path documentsRoot() {
     if(n&&n<path.size()) return fs::path(path.data())/L"Documents";
     return fs::current_path()/L"Documents";
 }
-struct Region { uintptr_t base{}; SIZE_T size{}; DWORD protect{}; DWORD type{}; };
 struct Section { std::string name; uint32_t rva{},virtualSize{},rawSize{},rawOffset{},characteristics{}; };
 std::vector<Section> readSections() {
     std::vector<Section> out;
@@ -175,41 +180,13 @@ const char* protectionName(DWORD p) {
       case PAGE_EXECUTE:return "execute-only"; case PAGE_EXECUTE_READ:return "execute-read";
       case PAGE_EXECUTE_READWRITE:return "execute-read-write"; case PAGE_EXECUTE_WRITECOPY:return "execute-copy-on-write"; default:return "unknown"; }
 }
-const char* memoryTypeName(DWORD t) { switch(t) { case MEM_IMAGE:return "image"; case MEM_MAPPED:return "mapped"; case MEM_PRIVATE:return "private"; default:return "unknown"; } }
 bool readable(DWORD p) {
     if(p&(PAGE_GUARD|PAGE_NOACCESS)) return false;
     switch(p&0xff) { case PAGE_READONLY: case PAGE_READWRITE: case PAGE_WRITECOPY:
       case PAGE_EXECUTE_READ: case PAGE_EXECUTE_READWRITE: case PAGE_EXECUTE_WRITECOPY: return true; default:return false; }
 }
-bool executable(DWORD p) {
-    switch(p&0xff) { case PAGE_EXECUTE: case PAGE_EXECUTE_READ: case PAGE_EXECUTE_READWRITE: case PAGE_EXECUTE_WRITECOPY:return true; default:return false; }
-}
-std::vector<Region> enumerateRegions() {
-    std::vector<Region> out; SYSTEM_INFO si{}; GetSystemInfo(&si);
-    uintptr_t p=reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress), end=reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
-    while(p<end) {
-        MEMORY_BASIC_INFORMATION m{}; if(!VirtualQuery(reinterpret_cast<void*>(p),&m,sizeof(m))) { p+=0x10000; continue; }
-        uintptr_t b=reinterpret_cast<uintptr_t>(m.BaseAddress); if(m.RegionSize==0||b>UINTPTR_MAX-m.RegionSize) break;
-        if(m.State==MEM_COMMIT&&readable(m.Protect)) out.push_back({b,m.RegionSize,m.Protect,m.Type});
-        p=b+m.RegionSize;
-    }
-    return out;
-}
-void exportMemoryMap(const std::vector<Region>& regions) {
-    json map={{"schema",1},{"process_id",GetCurrentProcessId()},{"module_base",hex(g_moduleBase)},
-        {"module_text_sha256",g_identity.textSha256},{"regions",json::array()}};
-    for(const auto& r:regions) {
-        json item={{"base",hex(r.base)},{"end",hex(r.base+r.size)},{"size",r.size},
-            {"protection",protectionName(r.protect)},{"protection_value",hex(r.protect)},
-            {"type",memoryTypeName(r.type)},{"type_value",hex(r.type)}};
-        const uintptr_t moduleEnd=g_moduleBase+g_identity.imageSize;
-        if(r.base<moduleEnd&&r.base+r.size>g_moduleBase) {
-            const uintptr_t lo=std::max(r.base,g_moduleBase),hi=std::min(r.base+r.size,moduleEnd);
-            item["module_rva_start"]=hex(lo-g_moduleBase); item["module_rva_end"]=hex(hi-g_moduleBase);
-        }
-        map["regions"].push_back(std::move(item));
-    }
-    atomicWrite(g_out/"memory_regions.json",map.dump(2));
+bool focusedSection(const std::string& name) {
+    return name==".text"||name==".rdata"||name==".pdata";
 }
 json exportModuleLayout(const std::vector<Section>& sections) {
     json layout={{"schema",1},{"module",{{"name","Minecraft.Windows.exe"},
@@ -223,21 +200,42 @@ json exportModuleLayout(const std::vector<Section>& sections) {
         {"characteristics",hex(s.characteristics)},{"readable_extents",json::array()}});
     return layout;
 }
-void dumpSectionMemory(json& layout,const std::vector<Section>& sections) {
+bool waitWhilePaused() {
+    while(g_pause.load()&&!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return !g_stop.load();
+}
+uint64_t focusedCaptureSize(const std::vector<Section>& sections) {
+    uint64_t total=0;
+    for(const auto& s:sections) if(focusedSection(s.name)) {
+        const uint64_t size=s.virtualSize?s.virtualSize:s.rawSize;
+        if(UINT64_MAX-total>=size) total+=size;
+    }
+    return total;
+}
+bool dumpSectionMemory(json& layout,const std::vector<Section>& sections) {
     const fs::path dir=g_out/"module_sections"; std::error_code ec; fs::create_directories(dir,ec);
+    if(ec) { ++g_failures; return false; }
     std::vector<uint8_t> buffer(kChunk);
+    uint64_t lastLog=0;
     for(size_t si=0;si<sections.size();++si) {
-        const auto& s=sections[si]; const uint64_t sectionSize=s.virtualSize?s.virtualSize:s.rawSize;
+        const auto& s=sections[si];
+        if(!focusedSection(s.name)) continue;
+        const uint64_t sectionSize=s.virtualSize?s.virtualSize:s.rawSize;
         if(s.rva>=g_identity.imageSize||sectionSize==0) continue;
         const uint64_t bounded=std::min<uint64_t>(sectionSize,g_identity.imageSize-s.rva);
         uintptr_t cursor=g_moduleBase+s.rva,end=cursor+static_cast<uintptr_t>(bounded); unsigned part=0;
         json extents=json::array();
-        while(cursor<end) {
+        while(cursor<end&&!g_stop.load()) {
             MEMORY_BASIC_INFORMATION mbi{};
-            if(!VirtualQuery(reinterpret_cast<const void*>(cursor),&mbi,sizeof(mbi))) { cursor+=0x1000; continue; }
+            if(!VirtualQuery(reinterpret_cast<const void*>(cursor),&mbi,sizeof(mbi))) {
+                ++g_failures;
+                const uint64_t skipped=std::min<uint64_t>(0x1000,end-cursor);
+                g_skipped.fetch_add(skipped); cursor+=static_cast<uintptr_t>(skipped); continue;
+            }
             const uintptr_t regionStart=reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            if(!mbi.RegionSize||regionStart>UINTPTR_MAX-mbi.RegionSize) { ++g_failures; break; }
             const uintptr_t regionEnd=regionStart+mbi.RegionSize;
-            if(!mbi.RegionSize||regionEnd<=cursor) break;
+            if(regionEnd<=cursor) { ++g_failures; break; }
             const uintptr_t next=std::min(end,regionEnd);
             if(mbi.State==MEM_COMMIT&&readable(mbi.Protect)) {
                 const uintptr_t extentStart=cursor; const SIZE_T extentSize=static_cast<SIZE_T>(next-cursor);
@@ -245,95 +243,357 @@ void dumpSectionMemory(json& layout,const std::vector<Section>& sections) {
                 const fs::path finalPath=dir/filename.str(); fs::path tempPath=finalPath; tempPath+=L".part";
                 std::ofstream out(tempPath,std::ios::binary|std::ios::trunc); bool ok=static_cast<bool>(out); SIZE_T done=0;
                 while(ok&&done<extentSize) {
+                    if(!waitWhilePaused()) { ok=false; break; }
                     const SIZE_T want=std::min<SIZE_T>(buffer.size(),extentSize-done); SIZE_T received=0;
                     const BOOL copied=ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(extentStart+done),buffer.data(),want,&received);
-                    if(!copied||received!=want) { ok=false; break; }
+                    if(!copied||received!=want) { ++g_failures; ok=false; break; }
                     out.write(reinterpret_cast<const char*>(buffer.data()),static_cast<std::streamsize>(received));
-                    if(!out) { ok=false; break; }
-                    done+=received; Sleep(1);
+                    if(!out) { ++g_failures; ok=false; break; }
+                    done+=received; g_done.fetch_add(received);
+                    if(g_done.load()-lastLog>=16*1024*1024) {
+                        lastLog=g_done.load();
+                        const uint64_t total=g_total.load();
+                        const double pct=total?100.0*double(lastLog)/double(total):100.0;
+                        log("[ScanClient] Focused module capture "+std::to_string(int(pct*100)/100.0)+"% | "+
+                            std::to_string(lastLog/1024/1024)+" / "+std::to_string(total/1024/1024)+" MiB");
+                    }
+                    Sleep(1);
                 }
                 out.flush(); if(!out) ok=false; out.close();
-                if(ok) {
+                if(ok&&done==extentSize) {
                     fs::rename(tempPath,finalPath,ec); if(ec) { fs::remove(finalPath,ec); ec.clear(); fs::rename(tempPath,finalPath,ec); }
                     ok=!ec;
                 }
+                if(!ok&&!g_stop.load()) {
+                    ++g_failures;
+                    g_skipped.fetch_add(extentSize);
+                }
                 if(!ok) fs::remove(tempPath,ec);
+                if(ok) g_saved.fetch_add(extentSize);
                 extents.push_back({{"rva",hex(extentStart-g_moduleBase)},{"loaded_va",hex(extentStart)},
                     {"size",extentSize},{"protection",protectionName(mbi.Protect)},
                     {"dump_file",ok?(fs::path("module_sections")/filename.str()).string():std::string{}},
                     {"dumped",ok}});
+                if(g_stop.load()) break;
+            } else {
+                g_skipped.fetch_add(next-cursor);
             }
             cursor=next;
         }
         layout["sections"][si]["readable_extents"]=std::move(extents);
+        atomicWrite(g_out/"module_layout.json",layout.dump(2));
+        if(g_stop.load()) break;
     }
     atomicWrite(g_out/"module_layout.json",layout.dump(2));
-}
-void dumpMappedImage(json& layout) {
-    const fs::path finalPath=g_out/"mapped_image.bin";
-    const fs::path tempPath=g_out/"mapped_image.bin.part";
-    std::ofstream out(tempPath,std::ios::binary|std::ios::trunc);
-    if(!out) { log("[ScanClient] Could not create mapped_image.bin."); return; }
-    std::vector<uint8_t> buffer(kChunk,0);
-    uint64_t copied=0, unreadable=0;
-    bool ok=true;
-    while(copied<g_identity.imageSize) {
-        const SIZE_T amount=static_cast<SIZE_T>(std::min<uint64_t>(buffer.size(),g_identity.imageSize-copied));
-        for(SIZE_T page=0;page<amount;) {
-            const SIZE_T pageBytes=std::min<SIZE_T>(0x1000,amount-page);
-            if(!safeRead(g_moduleBase+static_cast<uintptr_t>(copied+page),buffer.data()+page,pageBytes)) {
-                std::fill(buffer.begin()+page,buffer.begin()+page+pageBytes,0);
-                unreadable+=pageBytes;
-            }
-            page+=pageBytes;
-        }
-        out.write(reinterpret_cast<const char*>(buffer.data()),static_cast<std::streamsize>(amount));
-        if(!out) { ok=false; break; }
-        copied+=amount;
-        if((copied%(16*1024*1024))<amount) {
-            log("[ScanClient] Mapped image: "+std::to_string(copied/1024/1024)+" / "+std::to_string(g_identity.imageSize/1024/1024)+" MiB");
-        }
-        Sleep(1);
-    }
-    out.flush(); if(!out) ok=false; out.close();
-    std::error_code ec;
-    if(ok) { fs::rename(tempPath,finalPath,ec); if(ec) { fs::remove(finalPath,ec); ec.clear(); fs::rename(tempPath,finalPath,ec); } ok=!ec; }
-    if(!ok) { fs::remove(tempPath,ec); log("[ScanClient] Mapped image output incomplete; see output disk space/permissions."); }
-    layout["mapped_image"]={{"file","mapped_image.bin"},{"size",g_identity.imageSize},
-        {"layout","file offset equals RVA; unreadable ranges are zero-filled"},
-        {"unreadable_bytes_zero_filled",unreadable},{"complete",ok}};
-    atomicWrite(g_out/"module_layout.json",layout.dump(2));
-    if(ok) log("[ScanClient] Saved RVA-mapped image ("+std::to_string(unreadable)+" unreadable bytes zero-filled).");
+    return !g_stop.load();
 }
 void writeGhidraImportScript() {
     atomicWrite(g_out/"ghidra_import.py",kGhidraImportScript);
 }
-void saveProgress(const char* state,const std::vector<Region>& regions,size_t ri,SIZE_T off) {
-    json p={{"schema",1},{"state",state},{"version",g_version},{"pid",GetCurrentProcessId()},
-        {"module_text_sha256",g_identity.textSha256},{"bytes_scanned",g_done.load()},
-        {"bytes_total",g_total.load()},{"regions_total",regions.size()},{"regions_done",g_regionsDone.load()},
-        {"read_failures",g_failures.load()},{"current_region_index",ri},
-        {"current_region_base",ri<regions.size()?hex(regions[ri].base):"0x0"},
-        {"current_region_offset",off}};
+void saveProgress(const char* state) {
+    json p={{"schema",2},{"scope","Minecraft.Windows.exe PE sections only"},
+        {"state",state},{"version",g_version},{"pid",GetCurrentProcessId()},
+        {"module_sha256",g_identity.fileSha256},{"module_text_sha256",g_identity.textSha256},
+        {"bytes_read",g_done.load()},{"bytes_saved",g_saved.load()},{"bytes_skipped",g_skipped.load()},
+        {"bytes_total",g_total.load()},
+        {"read_failures",g_failures.load()}};
     atomicWrite(g_out/"progress.json",p.dump(2));
 }
-void saveCheckpoint(const std::vector<Region>& rs,size_t ri,SIZE_T off) {
-    json c={{"schema",1},{"pid",GetCurrentProcessId()},{"module_text_sha256",g_identity.textSha256},
-        {"version",g_version},{"region_index",ri},{"region_base",ri<rs.size()?hex(rs[ri].base):"0x0"},
-        {"region_size",ri<rs.size()?rs[ri].size:0},{"offset",off},
-        {"bytes_scanned",g_done.load()},{"note","Resume is accepted only in this same process with a matching game fingerprint."}};
-    atomicWrite(g_out/"checkpoint.json",c.dump(2));
+std::string bytePattern(const uint8_t* p,size_t n) {
+    std::ostringstream o;
+    for(size_t i=0;i<n;++i) { if(i) o<<' '; o<<std::hex<<std::uppercase<<std::setw(2)<<std::setfill('0')<<unsigned(p[i]); }
+    return o.str();
 }
-bool loadCheckpoint(const std::vector<Region>& rs,size_t& ri,SIZE_T& off) {
-    std::ifstream f(g_out/"checkpoint.json"); if(!f) return false;
-    try { json c=json::parse(f); if(c.value("pid",0u)!=GetCurrentProcessId()||c.value("module_text_sha256",std::string{})!=g_identity.textSha256) return false;
-        const size_t idx=c.value("region_index",size_t{}); if(idx>=rs.size()) return false;
-        if(c.value("region_base",std::string{})!=hex(rs[idx].base)||c.value("region_size",SIZE_T{})!=rs[idx].size) return false;
-        const auto cursor=c.value("offset",SIZE_T{}); if(cursor>rs[idx].size) return false;
-        ri=idx; off=cursor; g_done.store(c.value("bytes_scanned",uint64_t{})); return true;
-    } catch(...) { return false; }
+uint32_t parseHex32(const std::string& value) {
+    try { return static_cast<uint32_t>(std::stoul(value,nullptr,0)); } catch(...) { return 0; }
 }
-std::string bytePattern(const uint8_t* p,size_t n) { std::ostringstream o; for(size_t i=0;i<n;++i){if(i)o<<' ';o<<std::hex<<std::uppercase<<std::setw(2)<<std::setfill('0')<<unsigned(p[i]);}return o.str(); }
+std::vector<uint8_t> readCapturedSection(const Section& section,const json& layout) {
+    const uint64_t size=section.virtualSize?section.virtualSize:section.rawSize;
+    if(size==0||size>g_identity.imageSize-section.rva||size>kMaxAnalysisSection) {
+        ++g_failures;
+        return {};
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(size),0);
+    if(!layout.contains("sections")||!layout["sections"].is_array()) return {};
+    for(const auto& item:layout["sections"]) {
+        if(item.value("name",std::string{})!=section.name||!item.contains("readable_extents")) continue;
+        for(const auto& extent:item["readable_extents"]) {
+            if(!extent.value("dumped",false)) continue;
+            const uint32_t rva=parseHex32(extent.value("rva",std::string{}));
+            const uint64_t length=extent.value("size",uint64_t{});
+            if(rva<section.rva||length>size||uint64_t(rva-section.rva)>size-length) continue;
+            const fs::path path=g_out/extent.value("dump_file",std::string{});
+            std::ifstream file(path,std::ios::binary);
+            if(!file) { ++g_failures; continue; }
+            file.read(reinterpret_cast<char*>(bytes.data()+(rva-section.rva)),static_cast<std::streamsize>(length));
+            if(static_cast<uint64_t>(file.gcount())!=length) ++g_failures;
+        }
+        return bytes;
+    }
+    return {};
+}
+struct RuntimeFunction { uint32_t begin{},end{},unwind{}; };
+std::vector<RuntimeFunction> parseRuntimeFunctions(const std::vector<uint8_t>& pdata,const Section& text) {
+    std::vector<RuntimeFunction> functions;
+    const uint64_t textEnd=uint64_t(text.rva)+(text.rawSize?text.rawSize:text.virtualSize);
+    for(size_t offset=0;offset+sizeof(uint32_t)*3<=pdata.size()&&!g_stop.load();offset+=sizeof(uint32_t)*3) {
+        RuntimeFunction f{}; memcpy(&f.begin,pdata.data()+offset,4);
+        memcpy(&f.end,pdata.data()+offset+4,4); memcpy(&f.unwind,pdata.data()+offset+8,4);
+        if(f.begin>=text.rva&&f.end>f.begin&&f.end<=textEnd&&f.unwind<g_identity.imageSize)
+            functions.push_back(f);
+    }
+    std::sort(functions.begin(),functions.end(),[](const auto& a,const auto& b){return a.begin<b.begin;});
+    functions.erase(std::unique(functions.begin(),functions.end(),[](const auto& a,const auto& b){return a.begin==b.begin;}),functions.end());
+    return functions;
+}
+const RuntimeFunction* findRuntimeFunction(const std::vector<RuntimeFunction>& functions,uint32_t begin) {
+    const auto it=std::lower_bound(functions.begin(),functions.end(),begin,
+        [](const RuntimeFunction& f,uint32_t value){return f.begin<value;});
+    return it!=functions.end()&&it->begin==begin?&*it:nullptr;
+}
+std::vector<uint8_t> readCapturedTextPrefix(const Section& text,const json& layout,uint32_t rva,size_t length) {
+    std::vector<uint8_t> out;
+    if(!layout.contains("sections")||!layout["sections"].is_array()) return out;
+    for(const auto& item:layout["sections"]) {
+        if(item.value("name",std::string{})!=text.name||!item.contains("readable_extents")) continue;
+        for(const auto& extent:item["readable_extents"]) {
+            if(!extent.value("dumped",false)) continue;
+            const uint32_t extentRva=parseHex32(extent.value("rva",std::string{}));
+            const uint64_t extentSize=extent.value("size",uint64_t{});
+            if(rva<extentRva||uint64_t(rva-extentRva)>=extentSize) continue;
+            const size_t amount=static_cast<size_t>(std::min<uint64_t>(length,extentSize-(rva-extentRva)));
+            const fs::path path=g_out/extent.value("dump_file",std::string{});
+            std::ifstream file(path,std::ios::binary);
+            if(!file) return {};
+            file.seekg(static_cast<std::streamoff>(rva-extentRva));
+            out.resize(amount);
+            file.read(reinterpret_cast<char*>(out.data()),static_cast<std::streamsize>(amount));
+            if(static_cast<size_t>(file.gcount())!=amount) out.clear();
+            return out;
+        }
+        return out;
+    }
+    return out;
+}
+std::vector<std::string> matchingWorldTerms(const std::string& value) {
+    static constexpr std::array<std::string_view,17> terms={
+        "dimension","world","level","startgame","change_dimension","changedimension",
+        "dimensiondata","respawn","transfer","disconnect","reconnect","networkhandler",
+        "network handler","session","packet","unload","playerdimension"};
+    std::string lower=value;
+    std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    std::vector<std::string> matches;
+    for(const auto term:terms) if(lower.find(term)!=std::string::npos) matches.emplace_back(term);
+    return matches;
+}
+const RuntimeFunction* findContainingRuntimeFunction(const std::vector<RuntimeFunction>& functions,uint32_t rva) {
+    const auto it=std::upper_bound(functions.begin(),functions.end(),rva,
+        [](uint32_t value,const RuntimeFunction& f){return value<f.begin;});
+    if(it==functions.begin()) return nullptr;
+    const auto& candidate=*std::prev(it);
+    return rva<candidate.end?&candidate:nullptr;
+}
+size_t ripRelativeDisplacementOffset(const uint8_t* bytes,size_t size,size_t offset) {
+    size_t pos=offset, prefixCount=0; bool addressOverride=false;
+    while(pos<size&&prefixCount<4) {
+        const uint8_t b=bytes[pos];
+        if((b>=0x40&&b<=0x4f)||b==0x66||b==0xf2||b==0xf3) { ++pos; ++prefixCount; continue; }
+        if(b==0x67) { addressOverride=true; ++pos; ++prefixCount; continue; }
+        break;
+    }
+    if(addressOverride||pos>=size) return 0;
+    const uint8_t opcode=bytes[pos++];
+    if(opcode==0x0f) {
+        if(pos>=size) return 0;
+        const uint8_t second=bytes[pos++];
+        switch(second) {
+        case 0x10: case 0x11: case 0x28: case 0x29: case 0x2e: case 0x2f:
+        case 0x40: case 0x41: case 0x42: case 0x43: case 0x44: case 0x45:
+        case 0x46: case 0x47: case 0xaf: case 0xb6: case 0xb7: case 0xbe: case 0xbf:
+            break;
+        default: return 0;
+        }
+    } else {
+        switch(opcode) {
+        case 0x01: case 0x03: case 0x08: case 0x09: case 0x0a: case 0x0b:
+        case 0x21: case 0x23: case 0x29: case 0x2b: case 0x31: case 0x33:
+        case 0x38: case 0x39: case 0x3a: case 0x3b: case 0x80: case 0x81:
+        case 0x83: case 0x84: case 0x85: case 0x86: case 0x87: case 0x88:
+        case 0x89: case 0x8a: case 0x8b: case 0x8d: case 0xc6: case 0xc7:
+        case 0xf6: case 0xf7: case 0xfe: case 0xff:
+            break;
+        default: return 0;
+        }
+    }
+    if(pos+5>size) return 0;
+    const uint8_t modrm=bytes[pos++];
+    if((modrm&0xc7)!=0x05) return 0; // mod=00, r/m=101: RIP-relative memory operand.
+    return pos;
+}
+void addFilteredString(const std::string& value,uint32_t rva,const char* encoding,json& strings,json& rtti) {
+    if(value.size()<5||value.size()>512||strings.size()>=kMaxFindings) return;
+    const auto matches=matchingWorldTerms(value);
+    if(matches.empty()) return;
+    strings.push_back({{"rva",hex(rva)},{"address",hex(g_moduleBase+rva)},
+        {"encoding",encoding},{"value",value},{"matched_terms",matches},{"status","observed-string"}});
+    if(value.find(".?AV")!=std::string::npos||value.find(".?AU")!=std::string::npos||value.find(".?AT")!=std::string::npos) {
+        if(rtti.size()<kMaxFindings) rtti.push_back({{"rva",hex(rva)},{"address",hex(g_moduleBase+rva)},
+            {"value",value},{"status","RTTI-name-string-candidate; descriptor relationship unverified"}});
+    }
+}
+void collectFilteredStrings(const std::vector<uint8_t>& data,const Section& section,json& strings,json& rtti) {
+    for(size_t i=0;i<data.size()&&strings.size()<kMaxFindings&&!g_stop.load();) {
+        if(data[i]>=0x20&&data[i]<=0x7e&&i+1<data.size()&&data[i+1]==0) {
+            size_t j=i; std::string value;
+            while(j+1<data.size()&&data[j]>=0x20&&data[j]<=0x7e&&data[j+1]==0&&value.size()<512) {
+                value.push_back(static_cast<char>(data[j])); j+=2;
+            }
+            if(value.size()>=5) addFilteredString(value,section.rva+static_cast<uint32_t>(i),"utf-16le",strings,rtti);
+            i=std::max(j,i+1); continue;
+        }
+        if(data[i]>=0x20&&data[i]<=0x7e) {
+            size_t j=i; while(j<data.size()&&data[j]>=0x20&&data[j]<=0x7e&&j-i<512) ++j;
+            if(j-i>=5) addFilteredString(std::string(reinterpret_cast<const char*>(data.data()+i),j-i),
+                section.rva+static_cast<uint32_t>(i),"ascii",strings,rtti);
+            i=std::max(j,i+1); continue;
+        }
+        ++i;
+    }
+}
+std::string nearbyAsciiContext(const std::vector<uint8_t>& data,size_t offset) {
+    const size_t begin=offset>128?offset-128:0;
+    std::vector<std::string> runs;
+    for(size_t i=begin;i<offset;) {
+        if(data[i]>=0x20&&data[i]<=0x7e) {
+            size_t j=i; while(j<offset&&data[j]>=0x20&&data[j]<=0x7e&&j-i<128) ++j;
+            if(j-i>=4) runs.emplace_back(reinterpret_cast<const char*>(data.data()+i),j-i);
+            i=std::max(j,i+1);
+        } else ++i;
+    }
+    std::string context;
+    for(const auto& run:runs) { if(!context.empty()) context+=" | "; context+=run; }
+    return context;
+}
+void collectFunctionPointerTables(const std::vector<uint8_t>& data,const Section& rdata,const Section& text,
+    const std::vector<RuntimeFunction>& functions,const json& layout,json& tables,json& signatures,
+    std::unordered_set<uint32_t>& emittedFunctions) {
+    const uintptr_t textStart=g_moduleBase+text.rva;
+    const uintptr_t textEnd=textStart+(text.rawSize?text.rawSize:text.virtualSize);
+    const size_t alignment=(8-(rdata.rva&7))&7;
+    for(size_t i=alignment;i+4*sizeof(uint64_t)<=data.size()&&tables.size()<kMaxFindings&&!g_stop.load();) {
+        uint64_t first=0; memcpy(&first,data.data()+i,sizeof(first));
+        if(first<textStart||first>=textEnd) { i+=8; continue; }
+        const size_t tableStart=i; std::vector<uint32_t> targets; size_t functionStarts=0;
+        while(i+sizeof(uint64_t)<=data.size()&&targets.size()<kMaxTableEntries) {
+            uint64_t value=0; memcpy(&value,data.data()+i,sizeof(value));
+            if(value<textStart||value>=textEnd) break;
+            const uint32_t target=static_cast<uint32_t>(value-g_moduleBase);
+            targets.push_back(target);
+            if(findRuntimeFunction(functions,target)) ++functionStarts;
+            i+=sizeof(uint64_t);
+        }
+        const size_t minimumStarts=std::max<size_t>(3,(targets.size()+1)/2);
+        if(targets.size()<4||functionStarts<minimumStarts) { i=tableStart+sizeof(uint64_t); continue; }
+        const uint32_t tableRva=rdata.rva+static_cast<uint32_t>(tableStart);
+        const double ratio=targets.empty()?0.0:double(functionStarts)/double(targets.size());
+        json entries=json::array();
+        for(size_t entry=0;entry<targets.size();++entry) {
+            const auto* fn=findRuntimeFunction(functions,targets[entry]);
+            entries.push_back({{"index",entry},{"function_rva",hex(targets[entry])},
+                {"function_range_verified_by_pdata",fn!=nullptr},
+                {"end_rva",fn?hex(fn->end):std::string{}}});
+            if(!fn||!emittedFunctions.insert(fn->begin).second||signatures.size()>=kMaxFindings) continue;
+            const size_t sampleSize=std::min<size_t>(48,fn->end-fn->begin);
+            const auto sample=readCapturedTextPrefix(text,layout,fn->begin,sampleSize);
+            if(sample.empty()) continue;
+            signatures.push_back({{"rva",hex(fn->begin)},{"end_rva",hex(fn->end)},
+                {"function_size",fn->end-fn->begin},{"sample_length",sample.size()},
+                {"byte_prefix",bytePattern(sample.data(),sample.size())},
+                {"status","exact-build function prefix; uniqueness and ABI unverified"}});
+        }
+        tables.push_back({{"rva",hex(tableRva)},{"address",hex(g_moduleBase+tableRva)},
+            {"entry_count",targets.size()},{"pdata_function_start_count",functionStarts},
+            {"pdata_start_ratio",ratio},{"classification","function-pointer-table-candidate"},
+            {"vtable_status","unverified; class/type metadata not established"},
+            {"nearby_ascii_context",nearbyAsciiContext(data,tableStart)},{"entries",std::move(entries)}});
+    }
+}
+json collectWorldTransitionReferences(const Section& text,
+    const std::vector<RuntimeFunction>& functions,const json& layout,const json& strings,
+    json& signatures,std::unordered_set<uint32_t>& emittedFunctions) {
+    std::unordered_map<uint32_t,size_t> stringByRva;
+    for(size_t i=0;i<strings.size();++i) stringByRva.emplace(parseHex32(strings[i].value("rva",std::string{})),i);
+    json references=json::array();
+    if(stringByRva.empty()||!layout.contains("sections")||!layout["sections"].is_array()) return references;
+    constexpr size_t chunkSize=1024*1024, overlap=16;
+    std::vector<uint8_t> buffer(chunkSize+overlap);
+    std::unordered_set<uint64_t> emittedReferences;
+    for(const auto& sectionLayout:layout["sections"]) {
+        if(sectionLayout.value("name",std::string{})!=".text"||!sectionLayout.contains("readable_extents")) continue;
+        for(const auto& extent:sectionLayout["readable_extents"]) {
+            if(!extent.value("dumped",false)) continue;
+            const uint32_t extentRva=parseHex32(extent.value("rva",std::string{}));
+            const uint64_t extentSize=extent.value("size",uint64_t{});
+            std::ifstream file(g_out/extent.value("dump_file",std::string{}),std::ios::binary);
+            if(!file) { ++g_failures; continue; }
+            uint64_t consumed=0; size_t carry=0;
+            while(consumed<extentSize&&references.size()<kMaxFindings&&!g_stop.load()) {
+                if(!waitWhilePaused()) break;
+                const size_t request=static_cast<size_t>(std::min<uint64_t>(chunkSize,extentSize-consumed));
+                file.read(reinterpret_cast<char*>(buffer.data()+carry),static_cast<std::streamsize>(request));
+                const size_t received=static_cast<size_t>(file.gcount());
+                if(received!=request) { ++g_failures; break; }
+                const size_t available=carry+received;
+                const uint64_t windowRva=uint64_t(extentRva)+consumed-carry;
+                for(size_t i=0;i<available&&references.size()<kMaxFindings;++i) {
+                    const size_t displacement=ripRelativeDisplacementOffset(buffer.data(),available,i);
+                    if(!displacement) continue;
+                    int32_t relative=0; memcpy(&relative,buffer.data()+displacement,sizeof(relative));
+                    const uint64_t nextRva=windowRva+displacement+sizeof(relative);
+                    const int64_t targetSigned=static_cast<int64_t>(nextRva)+relative;
+                    if(targetSigned<0||targetSigned>UINT32_MAX) continue;
+                    const uint32_t targetRva=static_cast<uint32_t>(targetSigned);
+                    const auto stringIt=stringByRva.find(targetRva);
+                    if(stringIt==stringByRva.end()) continue;
+                    const uint32_t instructionRva=static_cast<uint32_t>(windowRva+i);
+                    const uint64_t referenceKey=(uint64_t(instructionRva)<<32)|targetRva;
+                    if(!emittedReferences.insert(referenceKey).second) continue;
+                    const RuntimeFunction* fn=findContainingRuntimeFunction(functions,instructionRva);
+                    const size_t instructionSize=displacement+sizeof(relative)-i;
+                    const size_t sampleSize=std::min<size_t>(16,available-i);
+                    json item={{"instruction_rva",hex(instructionRva)},
+                        {"instruction_address",hex(g_moduleBase+instructionRva)},
+                        {"instruction_bytes",bytePattern(buffer.data()+i,sampleSize)},
+                        {"target_string_rva",hex(targetRva)},
+                        {"target_string",strings[stringIt->second].value("value",std::string{})},
+                        {"encoding",strings[stringIt->second].value("encoding",std::string{})},
+                        {"instruction_length_lower_bound",instructionSize},
+                        {"reference_kind","recognized x64 RIP-relative memory operand; decoder is intentionally partial"},
+                        {"function_rva",fn?hex(fn->begin):std::string{}},
+                        {"function_end_rva",fn?hex(fn->end):std::string{}},
+                        {"function_boundary_source",fn?".pdata runtime-function range":"unmatched"},
+                        {"status","static-reference candidate; call path and world-change semantics unverified"}};
+                    references.push_back(std::move(item));
+                    if(fn&&emittedFunctions.insert(fn->begin).second&&signatures.size()<kMaxFindings) {
+                        const auto prefix=readCapturedTextPrefix(text,layout,fn->begin,
+                            std::min<size_t>(48,fn->end-fn->begin));
+                        if(!prefix.empty()) signatures.push_back({{"rva",hex(fn->begin)},
+                            {"end_rva",hex(fn->end)},{"function_size",fn->end-fn->begin},
+                            {"sample_length",prefix.size()},{"byte_prefix",bytePattern(prefix.data(),prefix.size())},
+                            {"source","world-transition string reference"},
+                            {"status","exact-build function prefix; uniqueness and ABI unverified"}});
+                    }
+                }
+                consumed+=received;
+                carry=std::min(overlap,available);
+                memmove(buffer.data(),buffer.data()+available-carry,carry);
+            }
+            if(g_stop.load()||references.size()>=kMaxFindings) break;
+        }
+        break;
+    }
+    return references;
+}
 std::string sha256(std::string_view data) {
     BCRYPT_ALG_HANDLE algorithm=nullptr; BCRYPT_HASH_HANDLE hash=nullptr;
     DWORD objectSize=0,returned=0; std::string digest;
@@ -348,25 +608,11 @@ done:
     if(hash) BCryptDestroyHash(hash); if(algorithm) BCryptCloseAlgorithmProvider(algorithm,0);
     return digest;
 }
-json loadItems(const fs::path& path,const char* field) {
-    try { std::ifstream f(path); if(!f) return json::array(); auto doc=json::parse(f);
-        if(doc.value("module_text_sha256",std::string{})!=g_identity.textSha256||!doc.contains(field)||!doc[field].is_array()) return json::array();
-        return doc[field];
-    } catch(...) { return json::array(); }
-}
-void saveFindings(const json& signatures,const json& strings,const json& vtables) {
-    const auto provenance=json{{"schema",1},{"module_text_sha256",g_identity.textSha256},{"version",g_version}};
-    auto sig=provenance; sig["status"]="candidate-only"; sig["items"]=signatures;
-    auto str=provenance; str["status"]="observations"; str["items"]=strings;
-    auto vt=provenance; vt["status"]="heuristic-candidates"; vt["items"]=vtables;
-    atomicWrite(g_out/"signatures.json",sig.dump(2));
-    atomicWrite(g_out/"strings.json",str.dump(2));
-    atomicWrite(g_out/"vtable_candidates.json",vt.dump(2));
-}
-
 void scan() {
     SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_BELOW_NORMAL);
+    g_done.store(0); g_saved.store(0); g_skipped.store(0); g_failures.store(0);
     g_identity={};
+    log("[ScanClient] Fingerprinting Minecraft headers and .text; unrelated process memory is excluded.");
     const auto sections=readSections();
     if(sections.empty()||g_identity.textSha256.empty()) { log("[ScanClient] Safe PE inspection failed; scan cancelled."); return; }
     g_version=detectVersion();
@@ -374,111 +620,75 @@ void scan() {
     std::error_code ec; fs::create_directories(g_out,ec);
     log("[ScanClient] Minecraft "+g_version+" | fingerprint "+g_identity.textSha256.substr(0,16));
     log("[ScanClient] Output: "+g_out.string());
+    g_total.store(focusedCaptureSize(sections));
+    log("[ScanClient] Scope: Minecraft .text/.rdata/.pdata only; private and unrelated process memory is excluded.");
     auto moduleLayout=exportModuleLayout(sections);
-    dumpSectionMemory(moduleLayout,sections);
-    dumpMappedImage(moduleLayout);
+    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
+    const bool captureFinished=dumpSectionMemory(moduleLayout,sections);
+    atomicWrite(g_out/"module_layout.json",moduleLayout.dump(2));
     writeGhidraImportScript();
-    auto regions=enumerateRegions(); uint64_t total=0;
-    exportMemoryMap(regions);
-    for(const auto& r:regions) if(UINT64_MAX-total>=r.size) total+=r.size;
-    g_total.store(total); if(regions.empty()) { log("[ScanClient] No readable committed memory regions."); return; }
-    size_t ri=0; SIZE_T offset=0; bool resumed=loadCheckpoint(regions,ri,offset);
-    if(resumed) log("[ScanClient] Resuming saved cursor."); else log("[ScanClient] Starting a fresh scan (checkpoint identity/layout did not match).");
+    if(!captureFinished||g_stop.load()) {
+        saveProgress("stopped");
+        log("[ScanClient] Focused capture stopped. Use restart to begin it again from the start.");
+        return;
+    }
+    const Section* textSection=nullptr; const Section* rdataSection=nullptr; const Section* pdataSection=nullptr;
+    for(const auto& section:sections) {
+        if(section.name==".text") textSection=&section;
+        else if(section.name==".rdata") rdataSection=&section;
+        else if(section.name==".pdata") pdataSection=&section;
+    }
+    if(!textSection||!rdataSection||!pdataSection) {
+        saveProgress("incomplete"); log("[ScanClient] Required PE sections were not present."); return;
+    }
+    log("[ScanClient] Indexing .pdata function ranges and filtering .rdata strings/pointer tables.");
+    auto pdataBytes=readCapturedSection(*pdataSection,moduleLayout);
+    const auto runtimeFunctions=parseRuntimeFunctions(pdataBytes,*textSection);
+    std::vector<uint8_t>().swap(pdataBytes);
+    const auto rdataBytes=readCapturedSection(*rdataSection,moduleLayout);
+    json strings=json::array(), rtti=json::array(), tables=json::array(), signatures=json::array();
+    collectFilteredStrings(rdataBytes,*rdataSection,strings,rtti);
+    std::unordered_set<uint32_t> emittedFunctions;
+    const auto references=collectWorldTransitionReferences(*textSection,runtimeFunctions,moduleLayout,
+        strings,signatures,emittedFunctions);
+    collectFunctionPointerTables(rdataBytes,*rdataSection,*textSection,runtimeFunctions,moduleLayout,
+        tables,signatures,emittedFunctions);
+    if(g_stop.load()) { saveProgress("stopped"); log("[ScanClient] Focused analysis stopped."); return; }
 
-    json signatures=json::array(), strings=json::array(), paths=json::array(), rtti=json::array(), vtables=json::array();
-    if(resumed) {
-        signatures=loadItems(g_out/"signatures.json","items");
-        strings=loadItems(g_out/"strings.json","items");
-        paths=loadItems(g_out/"paths.json","items");
-        rtti=loadItems(g_out/"rtti_candidates.json","items");
-        vtables=loadItems(g_out/"vtable_candidates.json","items");
-    }
-    std::vector<std::pair<uintptr_t,uintptr_t>> execRanges;
-    for(const auto& r:regions) if(executable(r.protect)) execRanges.emplace_back(r.base,r.base+r.size);
-    auto pointsIntoCode=[&](uintptr_t address) {
-        auto it=std::upper_bound(execRanges.begin(),execRanges.end(),address,
-            [](uintptr_t v,const auto& range){return v<range.first;});
-        if(it==execRanges.begin()) return false;
-        --it; return address>=it->first&&address<it->second;
-    };
-    uint64_t lastCheckpoint=g_done.load(), lastProgress=0; auto start=std::chrono::steady_clock::now();
-    std::vector<uint8_t> buffer(kChunk);
-    for(;ri<regions.size()&&!g_stop.load();++ri,offset=0) {
-        const auto& r=regions[ri];
-        while(offset<r.size&&!g_stop.load()) {
-            if(g_pause.load()) saveProgress("paused",regions,ri,offset);
-            while(g_pause.load()&&!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            if(g_stop.load()) break;
-            const SIZE_T want=std::min<SIZE_T>(buffer.size(),r.size-offset); SIZE_T got=0;
-            BOOL ok=ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(r.base+offset),buffer.data(),want,&got);
-            if(!ok||got==0) { ++g_failures; offset+=want; g_done.fetch_add(want); continue; }
-            const auto* data=buffer.data();
-            // Executable byte windows are useful signature seeds, not unique or ABI-verified signatures.
-            if(executable(r.protect)) {
-                for(SIZE_T at=0;at+24<=got&&signatures.size()<kMaxFindings;at+=4096) {
-                    signatures.push_back({{"address",hex(r.base+offset+at)},{"bytes",bytePattern(data+at,24)},
-                        {"length",24},{"status","candidate"},{"source","readable executable memory"}});
-                }
-            }
-            // Collect bounded printable UTF-8/ASCII observations with provenance.
-            for(SIZE_T i=0;i<got&&strings.size()<kMaxFindings;) {
-                if(data[i]>=0x20&&data[i]<=0x7e) { SIZE_T j=i; while(j<got&&data[j]>=0x20&&data[j]<=0x7e&&j-i<512) ++j;
-                    if(j-i>=10) { std::string s(reinterpret_cast<const char*>(data+i),j-i);
-                        const auto item=json{{"address",hex(r.base+offset+i)},{"value",s},{"source","readable process memory"}};
-                        strings.push_back(item);
-                        if(paths.size()<kMaxFindings&&(s.find('/')!=std::string::npos||s.find('\\')!=std::string::npos||s.find(".dll")!=std::string::npos||s.find(".exe")!=std::string::npos||s.find(".json")!=std::string::npos)) paths.push_back(item);
-                        if(rtti.size()<kMaxFindings&&(s.find(".?AV")!=std::string::npos||s.find(".?AU")!=std::string::npos||s.find("class ")!=std::string::npos||s.find("struct ")!=std::string::npos)) rtti.push_back(item);
-                    }
-                    i=std::max(j,i+1);
-                } else ++i;
-            }
-            // Heuristic vtable candidates: 4+ consecutive pointers into executable pages.
-            const DWORD prot=r.protect&0xff;
-            if(prot==PAGE_READONLY||prot==PAGE_READWRITE||prot==PAGE_WRITECOPY) {
-                const SIZE_T aligned=(8-(offset&7))&7;
-                for(SIZE_T i=aligned;i+32<=got&&vtables.size()<kMaxFindings;i+=8) {
-                    unsigned run=0; for(;run<8&&i+(run+1)*8<=got;++run) {
-                        uintptr_t value=0; memcpy(&value,data+i+run*8,8);
-                        if(!pointsIntoCode(value)) break;
-                    }
-                    if(run>=4) { vtables.push_back({{"address",hex(r.base+offset+i)},{"entries",run},
-                        {"status","candidate"},{"evidence","consecutive pointers target executable committed pages"}}); i+=(run-1)*8; }
-                }
-            }
-            offset+=got; g_done.fetch_add(got); g_regionsDone.store(ri);
-            const uint64_t done=g_done.load();
-            if(done-lastCheckpoint>=16*1024*1024) { saveFindings(signatures,strings,vtables);
-                atomicWrite(g_out/"paths.json",json({{"schema",1},{"module_text_sha256",g_identity.textSha256},{"status","observations"},{"items",paths}}).dump(2));
-                atomicWrite(g_out/"rtti_candidates.json",json({{"schema",1},{"module_text_sha256",g_identity.textSha256},{"status","heuristic-candidates"},{"items",rtti}}).dump(2));
-                saveCheckpoint(regions,ri,offset); lastCheckpoint=done; }
-            if(done-lastProgress>=4*1024*1024) {
-                saveProgress("scanning",regions,ri,offset); lastProgress=done;
-                const double pct=total?100.0*double(done)/double(total):100.0;
-                const auto secs=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-                log("[ScanClient] "+std::to_string(int(pct*100)/100.0)+"% | "+std::to_string(done/1024/1024)+" / "+std::to_string(total/1024/1024)+" MiB | region "+std::to_string(ri+1)+"/"+std::to_string(regions.size())+" | read failures "+std::to_string(g_failures.load())+" | "+std::to_string(secs>0?uint64_t(done/secs/1024/1024):0)+" MiB/s");
-            }
-            if(!ok||got<want) { ++g_failures; }
-            Sleep(1);
-        }
-    }
-    saveFindings(signatures,strings,vtables);
-    atomicWrite(g_out/"paths.json",json({{"schema",1},{"module_text_sha256",g_identity.textSha256},{"status","observations"},{"items",paths}}).dump(2));
-    atomicWrite(g_out/"rtti_candidates.json",json({{"schema",1},{"module_text_sha256",g_identity.textSha256},{"status","heuristic-candidates"},{"items",rtti}}).dump(2));
-    saveCheckpoint(regions,ri,offset);
-    const bool complete=!g_stop.load()&&ri>=regions.size();
+    const json provenance={{"schema",2},{"scope","Minecraft.Windows.exe .rdata/.pdata only"},
+        {"version",g_version},{"module_sha256",g_identity.fileSha256},
+        {"module_text_sha256",g_identity.textSha256}};
+    auto stringsDoc=provenance; stringsDoc["status"]="filtered-observations"; stringsDoc["items"]=strings;
+    auto rttiDoc=provenance; rttiDoc["status"]="name-candidates-only"; rttiDoc["items"]=rtti;
+    auto tablesDoc=provenance; tablesDoc["status"]="function-pointer-table-candidates"; tablesDoc["items"]=tables;
+    auto referencesDoc=provenance; referencesDoc["status"]="static-reference-candidates"; referencesDoc["items"]=references;
+    auto signaturesDoc=provenance; signaturesDoc["status"]="exact-build-prefix-candidates"; signaturesDoc["items"]=signatures;
+    atomicWrite(g_out/"world_transition_strings.json",stringsDoc.dump(2));
+    atomicWrite(g_out/"world_transition_references.json",referencesDoc.dump(2));
+    atomicWrite(g_out/"rtti_name_candidates.json",rttiDoc.dump(2));
+    atomicWrite(g_out/"function_pointer_tables.json",tablesDoc.dump(2));
+    atomicWrite(g_out/"signatures.json",signaturesDoc.dump(2));
+
+    const bool complete=!g_stop.load()&&g_failures.load()==0&&g_skipped.load()==0&&g_saved.load()==g_total.load();
     json target={{"product","minecraft-bedrock"},{"kind","client"},{"platform","windows"},{"arch","x64"},
         {"version",g_version},{"sha256",g_identity.fileSha256},{"text_sha256",g_identity.textSha256},
         {"image_base",hex(g_preferredBase)},{"size_of_image",g_identity.imageSize},
         {"text_rva",hex(g_identity.textRva)},{"text_size",g_identity.textSize}};
     json profile={{"schema",1},{"target",target},{"symbols",json::object()},
-        {"analysis",{{"scan_client",{{"status","candidate-only"},{"complete",complete},{"memory_regions",regions.size()},
-            {"bytes_scanned",g_done.load()},{"read_failures",g_failures.load()},
-            {"candidate_files",{{"signatures","signatures.json"},{"strings","strings.json"},{"paths","paths.json"},
-                {"rtti","rtti_candidates.json"},{"vtables","vtable_candidates.json"},
-                {"module_layout","module_layout.json"},{"memory_regions","memory_regions.json"},
-                {"module_section_dumps","module_sections/"},{"mapped_image","mapped_image.bin"},
+        {"analysis",{{"scan_client",{{"status","candidate-only"},{"complete",complete},
+            {"scope","Minecraft.Windows.exe PE sections .text, .rdata, .pdata only"},
+            {"bytes_read",g_done.load()},{"bytes_total",g_total.load()},{"read_failures",g_failures.load()},
+            {"bytes_saved",g_saved.load()},{"bytes_skipped",g_skipped.load()},
+            {"runtime_functions_from_pdata",runtimeFunctions.size()},
+            {"candidate_counts",{{"world_transition_strings",strings.size()},{"rtti_name_candidates",rtti.size()},
+                {"world_transition_references",references.size()},
+                {"function_pointer_tables",tables.size()},{"function_prefixes",signatures.size()}}},
+            {"candidate_files",{{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
+                {"world_transition_references","world_transition_references.json"},
+                {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
+                {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
                 {"ghidra_import","ghidra_import.py"}}},
-            {"note","Automated memory observations are not ABI verification."}}}}}};
+            {"note","The process-wide scan was removed. World-transition string references use a partial x64 RIP-relative decoder; strings, references, function-pointer tables, signatures, RTTI names, and ABI remain candidates until static/runtime verification."}}}}}};
     const std::string profileText=profile.dump(2);
     atomicWrite(g_out/"windows-x64.json",profileText);
     const std::string profileHash=sha256(profileText);
@@ -486,18 +696,20 @@ void scan() {
         {"module_sha256",g_identity.fileSha256},{"symbols",0},
         {"module_text_sha256",g_identity.textSha256},{"size_of_image",g_identity.imageSize},
         {"text_rva",hex(g_identity.textRva)},{"text_size",g_identity.textSize},
-        {"rtti_candidates",rtti.size()},{"status",complete?"complete":"partial"}};
+        {"rtti_name_candidates",rtti.size()},{"status",complete?"complete":"partial"}};
     json versionProfiles={{"windows-x64",entry}};
     json versions={{g_version,versionProfiles}};
-    json files={{"signatures","signatures.json"},{"strings","strings.json"},{"paths","paths.json"},
-        {"rtti_candidates","rtti_candidates.json"},{"vtable_candidates","vtable_candidates.json"},
-        {"module_layout","module_layout.json"},{"memory_regions","memory_regions.json"},
-        {"module_section_dumps","module_sections/"},{"mapped_image","mapped_image.bin"},
+    json files={{"signatures","signatures.json"},{"world_transition_strings","world_transition_strings.json"},
+        {"world_transition_references","world_transition_references.json"},
+        {"rtti_name_candidates","rtti_name_candidates.json"},{"function_pointer_tables","function_pointer_tables.json"},
+        {"module_layout","module_layout.json"},{"module_section_dumps","module_sections/"},
         {"ghidra_import","ghidra_import.py"}};
-    json manifest={{"schema",1},{"tool","ScanClient"},{"versions",versions},{"files",files}};
+    json manifest={{"schema",2},{"tool","ScanClient"},{"versions",versions},{"files",files}};
     atomicWrite(g_out/"manifest.json",manifest.dump(2));
-    saveProgress(complete?"complete":"stopped",regions,ri,offset);
-    log(std::string("[ScanClient] ")+(complete?"Scan complete.":"Scan stopped; checkpoint saved.")+" Findings: signatures="+std::to_string(signatures.size())+", strings="+std::to_string(strings.size())+", vtable candidates="+std::to_string(vtables.size()));
+    saveProgress(complete?"complete":"partial");
+    log(std::string("[ScanClient] Focused scan ")+(complete?"complete.":"partial.")+" Findings: transition strings="+
+        std::to_string(strings.size())+", RTTI names="+std::to_string(rtti.size())+", function tables="+
+        std::to_string(tables.size())+", function prefixes="+std::to_string(signatures.size()));
 }
 
 DWORD WINAPI boot(void*) {
@@ -518,14 +730,16 @@ DWORD WINAPI boot(void*) {
     while(std::getline(std::cin,command)) {
         if(command=="pause") { g_pause.store(true); log("[ScanClient] Pause requested."); }
         else if(command=="resume") { g_pause.store(false); log("[ScanClient] Resuming."); }
-        else if(command=="stop") { g_stop.store(true); g_pause.store(false); log("[ScanClient] Stop requested; checkpoint will be saved."); }
-        else if(command=="status") { log("[ScanClient] "+std::to_string(g_done.load()/1024/1024)+" / "+std::to_string(g_total.load()/1024/1024)+" MiB | read failures="+std::to_string(g_failures.load())); }
+        else if(command=="stop") { g_stop.store(true); g_pause.store(false); log("[ScanClient] Stop requested; completed extents are retained in the output bundle."); }
+        else if(command=="status") { log("[ScanClient] read="+std::to_string(g_done.load()/1024/1024)+" MiB | saved="+
+            std::to_string(g_saved.load()/1024/1024)+" / "+std::to_string(g_total.load()/1024/1024)+
+            " MiB | skipped="+std::to_string(g_skipped.load()/1024/1024)+" MiB | failures="+std::to_string(g_failures.load())); }
         else if(command=="restart") {
             g_stop.store(true); g_pause.store(false);
             if(worker.joinable()) worker.join();
-            g_done.store(0); g_total.store(0); g_failures.store(0); g_regionsDone.store(0);
+            g_done.store(0); g_saved.store(0); g_skipped.store(0); g_total.store(0); g_failures.store(0);
             g_stop.store(false);
-            try { worker=std::thread(scanEntry); log("[ScanClient] Restarting from the last compatible checkpoint."); }
+            try { worker=std::thread(scanEntry); log("[ScanClient] Restarting the focused capture from the beginning."); }
             catch(const std::exception& e) { log(std::string("[ScanClient] Could not restart scan: ")+e.what()); }
             catch(...) { log("[ScanClient] Could not restart scan."); }
         }

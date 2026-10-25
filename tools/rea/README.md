@@ -72,7 +72,10 @@ SHA-256, provider, address/RVA, and confidence. REA pseudocode and names remain
 analysis evidence; ABI and structure layout must still be independently
 verified against the exact build and runtime observations.
 
-ScanClient's `mapped_image.bin` is an RVA-layout memory image, not a PE file.
-For REA's native PE workflow, point it at the original `Minecraft.Windows.exe`.
-Use ScanClient output to cross-check runtime values and loaded addresses; do
-not treat zero-filled unreadable pages as observed bytes.
+ScanClient captures only the Minecraft image's `.text`, `.rdata`, and `.pdata`
+sections as separate readable extents. Its filtered world-transition string
+references and function ranges are runtime-address evidence, not verified
+symbols. For REA's native PE workflow, point it at the original
+`Minecraft.Windows.exe`; use the ScanClient bundle to cross-check captured
+bytes and loaded addresses. Skipped or unreadable extents are not observed
+bytes.
