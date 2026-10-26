@@ -945,6 +945,42 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "Live revision2 user log: native build calls/returns4 and observed exact sandstone states4. Walls and hive sea_shells had successful type-compatible predictions but pre-placement state differed. Revision3 permits type-compatible proposals, uses named orientation when available, allows real observed supports before final connection states and candle/cluster count increases; completion still requires exact recorded state. Hive-specific server properties remain live-unverified."
     ],
     "revision": 3
+  },
+  "native_top": {
+    "schema": 1,
+    "revision": 1,
+    "status": "candidate",
+    "runtime_verified": false,
+    "command_vtable_rva": "0xE897420",
+    "command_offset": "0x30",
+    "gui_offset": "0x650",
+    "min_height_offset": "0x3A",
+    "max_height_offset": "0x38",
+    "command_get_id": {
+      "rva": "0x38e6cb0",
+      "entry_check": "B8 4D 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC 48 89 D0 48 8D 0D FD 3A",
+      "abi": "int __fastcall(CommandRequestPacket const*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "evidence": "Constant leaf EAX=77; adjacent getName returns CommandRequestPacket; table0xE897420. Packet payload+0x30 in ev_4097a24c921f54e8a8fcb9e61281a0c41e9fbcd465af646f8e7f2760c404f7f5."
+    },
+    "gui_getter": {
+      "rva": "0x5dc5830",
+      "entry_check": "56 57 53 48 83 EC 20 48 8B B9 50 06 00 00 48 85 FF 0F 84 94 00 00 00 0F",
+      "abi": "NotNullNonOwnerPtr<GuiData>* __fastcall(ClientInstance*, hidden_result*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "evidence": "IClientInstance slot217; reads ClientInstance+0x650. Returned raw GuiData pointer is result+0x10; ev_06cd0676a4f9439790988afdfe48f165bbb2f72b839908eae884b5c532d01f73."
+    },
+    "display_message": {
+      "rva": "0x1560ae0",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80 00 00 00 48",
+      "abi": "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "evidence": "GuiData displaySystemMessage candidate. Calling closure0x878310 passes message, empty optional, empty TTS and stack context4; ev_88e76570b9a11e33d34759c9436ebba76b71ad2ee98cc633c41c51331d64cd50. Raw x64 instruction/caller evidence required because raw slice decompiler uses gcc calling conventions."
+    },
+    "evidence": "SHA256 4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4; original PE .pdata ranges extracted and inspected through REA/Ghidra. Heights source+0x38 max exclusive/source+0x3A min inclusive in existing getBlock ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5. Runtime command routing, messages and teleport validation pending."
   }
 }
 )BDK_SYM_V1";

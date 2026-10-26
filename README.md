@@ -7,6 +7,7 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 公開サンプル：
 
+- [Top example](exsample/Top/README.md) — `/top`・`/top N` による安全な上方移動（1.26.52.3候補）
 - [SpeedBuilder example](exsample/SpeedBuilder/README.md) — お題の記録と消失差分による自動配置（1.26.52.3候補・実機未確認）
 
 - [BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)
