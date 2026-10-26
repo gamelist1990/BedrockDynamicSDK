@@ -203,6 +203,9 @@ struct Stats {
     std::size_t unsupported{}, confirmed{}, exhausted{}, attempts{}, dispatchFailures{};
     std::size_t remaining{};
 };
+struct PlacementScan {
+    unsigned visited{}, unknown{}, occupied{}, inFlight{}, cooldown{}, noSupport{}, dependency{}, outOfReach{}, missingItem{};
+};
 struct EyePosition { double x{}, y{}, z{}; };
 struct BuildFrame {
     WorldId world{};
@@ -407,6 +410,7 @@ public:
         if (phase_ != Phase::building) return std::nullopt;
         if (stepTick_ && *stepTick_ == frame.tick) return std::nullopt;
         stepTick_ = frame.tick;
+        scan_={};
         std::map<BlockPos,const Cell*> current;
         for (const auto& c : frame.cells)
             if (!current.emplace(c.position,&c).second) return std::nullopt;
@@ -415,44 +419,53 @@ public:
         for (std::size_t step = 0; step < budget; ++step) {
             auto& task = tasks_[cursor_++ % tasks_.size()];
             if (task.done || task.failed) continue;
+            ++scan_.visited;
             const auto target = current.find(task.cell.position);
             if (target != current.end() && sameState(task.cell,*target->second)) {
                 if(!task.inFlight || frame.tick-task.sent>=3)confirm(task);
                 continue;
             }
             if (task.inFlight) {
-                if (frame.tick-task.sent < options_.confirmationTicks) continue;
+                if (frame.tick-task.sent < options_.confirmationTicks) {++scan_.inFlight;continue;}
                 task.inFlight = false;
             }
             if (task.attempts >= options_.maxAttempts) { exhaust(task); continue; }
-            if (activeAction_ || (lastPlacement_ && frame.tick-*lastPlacement_ < options_.buildIntervalTicks)) continue;
-            if (target == current.end() || target->second->kind != CellKind::air) continue;
+            if (activeAction_ || (lastPlacement_ && frame.tick-*lastPlacement_ < options_.buildIntervalTicks)) {++scan_.cooldown;continue;}
+            if (target == current.end() || target->second->kind == CellKind::unknown) {++scan_.unknown;continue;}
+            if (target->second->kind != CellKind::air) {++scan_.occupied;continue;}
             auto recipe = *task.cell.placement;
             auto support = *supportPosition(task.cell);
             auto supportCell = current.find(support);
             if(task.cell.nativePlacementCandidate){
-                bool found=false;
+                bool found=false;double bestDistance=std::numeric_limits<double>::infinity();
                 for(unsigned candidate:{1u,2u,3u,4u,5u,0u}){auto c=task.cell;c.placement->face=static_cast<Face>(candidate);
                     auto pos=supportPosition(c);if(!pos)continue;auto it=current.find(*pos);
-                    if(it!=current.end()&&it->second->kind==CellKind::block&&it->second->supportsPlacement){
-                        support=*pos;supportCell=it;recipe.face=static_cast<Face>(candidate);found=true;break;}}
-                if(!found)continue;
+                    if(it==current.end()||it->second->kind!=CellKind::block||!it->second->supportsPlacement)continue;
+                    auto proposed=recipe;proposed.face=static_cast<Face>(candidate);
+                    proposed.hitX=candidate==4?0.f:candidate==5?1.f:.5f;
+                    proposed.hitY=candidate==0?0.f:candidate==1?1.f:.5f;
+                    proposed.hitZ=candidate==2?0.f:candidate==3?1.f:.5f;
+                    const double x=double(pos->x)+proposed.hitX-frame.eye.x,y=double(pos->y)+proposed.hitY-frame.eye.y,z=double(pos->z)+proposed.hitZ-frame.eye.z;
+                    const double distance=x*x+y*y+z*z;
+                    if(distance<bestDistance){bestDistance=distance;support=*pos;supportCell=it;recipe=proposed;found=true;}
+                }
+                if(!found){++scan_.noSupport;continue;}
             }
-            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||!supportCell->second->supportsPlacement)continue;
+            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||!supportCell->second->supportsPlacement){++scan_.noSupport;continue;}
             // A planned support is usable only after its exact state is observed.
             const auto dependency = std::find_if(tasks_.begin(),tasks_.end(),[&](const Task& t) {
                 return t.cell.position == support;
             });
-            if (dependency != tasks_.end() && !sameState(dependency->cell,*supportCell->second)) continue;
+            if (dependency != tasks_.end() && !sameState(dependency->cell,*supportCell->second)) {++scan_.dependency;continue;}
             const double dx = double(support.x)+recipe.hitX-frame.eye.x;
             const double dy = double(support.y)+recipe.hitY-frame.eye.y;
             const double dz = double(support.z)+recipe.hitZ-frame.eye.z;
             const double distance2 = dx*dx+dy*dy+dz*dz;
-            if (!std::isfinite(distance2) || distance2 > options_.maxReach*options_.maxReach) continue;
+            if (!std::isfinite(distance2) || distance2 > options_.maxReach*options_.maxReach) {++scan_.outOfReach;continue;}
             std::optional<unsigned> slot;
             for (unsigned i = 0; i < frame.hotbar.size(); ++i)
                 if (frame.hotbar[i].count && frame.hotbar[i].identifier == recipe.itemIdentifier) { slot = i; break; }
-            if (!slot) continue;
+            if (!slot) {++scan_.missingItem;continue;}
             const auto action = ++actionSequence_;
             ++task.attempts;
             ++stats_.attempts;
@@ -508,6 +521,7 @@ public:
     Phase phase() const { checkThread(); return phase_; }
     StopReason stopReason() const { checkThread(); return reason_; }
     Stats stats() const { checkThread(); return stats_; }
+    PlacementScan placementScan() const {checkThread();return scan_;}
 
 private:
     static std::uint64_t nextGeneration(){static std::atomic<std::uint64_t> counter{};return counter.fetch_add(1,std::memory_order_relaxed)+1;}
@@ -535,7 +549,7 @@ private:
         token_ = {world,nextGeneration()};
         phase_ = Phase::idle;
         reason_ = StopReason::none;
-        stats_ = {};
+        stats_ = {};scan_={};
         positions_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
         baselineHotbar_ = {};grantFloor_.clear();
         frozen_ = promptVisible_ = false;
@@ -588,6 +602,7 @@ private:
     std::thread::id owner_;
     SessionToken token_;
     std::uint64_t actionSequence_{};
+    PlacementScan scan_{};
     Phase phase_ = Phase::idle;
     StopReason reason_ = StopReason::none;
     Stats stats_;

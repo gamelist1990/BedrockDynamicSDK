@@ -490,7 +490,7 @@ void* checkedFunction(const nlohmann::json& j){
     const auto ptr=reinterpret_cast<const std::byte*>(base+rva);MEMORY_BASIC_INFORMATION mbi{};
     if(!VirtualQuery(ptr,&mbi,sizeof(mbi))||mbi.State!=MEM_COMMIT||!(mbi.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE)))throw std::runtime_error("native target not executable");
     for(std::size_t i=0;i<text.size();i+=3){std::uint8_t value{};const auto expected=std::stoul(text.substr(i,2),nullptr,16);
-        if(!read(ptr,i/3,value)||value!=expected)throw std::runtime_error("native entry guard mismatch");}
+        if(!read(ptr,i/3,value)||value!=expected)throw std::runtime_error("native entry guard mismatch at RVA="+std::to_string(rva)+" byte="+std::to_string(i/3)+" expected="+std::to_string(expected)+" observed="+std::to_string(value));}
     return const_cast<std::byte*>(ptr);
 }
 void prepareProfile(const std::string& profile){
@@ -590,7 +590,9 @@ void worker(const std::filesystem::path& path){
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
-            const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?((insideCubeReady.load()||insideBlockReady.load())?"inside-cube suppression installed; awaiting render counters":"unavailable; game mode unchanged"):"off")+" full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+            const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
+                " cube_hook="+(insideCubeReady.load()?"installed":"unavailable")+" permission_hook="+(insideBlockReady.load()?"installed":"unavailable")+
+                " visual_revision=2 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -614,7 +616,7 @@ DWORD WINAPI start(void*){
         if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_cube_render"))profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_cube_render") || nlohmann::json::parse(profile).at("native_freecam").at("visual").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");

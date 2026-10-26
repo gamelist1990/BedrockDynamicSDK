@@ -112,3 +112,15 @@ Hook設置成功と実際の透過成功は区別します。地下の見え方�
 `full_bright`はOptionsのガンマ取得Hookだけで上書きし、options.txtの値は保存変更しません。
 Hook競合や入口不一致の場合は、明るさ機能を使用せず理由をログへ出します。
 地中表示と描画方式ごとの明るさは実機未確認です。
+
+### 入口照合エラーの修正（定義 revision 2）
+
+前版のinside-cube入口列で、`lea rbp,[rsp+0x80]`のModR/Mを誤って登録していました。
+EXEから取得した正しい27バイトへ修正しました。入口照合は維持します。
+キャッシュに古い同名エントリがあっても、revision 2未満なら内蔵定義を使用します。
+`Freecam view`は`cube_hook`と`permission_hook`を別々に表示します。
+`visual_revision=2`で今回のDLLを識別できます。実際の地下表示は実機確認待ちです。
+
+Runtimeのsidecarがエラー126でも、`actual owner=4.3.0 ABI=4`が出ていれば
+ログに示されたロード済みModの互換ランタイムへ接続しています。
+更新したDLLの古いHookを残さないため、Minecraftを完全終了してから差し替えてください。

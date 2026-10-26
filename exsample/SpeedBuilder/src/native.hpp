@@ -52,7 +52,7 @@ struct Bindings{
         for(std::size_t i=0;i<guard.size();i+=3){unsigned char value{};if(!read(p,i/3,value)||value!=std::stoul(guard.substr(i,2),nullptr,16))throw std::runtime_error("native entry mismatch");}return p;
     }
     void load(const std::string& profile){const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_speed_builder");
-        if(f.at("schema")!=1)throw std::runtime_error("unsupported SpeedBuilder schema");
+        if(f.at("schema")!=1||f.value("revision",0)<2)throw std::runtime_error("unsupported SpeedBuilder schema");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+number(j.at("target").at("text_rva"));textEnd=textBegin+number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
         regionFn=checked(f.at("get_region"));getBlockFn=checked(f.at("get_block"));selectFn=checked(f.at("select_hotbar"));getHitFn=checked(f.at("get_hit_result"));
@@ -88,6 +88,20 @@ struct Bindings{
         const std::array<int,2> chunk{pos.x>>4,pos.z>>4};
         __try{if(!reinterpret_cast<void*(__fastcall*)(void*,const void*)>(chunkFn)(source,&chunk))return nullptr;
             return reinterpret_cast<void*(__fastcall*)(void*,const Pos*)>(fn)(source,&pos);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
+    }
+    // Same hidden-return ABI used by InsideCubeRenderer. Query only support
+    // candidates, not the full preview volume. Non-solid slabs/chests can still
+    // provide a usable collision surface.
+    bool collision(void* type,void* state,void* source,const Pos& pos)const noexcept{
+        void** vt{};void* fn{};
+        if(!read(type,0,vt)||!read(vt,4*8,fn)||!executable(fn))return false;
+        bedrock::ActorBounds box{};
+        __try{
+            reinterpret_cast<void(__fastcall*)(void*,void*,void*,void*,const Pos*,void*)>(fn)(type,&box,state,source,&pos,nullptr);
+            const auto& a=box.minimum;const auto& z=box.maximum;
+            return std::isfinite(a.x)&&std::isfinite(a.y)&&std::isfinite(a.z)&&std::isfinite(z.x)&&std::isfinite(z.y)&&std::isfinite(z.z)&&
+                z.x>a.x&&z.y>a.y&&z.z>a.z&&z.x-a.x<64&&z.y-a.y<64&&z.z-a.z<64;
+        }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
     }
     void* stack(void* player,unsigned slot)const noexcept{
         void* supplies{};void* inventory{};void** vt{};void* fn{};
@@ -139,7 +153,7 @@ public:
     std::string typeName(void* type){if(auto it=names.find(type);it!=names.end())return it->second;
         StringCopy value;if(!copyString(static_cast<std::byte*>(type)+0xe8,&value))return {};
         std::string name(value.bytes,value.size);if(!identifier(name))return {};names.emplace(type,name);return name;}
-    speed_builder::Cell cell(void* source,Pos pos){speed_builder::Cell result;result.position=pos;auto* state=b.block(source,pos);if(!state)return result;
+    speed_builder::Cell cell(void* source,Pos pos,bool inspectSupport=false){speed_builder::Cell result;result.position=pos;auto* state=b.block(source,pos);if(!state)return result;
         auto it=states.find(state);if(it==states.end()){
             BlockInfo info;std::uint8_t flags{};if(!read(state,0x68,info.type)||!info.type)return result;
             info.name=typeName(info.type);if(info.name.empty())return result;
@@ -148,7 +162,7 @@ public:
         }
         result.identifier=it->second.name;result.stateIdentity=reinterpret_cast<std::uintptr_t>(state);
         if(result.identifier=="minecraft:air"||result.identifier=="minecraft:cave_air"||result.identifier=="minecraft:void_air")result.kind=speed_builder::CellKind::air;
-        else {result.kind=speed_builder::CellKind::block;result.supportsPlacement=it->second.solid;result.nativePlacementCandidate=true;
+        else {result.kind=speed_builder::CellKind::block;result.supportsPlacement=it->second.solid||(inspectSupport&&b.collision(it->second.type,state,source,pos));result.nativePlacementCandidate=true;
             speed_builder::PlacementRecipe recipe;recipe.itemIdentifier=result.identifier;result.placement=recipe;}
         return result;
     }
@@ -158,7 +172,10 @@ public:
             if(!read(stack,0x18,block)||!read(stack,0x20,aux))return false;
             if(!block||!read(block,0x68,type)||!type)continue;
             auto name=typeName(type);if(name.empty())continue;
-            result.copied[i]={std::move(name),count};result.types[i]=type;result.aux[i]=aux;
+            // Native block-backed stacks derive aux from the Block state unless
+            // the raw item aux is the wildcard sentinel.
+            std::uint16_t data{};if(aux!=0x7fff&&!read(block,0x120,data))return false;
+            result.copied[i]={std::move(name),count};result.types[i]=type;result.aux[i]=aux==0x7fff?0x7fff:data;
         }return true;
     }
 };

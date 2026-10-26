@@ -216,3 +216,14 @@ suppressed but the view remains blocked, the renderer/pipeline requires addition
 live evidence rather than marking these candidates verified. UI-layer game-type
 getters at RVAs `0x4932D20` and `0x42436C0` were inspected and deliberately not
 hooked: no underground-terrain semantics were established.
+
+### Exact entry correction, visual revision 2
+
+Live log reported `native entry guard mismatch`. The registered byte at offset21
+was `6C`; the exact PE byte is `AC` (LEA disp32 for positive0x80). The 27-byte
+entry guard is now copied directly from the exact executable rather than manually
+transcribed. Validation is not weakened. Catalogs below visual revision2 use the
+embedded exact-build profile even if they contain the formerly incorrect entry.
+Optional-hook installation status is logged independently for cube and permission.
+This repairs the observed guard error; it does not by itself establish that
+spectator terrain visibility works on the user's render pipeline.

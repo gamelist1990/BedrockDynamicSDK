@@ -60,3 +60,38 @@ Evidence slices and full exported REA bundles are outside the repository:
 `~/Documents/PEXData/REA/speedbuilder-native-1.26.52.3/`.
 Static evidence establishes candidate call shapes, not successful runtime placement,
 server acceptance, all block orientations, or immunity to native assertions.
+
+## Live placement follow-up, native revision 2
+
+User logs establish that title capture, the Japanese prompt, volume capture and
+stable removal diff execute. They do not establish successful placement. The
+previous `placement unresolved` line omitted every reason for rejecting poses.
+The new adapter preserves exact-state matching and reports support/reach/native
+prediction failure/state mismatch counts, expected/predicted Block data, effective
+hotbar metadata, dispatch attempts/returns and pre-dispatch deferral reasons.
+
+`ItemStackBase` method RVA0x248D280 reads raw aux+0x20, uses Block+0x120 when the
+Block exists and raw aux !=0x7FFF; the sentinel is preserved. REA/Ghidra evidence
+`ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b`,
+`item-data-review-evidence.json`. This establishes native metadata selection;
+it does not prove every block placement callback's meaning. Prediction now runs
+with the actual hotbar item selected, not the user's previous carried item.
+The selection lease spans bounded probe steps, restores only if still owned and
+in the same World/RuntimeID, and transfers to the pending placement on success.
+Rotation is applied immediately before dispatch and restored only if still owned,
+so normal input updating orientation between ticks cannot silently defer forever.
+
+For non-solid support candidates only, BlockType collision-shape virtual slot4
+is called using the renderer's exact hidden-return ABI: RCX type, RDX AABB output,
+R8 Block, R9 IConstBlockSource, stack BlockPos pointer and null optional entity.
+Existing cube-render evidence at0x47B0F4E..0x47B0F7F establishes register placement;
+LeviLamina's AABB-returning declaration corroborates it. Only finite, positive,
+bounded AABB extents qualify. The full preview capture does not run collision
+queries. No guessed `canBeBuiltOver` vtable call is enabled: inspection of slot83
+showed a component lookup rather than the expected four-argument bool getter.
+Saved rejection evidence: `rejected-support-slot83.snapshot.json`.
+These native bindings remain candidates pending the next live logs.
+
+End-of-round Japanese subtitles cancel capture/wait/build work. Pure UTF-8 section
+sign sequences are removed as formatting; lone0xA7 continuation bytes are preserved.
+Unchanged semantic configuration no longer causes a needless cancellation.
