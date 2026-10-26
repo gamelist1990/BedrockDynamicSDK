@@ -219,8 +219,8 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         return commit(plan);
     }
     constexpr unsigned faces[6]={1,2,3,4,5,0};constexpr float heights[3]={.5f,.25f,.75f};constexpr float pitches[3]={0.f,90.f,-90.f};
-    const auto deadline=Clock::now()+std::chrono::microseconds(350);
-    for(unsigned step=0;step<16&&p.candidate<216;++step){const unsigned n=p.candidate++;unsigned i=n;
+    const auto deadline=Clock::now()+std::chrono::microseconds(1500);
+    for(unsigned step=0;step<64&&p.candidate<216;++step){const unsigned n=p.candidate++;unsigned i=n;
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
