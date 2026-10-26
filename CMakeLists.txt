@@ -52,8 +52,8 @@ if(WIN32)
         set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         set_property(TARGET bedrock_resolver PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
-    # The runtime is embedded into each client DLL. The first copy loaded in a
-    # process becomes MinHook owner; later copies delegate through a named,
+    # The runtime is embedded into each client DLL. Initialization discovers
+    # the newest loaded provider; consumers delegate through a named,
     # per-process C ABI table, so only one copy patches Minecraft methods.
     add_library(bedrock_hook_minhook STATIC
         third_party/minhook-vendor/src/buffer.c
@@ -69,6 +69,15 @@ if(WIN32)
     target_link_libraries(bedrock_hook_runtime PRIVATE bedrock_hook_minhook)
     target_compile_features(bedrock_hook_runtime PUBLIC cxx_std_20)
     if(MSVC)
+        # Extract the provider object even when a consumer has no direct API
+        # references. Its dllexport directives retain all provider entry points.
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            target_link_options(bedrock_hook_runtime INTERFACE
+                "/INCLUDE:BedrockHookRuntime_BuildVersion")
+        else()
+            target_link_options(bedrock_hook_runtime INTERFACE
+                "/INCLUDE:_BedrockHookRuntime_BuildVersion")
+        endif()
         foreach(target bedrock_hook_minhook bedrock_hook_runtime)
             set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY
                 "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -91,6 +100,12 @@ if(WIN32)
         bedrock::game_api bedrock::symbols bedrock::hook_runtime)
     add_library(bedrock::game_hooks ALIAS bedrock_game_hooks)
     if(BEDROCK_SDK_BUILD_TOOLS)
+    add_library(BedrockHookRuntime SHARED src/hook_runtime_dll.cpp)
+    target_link_libraries(BedrockHookRuntime PRIVATE bedrock::hook_runtime)
+    if(MSVC)
+        set_property(TARGET BedrockHookRuntime PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
     add_library(BedrockClientLocator SHARED src/client_locator.cpp)
     target_include_directories(BedrockClientLocator PRIVATE include third_party)
     target_link_libraries(BedrockClientLocator PRIVATE bedrock_resolver bedrock_hook_minhook)

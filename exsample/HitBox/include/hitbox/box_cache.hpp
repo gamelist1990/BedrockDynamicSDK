@@ -20,6 +20,7 @@ struct Sample {
     bool isPlayer{};
     std::uintptr_t actorKey{};
     std::uint32_t entityId{};
+    std::uint64_t uniqueId{};
 };
 struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};

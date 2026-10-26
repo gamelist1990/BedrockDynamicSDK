@@ -7,6 +7,8 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 公開サンプル：
 
+- [SpeedBuilder example](exsample/SpeedBuilder/README.md) — お題の記録と消失差分による自動配置（1.26.52.3候補・実機未確認）
+
 - [BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)
 - [BedrockGuiDemo](https://github.com/gamelist1990/BedrockGuiDemo)
 - [BedrockZoom](https://github.com/gamelist1990/BedrockZoom)
@@ -418,3 +420,11 @@ CMakeサンプルは [BedrockAutoSprint](https://github.com/gamelist1990/Bedrock
 - データの生成ソースは [Latite](https://github.com/LatiteClient/Latite) と [Bedrock Lens](https://github.com/bedrock-mc/lens) などを参考にしています。
 - Microsoft配布物そのものをリポジトリ内で再配布しない方針です。
 
+
+## Freecam example
+
+[Freecam](exsample/Freecam/README.md) adds configurable detached camera movement,
+damage auto-disable, and bounded nearby Player boxes for Windows x64.
+The current Borion backend moves a local Player proxy and anchors outgoing movement to its pre-flight pose while forwarding interactions; live validation is pending.
+Runtime 4.3.0 compares compatible runtime providers in loaded Mod DLLs and shares renderLevel/sendToServer middleware. Place the compatible optional
+`BedrockHookRuntime.dll` beside the mods and restart the game when upgrading the owner.

@@ -56,33 +56,36 @@ inline std::string normalizedName(std::string_view input) {
 class NameMailbox {
 public:
     static constexpr std::size_t maximumBytes=384;
-    struct Value { std::array<char,maximumBytes> bytes{}; std::size_t size{}; std::uint64_t revision{}; };
+    struct Value { std::array<char,maximumBytes> bytes{}; std::size_t size{}; std::uint64_t revision{}; Clock::time_point observedAt{}; };
     bool observe(NameKey key,std::string_view text) noexcept {
-        if(!key.epoch || !key.runtimeId || !key.actor || text.empty()) return false;
+        if(!key.epoch || !key.runtimeId || !key.actor || text.empty() || !hasVisibleName(text)) return false;
         std::unique_lock lock(mutex_,std::try_to_lock);
         if(!lock) return false;
         auto* slot=&slots_[bucket(key)];
         auto* selected=slot;
         for(std::size_t i=0;i<ways;++i) {
-            if(slot[i].value.revision && slot[i].key==key) { selected=&slot[i]; break; }
+            if(slot[i].value.revision && sameRuntime(slot[i].key,key)) { selected=&slot[i]; break; }
             if(!slot[i].value.revision || slot[i].value.revision<selected->value.revision) selected=&slot[i];
         }
         const auto length=std::min(text.size(),maximumBytes);
-        if(selected->value.revision && selected->key==key && selected->value.size==length &&
-           !std::memcmp(selected->value.bytes.data(),text.data(),length)) return false;
+        if(selected->value.revision && sameRuntime(selected->key,key) && selected->value.size==length &&
+           !std::memcmp(selected->value.bytes.data(),text.data(),length)) {
+            selected->value.observedAt=Clock::now();return false;
+        }
         selected->key=key;
         std::memcpy(selected->value.bytes.data(),text.data(),length);
         selected->value.size=length; selected->value.revision=++revision_;
+        selected->value.observedAt=Clock::now();
         publishedRevision_.store(revision_,std::memory_order_release);
         return true;
     }
     // A busy worker means defer the optional native lookup, never block the game.
-    bool cachedOrBusy(NameKey key) const noexcept {
+    bool cachedOrBusy(NameKey key,std::chrono::minutes lifetime=std::chrono::minutes(10)) const noexcept {
         std::unique_lock lock(mutex_,std::try_to_lock);
         if(!lock) return true;
         const auto begin=bucket(key);
         for(std::size_t i=0;i<ways;++i)
-            if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return true;
+            if(slots_[begin+i].value.revision && sameRuntime(slots_[begin+i].key,key) && Clock::now()-slots_[begin+i].value.observedAt<lifetime) return true;
         return false;
     }
     std::uint64_t revision() const noexcept { return publishedRevision_.load(std::memory_order_acquire); }
@@ -98,21 +101,36 @@ public:
     std::optional<Value> readForRuntime(NameKey key) const {
         std::lock_guard lock(mutex_);
         const auto begin=bucket(key);
-        for(std::size_t i=0;i<ways;++i)
-            if(slots_[begin+i].value.revision && slots_[begin+i].key==key) return slots_[begin+i].value;
         const Slot* match=nullptr;
-        for(const auto& slot:slots_) {
-            if(slot.value.revision && slot.key.epoch==key.epoch &&
-               slot.key.runtimeId==key.runtimeId &&
+        for(std::size_t i=0;i<ways;++i) {
+            const auto& slot=slots_[begin+i];
+            if(slot.value.revision && sameRuntime(slot.key,key) &&
                (!match || slot.value.revision>match->value.revision)) match=&slot;
         }
         return match ? std::optional<Value>{match->value} : std::nullopt;
     }
+
 private:
     static constexpr std::size_t ways=4,capacity=2048;
     struct Slot { NameKey key; Value value; };
+    static bool sameRuntime(NameKey a,NameKey b) noexcept {
+        return a.epoch==b.epoch && a.runtimeId==b.runtimeId;
+    }
+    // Hidden/format-only getters must not replace the last usable name before
+    // a worker has consumed it. Do this without allocation on the native hook.
+    static bool hasVisibleName(std::string_view text) noexcept {
+        for(std::size_t i=0;i<text.size();) {
+            const auto c=static_cast<unsigned char>(text[i++]);
+            if(c=='\n'||c=='\r') return false;
+            if(c==0xc2 && i<text.size() && static_cast<unsigned char>(text[i])==0xa7) {
+                ++i;if(i<text.size())++i;continue;
+            }
+            if(c>32 && c!=127) return true;
+        }
+        return false;
+    }
     static std::size_t bucket(NameKey key) noexcept {
-        auto hash=static_cast<std::uint64_t>(key.actor)^(std::uint64_t(key.entity)<<32)^key.epoch^key.runtimeId;
+        auto hash=key.epoch^key.runtimeId;
         hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ULL;
         hash=(hash^(hash>>27))*0x94d049bb133111ebULL;
         return static_cast<std::size_t>(hash^(hash>>31))%(capacity/ways)*ways;

@@ -24,6 +24,8 @@
 
 #include <nlohmann/json.hpp>
 #include "hitbox/box_cache.hpp"
+#include "hitbox/latest_pose.hpp"
+#include "hitbox/player_name_archive.hpp"
 #include "hitbox/batch_queue.hpp"
 #include "hitbox/world_render_profile.hpp"
 #include "hitbox/name_tags.hpp"
@@ -93,12 +95,15 @@ struct Config {
     bool retainLastPosition = false;
     float nearbyDistance = 100.0f;
     int retentionMinutes = 10;
+    int nameCacheMinutes = 10;
     float lineThickness = 1.5f;
     std::uint32_t liveColor = packColor(76, 230, 132, 255);
     std::uint32_t retainedColor = packColor(255, 174, 66, 255);
 };
 
 using BoxRecord = hitbox::BoxRecord;
+hitbox::LatestPoseMailbox latestPoses;
+hitbox::PlayerNameArchive playerNames;
 struct CameraState {
     std::uint64_t epoch{};
     bedrock::Vec3 cameraPosition{};
@@ -118,6 +123,8 @@ struct CaptureBatch {
     std::array<hitbox::Sample, maximumNativeBatch> samples;
     std::size_t count{};
     std::size_t population{};
+    std::size_t tickPoseCount{};
+    std::uint64_t tickPoseUs{};
     const char* captureStage="registry_context";
     const char* captureFailure=nullptr;
     std::uint32_t faultCode{};
@@ -262,6 +269,7 @@ nlohmann::json configJson(const Config& config) {
         {"nearby_distance", config.nearbyDistance},
         {"retain_last_position", config.retainLastPosition},
         {"retention_minutes", config.retentionMinutes},
+        {"name_cache_minutes", config.nameCacheMinutes},
         {"line_thickness", config.lineThickness},
         {"live_color", colorString(config.liveColor)},
         {"retained_color", colorString(config.retainedColor)}};
@@ -275,6 +283,7 @@ Config parseConfig(const nlohmann::json& root) {
     config.playersOnly = root.value("players_only", config.playersOnly);
     config.showNameTags = root.value("show_name_tags", config.showNameTags);
     config.nameTagScale = root.value("name_tag_scale", config.nameTagScale);
+    config.nameCacheMinutes=std::clamp(root.value("name_cache_minutes",config.nameCacheMinutes),1,120);
     if(!std::isfinite(config.nameTagScale)) config.nameTagScale=1.0f;
     config.nameTagScale=std::clamp(config.nameTagScale,0.25f,3.0f);
     config.nearbyDistance = std::clamp(root.value("nearby_distance", config.nearbyDistance), 4.0f, 128.0f);
@@ -398,6 +407,7 @@ public:
     void* clientIdentity() const noexcept { return client_.load(std::memory_order_acquire); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
     void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
+    void setPlayerListOffset(std::size_t offset) noexcept {playerListOffset_=offset;}
     bool copyNameEntityId(void* actor,std::uint32_t& id) const noexcept {
         return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextEntityIdOffset,id);
     }
@@ -505,7 +515,88 @@ public:
         }
         return captureRegistryBatch(registry, local, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
     }
+    void capturePlayerNames(void* world,std::uint64_t epoch,int minutes) const noexcept {
+        const auto now=Clock::now();
+        if(now<nextRoster_ && rosterEpoch_==epoch)return;
+        nextRoster_=now+std::chrono::seconds(1);rosterEpoch_=epoch;
+        const auto count=copyPlayerNames(world,playerListOffset_,rosterCopies_.data());
+        if(count!=SIZE_MAX)playerNames.publish(epoch,rosterCopies_.data(),count,std::chrono::minutes(minutes));
+    }
+    // Keep stable EnTT handles for already discovered Actors. New Actor discovery
+    // stays bounded; positions of all tracked live handles are copied once per
+    // LevelTick, without walking Actor objects, names or equipment again.
+    void refreshTrackedPoses(void* local,CaptureBatch& batch) const noexcept {
+        const auto begin=Clock::now();
+        if(poseEpoch_!=batch.camera.epoch) {poseEpoch_=batch.camera.epoch;poseCount_=0;}
+        for(std::size_t n=0;n<batch.count;++n) {
+            const auto& sample=batch.samples[n];
+            std::size_t i=0;
+            for(;i<poseCount_;++i) if(poseHandles_[i].runtimeId==sample.runtimeId)break;
+            if(i==poseCount_) {if(poseCount_==poseHandles_.size())continue;++poseCount_;}
+            poseHandles_[i]=sample;
+        }
+        void* registry=nullptr;
+        if(!safeRead(local,actorLayout_.actorEntityContextOffset+actorLayout_.contextRegistryOffset,registry)||!registry)return;
+        batch.tickPoseCount=copyTrackedPoses(registry,actorLayout_,poseHandles_.data(),&poseCount_,poseCopies_.data());
+        latestPoses.publish(batch.camera.epoch,poseCopies_.data(),batch.tickPoseCount);
+        batch.tickPoseUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-begin).count());
+    }
 private:
+    struct NativePlayerEntry {std::uint64_t uniqueId;hitbox::PlayerUuid uuid;std::string name;std::byte rest[0xA8-0x18-sizeof(std::string)];};
+    static_assert(sizeof(NativePlayerEntry)==0xA8);
+    using NativePlayerList=std::unordered_map<hitbox::PlayerUuid,NativePlayerEntry,hitbox::PlayerUuidHash>;
+    static std::size_t copyPlayerNames(void* world,std::size_t offset,hitbox::CopiedPlayerName* copies) noexcept {
+        std::size_t count=0;
+        __try {
+            NativePlayerList* list=nullptr;
+            if(!safeRead(world,offset,list)||!list||list->size()>512)return SIZE_MAX;
+            for(const auto& item:*list){auto& target=copies[count];target={};
+                target.uuid=item.first;target.uniqueId=item.second.uniqueId;
+                const auto& text=item.second.name;
+                if(text.size()<=4096){target.size=std::min(text.size(),target.bytes.size());
+                    if(target.size)std::memcpy(target.bytes.data(),text.data(),target.size);}
+                if(++count==512)break;
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return SIZE_MAX;}
+        return count;
+    }
+    std::size_t playerListOffset_{};
+    mutable Clock::time_point nextRoster_{};mutable std::uint64_t rosterEpoch_{};
+    mutable std::array<hitbox::CopiedPlayerName,512> rosterCopies_{};
+    static std::size_t copyTrackedPoses(void* registry,const bedrock::NativeActorLayout& layout,
+        hitbox::Sample* handles,std::size_t* count,hitbox::Sample* copies) noexcept {
+        std::size_t copied=0;
+        __try {
+            using Registry=entt::basic_registry<hitbox_native::EntityId>;
+            auto* typed=static_cast<Registry*>(registry);
+            auto* runtime=typed->storage(layout.runtimeIdComponentHash);
+            auto* shape=typed->storage(layout.aabbShapeComponentHash);
+            if(!runtime || !shape)return 0;
+            const auto now=Clock::now();
+            for(std::size_t i=0;i<*count;) {
+                auto sample=handles[i];const hitbox_native::EntityId entity{sample.entityId};
+                std::uint64_t id=0;
+                if(!typed->valid(entity) || !runtime->contains(entity) ||
+                   !safeRead(runtime->value(entity),layout.runtimeIdValueOffset,id) || id!=sample.runtimeId) {
+                    handles[i]=handles[--*count];continue;
+                }
+                ++i;
+                if(!shape->contains(entity))continue;
+                auto* value=shape->value(entity);
+                if(layout.aabbMaximumOffset==layout.aabbMinimumOffset+sizeof(bedrock::Vec3)) {
+                    if(!safeRead(value,layout.aabbMinimumOffset,sample.bounds))continue;
+                } else if(!safeRead(value,layout.aabbMinimumOffset,sample.bounds.minimum)||
+                          !safeRead(value,layout.aabbMaximumOffset,sample.bounds.maximum))continue;
+                const auto& b=sample.bounds;
+                if(!b.valid() || b.maximum.x<=b.minimum.x || b.maximum.y<=b.minimum.y || b.maximum.z<=b.minimum.z)continue;
+                sample.seenAt=now;handles[i-1]=sample;copies[copied++]=sample;
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        return copied;
+    }
+    mutable std::uint64_t poseEpoch_{};
+    mutable std::size_t poseCount_{};
+    mutable std::array<hitbox::Sample,hitbox::TrackingBudget::maximumActors> poseHandles_{},poseCopies_{};
     static bool captureRegistryBatch(void* registry, void* local, const bedrock::NativeActorLayout& layout,
         std::size_t typeOffset, std::uint32_t playerType, hitbox::PlayerIdentityCache* identities, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
         __try {
@@ -516,6 +607,7 @@ private:
             if (!owner) { batch->captureFailure="actor_owner_storage_missing"; return false; }
             batch->captureStage="lookup_runtime_id_storage";
             auto* runtime = typed->storage(layout.runtimeIdComponentHash);
+            auto* unique = typed->storage(layout.actorUniqueIdComponentHash);
             if (!runtime) { batch->captureFailure="runtime_id_storage_missing"; return false; }
             batch->captureStage="lookup_aabb_storage";
             auto* shape = typed->storage(layout.aabbShapeComponentHash);
@@ -584,6 +676,9 @@ private:
                 sample.runtimeId=runtimeId;
                 sample.actorKey=reinterpret_cast<std::uintptr_t>(actor);
                 sample.entityId=static_cast<std::uint32_t>(entity);
+                sample.uniqueId=0;
+                if(unique && unique->contains(entity))
+                    safeRead(unique->value(entity),layout.actorUniqueIdValueOffset,sample.uniqueId);
                 auto* aabb = shape->value(entity);
                 if (layout.aabbMaximumOffset == layout.aabbMinimumOffset + sizeof(bedrock::Vec3)) {
                     if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) {
@@ -801,7 +896,7 @@ void fillMissingName(const CaptureBatch& batch) {
         const auto& sample=batch.samples[i];
         if(sample.isPlayer!=(pass==0)) continue;
         const hitbox::NameKey key{batch.camera.epoch,sample.runtimeId,sample.actorKey,sample.entityId};
-        if(nameMailbox.cachedOrBusy(key)) continue;
+        if(nameMailbox.cachedOrBusy(key,std::chrono::minutes(batch.config->nameCacheMinutes))) continue;
         auto& attempt=attempts[(sample.runtimeId^(sample.runtimeId>>32))%attempts.size()];
         if(attempt.key==key && now<attempt.next) continue;
         if(attempt.key!=key) attempt={key,{},0};
@@ -844,6 +939,8 @@ struct CachedName {
     std::shared_ptr<const hitbox::NameMesh> mesh;
     std::string text; // Keep the acquired name even if geometry is deferred/fails.
     Clock::time_point retryAfter{};
+    Clock::time_point expires{};
+    bool archived{};
 };
 
 void processingLoop(std::size_t shard) noexcept {
@@ -887,6 +984,7 @@ void processingLoop(std::size_t shard) noexcept {
         try {
             std::erase_if(retired, [](const auto& value) { return value.use_count() == 1; });
             const auto epoch=worldEpoch.load(std::memory_order_acquire);
+            playerNames.update();
             if (!cache.beginWorld(epoch)) continue;
             if (loggedEpoch != epoch) {
                 loggedEpoch=epoch; nextLog={}; names.clear(); nameTouch=0; nameReadyLogged=false; publishedEmpty=false;
@@ -923,6 +1021,10 @@ void processingLoop(std::size_t shard) noexcept {
                 config.nearbyDistance, config.retainLastPosition,
                 batch->liveLifetime, config.showAllActors, config.playersOnly,
                 std::chrono::minutes(config.retentionMinutes));
+            for(auto& box:snapshot->boxes) {
+                box.blendDuration=std::chrono::milliseconds(0);
+                box.blendFrom=box.bounds;
+            }
             if(snapshot->boxes.empty() && publishedEmpty) continue;
             const auto revision=nameMailbox.revision();
             const bool mailboxChanged=revision!=mailboxRevision;
@@ -936,14 +1038,25 @@ void processingLoop(std::size_t shard) noexcept {
                     if(box.retained) ++savedBoxes;
                     const hitbox::NameKey key{batch->camera.epoch,box.runtimeId,box.actorKey,box.entityId};
                     auto found=names.find(box.runtimeId);
-                    const auto observed=(mailboxChanged || found==names.end() || found->second.key!=key)
-                        ? nameMailbox.readForRuntime(key) : std::optional<hitbox::NameMailbox::Value>{};
+                    const auto archived=playerNames.read(key,box.uniqueId);
+                    auto observed=nameMailbox.readForRuntime(key);
+                    const auto nowName=Clock::now();
+                    const auto nameLifetime=std::chrono::minutes(config.nameCacheMinutes);
+                    if(observed && nowName-observed->observedAt>=nameLifetime)observed.reset();
+                    const bool fromArchive=!observed && archived.has_value();
+                    if(fromArchive)observed=archived;
+                    if(found!=names.end() && nowName>=found->second.expires && !observed) {
+                        names.erase(found);found=names.end();
+                    }
+                    if(observed && found!=names.end())
+                        found->second.expires=observed->observedAt+nameLifetime;
                     if(observed || (found!=names.end() && !found->second.text.empty())) ++observedNames; else ++misses;
                     if(observed && (found==names.end() || found->second.key!=key ||
-                        found->second.revision!=observed->revision)) {
+                        found->second.revision!=observed->revision || found->second.archived!=fromArchive)) {
                         auto text=hitbox::normalizedName(std::string_view(observed->bytes.data(),observed->size));
                         if(text.empty()) ++blanks;
                         if(!text.empty()) {
+                            playerNames.remember(key,text,observed->observedAt);
                             if(found==names.end() && names.size()>=hitbox::TrackingBudget::maximumActors) {
                                 const auto oldest=std::min_element(names.begin(),names.end(),[](const auto& a,const auto& b) {
                                     return a.second.touched<b.second.touched;
@@ -951,13 +1064,14 @@ void processingLoop(std::size_t shard) noexcept {
                                 names.erase(oldest);
                             }
                             auto& entry=names[box.runtimeId];
-                            entry.key=key; entry.revision=observed->revision;
+                            entry.key=key; entry.revision=observed->revision;entry.archived=fromArchive;
+                            entry.expires=observed->observedAt+nameLifetime;
                             if(entry.text!=text) { entry.text=std::move(text); entry.retryAfter={}; }
                             found=names.find(box.runtimeId);
                             if(Clock::now()>=nextNameExample) {
                                 nextNameExample=Clock::now()+std::chrono::seconds(5);
                                 log("NameTag cached: shard=",shard," epoch=",key.epoch," runtime_id=",box.runtimeId,
-                                    " retained=",box.retained," name=",entry.text);
+                                    " retained=",box.retained," source=",fromArchive?"playerlist_uuid_cache":"actor_nametag"," name=",entry.text);
                             }
                         } else if(found!=names.end()) {
                             found->second.key=key; found->second.revision=observed->revision;
@@ -1152,7 +1266,7 @@ void refreshGameTickSnapshot() {
     snapshotLocal=local; snapshotEntity=entity;
     localActorIdentity.store(reinterpret_cast<std::uintptr_t>(local),std::memory_order_release);
     // Validate the world before delivering any previously captured rows.
-    if(!delivery.flush(sendBatch)) return;
+    const bool workerReady=delivery.flush(sendBatch);
     // All-Actor mode does not need local position for distance filtering.
     const auto cameraPosition = config->showAllActors
         ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
@@ -1177,11 +1291,14 @@ void refreshGameTickSnapshot() {
                 " registry=", reinterpret_cast<void*>(registry), " pool=", batch.population,
                 " visited=", visited, " copied=", batch.count, " [will retry on next tick]");
         }
-        if (!captured) return;
+        if (!captured) {access.refreshTrackedPoses(local,batch);return;}
     } else if (loggedNativeFailure) {
         loggedNativeFailure=false;
         log("Actor capture recovered: pool=", batch.population, " copied=", batch.count);
     }
+    access.capturePlayerNames(world,batch.camera.epoch,config->nameCacheMinutes);
+    // Native position capture is one game tick for every tracked valid handle.
+    access.refreshTrackedPoses(local,batch);
     fillMissingName(batch);
     const auto actorsReadyAt = Clock::now();
     const std::array<std::size_t,9> counts{visited,batch.count,batch.nativePlayers,
@@ -1199,8 +1316,8 @@ void refreshGameTickSnapshot() {
     batch.liveLifetime = std::chrono::milliseconds(std::clamp<std::size_t>(
         batch.population * 100 / std::max<std::size_t>(1, static_cast<std::size_t>(averageVisited)),
         750, 30000));
-    delivery.begin(batch);
-    delivery.flush(sendBatch);
+    if(workerReady) { delivery.begin(batch); delivery.flush(sendBatch); }
+    // Worker backpressure may defer retention/name work, never fresh poses.
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-now).count();
     if ((config->debug || elapsed >= 2000) && now >= nextReport) {
         nextReport = now + std::chrono::seconds(10);
@@ -1210,6 +1327,7 @@ void refreshGameTickSnapshot() {
         log("HitBox native capture us=", elapsed,
             " local=", us(now, localReadyAt), " position=", us(localReadyAt, positionReadyAt),
             " actors=", us(positionReadyAt, actorsReadyAt),
+            " tick_poses=",batch.tickPoseCount," tick_pose_us=",batch.tickPoseUs,
             " publish=", us(actorsReadyAt, Clock::now()), " pool=", batch.population,
             " visited=", visited, " copied=", batch.count,
             " workers=",workerCount," [1-tick sweep target; maximum 32 rows/tick; cooperative 250us actor budget]");
@@ -1287,7 +1405,8 @@ constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visi
 struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
     const std::uint8_t* visible{};
     const hitbox::PreparedNames* names{};
-    std::chrono::milliseconds liveLifetime{}; };
+    std::chrono::milliseconds liveLifetime{};
+    const BoxRecord* preparedBoxes{}; };
 struct NativeDrawInput {
     std::array<NativeDrawRange, workerCapacity> ranges{};
     std::array<std::uint8_t,hitbox::TrackingBudget::maximumActors> visible{};
@@ -1364,6 +1483,17 @@ bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& o
                     label.vertexCount>prepared.vertices.size()-label.firstVertex) continue;
                 const auto& box=range.boxes[label.boxIndex];
                 if(box.retained!=(pass==1) || !range.visible[label.boxIndex]) continue;
+                // Text glyphs stay cached, but their anchor follows the same
+                // newest copied AABB as the outline, without font rebuilds.
+                bedrock::Vec3 translation=delta;
+                if(range.preparedBoxes) {
+                    const auto before=hitbox::interpolatedBounds(range.preparedBoxes[label.boxIndex],prepared.preparedAt);
+                    const auto after=hitbox::interpolatedBounds(box,input->now);
+                    translation.x+=(after.minimum.x+after.maximum.x-before.minimum.x-before.maximum.x)*0.5f;
+                    translation.y+=after.maximum.y-before.maximum.y;
+                    translation.z+=(after.minimum.z+after.maximum.z-before.minimum.z-before.maximum.z)*0.5f;
+                }
+                if(!safeWrite(tess,worldRenderProfile.translation,translation)) return false;
                 for(std::size_t p=label.firstVertex;p<label.firstVertex+label.vertexCount;p+=4)
                     batch.quad({prepared.vertices[p],prepared.vertices[p+1],prepared.vertices[p+2],prepared.vertices[p+3]});
                 ++submitted;
@@ -1462,20 +1592,24 @@ void drawWorldBoxes(void* renderer, void* screen) {
     std::array<std::shared_ptr<const RenderSnapshot>,workerCapacity> snapshots;
     NativeDrawInput input; input.config=*config; input.now=now;
     input.localActor=localActorIdentity.load(std::memory_order_acquire);
+    // Fixed TLS storage: no per-frame allocation and no native Actor reads.
+    static thread_local std::array<BoxRecord,hitbox::TrackingBudget::maximumActors> frameBoxes;
     std::size_t count=0;
     for (std::size_t i=0;i<workerCount;++i) {
         snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
         if (!snapshots[i] || snapshots[i]->epoch!=epoch) continue;
         // Old and new worker snapshots can overlap during slot handover.
         // Bound the combined frame even during that asynchronous transition.
-        input.ranges[i]={snapshots[i]->boxes.data(),
-            std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count),
-            input.visible.data()+count,
-            snapshots[i]->preparedNames.get(),
-            snapshots[i]->liveLifetime};
+        const auto size=std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count);
+        auto* current=frameBoxes.data()+count;
+        std::copy_n(snapshots[i]->boxes.data(),size,current);
+        latestPoses.apply(epoch,current,size);
+
+        input.ranges[i]={current,size,input.visible.data()+count,
+            snapshots[i]->preparedNames.get(),snapshots[i]->liveLifetime,snapshots[i]->boxes.data()};
         // Evaluate identity/expiry once, shared by line and both text passes.
         for(std::size_t j=0;j<input.ranges[i].count;++j) {
-            const auto& box=snapshots[i]->boxes[j];
+            const auto& box=input.ranges[i].boxes[j];
             input.visible[count+j]=box.actorKey!=input.localActor &&
                 hitbox::visibleInFrame(box,now,snapshots[i]->liveLifetime,config->retainLastPosition,
                     config->playersOnly,std::chrono::minutes(config->retentionMinutes));
@@ -1596,12 +1730,21 @@ DWORD WINAPI startClient(void*) {
     bedrock::Resolver resolver;
     bedrock::NativeItemLayout itemLayout;
     bedrock::NativeActorLayout actorLayout;
+    std::size_t playerListOffset{};
     const auto identity = choice.identity;
     const auto prepareProfile = [&](std::string_view candidate) {
         // Profile selection checks executable identity, but an older cache can
         // still lack layouts required by a newer mod. Validate the whole set
         // before accepting it or installing any native hooks.
         bedrock::Resolver candidateResolver;
+        try {
+            const auto data=nlohmann::json::parse(candidate).at("native_player_identity");
+            if(data.at("schema")!=1 || data.at("pointer_size")!=8 || data.at("entry_size")!=0xA8 ||
+               data.at("actor_unique_id_offset")!=0 || data.at("uuid_offset")!=8 || data.at("name_offset")!=24)
+                throw std::runtime_error("unsupported native player identity layout");
+            playerListOffset=data.at("level_player_list_offset").get<std::size_t>();
+            if(!playerListOffset || playerListOffset>0x10000)throw std::runtime_error("invalid PlayerList offset");
+        } catch(const std::exception& ex){error=ex.what();return false;}
         bedrock::NativeItemLayout candidateItems;
         bedrock::NativeActorLayout candidateActors;
         if (!candidateResolver.loadJson(candidate, error) ||
@@ -1653,6 +1796,7 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
+    access.setPlayerListOffset(playerListOffset);
     access.setLayouts(std::move(itemLayout), std::move(actorLayout),
                       worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
     log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; ActorType + remembered RuntimeID player filter; no name filter; profile candidate]");
@@ -1705,6 +1849,7 @@ DWORD WINAPI startClient(void*) {
         return 1;
     }
     log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 1-tick target sweep; exact-build guards; runtime candidate]");
+    log(BDS_HookRuntimeDiagnostic());
     log("ready ", choice.version, " [native Actors]");
     status.store(Status::Running, std::memory_order_release);
 
