@@ -709,7 +709,43 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "runtime_verified": false,
         "source": "Exact .pdata range 0x47B0360..0x47B123F; caller 0x468908E sets RCX renderer, RDX ClientInstance, R8 ScreenContext; false-permission path returns without drawing. REA/Ghidra ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a. Windows register ABI checked against PE assembly."
       },
-      "revision": 2
+      "revision": 3,
+      "terrain_culling": {
+        "schema": 1,
+        "status": "candidate",
+        "runtime_verified": false,
+        "none_mode": 0,
+        "camera_culler_offset": "0x9A8",
+        "camera_culler_type_offset": "0x9B8",
+        "none_vtable_rva": "0xE8DFD70",
+        "set_culler": {
+          "rva": "0x4690910",
+          "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
+          "abi": "void __fastcall(LevelRendererPlayer*, unsigned char cullerType)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "factory_check": {
+          "rva": "0x4690b80",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
+          "abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "none_update_check": {
+          "rva": "0x47e37e0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC C8 00 00 00 48 8D AC 24 80",
+          "abi": "void __fastcall(LevelCullerNone*)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "evidence": [
+          "REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680: native setter at0x4690910 waits for idle culler, invokes factory, replaces native shared_ptr+0x9A8, updates type+0x9B8 and invalidates visibility cache via0x4691770.",
+          "REA/Ghidra ev_4a88f6267e755016f84f5255f47fab9e15cdd8b08c18f10f079d3e9af676cfef plus exact PE jump table at0xE8E06B8: mode0 targets0x4690BC6, final concrete vtable0xE8DFD70, shared object0x48 bytes. Raw Ghidra slice cannot read the external table; targets independently resolved from the exact PE.",
+          "REA/Ghidra ev_e68eabbbb6a59032b5fd333ce1b5f3e00c36b978192ee1e256503c6fc8b7bad8: mode0 culler update enumerates complete bounded chunk grid into its results without portal/flood occlusion tests. None classification inferred from behavior; not runtime verified.",
+          "Primary camera is existing native_world_render level_renderer_player offset0x468. Mode restored only for same observed render camera/world epoch and while value remains0. No ActorGameType writes or worker native-pointer reads."
+        ]
+      }
     }
   },
   "native_player_identity": {
@@ -802,7 +838,19 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "hit_position_offset": 44,
       "block_state_data_offset": "0x120",
       "block_type_collision_shape_slot": 4,
-      "collision_shape_abi": "AABB* __fastcall(BlockType*, AABB* hidden_return, Block const*, IConstBlockSource const*, BlockPos const*, GetCollisionShapeInterface const* optional=nullptr)"
+      "collision_shape_abi": "AABB* __fastcall(BlockType*, AABB* hidden_return, Block const*, IConstBlockSource const*, BlockPos const*, GetCollisionShapeInterface const* optional=nullptr)",
+      "block_serialization_tag_offset": "0xF0",
+      "compound_tag_head_offset": 8,
+      "compound_tag_size_offset": 16,
+      "tree_left_offset": 0,
+      "tree_parent_offset": 8,
+      "tree_right_offset": 16,
+      "tree_nil_offset": 25,
+      "tree_key_offset": 32,
+      "tree_tag_variant_offset": 64,
+      "tag_variant_index_offset": 40,
+      "tag_scalar_or_string_offset": 8,
+      "tag_get_id_slot": 5
     },
     "evidence": [
       "REA/Ghidra ev_af167bba2797b60ffe45d17af648fa2edcc644be90a65a64b07bf3d2d2959fff: current ClientInstance region getter resolves dimension and region through native virtual dispatch",
@@ -813,9 +861,11 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "REA/Ghidra ev_8bfbdd8e95a06043f5c9b662c3c7cf0b36c98b3a0847d2fc885b060393e96eaa: BlockType placement getter chooses aux state/default and executes const placement callbacks with actor, pos, face and click",
       "REA/Ghidra ev_05c5c1018ab7d235651741c3bc7c4c5c623fc607ea3692b9f1ebb0ac504b619b and ev_b599387268910ce4ece43d8e0cc024e866c013c8cd1d966b39f79d34376cb444: SetTitlePacket constructor layout and stream read hidden result with success at0x40",
       "BlockType NameInfo, flags and ItemStack field semantics corroborated with existing SDK/Latite/Solstice/LeviLamina declarations and render callsites. These layouts, prediction click coordinates, actual receive path, native placement and server acceptance remain runtime-unverified; no symbol promoted to verified.",
-      "REA/Ghidra ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b: ItemStackBase uses Block+0x120 data for block-backed stacks except raw aux sentinel0x7FFF. Renderer 0x47B0F4E..0x47B0F7F calls BlockType collision-shape slot4 with hidden AABB return in RDX, Block in R8, source in R9, BlockPos and null optional on stack (existing ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a). Native placement remains runtime-unverified."
+      "REA/Ghidra ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b: ItemStackBase uses Block+0x120 data for block-backed stacks except raw aux sentinel0x7FFF. Renderer 0x47B0F4E..0x47B0F7F calls BlockType collision-shape slot4 with hidden AABB return in RDX, Block in R8, source in R9, BlockPos and null optional on stack (existing ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a). Native placement remains runtime-unverified.",
+      "REA/Ghidra ev_7384df9c2cbd7961b2b68138bb1d131fbff5b3a9923acc5d5d609104aecf07ce at0x2548830 establishes CompoundTag tree head+8, root=head+8, nil+0x19, key+0x20/string length+0x30/capacity+0x38, TagVariant+0x40 and discriminator+0x68. Inline Block serialization tag+0xF0 is a layout candidate corroborated by Block.h field sizes and leaf LEA+0xF0 at0x640EF0/0xB57130. Runtime reader requires Compound type10, bounded valid tree, matching name and compound states before exposing owned property copies. No NBT vtable function is invoked or foreign STL object modified.",
+      "Live revision2 user log: native build calls/returns4 and observed exact sandstone states4. Walls and hive sea_shells had successful type-compatible predictions but pre-placement state differed. Revision3 permits type-compatible proposals, uses named orientation when available, allows real observed supports before final connection states and candle/cluster count increases; completion still requires exact recorded state. Hive-specific server properties remain live-unverified."
     ],
-    "revision": 2
+    "revision": 3
   }
 }
 )BDK_SYM_V1";

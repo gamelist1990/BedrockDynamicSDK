@@ -8,6 +8,8 @@
 #include <compare>
 #include <limits>
 #include <map>
+#include <memory>
+#include <variant>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -28,11 +30,15 @@ struct BlockPos {
 enum class CellKind { unknown, air, block };
 enum class Face { down, up, north, south, west, east };
 enum class Hand { main };
+using StateValue=std::variant<int,std::string>;
+struct BlockProperties {std::map<std::string,StateValue> values;};
 struct PlacementRecipe {
     std::string itemIdentifier;
     Face face = Face::up;
     float yaw{}, pitch{};
     float hitX = .5f, hitY = .5f, hitZ = .5f;
+    bool deferredState = false;
+    bool augment = false;
     bool orientationKnown = false;
     bool exactStateSupported = false;
     bool operator==(const PlacementRecipe&) const = default;
@@ -42,6 +48,7 @@ struct Cell {
     std::string identifier;
     std::optional<std::uint64_t> stateIdentity;
     CellKind kind = CellKind::unknown;
+    std::shared_ptr<const BlockProperties> properties; // owned immutable copies, never native pointers
     bool supportsPlacement = false;
     bool nativePlacementCandidate = false; // Adapter must resolve and recheck the exact state before dispatch.
     std::optional<PlacementRecipe> placement;
@@ -107,6 +114,41 @@ inline bool sameState(const Cell& a, const Cell& b) {
     return a.kind == CellKind::block && b.kind == CellKind::block &&
         a.identifier == b.identifier && a.stateIdentity && b.stateIdentity &&
         a.stateIdentity == b.stateIdentity;
+}
+inline bool sameType(const Cell& a,const Cell& b){return a.kind==CellKind::block&&b.kind==CellKind::block&&a.identifier==b.identifier;}
+inline std::string_view stateName(std::string_view key){return key.starts_with("minecraft:")?key.substr(10):key;}
+inline bool derivedState(std::string_view key){key=stateName(key);return key.starts_with("wall_connection_type_")||key=="wall_post_bit"||key.starts_with("connection_")||key=="cardinal_connections";}
+inline bool countState(std::string_view key){key=stateName(key);return key=="candles"||key=="cluster_count";}
+inline bool canAugment(const Cell& goal,const Cell& current){
+    if(!sameType(goal,current)||!goal.properties||!current.properties)return false;
+    bool increase=false;
+    for(const auto& [key,value]:goal.properties->values){auto it=current.properties->values.find(key);if(it==current.properties->values.end())return false;
+        if(countState(key)){
+            auto a=std::get_if<int>(&value),b=std::get_if<int>(&it->second);
+            if(!a||!b||*a<0||*a>3||*b<0||*b>*a)return false;increase|=*a>*b;
+        }else if(!derivedState(key)&&value!=it->second)return false;
+    }
+    return increase;
+}
+inline bool samePlacementBasis(const Cell& goal,const Cell& predicted){
+    if(!sameType(goal,predicted)||!goal.properties||!predicted.properties)return false;
+    for(const auto& [key,value]:goal.properties->values){if(derivedState(key)||countState(key))continue;
+        auto it=predicted.properties->values.find(key);if(it==predicted.properties->values.end()||it->second!=value)return false;}
+    return true;
+}
+inline std::optional<std::pair<float,float>> placementAngles(const Cell& goal){
+    if(!goal.properties)return {};
+    for(const auto& [key,value]:goal.properties->values){auto name=stateName(key);
+        if(name!="cardinal_direction"&&name!="facing_direction")continue;
+        if(auto direction=std::get_if<std::string>(&value)){
+            if(*direction=="south")return std::pair{0.f,0.f};if(*direction=="west")return std::pair{90.f,0.f};
+            if(*direction=="north")return std::pair{180.f,0.f};if(*direction=="east")return std::pair{270.f,0.f};
+            if(*direction=="up")return std::pair{0.f,-90.f};if(*direction=="down")return std::pair{0.f,90.f};
+        }else if(name=="facing_direction")if(auto face=std::get_if<int>(&value)){
+            switch(*face){case 0:return std::pair{0.f,90.f};case 1:return std::pair{0.f,-90.f};case 2:return std::pair{180.f,0.f};
+                case 3:return std::pair{0.f,0.f};case 4:return std::pair{90.f,0.f};case 5:return std::pair{270.f,0.f};}
+        }
+    }return {};
 }
 inline bool candidateForPlacement(const Cell& c) {
     return supported(c) || (c.nativePlacementCandidate && c.kind==CellKind::block && c.stateIdentity &&
@@ -201,10 +243,10 @@ enum class StopReason { none, cancelled, worldChanged, timeout, captureUnknown, 
 struct Stats {
     std::size_t captured{}, capturePasses{}, persistent{}, removed{}, queued{};
     std::size_t unsupported{}, confirmed{}, exhausted{}, attempts{}, dispatchFailures{};
-    std::size_t remaining{};
+    std::size_t remaining{}, provisional{};
 };
 struct PlacementScan {
-    unsigned visited{}, unknown{}, occupied{}, inFlight{}, cooldown{}, noSupport{}, dependency{}, outOfReach{}, missingItem{};
+    unsigned visited{}, unknown{}, occupied{}, inFlight{}, cooldown{}, noSupport{}, dependency{}, outOfReach{}, missingItem{}, statePending{};
 };
 struct EyePosition { double x{}, y{}, z{}; };
 struct BuildFrame {
@@ -425,18 +467,25 @@ public:
                 if(!task.inFlight || frame.tick-task.sent>=3)confirm(task);
                 continue;
             }
-            if (task.inFlight) {
-                if (frame.tick-task.sent < options_.confirmationTicks) {++scan_.inFlight;continue;}
-                task.inFlight = false;
+            const bool typeObserved=target!=current.end()&&sameType(task.cell,*target->second);
+            if(typeObserved&&!task.provisional){task.provisional=true;++stats_.provisional;}
+            if(typeObserved&&target->second->stateIdentity!=task.lastObserved){task.lastObserved=target->second->stateIdentity;task.attempts=0;}
+            const bool augment=typeObserved&&canAugment(task.cell,*target->second);
+            if(task.inFlight){
+                const bool progressed=typeObserved&&target->second->stateIdentity!=task.sentState&&frame.tick-task.sent>=3;
+                if(!progressed&&frame.tick-task.sent<options_.confirmationTicks){++scan_.inFlight;continue;}
+                task.inFlight=false;if(progressed)task.attempts=0;
             }
+            if(typeObserved&&!augment){++scan_.statePending;continue;}
             if (task.attempts >= options_.maxAttempts) { exhaust(task); continue; }
             if (activeAction_ || (lastPlacement_ && frame.tick-*lastPlacement_ < options_.buildIntervalTicks)) {++scan_.cooldown;continue;}
             if (target == current.end() || target->second->kind == CellKind::unknown) {++scan_.unknown;continue;}
-            if (target->second->kind != CellKind::air) {++scan_.occupied;continue;}
+            if (target->second->kind != CellKind::air&&!augment) {++scan_.occupied;continue;}
             auto recipe = *task.cell.placement;
             auto support = *supportPosition(task.cell);
             auto supportCell = current.find(support);
-            if(task.cell.nativePlacementCandidate){
+            if(augment){support=task.cell.position;supportCell=target;recipe.face=Face::up;recipe.hitX=recipe.hitZ=.5f;recipe.hitY=1.f;recipe.augment=true;recipe.deferredState=true;}
+            else if(task.cell.nativePlacementCandidate){
                 bool found=false;double bestDistance=std::numeric_limits<double>::infinity();
                 for(unsigned candidate:{1u,2u,3u,4u,5u,0u}){auto c=task.cell;c.placement->face=static_cast<Face>(candidate);
                     auto pos=supportPosition(c);if(!pos)continue;auto it=current.find(*pos);
@@ -451,12 +500,12 @@ public:
                 }
                 if(!found){++scan_.noSupport;continue;}
             }
-            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||!supportCell->second->supportsPlacement){++scan_.noSupport;continue;}
+            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||(!augment&&!supportCell->second->supportsPlacement)){++scan_.noSupport;continue;}
             // A planned support is usable only after its exact state is observed.
             const auto dependency = std::find_if(tasks_.begin(),tasks_.end(),[&](const Task& t) {
                 return t.cell.position == support;
             });
-            if (dependency != tasks_.end() && !sameState(dependency->cell,*supportCell->second)) {++scan_.dependency;continue;}
+            if (dependency != tasks_.end() && !sameType(dependency->cell,*supportCell->second)) {++scan_.dependency;continue;}
             const double dx = double(support.x)+recipe.hitX-frame.eye.x;
             const double dy = double(support.y)+recipe.hitY-frame.eye.y;
             const double dz = double(support.z)+recipe.hitZ-frame.eye.z;
@@ -470,7 +519,7 @@ public:
             ++task.attempts;
             ++stats_.attempts;
             task.action = action;
-            task.sent = frame.tick;
+            task.sent = frame.tick;task.sentState=target->second->stateIdentity;
             task.inFlight = true;
             activeAction_ = action;
             lastPlacement_ = frame.tick;
@@ -503,6 +552,12 @@ public:
         }
         return false;
     }
+    const Cell* recordedCell(BlockPos pos)const{
+        checkThread();const auto r=static_cast<std::int64_t>(options_.radius),side=2*r+1;
+        const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
+        if(x<0||x>=side||y<0||y>=side||z<0||z>=side)return nullptr;
+        const auto index=static_cast<std::size_t>((z*side+y)*side+x);return index<preview_.size()?&preview_[index]:nullptr;
+    }
     std::optional<std::uint64_t> recordedState(BlockPos pos) const {
         checkThread();const auto r=static_cast<std::int64_t>(options_.radius);
         const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
@@ -530,7 +585,8 @@ private:
         unsigned attempts{};
         Tick sent{};
         std::uint64_t action{};
-        bool inFlight{}, done{}, failed{};
+        std::optional<std::uint64_t> sentState,lastObserved;
+        bool inFlight{}, done{}, failed{}, provisional{};
     };
     using Counts = std::map<std::string,std::uint64_t>;
     static Counts counts(const Hotbar& hotbar) {
@@ -585,6 +641,7 @@ private:
         task.done = true;
         task.inFlight = false;
         if (activeAction_ == task.action) activeAction_.reset();
+        if(task.provisional){--stats_.provisional;task.provisional=false;}
         ++stats_.confirmed;
         --stats_.remaining;
     }

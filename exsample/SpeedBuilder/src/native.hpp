@@ -52,7 +52,7 @@ struct Bindings{
         for(std::size_t i=0;i<guard.size();i+=3){unsigned char value{};if(!read(p,i/3,value)||value!=std::stoul(guard.substr(i,2),nullptr,16))throw std::runtime_error("native entry mismatch");}return p;
     }
     void load(const std::string& profile){const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_speed_builder");
-        if(f.at("schema")!=1||f.value("revision",0)<2)throw std::runtime_error("unsupported SpeedBuilder schema");
+        if(f.at("schema")!=1||f.value("revision",0)<3)throw std::runtime_error("unsupported SpeedBuilder schema");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+number(j.at("target").at("text_rva"));textEnd=textBegin+number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
         regionFn=checked(f.at("get_region"));getBlockFn=checked(f.at("get_block"));selectFn=checked(f.at("select_hotbar"));getHitFn=checked(f.at("get_hit_result"));
@@ -143,7 +143,46 @@ struct Bindings{
 };
 inline bool identifier(std::string_view name){if(name.empty()||name.size()>256||name.find(':')==name.npos)return false;
     return std::all_of(name.begin(),name.end(),[](unsigned char c){return c>32&&c<127;});}
-struct BlockInfo{std::string name;void* type{};bool solid{};};
+// Bounded read-only view of the exact-build MSVC map/TagVariant layout.
+// No foreign STL methods or native NBT constructors are called.
+inline bool tagEntries(const void* compound,std::vector<std::pair<std::string,void*>>& entries){
+    void* head{};std::uint64_t count{};unsigned char nil{};void* root{};
+    if(!read(compound,8,head)||!read(compound,16,count)||count>128||!read(head,25,nil)||nil!=1||!read(head,8,root))return false;
+    if(!count)return root==head;
+    void* parent{};if(!root||root==head||!read(root,8,parent)||parent!=head)return false;
+    std::array<void*,128> queue{};queue[0]=root;std::size_t used=1;
+    for(std::size_t i=0;i<used;++i){auto* node=queue[i];unsigned char type{};StringCopy key;
+        if(!read(node,25,nil)||nil||!copyString(static_cast<const std::byte*>(node)+0x20,&key)||key.size>128||!key.size||!read(node,0x68,type)||type>11)return false;
+        std::string name(key.bytes,key.size);if(!std::all_of(name.begin(),name.end(),[](unsigned char c){return c>32&&c<127;}))return false;
+        entries.emplace_back(std::move(name),static_cast<std::byte*>(node)+0x40);
+        for(unsigned offset:{0u,16u}){void* child{};if(!read(node,offset,child)||!read(child,25,nil))return false;if(nil)continue;
+            if(used>=count||used>=queue.size()||!read(child,8,parent)||parent!=node||std::find(queue.begin(),queue.begin()+used,child)!=queue.begin()+used)return false;
+            queue[used++]=child;
+        }
+    }return used==count;
+}
+inline std::shared_ptr<const speed_builder::BlockProperties> properties(const Bindings& b,void* state,std::string_view expectedName){
+    const auto* root=static_cast<const std::byte*>(state)+0xf0;void** vt{};void* idFn{};std::array<unsigned char,6> code{};
+    if(!read(root,0,vt)||!read(vt,5*8,idFn)||!b.executable(idFn)||!read(idFn,0,code))return {};
+    const bool compound=(code[0]==0xb0&&code[1]==10&&code[2]==0xc3)||(code[0]==0xb8&&code[1]==10&&code[2]==0&&code[3]==0&&code[4]==0&&code[5]==0xc3);
+    if(!compound)return {};
+    std::vector<std::pair<std::string,void*>> entries;if(!tagEntries(root,entries))return {};
+    void* states{};bool nameMatched=false;
+    for(const auto& [key,value]:entries){unsigned char type{};if(!read(value,0x28,type))return {};
+        if(key=="name"&&type==8){StringCopy name;if(!copyString(static_cast<const std::byte*>(value)+8,&name))return {};nameMatched=std::string_view(name.bytes,name.size)==expectedName;}
+        if(key=="states"&&type==10)states=value;
+    }
+    if(!states||!nameMatched)return {};
+    entries.clear();if(!tagEntries(states,entries))return {};
+    auto result=std::make_shared<speed_builder::BlockProperties>();
+    for(const auto& [key,value]:entries){unsigned char type{};if(!read(value,0x28,type))return {};
+        if(type==1){signed char n{};if(!read(value,8,n))return {};if(!result->values.emplace(key,int(n)).second)return {};}
+        else if(type==3){int n{};if(!read(value,8,n))return {};if(!result->values.emplace(key,n).second)return {};}
+        else if(type==8){StringCopy text;if(!copyString(static_cast<const std::byte*>(value)+8,&text)||text.size>256)return {};if(!result->values.emplace(key,std::string(text.bytes,text.size)).second)return {};}
+        else return {};
+    }return result;
+}
+struct BlockInfo{std::string name;void* type{};bool solid{};std::shared_ptr<const speed_builder::BlockProperties> properties;};
 struct NativeHotbar{speed_builder::Hotbar copied{};std::array<void*,9> types{};std::array<int,9> aux{};};
 class Reader{
 public:
@@ -153,17 +192,24 @@ public:
     std::string typeName(void* type){if(auto it=names.find(type);it!=names.end())return it->second;
         StringCopy value;if(!copyString(static_cast<std::byte*>(type)+0xe8,&value))return {};
         std::string name(value.bytes,value.size);if(!identifier(name))return {};names.emplace(type,name);return name;}
-    speed_builder::Cell cell(void* source,Pos pos,bool inspectSupport=false){speed_builder::Cell result;result.position=pos;auto* state=b.block(source,pos);if(!state)return result;
-        auto it=states.find(state);if(it==states.end()){
-            BlockInfo info;std::uint8_t flags{};if(!read(state,0x68,info.type)||!info.type)return result;
-            info.name=typeName(info.type);if(info.name.empty())return result;
-            if(!read(info.type,0x164,flags))return result;info.solid=(flags&2)!=0;
-            it=states.emplace(state,std::move(info)).first;
-        }
-        result.identifier=it->second.name;result.stateIdentity=reinterpret_cast<std::uintptr_t>(state);
-        if(result.identifier=="minecraft:air"||result.identifier=="minecraft:cave_air"||result.identifier=="minecraft:void_air")result.kind=speed_builder::CellKind::air;
-        else {result.kind=speed_builder::CellKind::block;result.supportsPlacement=it->second.solid||(inspectSupport&&b.collision(it->second.type,state,source,pos));result.nativePlacementCandidate=true;
+    BlockInfo* describe(void* state){
+        if(!state)return nullptr;auto it=states.find(state);if(it!=states.end())return &it->second;
+        BlockInfo info;std::uint8_t flags{};if(!read(state,0x68,info.type)||!info.type)return nullptr;
+        info.name=typeName(info.type);if(info.name.empty()||!read(info.type,0x164,flags))return nullptr;
+        info.solid=(flags&2)!=0;info.properties=properties(b,state,info.name);
+        return &states.emplace(state,std::move(info)).first->second;
+    }
+    speed_builder::Cell describeCell(void* state,Pos pos={}){
+        speed_builder::Cell result;result.position=pos;auto* info=describe(state);if(!info)return result;
+        result.identifier=info->name;result.stateIdentity=reinterpret_cast<std::uintptr_t>(state);result.properties=info->properties;
+        if(info->name=="minecraft:air"||info->name=="minecraft:cave_air"||info->name=="minecraft:void_air")result.kind=speed_builder::CellKind::air;
+        else{result.kind=speed_builder::CellKind::block;result.supportsPlacement=info->solid;result.nativePlacementCandidate=true;
             speed_builder::PlacementRecipe recipe;recipe.itemIdentifier=result.identifier;result.placement=recipe;}
+        return result;
+    }
+    speed_builder::Cell cell(void* source,Pos pos,bool inspectSupport=false){
+        auto* state=b.block(source,pos);auto result=describeCell(state,pos);
+        if(inspectSupport&&result.kind==speed_builder::CellKind::block&&!result.supportsPlacement){auto* info=describe(state);result.supportsPlacement=info&&b.collision(info->type,state,source,pos);}
         return result;
     }
     bool hotbar(void* player,NativeHotbar& result){result={};

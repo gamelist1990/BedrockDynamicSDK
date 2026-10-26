@@ -78,9 +78,11 @@ std::uint64_t generation{},runtime{},tick{},jobSequence{},capturePass{},lastQueu
 unsigned seenConfig{};void* playerIdentity{};void* sourceIdentity{};
 std::string currentTitle,currentSubtitle;std::uint64_t subtitleTick{};
 std::shared_ptr<const sb::Config> roundConfig;
+struct PlacementPlan{sb::PlacementRequest request;Vec hit{};float yaw{},pitch{},score{};};
 struct Probe{sb::PlacementRequest request;std::optional<std::uint64_t> targetState;unsigned candidate{};
     void* player{};std::uint64_t runtime{},world{},selectedTick{};int oldSlot=-1,heldSlot=-1;bool selectionReady{};
     unsigned noSupport{},outOfReach{},predictions{},nativeFailures{},mismatches{};int lastData=-1;
+    float preferredYaw{},preferredPitch{};std::optional<PlacementPlan> fallback;
 };
 std::optional<Probe> probe;
 struct Pending{sb::PlacementRequest request;std::uint64_t runtime{};void* player{};void* source{};std::uint64_t prepared{};
@@ -147,15 +149,22 @@ void capture(void* source){
     auto job=std::make_shared<DiffJob>(DiffJob{std::move(*before),std::move(*after),++jobSequence});
     std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput=std::move(job);lastQueuedPass=capturePass;}
 }
+std::string propertyText(const sb::Cell& cell){
+    if(!cell.properties)return "unavailable";nlohmann::json out=nlohmann::json::object();
+    for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){out[key]=v;},value);return out.dump();
+}
 bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
-    const auto slot=p.request.hotbarSlot;const auto& target=p.request.target;
-    const auto now=reader.cell(source,target);if(now.kind!=sb::CellKind::air){model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
-    auto state=reader.states.find(reinterpret_cast<void*>(p.targetState.value_or(0)));
-    if(state==reader.states.end()||slot>=9||hotbar.types[slot]!=state->second.type||!hotbar.copied[slot].count){++placementDeferred;lastDeferred="probe_item_or_type_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
-    // Prediction callbacks may inspect the actual carried item. Select once for
-    // the whole bounded probe lease, and let one native tick observe the slot.
+    const auto slot=p.request.hotbarSlot;const auto target=p.request.target;const auto* goal=model->recordedCell(target);
+    const auto now=reader.cell(source,target);
+    if(!goal||(p.request.recipe.augment?!sb::canAugment(*goal,now):now.kind!=sb::CellKind::air)){
+        model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
+    }
+    auto* wanted=reader.describe(reinterpret_cast<void*>(p.targetState.value_or(0)));
+    if(!wanted||slot>=9||hotbar.types[slot]!=wanted->type||!hotbar.copied[slot].count){
+        ++placementDeferred;lastDeferred="probe_item_or_type_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
+    }
     if(p.oldSlot<0)p.oldSlot=bindings.selected(player);
     if(p.oldSlot<0||p.oldSlot>8){model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
     if(!p.selectionReady){
@@ -164,47 +173,62 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     }
     if(bindings.selected(player)!=static_cast<int>(slot)){++placementDeferred;lastDeferred="selected_slot_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
     if(tick<=p.selectedTick)return false;
-    // Every proposal is independently checked against the engine's immutable target state.
-    // Six faces * four cardinal yaw values * three heights * three pitch values.
+    const auto commit=[&](const PlacementPlan& plan){
+        Pending action;action.request=plan.request;action.runtime=runtime;action.player=player;action.source=source;
+        action.prepared=tick;action.yaw=plan.yaw;action.pitch=plan.pitch;action.hit=plan.hit;action.oldSlot=p.oldSlot;
+        // A fallback may have come from another matching hotbar slot. Select it
+        // again and retain the normal one-tick main-hand boundary before use.
+        if(!bindings.select(player,action.request.hotbarSlot))return false;
+        pending=std::move(action);probe.reset();return true;
+    };
+    if(p.request.recipe.augment){
+        PlacementPlan plan;plan.request=p.request;plan.request.support=target;plan.request.recipe.face=sb::Face::up;
+        plan.request.recipe.hitX=plan.request.recipe.hitZ=.5f;plan.request.recipe.hitY=1.f;
+        plan.request.recipe.deferredState=true;plan.request.recipe.exactStateSupported=false;
+        plan.yaw=p.preferredYaw;plan.pitch=p.preferredPitch;plan.hit={target.x+.5f,target.y+1.f,target.z+.5f};
+        return commit(plan);
+    }
     constexpr unsigned faces[6]={1,2,3,4,5,0};constexpr float heights[3]={.5f,.25f,.75f};constexpr float pitches[3]={0.f,90.f,-90.f};
     const auto deadline=Clock::now()+std::chrono::microseconds(350);
     for(unsigned step=0;step<16&&p.candidate<216;++step){const unsigned n=p.candidate++;unsigned i=n;
-        const auto face=faces[i%6];i/=6;const float yaw=float(i%4)*90.f;i/=4;const float height=heights[i%3];i/=3;const float pitch=pitches[i%3];
+        const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
+        const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
         const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||!base.supportsPlacement){++p.noSupport;continue;}
         Vec fractional{.5f,height,.5f};if(face==0)fractional.y=0;else if(face==1)fractional.y=1;
         else if(face==2)fractional.z=0;else if(face==3)fractional.z=1;else if(face==4)fractional.x=0;else fractional.x=1;
-        Vec hit{float(support.x)+fractional.x,float(support.y)+fractional.y,float(support.z)+fractional.z};
+        Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
         const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
         if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach){++p.outOfReach;continue;}
-        void* predicted{};
-        ++p.predictions;
-        const bool predictedOK=bindings.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
-        if(!predictedOK)++p.nativeFailures;
-        else if(reinterpret_cast<std::uintptr_t>(predicted)!=p.targetState){++p.mismatches;std::uint16_t data{};if(native::read(predicted,0x120,data))p.lastData=data;}
-        if(predictedOK&&reinterpret_cast<std::uintptr_t>(predicted)==p.targetState){
-            Pending action;action.request=p.request;action.request.support=support;action.request.recipe.face=static_cast<sb::Face>(face);
-            action.request.recipe.orientationKnown=action.request.recipe.exactStateSupported=true;
-            action.request.recipe.yaw=yaw;action.request.recipe.pitch=pitch;action.request.recipe.hitX=fractional.x;action.request.recipe.hitY=fractional.y;action.request.recipe.hitZ=fractional.z;
-            action.runtime=runtime;action.player=player;action.source=source;action.prepared=tick;
-            action.yaw=yaw;action.pitch=pitch;action.hit=hit;action.oldSlot=p.oldSlot;
-            // Transfer the selected-slot lease. Rotation is applied immediately
-            // before dispatch, rather than requiring it to survive an input tick.
-            pending=action;probe.reset();return true;
+        void* predicted{};++p.predictions;
+        const bool ok=bindings.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
+        if(!ok){++p.nativeFailures;continue;}
+        auto* predictedInfo=reader.describe(predicted);if(!predictedInfo||predictedInfo->type!=wanted->type)continue;
+        const auto predictedCell=reader.describeCell(predicted,target);
+        const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
+        if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,0x120,data))p.lastData=data;}
+        PlacementPlan plan;plan.request=p.request;plan.request.support=support;auto& recipe=plan.request.recipe;
+        recipe.face=static_cast<sb::Face>(face);recipe.orientationKnown=true;recipe.exactStateSupported=exact;recipe.deferredState=!exact;
+        recipe.yaw=yaw;recipe.pitch=pitch;recipe.hitX=fractional.x;recipe.hitY=fractional.y;recipe.hitZ=fractional.z;
+        plan.yaw=yaw;plan.pitch=pitch;plan.hit=hit;plan.score=-float(turn)-float(tilt)*.1f;
+        if(goal->properties&&predictedCell.properties)for(const auto& [key,value]:goal->properties->values){
+            auto it=predictedCell.properties->values.find(key);if(it!=predictedCell.properties->values.end()&&value==it->second)plan.score+=sb::derivedState(key)?1.f:16.f;
         }
+        if(exact||sb::samePlacementBasis(*goal,predictedCell))return commit(plan);
+        if(!p.fallback||plan.score>p.fallback->score)p.fallback=std::move(plan);
         if(Clock::now()>=deadline)break;
     }
     if(p.candidate>=216){
+        // Explore every matching slot before selecting the best type-compatible
+        // proposal. Server-derived permutations must be checked after placement.
         for(unsigned next=slot+1;next<9;++next)if(hotbar.copied[next].count&&hotbar.copied[next].identifier==p.request.recipe.itemIdentifier){
             p.request.hotbarSlot=next;p.candidate=0;p.selectionReady=false;return false;
         }
-        std::uint16_t desiredData{};native::read(reinterpret_cast<void*>(p.targetState.value_or(0)),0x120,desiredData);
-        note("placement unresolved: "+p.request.recipe.itemIdentifier+" target="+std::to_string(target.x)+","+std::to_string(target.y)+","+std::to_string(target.z)+
-            " no_support="+std::to_string(p.noSupport)+" reach_rejected="+std::to_string(p.outOfReach)+" predictions="+std::to_string(p.predictions)+
-            " native_failures="+std::to_string(p.nativeFailures)+" state_mismatch="+std::to_string(p.mismatches)+
-            " aux="+std::to_string(hotbar.aux[slot])+" desired_data="+std::to_string(desiredData)+" last_predicted_data="+std::to_string(p.lastData));
-        model->placementResult(p.request.token,p.request.actionId,false,tick);restoreProbe(player,runtime);}
-    return false;
+        if(p.fallback){auto plan=*p.fallback;note("placement deferred-state proposal: item="+plan.request.recipe.itemIdentifier+" slot="+std::to_string(plan.request.hotbarSlot)+" expected="+propertyText(*goal));return commit(plan);}
+        note("placement unresolved: "+p.request.recipe.itemIdentifier+" no_support="+std::to_string(p.noSupport)+" reach_rejected="+std::to_string(p.outOfReach)+
+            " predictions="+std::to_string(p.predictions)+" native_failures="+std::to_string(p.nativeFailures)+" state_mismatch="+std::to_string(p.mismatches)+" expected="+propertyText(*goal));
+        model->placementResult(p.request.token,p.request.actionId,false,tick);restoreProbe(player,runtime);
+    }return false;
 }
 void tickGame(const bedrock::LevelTickEvent& event){
     void* instance=client.load();void* player=bindings.local(instance);void* level{};
@@ -243,15 +267,18 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const char* reason=nullptr;
             if(generation!=epoch.load()||!model->actionPending(token,aid)||action.runtime!=id||action.source!=source)reason="expired_action";
             else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier)reason="main_hand_changed";
-            else if(target.kind!=sb::CellKind::air)reason="target_not_air";
-            else if(!support.supportsPlacement)reason="no_support";
+            else if(recipe.augment?(!model->recordedCell(action.request.target)||!sb::canAugment(*model->recordedCell(action.request.target),target)):target.kind!=sb::CellKind::air)reason="target_changed";
+            else if(!recipe.augment&&!support.supportsPlacement)reason="no_support";
             else if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)reason="out_of_reach";
             else if(!native::read(rot,bindings.actors.rotationYawOffset,yaw)||!native::read(rot,bindings.actors.rotationPitchOffset,pitch))reason="rotation_read_failed";
             if(!reason){
                 action.oldYaw=yaw;action.oldPitch=pitch;action.rotationApplied=true;
                 if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch))reason="rotation_write_failed";
-                else if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
-                else if(reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
+                else if(!recipe.augment){
+                    if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
+                    else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
+                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);if(!wanted||!got||wanted->type!=got->type)reason="prediction_type_changed";}
+                }
             }
             if(!reason){
                 bool accepted=false;auto* gm=bindings.gameMode(player);
@@ -259,7 +286,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 if(dispatched)++nativeCalls;if(dispatched&&accepted)++nativeAccepted;
                 model->placementResult(token,aid,dispatched&&accepted,tick);action.dispatched=true;
                 note(std::string("placement native: called=")+(dispatched?"1":"0")+" accepted="+(accepted?"1":"0")+" game_mode="+(gm?"valid":"unavailable")+
-                    " item="+recipe.itemIdentifier+" slot="+std::to_string(slot)+" target="+std::to_string(action.request.target.x)+","+std::to_string(action.request.target.y)+","+std::to_string(action.request.target.z));
+                    " deferred_state="+std::to_string(recipe.deferredState)+" augment="+std::to_string(recipe.augment)+" item="+recipe.itemIdentifier+" slot="+std::to_string(slot)+" target="+std::to_string(action.request.target.x)+","+std::to_string(action.request.target.y)+","+std::to_string(action.request.target.z));
             }else {++placementDeferred;lastDeferred=reason;model->deferPlacement(token,aid,tick);restorePending(player,id);}
 
         }
@@ -269,19 +296,23 @@ void tickGame(const bedrock::LevelTickEvent& event){
             for(const auto& pos:model->inspectionPositions())frame.cells.push_back(reader.cell(source,pos,true));
             if(auto request=model->nextPlacement(frame)){
                 const auto desired=model->recordedState(request->target);
-                if(desired){probe=Probe{*request,desired,0};probe->player=player;probe->runtime=id;probe->world=generation;}else model->deferPlacement(request->token,request->actionId,tick);
+                if(desired){probe=Probe{*request,desired,0};probe->player=player;probe->runtime=id;probe->world=generation;
+                    auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
+                    native::read(rot,bindings.actors.rotationYawOffset,probe->preferredYaw);native::read(rot,bindings.actors.rotationPitchOffset,probe->preferredPitch);
+                    if(const auto* goal=model->recordedCell(request->target))if(auto angles=sb::placementAngles(*goal)){probe->preferredYaw=angles->first;probe->preferredPitch=angles->second;}
+                }else model->deferPlacement(request->token,request->actionId,tick);
             }
         }
         if(probe)probeNext(player,source,hotbar,eye);
     }
     const auto phase=model->phase();
     if(phase!=lastPhase||tick-lastProgress>=100){lastPhase=phase;lastProgress=tick;
-        if(phase!=sb::Phase::idle&&phase!=sb::Phase::cancelled){const auto stats=model->stats();note("progress: phase="+std::to_string(static_cast<int>(phase))+" captured="+std::to_string(stats.captured)+" observed="+std::to_string(stats.confirmed)+" remaining="+std::to_string(stats.remaining)+" exhausted="+std::to_string(stats.exhausted)+" stop_reason="+std::to_string(static_cast<int>(model->stopReason())));}}
+        if(phase!=sb::Phase::idle&&phase!=sb::Phase::cancelled){const auto stats=model->stats();note("progress: phase="+std::to_string(static_cast<int>(phase))+" captured="+std::to_string(stats.captured)+" observed="+std::to_string(stats.confirmed)+" remaining="+std::to_string(stats.remaining)+" provisional="+std::to_string(stats.provisional)+" exhausted="+std::to_string(stats.exhausted)+" stop_reason="+std::to_string(static_cast<int>(model->stopReason())));}}
     if(phase==sb::Phase::building&&tick%100==0){
         const auto scan=model->placementScan();
         note("placement pipeline: visited="+std::to_string(scan.visited)+" unknown="+std::to_string(scan.unknown)+" occupied="+std::to_string(scan.occupied)+
             " no_support="+std::to_string(scan.noSupport)+" dependency="+std::to_string(scan.dependency)+" out_of_reach="+std::to_string(scan.outOfReach)+
-            " missing_item="+std::to_string(scan.missingItem)+" inflight="+std::to_string(scan.inFlight)+" cooldown="+std::to_string(scan.cooldown)+
+            " state_pending="+std::to_string(scan.statePending)+" missing_item="+std::to_string(scan.missingItem)+" inflight="+std::to_string(scan.inFlight)+" cooldown="+std::to_string(scan.cooldown)+
             " probe="+std::to_string(probe?probe->candidate:0)+" pending="+std::to_string(bool(pending))+" native_calls="+std::to_string(nativeCalls)+
             " accepted="+std::to_string(nativeAccepted)+" deferred="+std::to_string(placementDeferred)+" last_defer="+lastDeferred);
     }
@@ -291,7 +322,7 @@ void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(con
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
-    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision2; native reads/writes on client tick; copied diff worker\n";
+    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision3; native reads/writes on client tick; copied diff worker\n";
     const auto path=dir/L"config.json";auto modified=std::filesystem::last_write_time(path);auto nextReload=Clock::now();
     while(!stopped.load()){
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
@@ -319,7 +350,7 @@ DWORD WINAPI start(void*){
         if(!std::filesystem::exists(path)){std::ofstream out(path);out<<sb::configJson(sb::Config{}).dump(2)<<'\n';}
         {std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});config.store(std::make_shared<const sb::Config>(sb::parseConfig(text)));}
         std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         bindings.load(profile);reader.states.reserve(4096);reader.names.reserve(512);
         if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");

@@ -227,3 +227,33 @@ embedded exact-build profile even if they contain the formerly incorrect entry.
 Optional-hook installation status is logged independently for cube and permission.
 This repairs the observed guard error; it does not by itself establish that
 spectator terrain visibility works on the user's render pipeline.
+
+## Terrain visibility, visual revision 3
+
+Live evidence now establishes cube suppression executes while the underground view
+remains blocked. Cube suppression is insufficient; do not label it spectator terrain
+visibility. The new path invokes the engine's primary-camera culler setter0x4690910
+with RCX camera, EDX type0 from the render callback, before forwarding renderLevel.
+Primary camera is the established LevelRenderer+0x468 field. The native setter
+checks current culler activity, replaces its native shared_ptr at+0x9A8 only when
+appropriate, stores type+0x9B8 and calls0x4691770 to invalidate visibility caches.
+REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680.
+
+Factory0x4690B80's raw slice cannot resolve its external switch table. Exact PE
+int32 entries at0xE8E06B8 map selector0 to0x4690BC6; this path installs concrete
+vtable0xE8DFD70 on a native shared object. Its update virtual is0x47E37E0, which
+populates results by enumerating the complete bounded native chunk grid without
+portal connectivity filtering. REA ev_4a88f6267e755016f84f5255f47fab9e15cdd8b08c18f10f079d3e9af676cfef
+plus ev_e68eabbbb6a59032b5fd333ce1b5f3e00c36b978192ee1e256503c6fc8b7bad8.
+The None classification is inferred from behavior; runtime verification is pending.
+Evidence is in PEXData/REA/freecam-terrain-1.26.52.3 outside the repository.
+
+No foreign shared_ptr is copied, forged, directly replaced or freed. The callback
+only requests a native switch when needed, retries native busy transitions, checks
+mode0 and the expected concrete vtable, and restores only a held camera/epoch lease.
+An external nonzero choice is not overwritten on restoration. A try-lock protects
+lease bookkeeping from nested/concurrent render callbacks. Workers see atomic
+scalar diagnostics only. The pinned render subscriber stays alive after Stop to
+restore at the next valid frame; expired world pointers are discarded. Native calls
+have exact entry guards and SEH isolation. This does not establish crash immunity.
+The no-occlusion culler can increase visible geometry/work within the loaded grid.

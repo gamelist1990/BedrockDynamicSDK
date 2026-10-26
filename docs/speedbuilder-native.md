@@ -95,3 +95,35 @@ These native bindings remain candidates pending the next live logs.
 End-of-round Japanese subtitles cancel capture/wait/build work. Pure UTF-8 section
 sign sequences are removed as formatting; lone0xA7 continuation bytes are preserved.
 Unchanged semantic configuration no longer causes a needless cancellation.
+
+## Named properties and post-placement permutations, revision 3
+
+The new live log proves four native sandstone placements were accepted and all four
+exact states observed. It also isolates wall/hive predictions as same-type, differing
+pre-placement state (e.g. wall41 vs1). Revision3 permits same-native-type proposals
+and validates completion only against the actual recorded state. Walls/connection
+states can settle after adjacent placements; real same-type supports are usable
+before their final permutation. Candles/cluster_count allow bounded incremental use
+only when the observed count is below the goal, never blind repeated clicks.
+Provisional type observations are tracked separately from exact confirmations.
+
+A read-only NBT view copies named properties once per interned Block state.
+REA/Ghidra ev_7384df9c2cbd7961b2b68138bb1d131fbff5b3a9923acc5d5d609104aecf07ce
+at0x2548830 establishes tree head+8, root parent+8, nil byte+0x19, key+0x20,
+TagVariant+0x40 and discriminator at node+0x68 (variant+0x28). Block+0xF0 is a
+candidate inline CompoundTag layout corroborated by declaration sizes and leaf
+LEA+0xF0 candidates. The runtime reader checks Compound getId leaf bytes (without
+calling it), bounded acyclic parent-consistent trees <=128 entries, matching root
+name and compound states. Only byte/int/string properties are exposed; any mismatch
+returns unavailable. It never calls foreign STL methods or mutates NBT. Immutable
+SDK-owned property copies, not native pointers, may cross to the diff worker.
+Evidence: PEXData/REA/speedbuilder-states-1.26.52.3/compound-map-evidence.json.
+
+Standard cardinal/facing names guide candidate yaw/pitch. Arbitrary custom bit
+values are not interpreted as orientation. Exact predicted candidates are preferred;
+otherwise known non-derived properties are preferred, then the best same-type
+proposal across matching hotbar slots is selected and rechecked before dispatch.
+The actual resulting permutation still must match. Unresolved server-defined
+orientation can remain provisional and is logged; success is not inferred from
+native acceptance. Microsoft primary block-state listings document wall connections
+and candle counts: https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/BlockReference/Examples/IntrinsicBlockStatesList.md .

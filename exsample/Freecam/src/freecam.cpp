@@ -81,6 +81,17 @@ void __fastcall insideCubeDetour(void* renderer,void* instance,void* screenConte
     }
     originalInsideCube(renderer,instance,screenContext);
 }
+// All culler ownership bookkeeping below belongs to the native render callback.
+// Workers only read atomic diagnostics; they never access camera/culler pointers.
+using SetCullerFn=void(__fastcall*)(void*,unsigned char);
+SetCullerFn setCuller{};
+std::size_t cameraCullerOffset{},cameraCullerTypeOffset{};
+std::uintptr_t noneCullerVtable{};
+std::atomic<bool> terrainReady{};
+std::atomic<unsigned> terrainCalls{},terrainChanges{},terrainRestores{},terrainFaults{};
+std::atomic<int> terrainObservedMode{-1};std::atomic<bool> terrainPending{};
+struct CullerLease{void* camera{};std::uint64_t epoch{};unsigned char previous{};bool owned{};};
+CullerLease cullerLease;std::mutex terrainLeaseMutex;
 std::atomic<bool> gammaReady{};
 float __fastcall gammaDetour(void* options){
     const float value=originalGamma(options);
@@ -103,6 +114,53 @@ template<class T> bool write(void* p,std::size_t offset,const T& value) noexcept
     if(!p)return false;
     __try {std::memcpy(static_cast<std::byte*>(p)+offset,&value,sizeof(T));return true;}
     __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool invokeCuller(void* camera,unsigned char mode) noexcept {
+    if(!setCuller)return false;
+    __try{setCuller(camera,mode);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+void updateTerrainCulling(void* renderer){
+    if(!terrainReady.load(std::memory_order_relaxed))return;
+    std::unique_lock leaseLock(terrainLeaseMutex,std::try_to_lock);if(!leaseLock)return;
+    const auto world=epoch.load();void* camera{};unsigned char mode{};
+    if(cullerLease.epoch!=world)cullerLease={};
+    if(!read(renderer,render.player,camera)||!camera||!read(camera,cameraCullerTypeOffset,mode)||mode>5)return;
+    if(cullerLease.camera&&cullerLease.camera!=camera)cullerLease={};
+    terrainObservedMode.store(mode,std::memory_order_relaxed);
+    const bool want=undergroundViewEnabled();
+    // Do not hold or swap a native shared_ptr ourselves. The engine setter waits
+    // for its asynchronous culler to become idle, constructs the replacement,
+    // and invalidates its old visibility cache.
+    if(want){
+        if(mode==0){
+            void* culler{};std::uintptr_t table{};
+            const bool none=read(camera,cameraCullerOffset,culler)&&read(culler,0,table)&&table==noneCullerVtable;
+            terrainPending.store(!none,std::memory_order_relaxed);return;
+        }
+        if(!cullerLease.owned)cullerLease={camera,world,mode,true};
+        if(epoch.load()!=world)return;
+        terrainCalls.fetch_add(1,std::memory_order_relaxed);
+        if(!invokeCuller(camera,0)){terrainFaults.fetch_add(1);terrainReady.store(false);return;}
+        unsigned char after{};
+        if(read(camera,cameraCullerTypeOffset,after)){
+            terrainObservedMode.store(after,std::memory_order_relaxed);
+            if(after==0)terrainChanges.fetch_add(1,std::memory_order_relaxed);
+            terrainPending.store(after!=0,std::memory_order_relaxed);
+        }
+    }else if(cullerLease.owned){
+        // A different mode means another native caller has already changed it;
+        // do not overwrite that caller's choice with a stale saved value.
+        if(mode!=0){cullerLease={};terrainPending.store(false);return;}
+        if(epoch.load()!=world)return;
+        if(!invokeCuller(camera,cullerLease.previous)){terrainFaults.fetch_add(1);terrainReady.store(false);return;}
+        unsigned char after{};
+        if(read(camera,cameraCullerTypeOffset,after)){
+            terrainObservedMode.store(after,std::memory_order_relaxed);
+            if(after==cullerLease.previous){cullerLease={};terrainRestores.fetch_add(1);terrainPending.store(false);}
+            else terrainPending.store(true);
+        }
+    }else terrainPending.store(false,std::memory_order_relaxed);
 }
 void disable(unsigned reason=Disabled){restoreRequested.store(true);desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
 void reset(){disable(World);epoch.fetch_add(1);local.store(nullptr);for(auto& key:keys)key.store(false);}
@@ -473,10 +531,12 @@ bool drawNative(void* renderer,void* screen,const Mesh* geometry) noexcept {
     return success;
 }
 void BDS_HOOK_CALL renderSubscriber(void*,void* raw,BDS_HookNext next,void* frame){
+    auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);
+    updateTerrainCulling(args.renderer);
     next(frame,raw);if(!active.load()||stop.load()||!config.load()->playerHitboxes)return;
     static thread_local bool drawing=false;if(drawing)return;
     const auto geometry=mesh.load();if(!geometry||geometry->epoch!=epoch.load()||!geometry->count||Clock::now()-geometry->made>std::chrono::milliseconds(250))return;
-    auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);drawing=true;
+    drawing=true;
     if(!drawNative(args.renderer,args.screen,geometry.get())){disable(RenderFault);}
     drawing=false;
 }
@@ -576,7 +636,7 @@ void worker(const std::filesystem::path& path){
             if(active.load()&&generation==epoch.load())mesh.store(result);
         }
         if(!active.load())mesh.store(nullptr);
-        if((active.load()||interactionPackets.load()||blockedPackets.load())&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
+        if((active.load()||interactionPackets.load()||blockedPackets.load()||terrainRestores.load()||terrainFaults.load()||terrainPending.load())&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
             const auto cubeCalls=insideCubeCalls.exchange(0),cubeSkipped=insideCubeSuppressed.exchange(0);
             const auto permissionCalls=insideBlockCalls.exchange(0),permissionSkipped=insideBlockSuppressed.exchange(0);
             const auto otherClient=insideBlockOtherClient.exchange(0);
@@ -586,13 +646,17 @@ void worker(const std::filesystem::path& path){
                     " other_client="+std::to_string(otherClient)+" [5s; render only]");
                 if(!cubeSkipped&&!permissionSkipped)log("Freecam underground view inactive: renderer path not observed; visibility is not confirmed");
             }
+            log("Freecam terrain visibility: ready="+std::to_string(terrainReady.load())+" mode="+std::to_string(terrainObservedMode.load())+
+                " pending="+std::to_string(terrainPending.load())+" switch_calls="+std::to_string(terrainCalls.exchange(0))+
+                " changed="+std::to_string(terrainChanges.exchange(0))+" restored="+std::to_string(terrainRestores.exchange(0))+
+                " faults="+std::to_string(terrainFaults.exchange(0))+" [5s; native camera culler]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
                 " cube_hook="+(insideCubeReady.load()?"installed":"unavailable")+" permission_hook="+(insideBlockReady.load()?"installed":"unavailable")+
-                " visual_revision=2 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+                " terrain_culler="+(terrainReady.load()?"ready":"unavailable")+" visual_revision=3 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -616,7 +680,7 @@ DWORD WINAPI start(void*){
         if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_cube_render") || nlohmann::json::parse(profile).at("native_freecam").at("visual").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_cube_render") || nlohmann::json::parse(profile).at("native_freecam").at("visual").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
@@ -649,6 +713,19 @@ DWORD WINAPI start(void*){
             insideCubeReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&insideCubeDetour),reinterpret_cast<void**>(&originalInsideCube),&insideCubeToken)!=0);
             log(insideCubeReady.load()?"Freecam inside-cube renderer hook installed [direct draw suppression; static candidate]":"Freecam inside-cube renderer unavailable: hook conflict");
         } catch(const std::exception& e){log(std::string("Freecam inside-cube renderer unavailable: ")+e.what());}
+        try {
+            const auto& culling=f.at("visual").at("terrain_culling");
+            if(culling.at("schema")!=1||number(culling.at("none_mode"))!=0)throw std::runtime_error("unsupported terrain culler schema");
+            setCuller=reinterpret_cast<SetCullerFn>(checkedFunction(culling.at("set_culler")));
+            checkedFunction(culling.at("factory_check"));
+            const auto updateNone=checkedFunction(culling.at("none_update_check"));
+            cameraCullerOffset=number(culling.at("camera_culler_offset"));cameraCullerTypeOffset=number(culling.at("camera_culler_type_offset"));
+            noneCullerVtable=base+number(culling.at("none_vtable_rva"));void* updateEntry{};
+            if(cameraCullerOffset!=0x9a8||cameraCullerTypeOffset!=0x9b8||!read(reinterpret_cast<void*>(noneCullerVtable),8,updateEntry)||updateEntry!=updateNone)
+                throw std::runtime_error("terrain culler identity mismatch");
+            terrainReady.store(true);
+            log("Freecam terrain culling ready [native culler type0; render camera only; candidate; game mode unchanged]");
+        }catch(const std::exception& e){terrainReady.store(false);log(std::string("Freecam terrain culling unavailable: ")+e.what());}
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){
@@ -666,7 +743,9 @@ DWORD WINAPI start(void*){
            !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,functions[0],renderSubscriber,nullptr,&renderToken))throw std::runtime_error("native hook conflict/install failure; restart Minecraft with matching runtime DLLs");
         log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());status.store(2);worker(path);
     }catch(const std::exception& e){log(std::string("startup failed: ")+e.what());status.store(4);}
-    disable();if(renderToken)BDS_HookUnsubscribe(renderToken);
+    disable();
+    // Keep the pinned render subscriber until process exit. It passes through
+    // after stop, but must get a frame to restore an outstanding culler lease.
     // The local-Player direct detour is a lifetime-pinned pass-through after stop.
     // Do not tear down trampolines while a native thread may still enter them.
     // Keep pinned callbacks as no-ops/pass-through after stop, so the next
