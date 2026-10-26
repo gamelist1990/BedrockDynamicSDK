@@ -55,6 +55,11 @@ using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn o
 BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
 using CreateViewFn=void*(__fastcall*)(void*,void*,void*,unsigned char);CreateViewFn originalCreateView{};
 BDS_HookToken createViewToken{};std::atomic<bool> createViewReady{};
+using EffectPredicateFn=bool(__fastcall*)(void*,void*);EffectPredicateFn originalEffectPredicate{};
+BDS_HookToken effectToken{};std::atomic<bool> effectReady{};
+std::array<std::uintptr_t,2> effectTables{},effectCallers{};
+std::atomic<unsigned> effectCalls{},effectEligible{},effectSkipped{},effectOtherCaller{};
+std::atomic<std::uintptr_t> effectLastCaller{};
 std::atomic<unsigned> cameraRenderCalls{},viewCreated{},viewChanged{},viewWriteFailed{};
 BDS_HookToken gammaToken{};
 // All culler ownership bookkeeping below belongs to the native render callback.
@@ -147,6 +152,29 @@ void __fastcall cameraRenderDetour(void* camera,void* context,void* view,void* i
         cameraRenderCalls.fetch_add(1,std::memory_order_relaxed);captureVisibility(camera,view,true);
     }
     originalCameraRender(camera,context,view,instance);
+}
+// RenderDragon extraction predicate. This shared native implementation serves
+// many tags, so require BOTH the InsideBlockEffect callable table and its exact
+// extraction call site. No frame/entity/terrain data is mutated.
+bool __fastcall effectPredicateDetour(void* predicate,void* arguments){
+    const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    std::uintptr_t table{};
+    if(!read(predicate,0,table))return originalEffectPredicate(predicate,arguments);
+    const bool tagged=table==effectTables[0]||table==effectTables[1];
+    if(!tagged)return originalEffectPredicate(predicate,arguments);
+    const bool permitted=originalEffectPredicate(predicate,arguments);
+    effectCalls.fetch_add(1,std::memory_order_relaxed);
+    const auto image=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    if(caller>=image&&caller-image<0x20000000)effectLastCaller.store(caller-image);
+    if(caller!=effectCallers[0]&&caller!=effectCallers[1]){
+        effectOtherCaller.fetch_add(1,std::memory_order_relaxed);return permitted;
+    }
+    if(permitted)effectEligible.fetch_add(1,std::memory_order_relaxed);
+    if(permitted&&effectReady.load(std::memory_order_relaxed)&&active.load()&&!stop.load()&&gameplay.load()&&
+       primaryCameraEpoch.load()==epoch.load()&&config.load()->spectatorMode){
+        effectSkipped.fetch_add(1,std::memory_order_relaxed);return false;
+    }
+    return permitted;
 }
 // Intercept the native selector BEFORE its update. Repeated native requests
 // then see an already selected mode5 and do not rebuild the async culler each frame.
@@ -702,7 +730,7 @@ void worker(const std::filesystem::path& path){
         if(config.load()->visibilityDiagnostics&&observed){
             if(!observations.is_open())observations.open(path.parent_path()/L"visibility.jsonl",std::ios::app);
             if(observations){auto vector=[](Vec v){return nlohmann::json::array({v.x,v.y,v.z});};
-                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",8},
+                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",9},
                     {"exe_sha256","4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4"},
                     {"monotonic_ms",sample.milliseconds},{"epoch",sample.epoch},{"freecam",sample.flying},{"actor_game_type",sample.gameType},
                     {"valid_camera_read",sample.valid},{"candidate_camera_654",vector(sample.camera654)},
@@ -737,13 +765,16 @@ void worker(const std::filesystem::path& path){
                 " churn_guard="+std::to_string(terrainRejected.load())+" [native selector mode5; underground view needs live confirmation]");
             log("Freecam view factory: ready="+std::to_string(createViewReady.load())+" created="+std::to_string(viewCreated.exchange(0))+
                 " changed="+std::to_string(viewChanged.exchange(0))+" failed="+std::to_string(viewWriteFailed.exchange(0))+
-                " camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+" [fresh output only; 5s; visual_revision=8]");
+                " camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+" [fresh output only; 5s; visual_revision=9]");
+            log("Freecam RenderDragon inside effect: ready="+std::to_string(effectReady.load())+" calls="+std::to_string(effectCalls.exchange(0))+
+                " eligible="+std::to_string(effectEligible.exchange(0))+" skipped="+std::to_string(effectSkipped.exchange(0))+
+                " other_caller="+std::to_string(effectOtherCaller.exchange(0))+" caller_rva="+std::to_string(effectLastCaller.load())+" [5s; visual_revision=9]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
-                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=8 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=9 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -771,7 +802,7 @@ DWORD WINAPI start(void*){
         if(!cached.contains("native_freecam")||!cached.at("native_freecam").contains("borion")||
            !cached.at("native_freecam").at("borion").contains("packet_motion")||
            !cached.at("native_freecam").contains("visual")||
-           cached.at("native_freecam").at("visual").value("revision",0)<8)
+           cached.at("native_freecam").at("visual").value("revision",0)<9)
             profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
@@ -807,7 +838,7 @@ DWORD WINAPI start(void*){
             if(!BDS_HookDirectInstall(reinterpret_cast<void*>(setCuller),reinterpret_cast<void*>(&cullerDetour),reinterpret_cast<void**>(&originalSetCuller),&cullerToken))
                 throw std::runtime_error("native culler selector hook conflict");
             setCuller=originalSetCuller;terrainReady.store(true);
-            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision8]");
+            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision9]");
         }catch(const std::exception& e){terrainReady.store(false);log(std::string("Freecam terrain culling unavailable: ")+e.what());}
         try{
             void* target=checkedFunction(f.at("visual").at("camera_render_observe"));
@@ -817,8 +848,23 @@ DWORD WINAPI start(void*){
         try{
             void* target=checkedFunction(f.at("visual").at("create_view"));
             createViewReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&createViewDetour),reinterpret_cast<void**>(&originalCreateView),&createViewToken)!=0);
-            log(createViewReady.load()?"Freecam view factory ready [new output draw_inside_cubes=false; no game-mode/ability writes; visual revision8]":"Freecam view factory unavailable: hook conflict");
+            log(createViewReady.load()?"Freecam view factory ready [new output draw_inside_cubes=false; no game-mode/ability writes; visual revision9]":"Freecam view factory unavailable: hook conflict");
         }catch(const std::exception& e){log(std::string("Freecam view factory unavailable: ")+e.what());}
+        try{
+            const auto& effect=f.at("visual").at("render_dragon_inside_effect");
+            if(effect.at("variants").size()!=2)throw std::runtime_error("unsupported InsideBlockEffect variants");
+            void* target=checkedFunction(effect.at("predicate"));
+            for(unsigned i=0;i<2;++i){const auto& v=effect.at("variants").at(i);
+                checkedFunction(v.at("caller_check"));const auto typeGetter=checkedFunction(v.at("type_getter_check"));
+                effectTables[i]=base+number(v.at("callable_vtable_rva"));effectCallers[i]=base+number(v.at("return_rva"));
+                void *call{},*type{};
+                if(!read(reinterpret_cast<void*>(effectTables[i]),0x10,call)||call!=target||
+                   !read(reinterpret_cast<void*>(effectTables[i]),0x18,type)||type!=typeGetter)
+                    throw std::runtime_error("InsideBlockEffect callable identity mismatch");
+            }
+            effectReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&effectPredicateDetour),reinterpret_cast<void**>(&originalEffectPredicate),&effectToken)!=0);
+            log(effectReady.load()?"Freecam RenderDragon InsideBlockEffect filter ready [tag + exact extraction caller; visual revision9]":"Freecam RenderDragon InsideBlockEffect filter unavailable: hook conflict");
+        }catch(const std::exception& e){log(std::string("Freecam RenderDragon InsideBlockEffect filter unavailable: ")+e.what());}
         log("Freecam legacy inside-cube bypass retired [revision7 did not resolve underground display]");
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});

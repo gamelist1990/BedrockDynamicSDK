@@ -1,6 +1,6 @@
 # Freecam (Windows x64)
 
-現行版は **visual revision8** です。更新内容と確認ログは末尾のrevision8節を参照してください。
+現行版は **visual revision9** です。更新内容と確認ログは末尾のrevision9節を参照してください。
 
 SDKの通常のexample Modです。MSVC **Release**で`BedrockFreecam.dll`を作成します。
 対象はMinecraft **1.26.52.3**。新規の座標書き込み・送信経路は解析中の候補であり、実機動作は未確認です。
@@ -144,3 +144,16 @@ revision8は本体の`createViewRenderObject`が作成した直後の戻り値�
 `Freecam view factory`の`created`は対象カメラの生成件数、`changed`はフラグ変更件数、`failed`は検証/書込失敗です。
 `visibility.jsonl`は今回の版で`visual_revision=8`。Freecam中に`draw_inside_cubes=false`となって初めて消費側まで反映されたと確認できます。
 本物のスペクテイターと地下表示が一致するかは今回も実機未確認です。Minecraftを完全終了して差し替えてください。
+
+
+## 現行 visual revision9: RenderDragonのInsideBlockEffect
+
+revision8はフラグの反映・解除後の復帰が記録で確認できても、ユーザーの画面では改善しませんでした。フラグ一致を表示成功とは扱いません。
+別のRenderDragon経路に`InsideBlockEffect`専用の抽出・描画対象が見つかりました。
+revision9はその型の呼び出しテーブルと2つの正確な呼出元が一致した場合に限り、Freecam中の抽出判定をfalseへ変更して描画対象から除外します。
+同じ判定関数を使う他の型・呼出元は本体の結果を維持します。地形メッシュの透明化・ゲームモード/能力の書き換えはしません。
+
+`Freecam RenderDragon inside effect`の`calls`は対象型の到達数、`eligible`は本体の描画許可数、`skipped`は今回除外した数です。
+`other_caller`は未対応呼出元のため本体へ任せた数で、`caller_rva`も記録します。通常のvisibility診断をOFFにしてもFreecam稼働中はこのログを出します。
+`skipped>0`は対象の除外を確認する値であり、視覚的改善の保証ではありません。実機の到達性と地下表示は未確認です。
+Minecraftを完全終了して差し替えてください。設定は引き続き`spectator_mode: true`です。

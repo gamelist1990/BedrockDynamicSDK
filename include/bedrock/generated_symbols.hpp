@@ -688,9 +688,9 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       ],
       "legacy_game_type_fields_unused": true,
       "spectator_mode_behavior": "native_spectator_culler_mode5",
-      "revision": 8,
-      "terrain_visibility_status": "candidate: apply observed spectator view flag to fresh factory output; revision7 bypass was insufficient; visual success unverified",
-      "notes": "Keep stable mode5 selector. At createViewRenderObject return, set fresh primary-camera output draw_inside_cubes=false before caller publication; no game-type or ability writes. Retire legacy cube bypass; camera consumer remains read-only.",
+      "revision": 9,
+      "terrain_visibility_status": "candidate: revision8 matching view flags failed visually; revision9 filters tagged RenderDragon InsideBlockEffect extraction; reachability and appearance unverified",
+      "notes": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator Freecam returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes.",
       "terrain_culling": {
         "schema": 1,
         "status": "candidate",
@@ -781,6 +781,48 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "evidence": [
           "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056; PE registers: RDX saved toR15 at0x46AC41A, RCX saved toR13, R8 ScreenContext +0x7C temporarily usesR9B, epilogue returnsR15 at0x46B0C7D. Four-register ABI matches LeviLamina LevelRendererPlayer::createViewRenderObject(ScreenContext&, SubClientId).",
           "User revision7 real spectator comparison: GameType6 and culler5 have draw_inside_cubes=false; survival Freecam has culler5 but true. Remaining recorded view flag bits match; per-frame legacy cube bypass had already been reached."
+        ]
+      },
+      "render_dragon_inside_effect": {
+        "schema": 1,
+        "status": "candidate",
+        "runtime_verified": false,
+        "predicate": {
+          "rva": "0x5308990",
+          "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02 4C 8B 4A 08 48 8B 0E 48 8B 56 08 48",
+          "abi": "bool __fastcall(void* callable RCX, void* render_argument_pair RDX)"
+        },
+        "variants": [
+          {
+            "callable_vtable_rva": "0xe9387c0",
+            "type_getter_check": {
+              "rva": "0x531a140",
+              "entry_check": "48 8D 05 69 E5 68 0C C3"
+            },
+            "caller_check": {
+              "rva": "0x529826b",
+              "entry_check": "FF 15 37 38 E6 09 84 C0 74 BB 48 8B 8D 98 67 00"
+            },
+            "return_rva": "0x5298271"
+          },
+          {
+            "callable_vtable_rva": "0xea3e540",
+            "type_getter_check": {
+              "rva": "0x8daa130",
+              "entry_check": "48 8D 05 F9 C3 E5 08 C3"
+            },
+            "caller_check": {
+              "rva": "0x8d17afb",
+              "entry_check": "FF 15 A7 3F 3E 06 84 C0 74 BB 48 8B 8D 38 05 00"
+            },
+            "return_rva": "0x8d17b01"
+          }
+        ],
+        "evidence": [
+          "Exact PE type_info strings at0x119A86C0 and0x11C06540 name extractAndDrawWithExclusion<InsideBlockEffect,...> lambda. Leaf target_type0x531A140/0x8DAA130 return the corresponding type descriptors. Callable tables0xE9387C0/0xEA3E540 slot3 point to these getters, slot2 to shared predicate0x5308990.",
+          "REA/Ghidra ev_1f59c49ef2ea2fb9ac76415165a37dd01e0c8c2b1b310100fc44585cfbba4457: shared bool predicate; Windows RCX/RDX ABI checked in exact PE assembly.",
+          "REA/Ghidra ev_728f7f9dd71ea8c5b08678f78dc8976631bb66ab8f98a5905f6018f6dbf4a937: InsideBlockEffect extraction at0x52981BC creates tagged callable; calls slot2 at0x529826B, false branches0x5298273 to next0xC8 render entry at0x5298230, true reaches extraction0x531A150. Second path has matching branch at0x8D17B03.",
+          "User revision8 data show correct culler5 + draw_inside_cubes=false at consumer and restoration, but user confirms visual failure. This falsifies sufficiency of revision8; it does not establish runtime reachability or visual success of this separate RenderDragon filter."
         ]
       }
     }
