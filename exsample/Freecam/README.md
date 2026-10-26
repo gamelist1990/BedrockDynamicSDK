@@ -1,5 +1,7 @@
 # Freecam (Windows x64)
 
+現行版は **visual revision8** です。更新内容と確認ログは末尾のrevision8節を参照してください。
+
 SDKの通常のexample Modです。MSVC **Release**で`BedrockFreecam.dll`を作成します。
 対象はMinecraft **1.26.52.3**。新規の座標書き込み・送信経路は解析中の候補であり、実機動作は未確認です。
 解析根拠は[freecam-native.md](../../docs/freecam-native.md)を参照してください。
@@ -129,3 +131,16 @@ revision7はFreecam中の主カメラ描画内、かつ呼出元0x4689093に限�
 主カメラの対象呼び出しを省略した場合にだけ`cube_skipped`が増えます。0なら対象へ届いていません。
 `visibility.jsonl`の`draw_inside_cubes`は本体が生成した元のフラグのままです。省略件数とは別に見てください。
 地下表示が本物のスペクテイターと一致するかは実機未確認です。Minecraftを完全終了してDLLを差し替えてください。
+
+
+## 現行 visual revision8: 本体が生成する描画データ
+
+revision7は内側面の描画省略が実行されても改善しなかったため、そのHookは廃止しました。
+追加の比較記録で、本物のspectatorは`draw_inside_cubes=false`、通常モードのFreecamは`true`と確認できました。
+revision8は本体の`createViewRenderObject`が作成した直後の戻り値へ、Freecam中の主カメラに限り`false`を設定します。
+呼び出し元が受け取る前の新しい出力バッファだけが対象です。ゲームモードやPlayerの能力、既に共有済みのViewRenderObjectは書き換えません。
+解除後に生成するデータは本体の値を使います。追加の全件走査やworkerによるネイティブ読み書きはありません。
+
+`Freecam view factory`の`created`は対象カメラの生成件数、`changed`はフラグ変更件数、`failed`は検証/書込失敗です。
+`visibility.jsonl`は今回の版で`visual_revision=8`。Freecam中に`draw_inside_cubes=false`となって初めて消費側まで反映されたと確認できます。
+本物のスペクテイターと地下表示が一致するかは今回も実機未確認です。Minecraftを完全終了して差し替えてください。

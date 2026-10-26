@@ -688,9 +688,9 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       ],
       "legacy_game_type_fields_unused": true,
       "spectator_mode_behavior": "native_spectator_culler_mode5",
-      "revision": 7,
-      "terrain_visibility_status": "candidate: stable mode5 plus exact primary-camera inside-cube draw bypass; appearance requires live confirmation",
-      "notes": "Keep revision6 source request filter. Revision7 bypasses the exact inside-cube draw while active Freecam spectator view, reproducing the disabled ViewRenderData gate without mutating shared view data or abilities. Retired permission hook and mode0 remain unused.",
+      "revision": 8,
+      "terrain_visibility_status": "candidate: apply observed spectator view flag to fresh factory output; revision7 bypass was insufficient; visual success unverified",
+      "notes": "Keep stable mode5 selector. At createViewRenderObject return, set fresh primary-camera output draw_inside_cubes=false before caller publication; no game-type or ability writes. Retire legacy cube bypass; camera consumer remains read-only.",
       "terrain_culling": {
         "schema": 1,
         "status": "candidate",
@@ -766,6 +766,21 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
           "REA/Ghidra cube-render.snapshot.json retained for exact-build function0x47B0360: three input registers preserved; void return.",
           "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: camera renderer tests view+0x80 and calls0x47B0360 at0x468908E.",
           "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056: producer stores draw flag at frame+0x3950, reading layered twelve-byte ability at index17 (offset0xCC), layers stride0xF0; LeviLamina identifies index17 as NoClip. Header association is inference; runtime visual success unverified."
+        ],
+        "retired": true,
+        "retirement_reason": "Revision7 runtime confirmed bypass but user observed unchanged underground display."
+      },
+      "create_view": {
+        "rva": "0x46AC3A0",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 B8 28 3C 00 00 E8 7A 3C A2 09 48 29 C4 48 8D",
+        "abi": "ViewRenderObject* __fastcall(LevelRendererPlayer* RCX, ViewRenderObject* hidden_return RDX, ScreenContext* R8, unsigned char SubClientId R9B)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "output_draw_inside_cubes_offset": "0x80",
+        "scope": "newly constructed return buffer, current primary camera and world, active Freecam spectator view only",
+        "evidence": [
+          "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056; PE registers: RDX saved toR15 at0x46AC41A, RCX saved toR13, R8 ScreenContext +0x7C temporarily usesR9B, epilogue returnsR15 at0x46B0C7D. Four-register ABI matches LeviLamina LevelRendererPlayer::createViewRenderObject(ScreenContext&, SubClientId).",
+          "User revision7 real spectator comparison: GameType6 and culler5 have draw_inside_cubes=false; survival Freecam has culler5 but true. Remaining recorded view flag bits match; per-frame legacy cube bypass had already been reached."
         ]
       }
     }
