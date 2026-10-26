@@ -12,6 +12,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -42,7 +43,7 @@ void* __fastcall titleRead(void* packet,void* result,void* stream){
     const auto generation=epoch.load();void* value=originalTitleRead(packet,result,stream);
     if(stopped.load())return value;
     TitleCopy text;text.epoch=generation;
-    if(captureTitle(packet,result,&text)){
+    if(captureTitle(packet,result,&text)&&(text.type==0||text.type==1||text.type==2||text.type==3||text.type==6||text.type==7)){
         std::unique_lock lock(titleMutex,std::try_to_lock);
         if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
     }return value;
@@ -96,8 +97,8 @@ void restorePending(void* player,std::uint64_t liveRuntime){
 }
 void resetRound(std::uint64_t world){
     // Cross-world pointers are discarded; never restore into an expired world.
-    pending.reset();probe.reset();reader.clear();model=std::make_unique<sb::Model>(*config.load());model->reset(world);
-    roundConfig=config.load();currentTitle.clear();currentSubtitle.clear();lastQueuedPass=capturePass=acceptedResult=0;lastPhase=sb::Phase::idle;
+    pending.reset();probe.reset();reader.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
+    currentTitle.clear();currentSubtitle.clear();lastQueuedPass=capturePass=acceptedResult=0;lastPhase=sb::Phase::idle;
     {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
 }
 void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
@@ -118,7 +119,9 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
 void capture(void* source){
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
     const auto deadline=Clock::now()+std::chrono::microseconds(1000);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
-    for(const auto& pos:request.positions){cells.push_back(reader.cell(source,pos));if(Clock::now()>=deadline)break;}
+    for(const auto& pos:request.positions){auto cell=reader.cell(source,pos);
+        if(cell.kind==sb::CellKind::unknown)note("capture unavailable at "+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+" [chunk/layout/native read]");
+        cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
     const auto stats=model->stats();capturePass=stats.capturePasses;
     if(model->phase()!=sb::Phase::waiting||!model->previewFrozen()||capturePass==lastQueuedPass)return;
@@ -154,7 +157,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
             action.request.recipe.yaw=yaw;action.request.recipe.pitch=pitch;action.request.recipe.hitX=fractional.x;action.request.recipe.hitY=fractional.y;action.request.recipe.hitZ=fractional.z;
             action.runtime=runtime;action.player=player;action.source=source;action.prepared=tick;action.yaw=yaw;action.pitch=pitch;action.hit=hit;action.oldSlot=bindings.selected(player);
             auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-            if(native::read(rot,bindings.actors.rotationYawOffset,action.oldYaw)&&native::read(rot,bindings.actors.rotationPitchOffset,action.oldPitch)&&
+            if(generation==epoch.load()&&native::read(rot,bindings.actors.rotationYawOffset,action.oldYaw)&&native::read(rot,bindings.actors.rotationPitchOffset,action.oldPitch)&&
                bindings.select(player,slot)&&native::write(rot,bindings.actors.rotationYawOffset,yaw)&&native::write(rot,bindings.actors.rotationPitchOffset,pitch)){
                 pending=action;probe.reset();return true;
             }
@@ -186,7 +189,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(stopped.load()||cancelRequested.exchange(false)||!gameplay.load()||!roundConfig->enabled){restorePending(player,id);probe.reset();if(model->phase()!=sb::Phase::idle&&model->phase()!=sb::Phase::cancelled)model->cancel();return;}
     if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load())return;
     native::NativeHotbar hotbar;if(!reader.hotbar(player,hotbar)){restorePending(player,id);probe.reset();model->cancel();note("round cancelled: hotbar read failed");return;}
-    processTitles(hotbar,position);
+    processTitles(hotbar,position);model->observeHotbar(hotbar.copied);
     if(model->phase()==sb::Phase::capturing||model->phase()==sb::Phase::waiting)capture(source);
     if(model->phase()==sb::Phase::waiting){std::shared_ptr<const DiffResult> ready;
         {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock)ready=diffOutput;}
@@ -194,7 +197,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             if(model->acceptCandidates(ready->candidates,tick,hotbar.copied)){acceptedResult=ready->serial;note("building: removed preview blocks="+std::to_string(model->stats().queued)+" permanent scenery excluded="+std::to_string(model->stats().persistent));}
         }
     }
-    Vec eye=position; // StateVector position is the native Player eye origin in this exact build.
+    Vec eye=position; // Native Player origin; reach/ray semantics still require live confirmation.
     if(pending){
         if(pending->dispatched){restorePending(player,id);}
         else if(tick>pending->prepared){
@@ -204,7 +207,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const auto desired=model->recordedState(action.request.target).value_or(0);
             const auto& recipe=action.request.recipe;const unsigned slot=action.request.hotbarSlot;
             const double dx=double(action.hit.x)-eye.x,dy=double(action.hit.y)-eye.y,dz=double(action.hit.z)-eye.z;
-            const bool valid=model->actionPending(token,aid)&&action.runtime==id&&action.source==source&&
+            const bool valid=generation==epoch.load()&&model->actionPending(token,aid)&&action.runtime==id&&action.source==source&&
                 bindings.selected(player)==static_cast<int>(slot)&&hotbar.copied[slot].count&&hotbar.copied[slot].identifier==recipe.itemIdentifier&&
                 native::read(rot,bindings.actors.rotationYawOffset,yaw)&&native::read(rot,bindings.actors.rotationPitchOffset,pitch)&&
                 std::abs(yaw-action.yaw)<.01f&&std::abs(pitch-action.pitch)<.01f&&target.kind==sb::CellKind::air&&support.supportsPlacement&&
@@ -228,7 +231,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     }
     const auto phase=model->phase();
     if(phase!=lastPhase||tick-lastProgress>=100){lastPhase=phase;lastProgress=tick;
-        if(phase!=sb::Phase::idle&&phase!=sb::Phase::cancelled){const auto stats=model->stats();note("progress: phase="+std::to_string(static_cast<int>(phase))+" captured="+std::to_string(stats.captured)+" observed="+std::to_string(stats.confirmed)+" remaining="+std::to_string(stats.remaining)+" exhausted="+std::to_string(stats.exhausted));}}
+        if(phase!=sb::Phase::idle&&phase!=sb::Phase::cancelled){const auto stats=model->stats();note("progress: phase="+std::to_string(static_cast<int>(phase))+" captured="+std::to_string(stats.captured)+" observed="+std::to_string(stats.confirmed)+" remaining="+std::to_string(stats.remaining)+" exhausted="+std::to_string(stats.exhausted)+" stop_reason="+std::to_string(static_cast<int>(model->stopReason())));}}
     if(phase==sb::Phase::complete||phase==sb::Phase::failed||phase==sb::Phase::cancelled){restorePending(player,id);probe.reset();}
 }
 void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(const std::exception& e){cancelRequested.store(true);note(std::string("tick failed: ")+e.what());}}
@@ -265,7 +268,7 @@ DWORD WINAPI start(void*){
         std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         if(!nlohmann::json::parse(profile).contains("native_speed_builder"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        bindings.load(profile);
+        bindings.load(profile);reader.states.reserve(4096);reader.names.reserve(512);
         if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -250,9 +251,9 @@ public:
         if (!options_.enabled || !rising) return false;
         clear(world);
         promptVisible_ = true;
-        token_.generation = ++generation_;
+        token_.generation = nextGeneration();
         center_ = center;
-        baselineHotbar_ = hotbar;
+        baselineHotbar_ = hotbar;grantFloor_=counts(hotbar);
         started_ = lastTick_ = tick;
         phase_ = Phase::capturing;
         const auto r = static_cast<int>(options_.radius);
@@ -308,12 +309,12 @@ public:
         stats_.captured += cells.size();
         if (pass_.size() == positions_.size()) {
             ++stats_.capturePasses;
-            latest_ = std::move(pass_);
+            latest_.swap(pass_);
             pass_.clear();
             if (!frozen_) {
-                preview_ = latest_;
+                preview_.swap(latest_);
                 // A worker result from an earlier complete pass is now stale.
-                token_.generation = ++generation_;
+                token_.generation = nextGeneration();
             }
             phase_ = Phase::waiting;
         }
@@ -360,7 +361,7 @@ public:
         stats_.persistent = prepared.persistent;
         stats_.unsupported = skipped;
         if (tasks.empty()) { stop(Phase::failed,StopReason::noTargets); return false; }
-        const auto before = counts(baselineHotbar_), now = counts(hotbar);
+        const auto& before = grantFloor_; const auto now = counts(hotbar);
         for (const auto& [id,count] : needed) {
             const auto oldCount = countOf(before,id), newCount = countOf(now,id);
             if (newCount <= oldCount) return false; // Multi-cell blocks may need fewer items than cells.
@@ -372,6 +373,10 @@ public:
         return true;
     }
 
+    void observeHotbar(const Hotbar& hotbar){
+        checkThread();if(phase_!=Phase::capturing&&phase_!=Phase::waiting)return;
+        const auto now=counts(hotbar);for(auto& [id,amount]:grantFloor_)amount=std::min(amount,countOf(now,id));
+    }
     // Pump every tick, even without a placement opportunity, to enforce deadlines.
     void update(WorldId world, Tick tick) {
         checkThread();
@@ -505,6 +510,7 @@ public:
     Stats stats() const { checkThread(); return stats_; }
 
 private:
+    static std::uint64_t nextGeneration(){static std::atomic<std::uint64_t> counter{};return counter.fetch_add(1,std::memory_order_relaxed)+1;}
     struct Task {
         Cell cell;
         unsigned attempts{};
@@ -526,19 +532,19 @@ private:
         if (std::this_thread::get_id() != owner_) throw std::logic_error("SpeedBuilder Model accessed off owner thread");
     }
     void clear(WorldId world) {
-        token_ = {world,++generation_};
+        token_ = {world,nextGeneration()};
         phase_ = Phase::idle;
         reason_ = StopReason::none;
         stats_ = {};
         positions_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
-        baselineHotbar_ = {};
+        baselineHotbar_ = {};grantFloor_.clear();
         frozen_ = promptVisible_ = false;
         cursor_ = 0;
         captureTick_.reset(); stepTick_.reset(); lastPlacement_.reset(); activeAction_.reset();
         started_ = buildStarted_ = lastTick_ = 0;
     }
     void stop(Phase phase, StopReason reason) {
-        token_.generation = ++generation_;
+        token_.generation = nextGeneration();
         phase_ = phase;
         reason_ = reason;
         requested_.clear();
@@ -581,12 +587,12 @@ private:
     Options options_;
     std::thread::id owner_;
     SessionToken token_;
-    std::uint64_t generation_{}, actionSequence_{};
+    std::uint64_t actionSequence_{};
     Phase phase_ = Phase::idle;
     StopReason reason_ = StopReason::none;
     Stats stats_;
     BlockPos center_;
-    Hotbar baselineHotbar_;
+    Hotbar baselineHotbar_;Counts grantFloor_;
     std::vector<BlockPos> positions_, requested_;
     std::vector<Cell> pass_, preview_, latest_;
     std::vector<Task> tasks_;
