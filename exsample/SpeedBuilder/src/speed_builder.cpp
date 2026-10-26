@@ -167,13 +167,21 @@ std::string propertyText(const sb::Cell& cell){
     for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){out[key]=v;},value);return out.dump();
 }
 bool hasVerticalPlacementState(const sb::Cell& cell){
-    if(!cell.properties)return true;
+    if(!cell.properties)return cell.identifier.find("_slab")!=std::string::npos||
+                                  cell.identifier.find("_stairs")!=std::string::npos;
     for(const auto& [key,value]:cell.properties->values){
         const auto name=sb::stateName(key);
         if(name=="top_slot_bit"||name=="vertical_half"||name=="upper_block_bit"||name=="upside_down_bit")
             return true;
     }
     return false;
+}
+bool sameNativeState(void* expected,void* actual){
+    if(!expected||!actual)return false;
+    if(expected==actual)return true;
+    std::uint16_t expectedData{},actualData{};
+    return native::read(expected,0x120,expectedData)&&native::read(actual,0x120,actualData)&&
+           expectedData==actualData;
 }
 bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
@@ -235,7 +243,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         if(!ok){++p.nativeFailures;continue;}
         auto* predictedInfo=reader.describe(predicted);if(!predictedInfo||predictedInfo->name!=p.request.recipe.itemIdentifier)continue;
         const auto predictedCell=reader.describeCell(predicted,target);
-        const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
+        const bool exact=sameNativeState(reinterpret_cast<void*>(p.targetState.value_or(0)),predicted);
         if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,0x120,data))p.lastData=data;}
         PlacementPlan plan;plan.request=p.request;plan.request.support=support;auto& recipe=plan.request.recipe;
         recipe.face=static_cast<sb::Face>(face);recipe.orientationKnown=true;recipe.exactStateSupported=exact;recipe.deferredState=!exact;
@@ -335,7 +343,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch))reason="rotation_write_failed";
                 else if(!recipe.augment){
                     if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
-                    else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
+                    else if(!recipe.deferredState&&!sameNativeState(reinterpret_cast<void*>(desired),predicted))reason="prediction_state_changed";
                     else if(recipe.deferredState){auto* got=reader.describe(predicted);if(!got||got->name!=recipe.itemIdentifier)reason="prediction_type_changed";}
                 }
             }
