@@ -334,7 +334,10 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const double dx=double(action.hit.x)-eye.x,dy=double(action.hit.y)-eye.y,dz=double(action.hit.z)-eye.z;
             const char* reason=nullptr;
             if(generation!=epoch.load()||!model->actionPending(token,aid)||action.runtime!=id||action.source!=source)reason="expired_action";
-            else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier)reason="main_hand_changed";
+            else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||
+                    hotbar.copied[slot].identifier!=recipe.itemIdentifier||
+                    !hotbar.types[slot]||reader.typeName(hotbar.types[slot])!=recipe.itemIdentifier)
+                reason="main_hand_changed";
             else if(recipe.augment?(!model->recordedCell(action.request.target)||!sb::canAugment(*model->recordedCell(action.request.target),target)):target.kind!=sb::CellKind::air)reason="target_changed";
             else if(!recipe.augment&&!support.supportsPlacement&&
                     (!model->recordedCell(action.request.target)||!model->recordedCell(action.request.target)->nativePlacementCandidate))
