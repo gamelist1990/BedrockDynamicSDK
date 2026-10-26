@@ -71,7 +71,7 @@ std::string titleText(const native::StringCopy& text,int type){
     }catch(...){return {};}
 }
 struct DiffJob{sb::PreviewSnapshot before;sb::ObservationSnapshot after;std::uint64_t serial{};};
-struct DiffResult{sb::PreparedCandidates candidates;std::uint64_t serial{};};
+struct DiffResult{sb::PreparedCandidates candidates;std::uint64_t serial{};bool stable{};};
 std::mutex diffMutex;std::shared_ptr<const DiffJob> diffInput;std::shared_ptr<const DiffResult> diffOutput;
 std::unique_ptr<sb::Model> model;
 std::uint64_t generation{},runtime{},tick{},jobSequence{},capturePass{},lastQueuedPass{},acceptedResult{};
@@ -251,7 +251,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(model->phase()==sb::Phase::waiting){std::shared_ptr<const DiffResult> ready;
         {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock)ready=diffOutput;}
         if(ready&&ready->serial!=acceptedResult&&ready->candidates.token==model->token()){
-            if(model->acceptCandidates(ready->candidates,tick,hotbar.copied)){acceptedResult=ready->serial;note("building: removed preview blocks="+std::to_string(model->stats().queued)+" permanent scenery excluded="+std::to_string(model->stats().persistent));for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("build hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count)+" effective_aux="+std::to_string(hotbar.aux[slot]));}
+            if(ready->stable&&model->acceptCandidates(ready->candidates,tick,hotbar.copied)){acceptedResult=ready->serial;note("building: removed preview blocks="+std::to_string(model->stats().queued)+" permanent scenery excluded="+std::to_string(model->stats().persistent));for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("build hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count)+" effective_aux="+std::to_string(hotbar.aux[slot]));}
         }
     }
     Vec eye=position; // Native Player origin; reach/ray semantics still require live confirmation.
@@ -308,6 +308,16 @@ void tickGame(const bedrock::LevelTickEvent& event){
     const auto phase=model->phase();
     if(phase!=lastPhase||tick-lastProgress>=100){lastPhase=phase;lastProgress=tick;
         if(phase!=sb::Phase::idle&&phase!=sb::Phase::cancelled){const auto stats=model->stats();note("progress: phase="+std::to_string(static_cast<int>(phase))+" captured="+std::to_string(stats.captured)+" observed="+std::to_string(stats.confirmed)+" remaining="+std::to_string(stats.remaining)+" provisional="+std::to_string(stats.provisional)+" exhausted="+std::to_string(stats.exhausted)+" stop_reason="+std::to_string(static_cast<int>(model->stopReason())));}}
+    if(phase==sb::Phase::waiting&&tick%100==0){
+        std::shared_ptr<const DiffResult> ready;{std::unique_lock lock(diffMutex,std::try_to_lock);if(lock)ready=diffOutput;}
+        const auto reason=!model->previewFrozen()?"preview_not_removed":!ready?"diff_pending":
+            ready->candidates.token!=model->token()?"stale_diff":!ready->stable?"await_second_removal_pass":
+            ready->candidates.status!=sb::DiffStatus::ready?"diff_not_ready":"await_matching_item_grant";
+        note(std::string("build wait: reason=")+reason+" passes="+std::to_string(model->stats().capturePasses)+
+            " frozen="+std::to_string(model->previewFrozen())+" diff="+(ready?std::to_string(static_cast<int>(ready->candidates.status)):"none")+
+            " removed="+std::to_string(ready?ready->candidates.removed.size():0)+" changed_excluded="+std::to_string(ready?ready->candidates.changedExcluded:0));
+        for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("waiting hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count));
+    }
     if(phase==sb::Phase::building&&tick%100==0){
         const auto scan=model->placementScan();
         note("placement pipeline: visited="+std::to_string(scan.visited)+" unknown="+std::to_string(scan.unknown)+" occupied="+std::to_string(scan.occupied)+
@@ -322,7 +332,7 @@ void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(con
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
-    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision3; native reads/writes on client tick; copied diff worker\n";
+    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision4; native reads/writes on client tick; copied diff worker\n";
     const auto path=dir/L"config.json";auto modified=std::filesystem::last_write_time(path);auto nextReload=Clock::now();
     while(!stopped.load()){
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
@@ -331,8 +341,8 @@ void worker(const std::filesystem::path& dir){
             // A fresh second removal pass prevents acting on an incomplete disappearance animation.
             static std::vector<sb::Cell> previous;static sb::SessionToken previousToken{};
             const bool stable=previousToken==result->candidates.token&&previous==result->candidates.removed;
-            previousToken=result->candidates.token;previous=result->candidates.removed;
-            if(stable&&result->candidates.token.world==epoch.load()){std::lock_guard lock(diffMutex);diffOutput=std::move(result);}
+            previousToken=result->candidates.token;previous=result->candidates.removed;result->stable=stable;
+            if(result->candidates.token.world==epoch.load()){std::lock_guard lock(diffMutex);diffOutput=std::move(result);}
         }
         std::deque<std::string> batch;{std::lock_guard lock(logMutex);batch.swap(logs);}
         for(const auto& line:batch)file<<line<<'\n';if(!batch.empty())file.flush();

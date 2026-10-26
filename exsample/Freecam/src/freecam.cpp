@@ -74,6 +74,26 @@ template<class T> bool write(void* p,std::size_t offset,const T& value) noexcept
     __try {std::memcpy(static_cast<std::byte*>(p)+offset,&value,sizeof(T));return true;}
     __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
+// Opt-in bounded observations. Native reads remain on the owning callbacks;
+// the worker serializes only scalar copies. These fields do not alter rendering.
+struct VisibilitySample {std::uint64_t epoch{},milliseconds{};int gameType=-1;bool flying{},valid{};
+    Vec camera654{},origin{};std::array<unsigned char,7> fogFlags{};unsigned char cullerType{};std::uintptr_t cullerVtable{};};
+std::mutex visibilityMutex;VisibilitySample visibilityMailbox{};bool visibilityReady{};
+std::atomic<int> diagnosticGameType{-1};std::atomic<std::uint64_t> diagnosticGameEpoch{},diagnosticGameTime{};
+void captureVisibility(void* renderer){
+    if(!config.load()->visibilityDiagnostics||stop.load())return;
+    static thread_local Clock::time_point next{};const auto now=Clock::now();if(now<next)return;
+    next=now+std::chrono::milliseconds(500);
+    VisibilitySample s;s.epoch=epoch.load();s.milliseconds=std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();s.flying=active.load();
+    if(diagnosticGameEpoch.load()==s.epoch&&s.milliseconds-diagnosticGameTime.load()<=1500)s.gameType=diagnosticGameType.load();
+    void* camera{};void* culler{};std::uintptr_t vt{};
+    s.valid=read(renderer,render.player,camera)&&camera&&read(camera,0x654,s.camera654)&&finite(s.camera654)&&
+        read(camera,render.origin,s.origin)&&finite(s.origin)&&read(camera,0x970,s.fogFlags)&&
+        read(camera,0x9b8,s.cullerType)&&s.cullerType<=5&&read(camera,0x9a8,culler)&&read(culler,0,vt);
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    if(vt>=base&&vt-base<0x20000000)s.cullerVtable=vt-base;
+    std::unique_lock lock(visibilityMutex,std::try_to_lock);if(lock){visibilityMailbox=s;visibilityReady=true;}
+}
 void disable(unsigned reason=Disabled){restoreRequested.store(true);desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
 void reset(){disable(World);epoch.fetch_add(1);local.store(nullptr);for(auto& key:keys)key.store(false);}
 void* component(void* actor,std::uint32_t hash) noexcept {
@@ -348,6 +368,12 @@ void borionTick(const bedrock::LevelTickEvent&) {
     std::unique_lock guard(borionMutex,std::try_to_lock);if(!guard.owns_lock())return;
     observePacketSender(client.load());
     const auto c=config.load();void* player=local.load();
+    if(c->visibilityDiagnostics&&!stop.load()){
+        static Clock::time_point next{};const auto now=Clock::now();if(now>=next){next=now+std::chrono::milliseconds(500);
+            int type=-1;if(gameplay.load()&&player){int candidate{};if(read(component(player,0x88d3eddf),0,candidate)&&candidate>=0&&candidate<=6)type=candidate;}
+            diagnosticGameType.store(type);diagnosticGameTime.store(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());diagnosticGameEpoch.store(epoch.load());
+        }
+    }
     if(borion.saved && (restoreRequested.load()||stop.load()||!desired.load()||!gameplay.load()||!c->enabled||
        player!=borion.actor||borion.epoch!=epoch.load())) {
         if(!restoreBorionLocked())note(ReadFailed);else restoreRequested.store(false);return;
@@ -444,6 +470,7 @@ bool drawNative(void* renderer,void* screen,const Mesh* geometry) noexcept {
 }
 void BDS_HOOK_CALL renderSubscriber(void*,void* raw,BDS_HookNext next,void* frame){
     auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);
+    captureVisibility(args.renderer);
     next(frame,raw);if(!active.load()||stop.load()||!config.load()->playerHitboxes)return;
     static thread_local bool drawing=false;if(drawing)return;
     const auto geometry=mesh.load();if(!geometry||geometry->epoch!=epoch.load()||!geometry->count||Clock::now()-geometry->made>std::chrono::milliseconds(250))return;
@@ -516,6 +543,7 @@ bool loadConfig(const std::filesystem::path& path){
             json["config_revision"]=2;rewrite=true;
         }
         if(!json.contains("spectator_mode")){json["spectator_mode"]=false;rewrite=true;}
+        if(!json.contains("visibility_diagnostics")){json["visibility_diagnostics"]=false;rewrite=true;}
         if(!json.contains("full_bright")){json["full_bright"]=true;rewrite=true;}
         const auto next=std::make_shared<const freecam::Config>(freecam::parseConfig(json.dump()));
         if(rewrite){std::ofstream migrated(path,std::ios::trunc);migrated<<json.dump(2)<<'\n';
@@ -525,10 +553,24 @@ bool loadConfig(const std::filesystem::path& path){
     }catch(const std::exception& e){log(std::string("config rejected: ")+e.what());return false;}
 }
 void worker(const std::filesystem::path& path){
+    std::ofstream observations;
+
     std::uint64_t generation{};auto lastReload=Clock::now();Clock::time_point nextWaitingLog{},nextPacketLog{};std::error_code ec;auto modified=std::filesystem::last_write_time(path,ec);
     constexpr std::array<std::array<unsigned,2>,12> edges{{{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}}};
     while(!stop.load()){
         const auto now=Clock::now();
+        VisibilitySample sample;bool observed=false;
+        {std::unique_lock lock(visibilityMutex,std::try_to_lock);if(lock&&visibilityReady){sample=visibilityMailbox;visibilityReady=false;observed=true;}}
+        if(config.load()->visibilityDiagnostics&&observed){
+            if(!observations.is_open())observations.open(path.parent_path()/L"visibility.jsonl",std::ios::app);
+            if(observations){auto vector=[](Vec v){return nlohmann::json::array({v.x,v.y,v.z});};
+                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",4},
+                    {"exe_sha256","4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4"},
+                    {"monotonic_ms",sample.milliseconds},{"epoch",sample.epoch},{"freecam",sample.flying},{"actor_game_type",sample.gameType},
+                    {"valid_camera_read",sample.valid},{"candidate_camera_654",vector(sample.camera654)},
+                    {"render_origin",vector(sample.origin)},{"raw_camera_970_976",sample.fogFlags},{"culler_type",sample.cullerType},
+                    {"culler_vtable_rva",sample.cullerVtable}}.dump()<<'\n';observations.flush();}
+        }else if(!config.load()->visibilityDiagnostics&&observations.is_open())observations.close();
         if(!packetReady.load())installPacketSource();
         const auto e=epoch.load();if(generation!=e){generation=e;mesh.store(nullptr);}
         Capture batch;bool have=false;{std::lock_guard lock(mailboxMutex);if(mailboxReady){batch=mailbox;mailboxReady=false;have=true;}}

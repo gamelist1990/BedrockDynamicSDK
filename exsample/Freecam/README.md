@@ -103,3 +103,11 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 古いDLLのHookが残るため、差し替え前にMinecraftを完全終了してください。
 Runtimeのsidecarがエラー126でも、`actual owner=4.3.0 ABI=4`ならロード済みModの互換Runtimeが動作しています。
 調査記録は[docs/freecam-native.md](../../docs/freecam-native.md)を参照してください。
+
+## スペクテイター比較用の記録
+
+`visibility_diagnostics: true`で、通常視点でもFreecam中でも0.5秒ごとにカメラの候補フィールド・カリング方式・Actor GameTypeを記録します。
+出力はDocuments/PEXData/Freecam/visibility.jsonlです。既定false。画面表示やゲームモードを変更しません。
+ScanClientの既存監視はEXEの書き込み可能セクションが対象で、カメラのヒープを追わないため、この補助記録も必要です。
+比較時はfull_bright=falseとし、同一ローカルワールド・同一描画方式で、通常の地上→本物のspectator地上→spectator地中→通常に戻してFreecam地中を、それぞれ10秒ずつ記録してください。
+GameType=-1やvalid_camera_read=falseは読み取り不成立です。候補フィールドの意味・視認効果はこの記録だけで確定しません。

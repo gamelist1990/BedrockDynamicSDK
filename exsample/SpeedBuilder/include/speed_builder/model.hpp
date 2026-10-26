@@ -186,10 +186,11 @@ struct PreparedCandidates {
     SessionToken token;
     DiffStatus status = DiffStatus::incomplete;
     std::vector<Cell> removed;
-    std::size_t persistent{};
+    std::size_t persistent{}, changedExcluded{};
 };
 
-// Pure worker function. Unknown reads and non-air replacements fail closed.
+// Pure worker function. Only observed block-to-air cells become targets.
+// Unrelated additions/replacements are excluded, never overwritten.
 // All input/output storage is owned; there are no SDK objects or callbacks.
 inline PreparedCandidates prepareCandidates(const PreviewSnapshot& preview,
                                              const ObservationSnapshot& after) {
@@ -216,19 +217,19 @@ inline PreparedCandidates prepareCandidates(const PreviewSnapshot& preview,
         if (it == current.end()) return out;
         const auto& now = *it->second;
         if (original->kind == CellKind::air) {
-            if (now.kind != CellKind::air) { out.status = DiffStatus::changedBlock; return out; }
+            if (now.kind != CellKind::air) ++out.changedExcluded;
         } else if (now.kind == CellKind::air) {
             out.removed.push_back(*original);
         } else if (sameState(*original,now)) {
             ++out.persistent;
         } else {
-            // Missing state IDs cannot establish that a permanent block is unchanged.
-            out.status = DiffStatus::changedBlock;
-            return out;
+            // A fluid/light/wall state change outside the removed preview must
+            // not veto independent block-to-air targets. Never queue this cell.
+            ++out.changedExcluded;
         }
     }
     if (!after.previewGone) out.status = DiffStatus::previewPresent;
-    else if (out.removed.empty()) out.status = DiffStatus::empty;
+    else if (out.removed.empty()) out.status = out.changedExcluded ? DiffStatus::changedBlock : DiffStatus::empty;
     else if (out.removed.size() > preview.maxBlocks) out.status = DiffStatus::tooManyBlocks;
     else out.status = DiffStatus::ready;
     std::sort(out.removed.begin(),out.removed.end(),[](const Cell& a, const Cell& b) {
@@ -407,10 +408,12 @@ public:
         stats_.unsupported = skipped;
         if (tasks.empty()) { stop(Phase::failed,StopReason::noTargets); return false; }
         const auto& before = grantFloor_; const auto now = counts(hotbar);
-        for (const auto& [id,count] : needed) {
-            const auto oldCount = countOf(before,id), newCount = countOf(now,id);
-            if (newCount <= oldCount) return false; // Multi-cell blocks may need fewer items than cells.
-        }
+        bool granted=false;
+        for (const auto& [id,count] : needed)
+            granted |= countOf(now,id)>countOf(before,id);
+        if(!granted)return false; // Require a round grant, not every scenery block's item.
+        // Keep missing item tasks pending: grants may arrive across several slots/ticks.
+        // The placement scheduler already skips missing items and visits other tasks.
         tasks_ = std::move(tasks);
         stats_.queued = stats_.remaining = tasks_.size();
         buildStarted_ = tick;
