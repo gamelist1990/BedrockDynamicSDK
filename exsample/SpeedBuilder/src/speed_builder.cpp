@@ -165,6 +165,9 @@ std::string propertyText(const sb::Cell& cell){
     if(!cell.properties)return "unavailable";nlohmann::json out=nlohmann::json::object();
     for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){out[key]=v;},value);return out.dump();
 }
+bool sameBlockType(const native::BlockInfo* expected,const native::BlockInfo* actual){
+    return expected&&actual&&(expected->type==actual->type||expected->name==actual->name);
+}
 bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
@@ -174,7 +177,9 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
     auto* wanted=reader.describe(reinterpret_cast<void*>(p.targetState.value_or(0)));
-    if(!wanted||slot>=9||hotbar.types[slot]!=wanted->type||!hotbar.copied[slot].count){
+    const auto heldName=slot<9?reader.typeName(hotbar.types[slot]):std::string{};
+    if(!wanted||slot>=9||(!hotbar.types[slot]||(
+           hotbar.types[slot]!=wanted->type&&wanted->name!=heldName))||!hotbar.copied[slot].count){
         ++placementDeferred;lastDeferred="probe_item_or_type_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
     if(p.oldSlot<0)p.oldSlot=bindings.selected(player);
@@ -221,7 +226,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         void* predicted{};++p.predictions;
         const bool ok=bindings.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
         if(!ok){++p.nativeFailures;continue;}
-        auto* predictedInfo=reader.describe(predicted);if(!predictedInfo||predictedInfo->type!=wanted->type)continue;
+        auto* predictedInfo=reader.describe(predicted);if(!sameBlockType(wanted,predictedInfo))continue;
         const auto predictedCell=reader.describeCell(predicted,target);
         const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
         if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,0x120,data))p.lastData=data;}
@@ -324,7 +329,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 else if(!recipe.augment){
                     if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
                     else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
-                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);if(!wanted||!got||wanted->type!=got->type)reason="prediction_type_changed";}
+                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);if(!sameBlockType(wanted,got))reason="prediction_type_changed";}
                 }
             }
             if(!reason){
