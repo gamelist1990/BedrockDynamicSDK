@@ -202,3 +202,14 @@ Lease ownership is tied to camera pointer, SDK world epoch and copied native Act
 This verifies the *vanilla selection* of mode5 for this capture, not that applying mode5 alone reproduces underground rendering in Freecam. That effect and restoration still require live confirmation. The active profile remains candidate/runtime_verified=false. Logs report selected mode and post-call state separately from visual success.
 
 Retained runtime summary and REA output: `~/Documents/PEXData/REA/freecam-spectator-mode5-1.26.52.3/`.
+
+
+## Revision6: intercept native pre-render selection and observe view flags
+
+Revision5 runtime logs supplied by the user show ~1600 successful mode3→5 replacements per5s. A mode5 sample alone did not establish stable selection or correct underground rendering. The native preRenderUpdate0x46AA4A0 loads a byte from its parameters+0x4D at0x46AA824 and calls setter0x4690910 at0x46AA82B (return0x46AA830). This is a pre-render method, not a constructor. REA/Ghidra evidence: `ev_fcec2d12337538e3335dbb43d038435de03c4ec30851a447539ac584c29b24ab`.
+
+Revision6 hooks the guarded setter before the original update. Only normal mode3 requests for the current primary camera, SDK epoch and copied native game-mode context are replaced by5 while Freecam's spectator view is active. Other cameras/modes are forwarded unchanged. The bootstrap/restore callback remains; successful switches are limited to8 per activation, then the override backs off. Native requests and actual replacements are counted separately. No worker touches native objects.
+
+A separate read-only observer of camera renderer0x4686F20 forwards all four Windows x64 register arguments unchanged: RCX camera, RDX actor render context, R8 ViewRenderObject, R9 client instance. The function preserves R8, reloads it and tests view+0x80 at0x4688F92 before inside-cube rendering at0x468908E. Evidence: `ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac`. The optional diagnostics copy13 bool-sized fields at view+0x7C..0x88, including+0x80, at2Hz. They do not suppress the overlay or write flags. Validity is reported separately; no observation yet establishes the complete spectator terrain policy.
+
+Freecam revision6 needs a new same-world normal/spectator/Freecam comparison. Mode5 stability, camera view flags, underground appearance and restoration remain live-validation tasks. Keep candidate/runtime_verified=false. The user's revision5 capture cannot supply these newly added view fields.

@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <intrin.h>
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <bedrock/game_api.hpp>
@@ -50,11 +51,13 @@ std::size_t hurtOffset{};std::uint32_t hurtHash{};
 BDS_HookToken localToken{},renderToken{};
 using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
 using GammaFn=float(__fastcall*)(void*);GammaFn originalGamma{};
+using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn originalCameraRender{};
+BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
 BDS_HookToken gammaToken{};
 // All culler ownership bookkeeping below belongs to the native render callback.
 // Workers only read atomic diagnostics; they never access camera/culler pointers.
 using SetCullerFn=void(__fastcall*)(void*,unsigned char);
-SetCullerFn setCuller{};
+SetCullerFn setCuller{},originalSetCuller{};BDS_HookToken cullerToken{};
 std::size_t cameraCullerOffset{},cameraCullerTypeOffset{};
 std::uintptr_t spectatorCullerVtable{};
 std::atomic<bool> terrainReady{};
@@ -64,6 +67,12 @@ struct CullerLease{void* camera{};std::uint64_t epoch{};unsigned char previous{}
 CullerLease cullerLease;std::mutex terrainLeaseMutex;
 std::atomic<std::uint64_t> nativeModeContext{};std::atomic<bool> terrainLeaseActive{};
 constexpr unsigned char spectatorCullerMode=5;
+std::atomic<void*> primaryCamera{};std::atomic<std::uint64_t> primaryCameraEpoch{},flightSerial{};
+std::atomic<unsigned> selectorRequests{},selectorRewrites{};std::atomic<std::uintptr_t> selectorCaller{};
+std::atomic<bool> terrainRejected{};std::uint64_t budgetFlight{};unsigned budgetSwitches{};
+void resetCullerBudgetLocked(){const auto serial=flightSerial.load();if(serial!=budgetFlight){budgetFlight=serial;budgetSwitches=0;terrainRejected.store(false);}}
+void recordCullerSwitchLocked(){terrainChanges.fetch_add(1,std::memory_order_relaxed);if(++budgetSwitches>=8)terrainRejected.store(true);}
+
 std::atomic<bool> gammaReady{};
 float __fastcall gammaDetour(void* options){
     const float value=originalGamma(options);
@@ -90,22 +99,55 @@ template<class T> bool write(void* p,std::size_t offset,const T& value) noexcept
 // Opt-in bounded observations. Native reads remain on the owning callbacks;
 // the worker serializes only scalar copies. These fields do not alter rendering.
 struct VisibilitySample {std::uint64_t epoch{},milliseconds{};int gameType=-1;bool flying{},valid{};
-    Vec camera654{},origin{};std::array<unsigned char,7> fogFlags{};unsigned char cullerType{};std::uintptr_t cullerVtable{};};
+    Vec camera654{},origin{};std::array<unsigned char,7> fogFlags{};unsigned char cullerType{};std::uintptr_t cullerVtable{};
+    bool viewValid{};std::array<unsigned char,13> viewFlags{};};
 std::mutex visibilityMutex;VisibilitySample visibilityMailbox{};bool visibilityReady{};
 std::atomic<int> diagnosticGameType{-1};std::atomic<std::uint64_t> diagnosticGameEpoch{},diagnosticGameTime{};
-void captureVisibility(void* renderer){
+void captureVisibility(void* renderer,void* view=nullptr,bool directCamera=false){
     if(!config.load()->visibilityDiagnostics||stop.load())return;
     static thread_local Clock::time_point next{};const auto now=Clock::now();if(now<next)return;
     next=now+std::chrono::milliseconds(500);
     VisibilitySample s;s.epoch=epoch.load();s.milliseconds=std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();s.flying=active.load();
     if(diagnosticGameEpoch.load()==s.epoch&&s.milliseconds-diagnosticGameTime.load()<=1500)s.gameType=diagnosticGameType.load();
-    void* camera{};void* culler{};std::uintptr_t vt{};
-    s.valid=read(renderer,render.player,camera)&&camera&&read(camera,0x654,s.camera654)&&finite(s.camera654)&&
+    void* camera=directCamera?renderer:nullptr;void* culler{};std::uintptr_t vt{};
+    if(!directCamera&&!read(renderer,render.player,camera))return;
+    s.valid=camera&&read(camera,0x654,s.camera654)&&finite(s.camera654)&&
         read(camera,render.origin,s.origin)&&finite(s.origin)&&read(camera,0x970,s.fogFlags)&&
         read(camera,0x9b8,s.cullerType)&&s.cullerType<=5&&read(camera,0x9a8,culler)&&read(culler,0,vt);
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     if(vt>=base&&vt-base<0x20000000)s.cullerVtable=vt-base;
+    s.viewValid=view&&read(view,0x7c,s.viewFlags)&&std::all_of(s.viewFlags.begin(),s.viewFlags.end(),[](unsigned char b){return b<=1;});
     std::unique_lock lock(visibilityMutex,std::try_to_lock);if(lock){visibilityMailbox=s;visibilityReady=true;}
+}
+// Read-only observation of the exact native ViewRenderData consumed by the
+// camera renderer. Arguments and flags are forwarded without modification.
+void __fastcall cameraRenderDetour(void* camera,void* context,void* view,void* instance){
+    if(camera==primaryCamera.load()&&primaryCameraEpoch.load()==epoch.load())captureVisibility(camera,view,true);
+    originalCameraRender(camera,context,view,instance);
+}
+// Intercept the native selector BEFORE its update. Repeated native requests
+// then see an already selected mode5 and do not rebuild the async culler each frame.
+void __fastcall cullerDetour(void* camera,unsigned char requested){
+    const auto world=epoch.load();const auto context=nativeModeContext.load();
+    bool rewrite=terrainReady.load()&&requested==3&&camera==primaryCamera.load()&&primaryCameraEpoch.load()==world&&
+        (context>>8)==world&&(context&0xff)!=7&&active.load()&&!stop.load()&&config.load()->spectatorMode;
+    if(!rewrite){originalSetCuller(camera,requested);return;}
+    selectorRequests.fetch_add(1,std::memory_order_relaxed);
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    if(caller>=base&&caller-base<0x20000000)selectorCaller.store(caller-base);
+    std::unique_lock guard(terrainLeaseMutex,std::try_to_lock);
+    if(!guard){originalSetCuller(camera,requested);return;}
+    resetCullerBudgetLocked();
+    if(terrainRejected.load()){originalSetCuller(camera,requested);return;}
+    unsigned char before{};if(!read(camera,cameraCullerTypeOffset,before)||before>5){originalSetCuller(camera,requested);return;}
+    if(cullerLease.owned&&(cullerLease.camera!=camera||cullerLease.epoch!=world||cullerLease.nativeModeContext!=context))cullerLease={};
+    if(!cullerLease.owned){cullerLease={camera,world,requested,true,context};terrainLeaseActive.store(true);}
+    selectorRewrites.fetch_add(1,std::memory_order_relaxed);
+    originalSetCuller(camera,spectatorCullerMode);
+    unsigned char after{};if(read(camera,cameraCullerTypeOffset,after)){
+        terrainObservedMode.store(after);terrainPending.store(after!=spectatorCullerMode);
+        if(before!=spectatorCullerMode&&after==spectatorCullerMode)recordCullerSwitchLocked();
+    }
 }
 bool invokeCuller(void* camera,unsigned char mode) noexcept {
     if(!setCuller)return false;
@@ -115,6 +157,7 @@ bool invokeCuller(void* camera,unsigned char mode) noexcept {
 void updateTerrainCulling(void* renderer){
     if(!terrainReady.load(std::memory_order_relaxed))return;
     std::unique_lock leaseLock(terrainLeaseMutex,std::try_to_lock);if(!leaseLock)return;
+    resetCullerBudgetLocked();
     const auto world=epoch.load();void* camera{};unsigned char mode{};
     if(cullerLease.epoch!=world){cullerLease={};terrainLeaseActive.store(false);}
     if(!read(renderer,render.player,camera)||!camera||!read(camera,cameraCullerTypeOffset,mode)||mode>5)return;
@@ -124,11 +167,12 @@ void updateTerrainCulling(void* renderer){
     // particular, never restore mode3 over a newly entered real spectator.
     if(cullerLease.owned&&nativeContext&&nativeContext!=cullerLease.nativeModeContext){cullerLease={};terrainLeaseActive.store(false);}
     terrainObservedMode.store(mode,std::memory_order_relaxed);
-    const bool want=active.load(std::memory_order_relaxed)&&!stop.load(std::memory_order_relaxed)&&config.load()->spectatorMode;
+    const bool want=active.load(std::memory_order_relaxed)&&!stop.load(std::memory_order_relaxed)&&config.load()->spectatorMode&&!terrainRejected.load();
     // Native setter checks that its asynchronous culler is idle, constructs
     // the replacement and resets visibility caches. A busy culler is retried
     // on a later frame; no spin/wait and no manual native shared_ptr swap.
     if(want){
+        if(mode!=3&&mode!=spectatorCullerMode){terrainPending.store(true);return;}
         if(mode==spectatorCullerMode){
             void* culler{};std::uintptr_t table{};
             const bool expected=read(camera,cameraCullerOffset,culler)&&read(culler,0,table)&&table==spectatorCullerVtable;
@@ -142,13 +186,13 @@ void updateTerrainCulling(void* renderer){
         unsigned char after{};
         if(read(camera,cameraCullerTypeOffset,after)){
             terrainObservedMode.store(after,std::memory_order_relaxed);
-            if(after==spectatorCullerMode)terrainChanges.fetch_add(1,std::memory_order_relaxed);
+            if(after==spectatorCullerMode)recordCullerSwitchLocked();
             terrainPending.store(after!=spectatorCullerMode,std::memory_order_relaxed);
         }
     }else if(cullerLease.owned){
         // A different mode means another native caller has already changed it;
         // do not overwrite that caller's choice with a stale saved value.
-        if(mode!=spectatorCullerMode){cullerLease={};terrainLeaseActive.store(false);terrainPending.store(false);return;}
+        if(mode!=spectatorCullerMode){if(mode==cullerLease.previous)terrainRestores.fetch_add(1);cullerLease={};terrainLeaseActive.store(false);terrainPending.store(false);return;}
         if(epoch.load()!=world)return;
         if(!invokeCuller(camera,cullerLease.previous)){terrainFaults.fetch_add(1);terrainReady.store(false);return;}
         unsigned char after{};
@@ -469,7 +513,7 @@ void borionTick(const bedrock::LevelTickEvent&) {
         std::unique_lock phase(packetMotionMutex);
         if(!prepareMovementAnchor(runtime,position)){note(Waiting);return;}
         borion={true,player,epoch.load(),runtime,registry,entity,position,previous,velocity,position,bounds,fallDistance};
-        suppressMovement.store(true);active.store(true);note(Activated);
+        suppressMovement.store(true);flightSerial.fetch_add(1);active.store(true);note(Activated);
     }
     if(actorRuntime(player)!=borion.runtime){disable(ReadFailed);restoreBorionLocked();return;}
     const auto down=[](unsigned key){return keys[key].load()?1.f:0.f;};
@@ -539,8 +583,9 @@ bool drawNative(void* renderer,void* screen,const Mesh* geometry) noexcept {
 }
 void BDS_HOOK_CALL renderSubscriber(void*,void* raw,BDS_HookNext next,void* frame){
     auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);
+    void* camera{};if(read(args.renderer,render.player,camera)&&camera){primaryCamera.store(camera);primaryCameraEpoch.store(epoch.load());}
     updateTerrainCulling(args.renderer);
-    captureVisibility(args.renderer);
+    if(!cameraRenderReady.load())captureVisibility(args.renderer);
     next(frame,raw);if(!active.load()||stop.load()||!config.load()->playerHitboxes)return;
     static thread_local bool drawing=false;if(drawing)return;
     const auto geometry=mesh.load();if(!geometry||geometry->epoch!=epoch.load()||!geometry->count||Clock::now()-geometry->made>std::chrono::milliseconds(250))return;
@@ -634,12 +679,13 @@ void worker(const std::filesystem::path& path){
         if(config.load()->visibilityDiagnostics&&observed){
             if(!observations.is_open())observations.open(path.parent_path()/L"visibility.jsonl",std::ios::app);
             if(observations){auto vector=[](Vec v){return nlohmann::json::array({v.x,v.y,v.z});};
-                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",5},
+                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",6},
                     {"exe_sha256","4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4"},
                     {"monotonic_ms",sample.milliseconds},{"epoch",sample.epoch},{"freecam",sample.flying},{"actor_game_type",sample.gameType},
                     {"valid_camera_read",sample.valid},{"candidate_camera_654",vector(sample.camera654)},
                     {"render_origin",vector(sample.origin)},{"raw_camera_970_976",sample.fogFlags},{"culler_type",sample.cullerType},
-                    {"culler_vtable_rva",sample.cullerVtable}}.dump()<<'\n';observations.flush();}
+                    {"culler_vtable_rva",sample.cullerVtable},{"camera_view_flags_valid",sample.viewValid},
+                    {"raw_view_flags_7c_88",sample.viewFlags},{"draw_inside_cubes",sample.viewValid?nlohmann::json(bool(sample.viewFlags[4])):nlohmann::json(nullptr)}}.dump()<<'\n';observations.flush();}
         }else if(!config.load()->visibilityDiagnostics&&observations.is_open())observations.close();
         if(!packetReady.load())installPacketSource();
         const auto e=epoch.load();if(generation!=e){generation=e;mesh.store(nullptr);}
@@ -663,13 +709,15 @@ void worker(const std::filesystem::path& path){
             log("Freecam spectator culler: ready="+std::to_string(terrainReady.load())+" mode="+std::to_string(terrainObservedMode.load())+
                 " pending="+std::to_string(terrainPending.load())+" calls="+std::to_string(terrainCalls.exchange(0))+
                 " changed="+std::to_string(terrainChanges.exchange(0))+" restored="+std::to_string(terrainRestores.exchange(0))+
-                " faults="+std::to_string(terrainFaults.exchange(0))+" [native observed spectator mode5; underground view needs live confirmation]");
+                " faults="+std::to_string(terrainFaults.exchange(0))+" native_requests="+std::to_string(selectorRequests.exchange(0))+
+                " rewritten="+std::to_string(selectorRewrites.exchange(0))+" caller_rva="+std::to_string(selectorCaller.load())+
+                " churn_guard="+std::to_string(terrainRejected.load())+" [native selector mode5; underground view needs live confirmation]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
-                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=5 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=6 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -697,7 +745,7 @@ DWORD WINAPI start(void*){
         if(!cached.contains("native_freecam")||!cached.at("native_freecam").contains("borion")||
            !cached.at("native_freecam").at("borion").contains("packet_motion")||
            !cached.at("native_freecam").contains("visual")||
-           cached.at("native_freecam").at("visual").value("revision",0)<5)
+           cached.at("native_freecam").at("visual").value("revision",0)<6)
             profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
@@ -730,9 +778,16 @@ DWORD WINAPI start(void*){
             spectatorCullerVtable=base+number(culling.at("spectator_vtable_rva"));void* updateEntry{};
             if(cameraCullerOffset!=0x9a8||cameraCullerTypeOffset!=0x9b8||!read(reinterpret_cast<void*>(spectatorCullerVtable),8,updateEntry)||updateEntry!=updateSpectator)
                 throw std::runtime_error("terrain culler identity mismatch");
-            terrainReady.store(true);
-            log("Freecam spectator culler ready [mode5 + vtable0xE8DFE00 observed in real spectator; native setter; game mode unchanged; visual revision5]");
+            if(!BDS_HookDirectInstall(reinterpret_cast<void*>(setCuller),reinterpret_cast<void*>(&cullerDetour),reinterpret_cast<void**>(&originalSetCuller),&cullerToken))
+                throw std::runtime_error("native culler selector hook conflict");
+            setCuller=originalSetCuller;terrainReady.store(true);
+            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision6]");
         }catch(const std::exception& e){terrainReady.store(false);log(std::string("Freecam terrain culling unavailable: ")+e.what());}
+        try{
+            void* target=checkedFunction(f.at("visual").at("camera_render_observe"));
+            cameraRenderReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&cameraRenderDetour),reinterpret_cast<void**>(&originalCameraRender),&cameraRenderToken)!=0);
+            log(cameraRenderReady.load()?"Freecam native ViewRenderData observer ready [read only; no overlay suppression]":"Freecam ViewRenderData observer unavailable: hook conflict");
+        }catch(const std::exception& e){log(std::string("Freecam ViewRenderData observer unavailable: ")+e.what());}
         log("Freecam inside-block overlay suppression remains removed");
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
