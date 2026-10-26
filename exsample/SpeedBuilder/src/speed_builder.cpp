@@ -107,6 +107,7 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
         else if(update.type==2||update.type==6){currentTitle=titleText(update.text,update.type);if(tick-subtitleTick>10)currentSubtitle.clear();
             model->onPrompt(generation,tick,{},hotbar.copied,currentTitle,{});}
         else if(update.type==3||update.type==7){currentSubtitle=titleText(update.text,update.type);subtitleTick=tick;}
+        if(update.type!=5)note("title received: type="+std::to_string(update.type)+" title="+currentTitle.substr(0,256)+" subtitle="+currentSubtitle.substr(0,256));
         const sb::BlockPos center{static_cast<int>(std::floor(position.x)),static_cast<int>(std::floor(position.y)),static_cast<int>(std::floor(position.z))};
         if(model->onPrompt(generation,tick,center,hotbar.copied,currentTitle,currentSubtitle)){
             probe.reset();restorePending(playerIdentity,runtime);lastQueuedPass=0;
@@ -115,7 +116,7 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
     }
 }
 void capture(void* source){
-    const auto request=model->nextCapture(tick);if(request.positions.empty())return;
+    const auto request=model->captureRequest(tick);if(request.positions.empty())return;
     const auto deadline=Clock::now()+std::chrono::microseconds(1000);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
     for(const auto& pos:request.positions){cells.push_back(reader.cell(source,pos));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
@@ -162,7 +163,11 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         }
         if(Clock::now()>=deadline)break;
     }
-    if(p.candidate>=216){note("placement unresolved: "+p.request.recipe.itemIdentifier+" target="+std::to_string(target.x)+","+std::to_string(target.y)+","+std::to_string(target.z));
+    if(p.candidate>=216){
+        for(unsigned next=slot+1;next<9;++next)if(hotbar.copied[next].count&&hotbar.copied[next].identifier==p.request.recipe.itemIdentifier){
+            p.request.hotbarSlot=next;p.candidate=0;return false;
+        }
+        note("placement unresolved: "+p.request.recipe.itemIdentifier+" target="+std::to_string(target.x)+","+std::to_string(target.y)+","+std::to_string(target.z));
         model->placementResult(p.request.token,p.request.actionId,false,tick);probe.reset();}
     return false;
 }
