@@ -232,7 +232,8 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
-        const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||!base.supportsPlacement){++p.noSupport;continue;}
+        const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||
+            (!base.supportsPlacement&&!p.request.recipe.nativePlacementCandidate)){++p.noSupport;continue;}
         Vec fractional{.5f,height,.5f};if(face==0)fractional.y=0;else if(face==1)fractional.y=1;
         else if(face==2)fractional.z=0;else if(face==3)fractional.z=1;else if(face==4)fractional.x=0;else fractional.x=1;
         Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
@@ -335,7 +336,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             if(generation!=epoch.load()||!model->actionPending(token,aid)||action.runtime!=id||action.source!=source)reason="expired_action";
             else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier)reason="main_hand_changed";
             else if(recipe.augment?(!model->recordedCell(action.request.target)||!sb::canAugment(*model->recordedCell(action.request.target),target)):target.kind!=sb::CellKind::air)reason="target_changed";
-            else if(!recipe.augment&&!support.supportsPlacement)reason="no_support";
+            else if(!recipe.augment&&!support.supportsPlacement&&!recipe.nativePlacementCandidate)reason="no_support";
             else if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)reason="out_of_reach";
             else if(!native::read(rot,bindings.actors.rotationYawOffset,yaw)||!native::read(rot,bindings.actors.rotationPitchOffset,pitch))reason="rotation_read_failed";
             if(!reason){
