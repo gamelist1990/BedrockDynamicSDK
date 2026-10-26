@@ -147,14 +147,15 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
 void capture(void* source){
     const auto beforePass=model->stats().capturePasses;
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
-    const auto deadline=Clock::now()+std::chrono::microseconds(1000);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
+    const auto captureBudget=model->phase()==sb::Phase::capturing?2000:1000;
+    const auto deadline=Clock::now()+std::chrono::microseconds(captureBudget);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
     for(const auto& pos:request.positions){auto cell=reader.cell(source,pos);
         if(cell.kind==sb::CellKind::unknown)note("capture unavailable at "+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+" [chunk/layout/native read]");
         cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
     const auto stats=model->stats();capturePass=stats.capturePasses;
     if(capturePass==1&&beforePass==0)note("capture ready: initial_cells="+std::to_string(stats.captured)+" observation_cells="+std::to_string(model->observationCellCount())+
-        " cap_per_tick="+std::to_string(roundConfig->captureCellsPerTick)+" cooperative_budget_us=1000");
+        " cap_per_tick="+std::to_string(roundConfig->captureCellsPerTick)+" cooperative_budget_us=2000");
     if(model->phase()!=sb::Phase::waiting||!model->previewFrozen()||capturePass==beforePass||capturePass==lastQueuedPass)return;
     if(!immutablePreview||immutablePreview->token!=model->token()){
         auto before=model->previewSnapshot();if(!before)return;
@@ -190,8 +191,8 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     }
     auto* wanted=reader.describe(reinterpret_cast<void*>(p.targetState.value_or(0)));
     const auto heldName=slot<9?reader.typeName(hotbar.types[slot]):std::string{};
-    if(!wanted||slot>=9||(!hotbar.types[slot]||(
-           hotbar.types[slot]!=wanted->type&&wanted->name!=heldName))||!hotbar.copied[slot].count){
+    if(!wanted||slot>=9||!hotbar.types[slot]||!hotbar.copied[slot].count||
+       hotbar.copied[slot].identifier!=p.request.recipe.itemIdentifier||heldName!=p.request.recipe.itemIdentifier){
         ++placementDeferred;lastDeferred="probe_item_or_type_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
     if(p.oldSlot<0)p.oldSlot=bindings.selected(player);
@@ -231,7 +232,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     if(p.candidate==0)if(auto found=recipeCache.find(p.targetState.value_or(0));found!=recipeCache.end()){
         for(const auto& c:found->second){if(c.type!=hotbar.types[slot]||c.aux!=hotbar.aux[slot])continue;
             const auto n=sb::faceNormal(c.recipe.face);sb::BlockPos support{target.x-n.x,target.y-n.y,target.z-n.z};
-            const auto base=reader.cell(source,support,true);if(!base.supportsPlacement)continue;
+            const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate))continue;
             Vec hit{support.x+c.recipe.hitX,support.y+c.recipe.hitY,support.z+c.recipe.hitZ};
             const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
             if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)continue;
@@ -242,12 +243,12 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         }
     }
     constexpr unsigned faces[6]={1,2,3,4,5,0};constexpr float heights[3]={.5f,.25f,.75f};constexpr float pitches[3]={0.f,90.f,-90.f};
-    const auto deadline=Clock::now()+std::chrono::microseconds(750);
-    for(unsigned step=0;step<48&&p.candidate<216&&Clock::now()<deadline;++step){const unsigned n=p.candidate++;unsigned i=n;
+    const auto deadline=Clock::now()+std::chrono::microseconds(1500);
+    for(unsigned step=0;step<64&&p.candidate<216&&Clock::now()<deadline;++step){const unsigned n=p.candidate++;unsigned i=n;
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
-        const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||!base.supportsPlacement){++p.noSupport;continue;}
+        const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate)){++p.noSupport;continue;}
         Vec fractional{.5f,height,.5f};if(face==0)fractional.y=0;else if(face==1)fractional.y=1;
         else if(face==2)fractional.z=0;else if(face==3)fractional.z=1;else if(face==4)fractional.x=0;else fractional.x=1;
         Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
@@ -315,7 +316,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             if(matchingItem)removalCheck=RemovalCheck{ready->candidates,ready->serial,tick,0};
         }
         if(removalCheck&&tick>removalCheck->started){
-            const auto deadline=Clock::now()+std::chrono::microseconds(750);unsigned checked=0;bool invalid=false;
+            const auto deadline=Clock::now()+std::chrono::microseconds(1500);unsigned checked=0;bool invalid=false;
             auto& check=*removalCheck;
             while(check.cursor<check.candidates.removed.size()&&checked++<128){
                 const auto cell=reader.cell(source,check.candidates.removed[check.cursor].position);
@@ -334,9 +335,9 @@ void tickGame(const bedrock::LevelTickEvent& event){
     Vec eye=position; // Native Player origin; reach/ray semantics still require live confirmation.
     if(pending){
         if(pending->dispatched){restorePending(player,id);}
-        else if(tick<=pending->prepared+1){
-            // Keep the selected pose across two client ticks before dispatch.
-            // Immediate predictor writes can otherwise be restored before normal input serialization.
+        else if(tick<=pending->prepared){
+            // Retain the selected main hand and pose through preparation; dispatch
+            // on the next client tick, rechecking the exact prediction first.
             auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
             if(!native::write(rot,bindings.actors.rotationYawOffset,pending->yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,pending->pitch)){
                 model->deferPlacement(pending->request.token,pending->request.actionId,tick);restorePending(player,id);
@@ -351,9 +352,10 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const double dx=double(action.hit.x)-eye.x,dy=double(action.hit.y)-eye.y,dz=double(action.hit.z)-eye.z;
             const char* reason=nullptr;
             if(generation!=epoch.load()||!model->actionPending(token,aid)||action.runtime!=id||action.source!=source)reason="expired_action";
-            else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier)reason="main_hand_changed";
+            else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier||!hotbar.types[slot]||reader.typeName(hotbar.types[slot])!=recipe.itemIdentifier)reason="main_hand_changed";
             else if(recipe.augment?(!model->recordedCell(action.request.target)||!sb::canAugment(*model->recordedCell(action.request.target),target)):target.kind!=sb::CellKind::air)reason="target_changed";
-            else if(!recipe.augment&&!support.supportsPlacement)reason="no_support";
+            else if(!recipe.augment&&(support.kind!=sb::CellKind::block||
+                    (!support.supportsPlacement&&(!model->recordedCell(action.request.target)||!model->recordedCell(action.request.target)->nativePlacementCandidate))))reason="no_support";
             else if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)reason="out_of_reach";
             else if(!native::read(rot,bindings.actors.rotationYawOffset,yaw)||!native::read(rot,bindings.actors.rotationPitchOffset,pitch))reason="rotation_read_failed";
             if(!reason){

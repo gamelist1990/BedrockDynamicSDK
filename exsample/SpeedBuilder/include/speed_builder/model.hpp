@@ -516,7 +516,8 @@ public:
                 bool found=false;double bestDistance=std::numeric_limits<double>::infinity();
                 for(unsigned candidate:{1u,2u,3u,4u,5u,0u}){auto c=task.cell;c.placement->face=static_cast<Face>(candidate);
                     auto pos=supportPosition(c);if(!pos)continue;auto it=current.find(*pos);
-                    if(it==current.end()||it->second->kind!=CellKind::block||!it->second->supportsPlacement)continue;
+                    if(it==current.end()||it->second->kind!=CellKind::block||
+                       (!it->second->supportsPlacement&&!task.cell.nativePlacementCandidate))continue;
                     auto proposed=recipe;proposed.face=static_cast<Face>(candidate);
                     proposed.hitX=candidate==4?0.f:candidate==5?1.f:.5f;
                     proposed.hitY=candidate==0?0.f:candidate==1?1.f:.5f;
@@ -527,7 +528,8 @@ public:
                 }
                 if(!found){++scan_.noSupport;continue;}
             }
-            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||(!augment&&!supportCell->second->supportsPlacement)){++scan_.noSupport;continue;}
+            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||
+               (!augment&&!supportCell->second->supportsPlacement&&!task.cell.nativePlacementCandidate)){++scan_.noSupport;continue;}
             // A planned support is usable only after its exact state is observed.
             const auto dependency = std::find_if(tasks_.begin(),tasks_.end(),[&](const Task& t) {
                 return t.cell.position == support;
