@@ -142,14 +142,15 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
 void capture(void* source){
     const auto beforePass=model->stats().capturePasses;
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
-    const auto deadline=Clock::now()+std::chrono::microseconds(1000);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
+    const auto captureBudget=model->phase()==sb::Phase::capturing?2000:1000;
+    const auto deadline=Clock::now()+std::chrono::microseconds(captureBudget);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
     for(const auto& pos:request.positions){auto cell=reader.cell(source,pos);
         if(cell.kind==sb::CellKind::unknown)note("capture unavailable at "+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+" [chunk/layout/native read]");
         cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
     const auto stats=model->stats();capturePass=stats.capturePasses;
     if(capturePass==1&&beforePass==0)note("capture ready: initial_cells="+std::to_string(stats.captured)+" observation_cells="+std::to_string(model->observationCellCount())+
-        " cap_per_tick="+std::to_string(roundConfig->captureCellsPerTick)+" cooperative_budget_us=1000");
+        " cap_per_tick="+std::to_string(roundConfig->captureCellsPerTick)+" cooperative_budget_us=2000");
     if(model->phase()!=sb::Phase::waiting||!model->previewFrozen()||capturePass==beforePass||capturePass==lastQueuedPass)return;
     if(!immutablePreview||immutablePreview->token!=model->token()){
         auto before=model->previewSnapshot();if(!before)return;
@@ -291,7 +292,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             if(matchingItem)removalCheck=RemovalCheck{ready->candidates,ready->serial,tick,0};
         }
         if(removalCheck&&tick>removalCheck->started){
-            const auto deadline=Clock::now()+std::chrono::microseconds(750);unsigned checked=0;bool invalid=false;
+            const auto deadline=Clock::now()+std::chrono::microseconds(1500);unsigned checked=0;bool invalid=false;
             auto& check=*removalCheck;
             while(check.cursor<check.candidates.removed.size()&&checked++<128){
                 const auto cell=reader.cell(source,check.candidates.removed[check.cursor].position);
