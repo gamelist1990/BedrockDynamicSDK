@@ -65,8 +65,8 @@ struct Options {
     bool enabled = true;
     unsigned radius = 10;
     unsigned maxBlocks = 512;
-    unsigned captureCellsPerTick = 256;
-    unsigned buildIntervalTicks = 2;
+    unsigned captureCellsPerTick = 1024;
+    unsigned buildIntervalTicks = 1;
     double maxReach = 4.5;
     unsigned maxAttempts = 3;
     unsigned confirmationTicks = 20;
@@ -180,6 +180,7 @@ struct ObservationSnapshot {
     SessionToken token;
     std::vector<Cell> cells;
     bool previewGone = false;
+    bool sparse = false; // Complete observations of original non-air cells only.
 };
 enum class DiffStatus { ready, previewPresent, incomplete, changedBlock, tooManyBlocks, empty };
 struct PreparedCandidates {
@@ -199,7 +200,7 @@ inline PreparedCandidates prepareCandidates(const PreviewSnapshot& preview,
     if (!(preview.token == after.token)) return out;
     const auto side = std::uint64_t(preview.radius) * 2 + 1;
     if (preview.radius < 1 || preview.radius > 32 ||
-        preview.cells.size() != side * side * side || after.cells.size() != preview.cells.size())
+        preview.cells.size() != side * side * side || (!after.sparse && after.cells.size() != preview.cells.size()))
         return out;
     std::map<BlockPos, const Cell*> before, current;
     for (const auto& c : preview.cells) {
@@ -212,7 +213,9 @@ inline PreparedCandidates prepareCandidates(const PreviewSnapshot& preview,
     }
     for (const auto& c : after.cells)
         if (c.kind == CellKind::unknown || !current.emplace(c.position,&c).second) return out;
+    if(after.sparse&&current.size()!=std::count_if(preview.cells.begin(),preview.cells.end(),[](const Cell& c){return c.kind==CellKind::block;}))return out;
     for (const auto& [position, original] : before) {
+        if(after.sparse&&original->kind==CellKind::air)continue;
         const auto it = current.find(position);
         if (it == current.end()) return out;
         const auto& now = *it->second;
@@ -299,24 +302,22 @@ public:
         promptVisible_ = true;
         token_.generation = nextGeneration();
         center_ = center;
-        baselineHotbar_ = hotbar;grantFloor_=counts(hotbar);
+        baselineHotbar_=hotbar;
         started_ = lastTick_ = tick;
         phase_ = Phase::capturing;
-        const auto r = static_cast<int>(options_.radius);
-        for (int z = -r; z <= r; ++z)
-            for (int y = -r; y <= r; ++y)
-                for (int x = -r; x <= r; ++x) {
-                    const auto px = std::int64_t(center.x) + x;
-                    const auto py = std::int64_t(center.y) + y;
-                    const auto pz = std::int64_t(center.z) + z;
-                    if (px < std::numeric_limits<int>::min() || px > std::numeric_limits<int>::max() ||
-                        py < std::numeric_limits<int>::min() || py > std::numeric_limits<int>::max() ||
-                        pz < std::numeric_limits<int>::min() || pz > std::numeric_limits<int>::max()) {
-                        stop(Phase::failed,StopReason::captureUnknown);
-                        return false;
-                    }
-                    positions_.push_back({static_cast<int>(px),static_cast<int>(py),static_cast<int>(pz)});
-                }
+        const auto r=static_cast<int>(options_.radius);
+        for(int value:{center.x,center.y,center.z})if(std::int64_t(value)-r<std::numeric_limits<int>::min()||std::int64_t(value)+r>std::numeric_limits<int>::max()){
+            stop(Phase::failed,StopReason::captureUnknown);return false;
+        }
+        const auto side=std::size_t(r)*2+1;positions_.reserve(side*side*side);
+        const auto add=[&](int x,int y,int z){positions_.push_back({center.x+x,center.y+y,center.z+z});};
+        add(0,0,0);
+        // Unique cube shells: center first, O(volume), no game-thread sort.
+        for(int n=1;n<=r;++n){
+            for(int z=-n;z<=n;++z)for(int y=-n;y<=n;++y){add(-n,y,z);add(n,y,z);}
+            for(int z=-n;z<=n;++z)for(int x=1-n;x<n;++x){add(x,-n,z);add(x,n,z);}
+            for(int y=1-n;y<n;++y)for(int x=1-n;x<n;++x){add(x,y,-n);add(x,y,n);}
+        }
         return true;
     }
 
@@ -327,8 +328,11 @@ public:
         if (!requested_.empty()) { captureTick_=tick; return {token_,requested_}; }
         if (captureTick_ && *captureTick_ == tick) return {token_,{}};
         captureTick_ = tick;
-        const auto count = std::min<std::size_t>(options_.captureCellsPerTick,positions_.size()-pass_.size());
-        requested_.assign(positions_.begin()+pass_.size(),positions_.begin()+pass_.size()+count);
+        const bool sparse=phase_==Phase::waiting&&!preview_.empty();
+        const auto total=sparse?watchIndices_.size():positions_.size();
+        const auto count=std::min<std::size_t>(options_.captureCellsPerTick,total-pass_.size());
+        requested_.clear();requested_.reserve(count);
+        for(std::size_t i=0;i<count;++i){const auto index=pass_.size()+i;requested_.push_back(sparse?preview_[watchIndices_[index]].position:positions_[index]);}
         return {token_,requested_};
     }
     bool submitCapture(SessionToken token, Tick tick, std::span<const Cell> cells) {
@@ -346,23 +350,25 @@ public:
             }
         }
         for (const auto& c : cells) {
-            const auto index = pass_.size();
+            const auto index=preview_.empty()?pass_.size():watchIndices_[pass_.size()];
             if (!preview_.empty() && preview_[index].kind == CellKind::block && c.kind == CellKind::air)
                 frozen_ = true; // Never replace the last complete preview with a removal pass.
             pass_.push_back(c);
         }
         requested_.erase(requested_.begin(),requested_.begin()+cells.size());
         stats_.captured += cells.size();
-        if (pass_.size() == positions_.size()) {
+        const bool initial=preview_.empty();
+        if(pass_.size()==(initial?positions_.size():watchIndices_.size())){
             ++stats_.capturePasses;
-            latest_.swap(pass_);
-            pass_.clear();
-            if (!frozen_) {
-                preview_.swap(latest_);
-                // A worker result from an earlier complete pass is now stale.
-                token_.generation = nextGeneration();
+            if(initial){
+                preview_.swap(pass_);latest_.clear();
+                for(std::size_t i=0;i<preview_.size();++i)if(preview_[i].kind==CellKind::block)watchIndices_.push_back(i);
+                token_.generation=nextGeneration();
+                if(watchIndices_.empty()){stop(Phase::failed,StopReason::noTargets);return true;}
+            }else{
+                latest_.swap(pass_);
             }
-            phase_ = Phase::waiting;
+            pass_.clear();phase_=Phase::waiting;
         }
         return true;
     }
@@ -374,9 +380,10 @@ public:
     std::optional<ObservationSnapshot> observationSnapshot(bool previewGone) const {
         checkThread();
         if (latest_.empty()) return std::nullopt;
-        return ObservationSnapshot{token_,latest_,previewGone};
+        return ObservationSnapshot{token_,latest_,previewGone,true};
     }
     bool previewFrozen() const { checkThread(); return frozen_; }
+    std::size_t observationCellCount() const {checkThread();return watchIndices_.size();}
 
     // Call repeatedly with current hotbar while waiting for a grant. Prepared data
     // must come from prepareCandidates, using this model's unchanged snapshot.
@@ -407,11 +414,9 @@ public:
         stats_.persistent = prepared.persistent;
         stats_.unsupported = skipped;
         if (tasks.empty()) { stop(Phase::failed,StopReason::noTargets); return false; }
-        const auto& before = grantFloor_; const auto now = counts(hotbar);
-        bool granted=false;
-        for (const auto& [id,count] : needed)
-            granted |= countOf(now,id)>countOf(before,id);
-        if(!granted)return false; // Require a round grant, not every scenery block's item.
+        const auto now=counts(hotbar);bool available=false;
+        for(const auto& [id,count]:needed)available|=countOf(now,id)>0;
+        if(!available)return false; // Prompt + removal observations establish the round; accept available matching slots.
         // Keep missing item tasks pending: grants may arrive across several slots/ticks.
         // The placement scheduler already skips missing items and visits other tasks.
         tasks_ = std::move(tasks);
@@ -422,8 +427,7 @@ public:
     }
 
     void observeHotbar(const Hotbar& hotbar){
-        checkThread();if(phase_!=Phase::capturing&&phase_!=Phase::waiting)return;
-        const auto now=counts(hotbar);for(auto& [id,amount]:grantFloor_)amount=std::min(amount,countOf(now,id));
+        checkThread();(void)hotbar; // Compatibility API; matching slot availability is checked at acceptCandidates.
     }
     // Pump every tick, even without a placement opportunity, to enforce deadlines.
     void update(WorldId world, Tick tick) {
@@ -609,8 +613,8 @@ private:
         phase_ = Phase::idle;
         reason_ = StopReason::none;
         stats_ = {};scan_={};
-        positions_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
-        baselineHotbar_ = {};grantFloor_.clear();
+        positions_.clear(); watchIndices_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
+        baselineHotbar_={};
         frozen_ = promptVisible_ = false;
         cursor_ = 0;
         captureTick_.reset(); stepTick_.reset(); lastPlacement_.reset(); activeAction_.reset();
@@ -667,8 +671,9 @@ private:
     StopReason reason_ = StopReason::none;
     Stats stats_;
     BlockPos center_;
-    Hotbar baselineHotbar_;Counts grantFloor_;
+    Hotbar baselineHotbar_;
     std::vector<BlockPos> positions_, requested_;
+    std::vector<std::size_t> watchIndices_;
     std::vector<Cell> pass_, preview_, latest_;
     std::vector<Task> tasks_;
     bool frozen_{}, promptVisible_{};

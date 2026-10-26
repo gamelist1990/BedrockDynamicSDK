@@ -127,3 +127,16 @@ The actual resulting permutation still must match. Unresolved server-defined
 orientation can remain provisional and is logged; success is not inferred from
 native acceptance. Microsoft primary block-state listings document wall connections
 and candle counts: https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/BlockReference/Examples/IntrinsicBlockStatesList.md .
+
+
+## Revision5 — sparse observations and orientation lead
+
+The user's radius20 recording contains68,921 cells per full pass,256 cells/tick and a second-removal-pass wait that lasts to round end. Native calls were not the stopping point in that round. Another round reached33 accepted native placements but retained five type-only states. The user confirms those are orientation errors, not wrong target coordinates.
+
+The initial scan now enumerates unique cube shells in O(volume), recording the center before far corners without a game-thread sort. Freeze that first full baseline. Later observations contain only original non-air positions; worker validation checks completeness against exactly that non-air set. Original air positions cannot become placement targets. The baseline is copied once to an immutable shared snapshot, and sparse after-snapshots are copied per completed observation pass. Main-thread sampling keeps the cooperative1000us deadline and increases only the old default row cap256→1024. A slow individual native read can exceed the cooperative budget; it is not a hard deadline.
+
+Worker computes the first removed candidate list; the owning client tick rereads those positions on a later tick, in batches capped at128 with a cooperative750us deadline. Any non-air reappearance rejects that candidate batch and resumes observation. Unknown reads wait without issuing placements. No second full-volume pass is required. A fresh title/world token invalidates caches and in-flight checks.
+
+Native pose selection now precedes the build call by two client ticks, with the planned angle re-applied while waiting. Prediction still restores its temporary changes; pending placement retains an owned angle lease until dispatch/cancel. This gives the normal input pipeline a chance to serialize the planned pose. It does not prove the server used that pose or establish the meaning of arbitrary custom direction integers. No additional packet layout, native RVA, block deletion or state write is introduced.
+
+Actual custom-state mismatches are logged with goal/current properties and absolute target coordinates. The exact support coordinate, face and yaw/pitch used are logged for each dispatch. Type-only matches remain provisional. Standard and Hive-specific server results require live validation; do not label the custom yaw mapping verified.

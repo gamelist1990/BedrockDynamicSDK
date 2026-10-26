@@ -10,7 +10,7 @@ struct Config : Options {};
 
 inline nlohmann::json configJson(const Config& c) {
     validateOptions(c);
-    return {{"config_revision",1}, {"enabled",c.enabled}, {"radius",c.radius},
+    return {{"config_revision",2}, {"enabled",c.enabled}, {"radius",c.radius},
         {"max_blocks",c.maxBlocks}, {"capture_cells_per_tick",c.captureCellsPerTick},
         {"build_interval_ticks",c.buildIntervalTicks}, {"max_reach",c.maxReach},
         {"max_attempts",c.maxAttempts}, {"confirmation_ticks",c.confirmationTicks},
@@ -35,7 +35,7 @@ inline Config parseConfig(std::string_view source) {
             throw std::runtime_error("integer out of range");
         return static_cast<unsigned>(n);
     };
-    if (j.contains("config_revision") && integer(j.at("config_revision")) != 1)
+    if(j.contains("config_revision")&&integer(j.at("config_revision"))!=1&&integer(j.at("config_revision"))!=2)
         throw std::runtime_error("unsupported config_revision");
     if (j.contains("enabled")) {
         if (!j.at("enabled").is_boolean()) throw std::runtime_error("enabled must be boolean");
@@ -62,6 +62,11 @@ inline Config parseConfig(std::string_view source) {
         const auto& keys = j.at("keys");
         if (!keys.is_object()) throw std::runtime_error("keys must be an object");
         if (keys.contains("cancel")) c.cancelKey = integer(keys.at("cancel"));
+    }
+    // Upgrade only the previous defaults. Explicit non-default budgets stay intact.
+    if(j.value("config_revision",1)==1){
+        if(c.captureCellsPerTick==256)c.captureCellsPerTick=1024;
+        if(c.buildIntervalTicks==2)c.buildIntervalTicks=1;
     }
     validateOptions(c);
     return c;
