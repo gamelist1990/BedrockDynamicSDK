@@ -19,1097 +19,668 @@
 #include <utility>
 #include <vector>
 
-namespace speed_builder
-{
+namespace speed_builder {
 
-    using Tick = std::uint64_t;
-    using WorldId = std::uint64_t;
-    struct BlockPos
-    {
-        int x{}, y{}, z{};
-        auto operator<=>(const BlockPos &) const = default;
-    };
-    enum class CellKind
-    {
-        unknown,
-        air,
-        block
-    };
-    enum class Face
-    {
-        down,
-        up,
-        north,
-        south,
-        west,
-        east
-    };
-    enum class Hand
-    {
-        main
-    };
-    using StateValue = std::variant<int, std::string>;
-    struct BlockProperties
-    {
-        std::map<std::string, StateValue> values;
-    };
-    struct PlacementRecipe
-    {
-        std::string itemIdentifier;
-        Face face = Face::up;
-        float yaw{}, pitch{};
-        float hitX = .5f, hitY = .5f, hitZ = .5f;
-        bool deferredState = false;
-        bool augment = false;
-        bool orientationKnown = false;
-        bool exactStateSupported = false;
-        bool operator==(const PlacementRecipe &) const = default;
-    };
-    struct Cell
-    {
-        BlockPos position;
-        std::string identifier;
-        std::optional<std::uint64_t> stateIdentity;
-        CellKind kind = CellKind::unknown;
-        std::shared_ptr<const BlockProperties> properties; // owned immutable copies, never native pointers
-        bool supportsPlacement = false;
-        bool nativePlacementCandidate = false; // Adapter must resolve and recheck the exact state before dispatch.
-        std::optional<PlacementRecipe> placement;
-        bool operator==(const Cell &) const = default;
-    };
-    struct HotbarSlot
-    {
-        std::string identifier;
-        unsigned count{};
-    };
-    using Hotbar = std::array<HotbarSlot, 9>;
-    struct SessionToken
-    {
-        WorldId world{};
-        std::uint64_t generation{};
-        bool operator==(const SessionToken &) const = default;
-    };
-    struct Options
-    {
-        bool enabled = true;
-        unsigned radius = 10;
-        unsigned maxBlocks = 512;
-        unsigned captureCellsPerTick = 256;
-        unsigned buildIntervalTicks = 2;
-        double maxReach = 4.5;
-        unsigned maxAttempts = 3;
-        unsigned confirmationTicks = 20;
-        unsigned maxStepsPerTick = 8;
-        unsigned maxWaitTicks = 2400;
-        unsigned maxBuildTicks = 2400;
-        unsigned cancelKey = 27;
-        std::string prompt = "記憶しましょう"; // "Remember this!"
-    };
-    inline void validateOptions(const Options &o)
-    {
-        if (o.radius < 1 || o.radius > 32 || o.maxBlocks < 1 || o.maxBlocks > 8192 ||
-            o.captureCellsPerTick < 1 || o.captureCellsPerTick > 4096 ||
-            o.buildIntervalTicks < 1 || o.buildIntervalTicks > 1200 ||
-            !std::isfinite(o.maxReach) || o.maxReach <= 0 || o.maxReach > 16 ||
-            o.maxAttempts < 1 || o.maxAttempts > 32 ||
-            o.confirmationTicks < 1 || o.confirmationTicks > 1200 ||
-            o.maxStepsPerTick < 1 || o.maxStepsPerTick > 8192 ||
-            o.maxWaitTicks < 1 || o.maxBuildTicks < 1 ||
-            o.cancelKey < 1 || o.cancelKey > 255 || o.prompt.empty())
-            throw std::invalid_argument("invalid SpeedBuilder options");
+using Tick = std::uint64_t;
+using WorldId = std::uint64_t;
+struct BlockPos {
+    int x{}, y{}, z{};
+    auto operator<=>(const BlockPos&) const = default;
+};
+enum class CellKind { unknown, air, block };
+enum class Face { down, up, north, south, west, east };
+enum class Hand { main };
+using StateValue=std::variant<int,std::string>;
+struct BlockProperties {std::map<std::string,StateValue> values;};
+struct PlacementRecipe {
+    std::string itemIdentifier;
+    Face face = Face::up;
+    float yaw{}, pitch{};
+    float hitX = .5f, hitY = .5f, hitZ = .5f;
+    bool deferredState = false;
+    bool augment = false;
+    bool orientationKnown = false;
+    bool exactStateSupported = false;
+    bool operator==(const PlacementRecipe&) const = default;
+};
+struct Cell {
+    BlockPos position;
+    std::string identifier;
+    std::optional<std::uint64_t> stateIdentity;
+    CellKind kind = CellKind::unknown;
+    std::shared_ptr<const BlockProperties> properties; // owned immutable copies, never native pointers
+    bool supportsPlacement = false;
+    bool nativePlacementCandidate = false; // Adapter must resolve and recheck the exact state before dispatch.
+    std::optional<PlacementRecipe> placement;
+    bool operator==(const Cell&) const = default;
+};
+struct HotbarSlot { std::string identifier; unsigned count{}; };
+using Hotbar = std::array<HotbarSlot, 9>;
+struct SessionToken {
+    WorldId world{};
+    std::uint64_t generation{};
+    bool operator==(const SessionToken&) const = default;
+};
+struct Options {
+    bool enabled = true;
+    unsigned radius = 10;
+    unsigned maxBlocks = 512;
+    unsigned captureCellsPerTick = 1024;
+    unsigned buildIntervalTicks = 1;
+    double maxReach = 4.5;
+    unsigned maxAttempts = 3;
+    unsigned confirmationTicks = 20;
+    unsigned maxStepsPerTick = 8;
+    unsigned maxWaitTicks = 2400;
+    unsigned maxBuildTicks = 2400;
+    unsigned cancelKey = 27;
+    std::string prompt = "記憶しましょう"; // "Remember this!"
+};
+inline void validateOptions(const Options& o) {
+    if (o.radius < 1 || o.radius > 32 || o.maxBlocks < 1 || o.maxBlocks > 8192 ||
+        o.captureCellsPerTick < 1 || o.captureCellsPerTick > 4096 ||
+        o.buildIntervalTicks < 1 || o.buildIntervalTicks > 1200 ||
+        !std::isfinite(o.maxReach) || o.maxReach <= 0 || o.maxReach > 16 ||
+        o.maxAttempts < 1 || o.maxAttempts > 32 ||
+        o.confirmationTicks < 1 || o.confirmationTicks > 1200 ||
+        o.maxStepsPerTick < 1 || o.maxStepsPerTick > 8192 ||
+        o.maxWaitTicks < 1 || o.maxBuildTicks < 1 ||
+        o.cancelKey < 1 || o.cancelKey > 255 || o.prompt.empty())
+        throw std::invalid_argument("invalid SpeedBuilder options");
+}
+inline BlockPos faceNormal(Face face) {
+    switch (face) {
+    case Face::down: return {0,-1,0};
+    case Face::up: return {0,1,0};
+    case Face::north: return {0,0,-1};
+    case Face::south: return {0,0,1};
+    case Face::west: return {-1,0,0};
+    case Face::east: return {1,0,0};
     }
-    inline BlockPos faceNormal(Face face)
-    {
-        switch (face)
-        {
-        case Face::down:
-            return {0, -1, 0};
-        case Face::up:
-            return {0, 1, 0};
-        case Face::north:
-            return {0, 0, -1};
-        case Face::south:
-            return {0, 0, 1};
-        case Face::west:
-            return {-1, 0, 0};
-        case Face::east:
-            return {1, 0, 0};
+    throw std::invalid_argument("invalid placement face");
+}
+inline bool supported(const Cell& c) {
+    if (c.kind != CellKind::block || c.identifier.empty() || !c.stateIdentity || !c.placement)
+        return false;
+    const auto& r = *c.placement;
+    return r.orientationKnown && r.exactStateSupported && !r.itemIdentifier.empty() &&
+        static_cast<unsigned>(r.face) <= static_cast<unsigned>(Face::east) &&
+        std::isfinite(r.yaw) && std::isfinite(r.pitch) && r.pitch >= -90 && r.pitch <= 90 &&
+        std::isfinite(r.hitX) && r.hitX >= 0 && r.hitX <= 1 &&
+        std::isfinite(r.hitY) && r.hitY >= 0 && r.hitY <= 1 &&
+        std::isfinite(r.hitZ) && r.hitZ >= 0 && r.hitZ <= 1;
+}
+inline bool sameState(const Cell& a, const Cell& b) {
+    return a.kind == CellKind::block && b.kind == CellKind::block &&
+        a.identifier == b.identifier && a.stateIdentity && b.stateIdentity &&
+        a.stateIdentity == b.stateIdentity;
+}
+inline bool sameType(const Cell& a,const Cell& b){return a.kind==CellKind::block&&b.kind==CellKind::block&&a.identifier==b.identifier;}
+inline std::string_view stateName(std::string_view key){return key.starts_with("minecraft:")?key.substr(10):key;}
+inline bool derivedState(std::string_view key){key=stateName(key);return key.starts_with("wall_connection_type_")||key=="wall_post_bit"||key.starts_with("connection_")||key=="cardinal_connections";}
+inline bool countState(std::string_view key){key=stateName(key);return key=="candles"||key=="cluster_count";}
+inline bool canAugment(const Cell& goal,const Cell& current){
+    if(!sameType(goal,current)||!goal.properties||!current.properties)return false;
+    bool increase=false;
+    for(const auto& [key,value]:goal.properties->values){auto it=current.properties->values.find(key);if(it==current.properties->values.end())return false;
+        if(countState(key)){
+            auto a=std::get_if<int>(&value),b=std::get_if<int>(&it->second);
+            if(!a||!b||*a<0||*a>3||*b<0||*b>*a)return false;increase|=*a>*b;
+        }else if(!derivedState(key)&&value!=it->second)return false;
+    }
+    return increase;
+}
+inline bool samePlacementBasis(const Cell& goal,const Cell& predicted){
+    if(!sameType(goal,predicted)||!goal.properties||!predicted.properties)return false;
+    for(const auto& [key,value]:goal.properties->values){if(derivedState(key)||countState(key))continue;
+        auto it=predicted.properties->values.find(key);if(it==predicted.properties->values.end()||it->second!=value)return false;}
+    return true;
+}
+inline std::optional<std::pair<float,float>> placementAngles(const Cell& goal){
+    if(!goal.properties)return {};
+    for(const auto& [key,value]:goal.properties->values){auto name=stateName(key);
+        if(name!="cardinal_direction"&&name!="facing_direction")continue;
+        if(auto direction=std::get_if<std::string>(&value)){
+            if(*direction=="south")return std::pair{0.f,0.f};if(*direction=="west")return std::pair{90.f,0.f};
+            if(*direction=="north")return std::pair{180.f,0.f};if(*direction=="east")return std::pair{270.f,0.f};
+            if(*direction=="up")return std::pair{0.f,-90.f};if(*direction=="down")return std::pair{0.f,90.f};
+        }else if(name=="facing_direction")if(auto face=std::get_if<int>(&value)){
+            switch(*face){case 0:return std::pair{0.f,90.f};case 1:return std::pair{0.f,-90.f};case 2:return std::pair{180.f,0.f};
+                case 3:return std::pair{0.f,0.f};case 4:return std::pair{90.f,0.f};case 5:return std::pair{270.f,0.f};}
         }
-        throw std::invalid_argument("invalid placement face");
+    }return {};
+}
+inline bool candidateForPlacement(const Cell& c) {
+    return supported(c) || (c.nativePlacementCandidate && c.kind==CellKind::block && c.stateIdentity &&
+        c.placement && !c.placement->itemIdentifier.empty());
+}
+inline std::optional<BlockPos> supportPosition(const Cell& c) {
+    if (!candidateForPlacement(c)) return std::nullopt;
+    const auto n = faceNormal(c.placement->face);
+    const auto sub = [](int a, int b) -> std::optional<int> {
+        const auto v = std::int64_t(a) - b;
+        if (v < std::numeric_limits<int>::min() || v > std::numeric_limits<int>::max())
+            return std::nullopt;
+        return static_cast<int>(v);
+    };
+    const auto x = sub(c.position.x,n.x), y = sub(c.position.y,n.y), z = sub(c.position.z,n.z);
+    if (!x || !y || !z) return std::nullopt;
+    return BlockPos{*x,*y,*z};
+}
+struct CaptureRequest { SessionToken token; std::vector<BlockPos> positions; };
+struct PreviewSnapshot {
+    SessionToken token;
+    BlockPos center;
+    unsigned radius{};
+    unsigned maxBlocks{};
+    std::vector<Cell> cells;
+    Hotbar hotbarAtPrompt;
+};
+struct ObservationSnapshot {
+    SessionToken token;
+    std::vector<Cell> cells;
+    bool previewGone = false;
+    bool sparse = false; // Complete observations of original non-air cells only.
+};
+enum class DiffStatus { ready, previewPresent, incomplete, changedBlock, tooManyBlocks, empty };
+struct PreparedCandidates {
+    SessionToken token;
+    DiffStatus status = DiffStatus::incomplete;
+    std::vector<Cell> removed;
+    std::size_t persistent{}, changedExcluded{};
+};
+
+// Pure worker function. Only observed block-to-air cells become targets.
+// Unrelated additions/replacements are excluded, never overwritten.
+// All input/output storage is owned; there are no SDK objects or callbacks.
+inline PreparedCandidates prepareCandidates(const PreviewSnapshot& preview,
+                                             const ObservationSnapshot& after) {
+    PreparedCandidates out;
+    out.token = preview.token;
+    if (!(preview.token == after.token)) return out;
+    const auto side = std::uint64_t(preview.radius) * 2 + 1;
+    if (preview.radius < 1 || preview.radius > 32 ||
+        preview.cells.size() != side * side * side || (!after.sparse && after.cells.size() != preview.cells.size()))
+        return out;
+    std::map<BlockPos, const Cell*> before, current;
+    for (const auto& c : preview.cells) {
+        const auto dx = std::int64_t(c.position.x) - preview.center.x;
+        const auto dy = std::int64_t(c.position.y) - preview.center.y;
+        const auto dz = std::int64_t(c.position.z) - preview.center.z;
+        if (std::abs(dx) > preview.radius || std::abs(dy) > preview.radius ||
+            std::abs(dz) > preview.radius || c.kind == CellKind::unknown ||
+            !before.emplace(c.position,&c).second) return out;
     }
-    inline bool supported(const Cell &c)
-    {
-        if (c.kind != CellKind::block || c.identifier.empty() || !c.stateIdentity || !c.placement)
-            return false;
-        const auto &r = *c.placement;
-        return r.orientationKnown && r.exactStateSupported && !r.itemIdentifier.empty() &&
-               static_cast<unsigned>(r.face) <= static_cast<unsigned>(Face::east) &&
-               std::isfinite(r.yaw) && std::isfinite(r.pitch) && r.pitch >= -90 && r.pitch <= 90 &&
-               std::isfinite(r.hitX) && r.hitX >= 0 && r.hitX <= 1 &&
-               std::isfinite(r.hitY) && r.hitY >= 0 && r.hitY <= 1 &&
-               std::isfinite(r.hitZ) && r.hitZ >= 0 && r.hitZ <= 1;
-    }
-    inline bool sameState(const Cell &a, const Cell &b)
-    {
-        return a.kind == CellKind::block && b.kind == CellKind::block &&
-               a.identifier == b.identifier && a.stateIdentity && b.stateIdentity &&
-               a.stateIdentity == b.stateIdentity;
-    }
-    inline bool sameType(const Cell &a, const Cell &b) { return a.kind == CellKind::block && b.kind == CellKind::block && a.identifier == b.identifier; }
-    inline std::string_view stateName(std::string_view key) { return key.starts_with("minecraft:") ? key.substr(10) : key; }
-    inline bool derivedState(std::string_view key)
-    {
-        key = stateName(key);
-        return key.starts_with("wall_connection_type_") || key == "wall_post_bit" || key.starts_with("connection_") || key == "cardinal_connections";
-    }
-    inline bool countState(std::string_view key)
-    {
-        key = stateName(key);
-        return key == "candles" || key == "cluster_count";
-    }
-    inline bool canAugment(const Cell &goal, const Cell &current)
-    {
-        if (!sameType(goal, current) || !goal.properties || !current.properties)
-            return false;
-        bool increase = false;
-        for (const auto &[key, value] : goal.properties->values)
-        {
-            auto it = current.properties->values.find(key);
-            if (it == current.properties->values.end())
-                return false;
-            if (countState(key))
-            {
-                auto a = std::get_if<int>(&value), b = std::get_if<int>(&it->second);
-                if (!a || !b || *a < 0 || *a > 3 || *b < 0 || *b > *a)
-                    return false;
-                increase |= *a > *b;
-            }
-            else if (!derivedState(key) && value != it->second)
-                return false;
+    for (const auto& c : after.cells)
+        if (c.kind == CellKind::unknown || !current.emplace(c.position,&c).second) return out;
+    if(after.sparse&&current.size()!=std::count_if(preview.cells.begin(),preview.cells.end(),[](const Cell& c){return c.kind==CellKind::block;}))return out;
+    for (const auto& [position, original] : before) {
+        if(after.sparse&&original->kind==CellKind::air)continue;
+        const auto it = current.find(position);
+        if (it == current.end()) return out;
+        const auto& now = *it->second;
+        if (original->kind == CellKind::air) {
+            if (now.kind != CellKind::air) ++out.changedExcluded;
+        } else if (now.kind == CellKind::air) {
+            out.removed.push_back(*original);
+        } else if (sameState(*original,now)) {
+            ++out.persistent;
+        } else {
+            // A fluid/light/wall state change outside the removed preview must
+            // not veto independent block-to-air targets. Never queue this cell.
+            ++out.changedExcluded;
         }
-        return increase;
     }
-    inline bool samePlacementBasis(const Cell &goal, const Cell &predicted)
-    {
-        if (!sameType(goal, predicted) || !goal.properties || !predicted.properties)
-            return false;
-        for (const auto &[key, value] : goal.properties->values)
-        {
-            if (derivedState(key) || countState(key))
-                continue;
-            auto it = predicted.properties->values.find(key);
-            if (it == predicted.properties->values.end() || it->second != value)
-                return false;
+    if (!after.previewGone) out.status = DiffStatus::previewPresent;
+    else if (out.removed.empty()) out.status = out.changedExcluded ? DiffStatus::changedBlock : DiffStatus::empty;
+    else if (out.removed.size() > preview.maxBlocks) out.status = DiffStatus::tooManyBlocks;
+    else out.status = DiffStatus::ready;
+    std::sort(out.removed.begin(),out.removed.end(),[](const Cell& a, const Cell& b) {
+        if (a.position.y != b.position.y) return a.position.y < b.position.y;
+        return a.position < b.position;
+    });
+    return out;
+}
+
+enum class Phase { idle, capturing, waiting, building, complete, cancelled, failed };
+enum class StopReason { none, cancelled, worldChanged, timeout, captureUnknown, oversized, noTargets };
+struct Stats {
+    std::size_t captured{}, capturePasses{}, persistent{}, removed{}, queued{};
+    std::size_t unsupported{}, confirmed{}, exhausted{}, attempts{}, dispatchFailures{};
+    std::size_t remaining{}, provisional{};
+};
+struct PlacementScan {
+    unsigned visited{}, unknown{}, occupied{}, inFlight{}, cooldown{}, noSupport{}, dependency{}, outOfReach{}, missingItem{}, statePending{};
+};
+struct EyePosition { double x{}, y{}, z{}; };
+struct BuildFrame {
+    WorldId world{};
+    Tick tick{};
+    EyePosition eye;
+    Hotbar hotbar;
+    std::vector<Cell> cells; // Current game-thread copies of targets and supports.
+};
+struct PlacementRequest {
+    SessionToken token;
+    std::uint64_t actionId{};
+    BlockPos target, support;
+    PlacementRecipe recipe;
+    unsigned hotbarSlot{}; // zero based; select this slot before main-hand use
+    Hand hand = Hand::main;
+};
+
+// Construct, access, and destroy on one game thread. Transfer snapshots to workers,
+// never the Model. Ticks are monotonic within a world generation.
+class Model {
+public:
+    explicit Model(Options options = {}) : options_(std::move(options)), owner_(std::this_thread::get_id()) {
+        validateOptions(options_);
+    }
+    Model(const Model&) = delete;
+    Model& operator=(const Model&) = delete;
+    Model(Model&&) = delete;
+    Model& operator=(Model&&) = delete;
+
+    void reset(WorldId world) {
+        checkThread();
+        clear(world);
+    }
+    void cancel() {
+        checkThread();
+        stop(Phase::cancelled,StopReason::cancelled);
+    }
+    bool onPrompt(WorldId world, Tick tick, BlockPos center, const Hotbar& hotbar,
+                  std::string_view title, std::string_view subtitle) {
+        checkThread();
+        if (world != token_.world) clear(world);
+        const bool matched = !title.empty() && subtitle.find(options_.prompt) != std::string_view::npos;
+        // Adapter feeds the current title/subtitle once per tick (including empty).
+        const bool rising = matched && !promptVisible_;
+        promptVisible_ = matched;
+        if (!options_.enabled || !rising) return false;
+        clear(world);
+        promptVisible_ = true;
+        token_.generation = nextGeneration();
+        center_ = center;
+        baselineHotbar_=hotbar;
+        started_ = lastTick_ = tick;
+        phase_ = Phase::capturing;
+        const auto r=static_cast<int>(options_.radius);
+        for(int value:{center.x,center.y,center.z})if(std::int64_t(value)-r<std::numeric_limits<int>::min()||std::int64_t(value)+r>std::numeric_limits<int>::max()){
+            stop(Phase::failed,StopReason::captureUnknown);return false;
+        }
+        const auto side=std::size_t(r)*2+1;positions_.reserve(side*side*side);
+        const auto add=[&](int x,int y,int z){positions_.push_back({center.x+x,center.y+y,center.z+z});};
+        add(0,0,0);
+        // Unique cube shells: center first, O(volume), no game-thread sort.
+        for(int n=1;n<=r;++n){
+            for(int z=-n;z<=n;++z)for(int y=-n;y<=n;++y){add(-n,y,z);add(n,y,z);}
+            for(int z=-n;z<=n;++z)for(int x=1-n;x<n;++x){add(x,-n,z);add(x,n,z);}
+            for(int y=1-n;y<n;++y)for(int x=1-n;x<n;++x){add(x,y,-n);add(x,y,n);}
         }
         return true;
     }
-    inline std::optional<std::pair<float, float>> placementAngles(const Cell &goal)
-    {
-        if (!goal.properties)
-            return {};
-        for (const auto &[key, value] : goal.properties->values)
-        {
-            auto name = stateName(key);
-            if (name != "cardinal_direction" && name != "facing_direction")
-                continue;
-            if (auto direction = std::get_if<std::string>(&value))
-            {
-                if (*direction == "south")
-                    return std::pair{0.f, 0.f};
-                if (*direction == "west")
-                    return std::pair{90.f, 0.f};
-                if (*direction == "north")
-                    return std::pair{180.f, 0.f};
-                if (*direction == "east")
-                    return std::pair{270.f, 0.f};
-                if (*direction == "up")
-                    return std::pair{0.f, -90.f};
-                if (*direction == "down")
-                    return std::pair{0.f, 90.f};
-            }
-            else if (name == "facing_direction")
-                if (auto face = std::get_if<int>(&value))
-                {
-                    switch (*face)
-                    {
-                    case 0:
-                        return std::pair{0.f, 90.f};
-                    case 1:
-                        return std::pair{0.f, -90.f};
-                    case 2:
-                        return std::pair{180.f, 0.f};
-                    case 3:
-                        return std::pair{0.f, 0.f};
-                    case 4:
-                        return std::pair{90.f, 0.f};
-                    case 5:
-                        return std::pair{270.f, 0.f};
-                    }
-                }
-        }
-        return {};
-    }
-    inline bool candidateForPlacement(const Cell &c)
-    {
-        return supported(c) || (c.nativePlacementCandidate && c.kind == CellKind::block && c.stateIdentity &&
-                                c.placement && !c.placement->itemIdentifier.empty());
-    }
-    inline std::optional<BlockPos> supportPosition(const Cell &c)
-    {
-        if (!candidateForPlacement(c))
-            return std::nullopt;
-        const auto n = faceNormal(c.placement->face);
-        const auto sub = [](int a, int b) -> std::optional<int>
-        {
-            const auto v = std::int64_t(a) - b;
-            if (v < std::numeric_limits<int>::min() || v > std::numeric_limits<int>::max())
-                return std::nullopt;
-            return static_cast<int>(v);
-        };
-        const auto x = sub(c.position.x, n.x), y = sub(c.position.y, n.y), z = sub(c.position.z, n.z);
-        if (!x || !y || !z)
-            return std::nullopt;
-        return BlockPos{*x, *y, *z};
-    }
-    struct CaptureRequest
-    {
-        SessionToken token;
-        std::vector<BlockPos> positions;
-    };
-    struct PreviewSnapshot
-    {
-        SessionToken token;
-        BlockPos center;
-        unsigned radius{};
-        unsigned maxBlocks{};
-        std::vector<Cell> cells;
-        Hotbar hotbarAtPrompt;
-    };
-    struct ObservationSnapshot
-    {
-        SessionToken token;
-        std::vector<Cell> cells;
-        bool previewGone = false;
-    };
-    enum class DiffStatus
-    {
-        ready,
-        previewPresent,
-        incomplete,
-        changedBlock,
-        tooManyBlocks,
-        empty
-    };
-    struct PreparedCandidates
-    {
-        SessionToken token;
-        DiffStatus status = DiffStatus::incomplete;
-        std::vector<Cell> removed;
-        std::size_t persistent{}, changedExcluded{};
-    };
 
-    // Pure worker function. Only observed block-to-air cells become targets.
-    // Unrelated additions/replacements are excluded, never overwritten.
-    // All input/output storage is owned; there are no SDK objects or callbacks.
-    inline PreparedCandidates prepareCandidates(const PreviewSnapshot &preview,
-                                                const ObservationSnapshot &after)
-    {
-        PreparedCandidates out;
-        out.token = preview.token;
-        if (!(preview.token == after.token))
-            return out;
-        const auto side = std::uint64_t(preview.radius) * 2 + 1;
-        if (preview.radius < 1 || preview.radius > 32 ||
-            preview.cells.size() != side * side * side || after.cells.size() != preview.cells.size())
-            return out;
-        std::map<BlockPos, const Cell *> before, current;
-        for (const auto &c : preview.cells)
-        {
-            const auto dx = std::int64_t(c.position.x) - preview.center.x;
-            const auto dy = std::int64_t(c.position.y) - preview.center.y;
-            const auto dz = std::int64_t(c.position.z) - preview.center.z;
-            if (std::abs(dx) > preview.radius || std::abs(dy) > preview.radius ||
-                std::abs(dz) > preview.radius || c.kind == CellKind::unknown ||
-                !before.emplace(c.position, &c).second)
-                return out;
-        }
-        for (const auto &c : after.cells)
-            if (c.kind == CellKind::unknown || !current.emplace(c.position, &c).second)
-                return out;
-        for (const auto &[position, original] : before)
-        {
-            const auto it = current.find(position);
-            if (it == current.end())
-                return out;
-            const auto &now = *it->second;
-            if (original->kind == CellKind::air)
-            {
-                if (now.kind != CellKind::air)
-                    ++out.changedExcluded;
-            }
-            else if (now.kind == CellKind::air)
-            {
-                out.removed.push_back(*original);
-            }
-            else if (sameState(*original, now))
-            {
-                ++out.persistent;
-            }
-            else
-            {
-                // A fluid/light/wall state change outside the removed preview must
-                // not veto independent block-to-air targets. Never queue this cell.
-                ++out.changedExcluded;
-            }
-        }
-        if (!after.previewGone)
-            out.status = DiffStatus::previewPresent;
-        else if (out.removed.empty())
-            out.status = out.changedExcluded ? DiffStatus::changedBlock : DiffStatus::empty;
-        else if (out.removed.size() > preview.maxBlocks)
-            out.status = DiffStatus::tooManyBlocks;
-        else
-            out.status = DiffStatus::ready;
-        std::sort(out.removed.begin(), out.removed.end(), [](const Cell &a, const Cell &b)
-                  {
-        if (a.position.y != b.position.y) return a.position.y < b.position.y;
-        return a.position < b.position; });
-        return out;
+    // Repeated request on the same tick returns the same outstanding batch.
+    CaptureRequest captureRequest(Tick tick) {
+        checkThread();
+        if (!advance(tick) || (phase_ != Phase::capturing && phase_ != Phase::waiting)) return {token_,{}};
+        if (!requested_.empty()) { captureTick_=tick; return {token_,requested_}; }
+        if (captureTick_ && *captureTick_ == tick) return {token_,{}};
+        captureTick_ = tick;
+        const bool sparse=phase_==Phase::waiting&&!preview_.empty();
+        const auto total=sparse?watchIndices_.size():positions_.size();
+        const auto count=std::min<std::size_t>(options_.captureCellsPerTick,total-pass_.size());
+        requested_.clear();requested_.reserve(count);
+        for(std::size_t i=0;i<count;++i){const auto index=pass_.size()+i;requested_.push_back(sparse?preview_[watchIndices_[index]].position:positions_[index]);}
+        return {token_,requested_};
     }
-
-    enum class Phase
-    {
-        idle,
-        capturing,
-        waiting,
-        building,
-        complete,
-        cancelled,
-        failed
-    };
-    enum class StopReason
-    {
-        none,
-        cancelled,
-        worldChanged,
-        timeout,
-        captureUnknown,
-        oversized,
-        noTargets
-    };
-    struct Stats
-    {
-        std::size_t captured{}, capturePasses{}, persistent{}, removed{}, queued{};
-        std::size_t unsupported{}, confirmed{}, exhausted{}, attempts{}, dispatchFailures{};
-        std::size_t remaining{}, provisional{};
-    };
-    struct PlacementScan
-    {
-        unsigned visited{}, unknown{}, occupied{}, inFlight{}, cooldown{}, noSupport{}, dependency{}, outOfReach{}, missingItem{}, statePending{};
-    };
-    struct EyePosition
-    {
-        double x{}, y{}, z{};
-    };
-    struct BuildFrame
-    {
-        WorldId world{};
-        Tick tick{};
-        EyePosition eye;
-        Hotbar hotbar;
-        std::vector<Cell> cells; // Current game-thread copies of targets and supports.
-    };
-    struct PlacementRequest
-    {
-        SessionToken token;
-        std::uint64_t actionId{};
-        BlockPos target, support;
-        PlacementRecipe recipe;
-        unsigned hotbarSlot{}; // zero based; select this slot before main-hand use
-        Hand hand = Hand::main;
-    };
-
-    // Construct, access, and destroy on one game thread. Transfer snapshots to workers,
-    // never the Model. Ticks are monotonic within a world generation.
-    class Model
-    {
-    public:
-        explicit Model(Options options = {}) : options_(std::move(options)), owner_(std::this_thread::get_id())
-        {
-            validateOptions(options_);
-        }
-        Model(const Model &) = delete;
-        Model &operator=(const Model &) = delete;
-        Model(Model &&) = delete;
-        Model &operator=(Model &&) = delete;
-
-        void reset(WorldId world)
-        {
-            checkThread();
-            clear(world);
-        }
-        void cancel()
-        {
-            checkThread();
-            stop(Phase::cancelled, StopReason::cancelled);
-        }
-        bool onPrompt(WorldId world, Tick tick, BlockPos center, const Hotbar &hotbar,
-                      std::string_view title, std::string_view subtitle)
-        {
-            checkThread();
-            if (world != token_.world)
-                clear(world);
-            const bool matched = !title.empty() && subtitle.find(options_.prompt) != std::string_view::npos;
-            // Adapter feeds the current title/subtitle once per tick (including empty).
-            const bool rising = matched && !promptVisible_;
-            promptVisible_ = matched;
-            if (!options_.enabled || !rising)
+    bool submitCapture(SessionToken token, Tick tick, std::span<const Cell> cells) {
+        checkThread();
+        if (!(token == token_) || !advance(tick) ||
+            (phase_ != Phase::capturing && phase_ != Phase::waiting) ||
+            requested_.empty() || cells.empty() || cells.size() > requested_.size() || !captureTick_ || tick != *captureTick_)
+            return false;
+        for (std::size_t i = 0; i < cells.size(); ++i) {
+            if (cells[i].position != requested_[i]) return false;
+            if (cells[i].kind == CellKind::unknown ||
+                (cells[i].kind == CellKind::block && cells[i].identifier.empty())) {
+                stop(Phase::failed,StopReason::captureUnknown);
                 return false;
-            clear(world);
-            promptVisible_ = true;
-            token_.generation = nextGeneration();
-            center_ = center;
-            baselineHotbar_ = hotbar;
-            grantFloor_ = counts(hotbar);
-            started_ = lastTick_ = tick;
-            phase_ = Phase::capturing;
-            const auto r = static_cast<int>(options_.radius);
-            for (int z = -r; z <= r; ++z)
-                for (int y = -r; y <= r; ++y)
-                    for (int x = -r; x <= r; ++x)
-                    {
-                        const auto px = std::int64_t(center.x) + x;
-                        const auto py = std::int64_t(center.y) + y;
-                        const auto pz = std::int64_t(center.z) + z;
-                        if (px < std::numeric_limits<int>::min() || px > std::numeric_limits<int>::max() ||
-                            py < std::numeric_limits<int>::min() || py > std::numeric_limits<int>::max() ||
-                            pz < std::numeric_limits<int>::min() || pz > std::numeric_limits<int>::max())
-                        {
-                            stop(Phase::failed, StopReason::captureUnknown);
-                            return false;
-                        }
-                        positions_.push_back({static_cast<int>(px), static_cast<int>(py), static_cast<int>(pz)});
-                    }
-            return true;
+            }
         }
-
-        // Repeated request on the same tick returns the same outstanding batch.
-        CaptureRequest captureRequest(Tick tick)
-        {
-            checkThread();
-            if (!advance(tick) || (phase_ != Phase::capturing && phase_ != Phase::waiting))
-                return {token_, {}};
-            if (!requested_.empty())
-            {
-                captureTick_ = tick;
-                return {token_, requested_};
-            }
-            if (captureTick_ && *captureTick_ == tick)
-                return {token_, {}};
-            captureTick_ = tick;
-            const auto count = std::min<std::size_t>(options_.captureCellsPerTick, positions_.size() - pass_.size());
-            requested_.assign(positions_.begin() + pass_.size(), positions_.begin() + pass_.size() + count);
-            return {token_, requested_};
+        for (const auto& c : cells) {
+            const auto index=preview_.empty()?pass_.size():watchIndices_[pass_.size()];
+            if (!preview_.empty() && preview_[index].kind == CellKind::block && c.kind == CellKind::air)
+                frozen_ = true; // Never replace the last complete preview with a removal pass.
+            pass_.push_back(c);
         }
-        bool submitCapture(SessionToken token, Tick tick, std::span<const Cell> cells)
-        {
-            checkThread();
-            if (!(token == token_) || !advance(tick) ||
-                (phase_ != Phase::capturing && phase_ != Phase::waiting) ||
-                requested_.empty() || cells.empty() || cells.size() > requested_.size() || !captureTick_ || tick != *captureTick_)
-                return false;
-            for (std::size_t i = 0; i < cells.size(); ++i)
-            {
-                if (cells[i].position != requested_[i])
-                    return false;
-                if (cells[i].kind == CellKind::unknown ||
-                    (cells[i].kind == CellKind::block && cells[i].identifier.empty()))
-                {
-                    stop(Phase::failed, StopReason::captureUnknown);
-                    return false;
-                }
-            }
-            for (const auto &c : cells)
-            {
-                const auto index = pass_.size();
-                if (!preview_.empty() && preview_[index].kind == CellKind::block && c.kind == CellKind::air)
-                    frozen_ = true; // Never replace the last complete preview with a removal pass.
-                pass_.push_back(c);
-            }
-            requested_.erase(requested_.begin(), requested_.begin() + cells.size());
-            stats_.captured += cells.size();
-            if (pass_.size() == positions_.size())
-            {
-                ++stats_.capturePasses;
+        requested_.erase(requested_.begin(),requested_.begin()+cells.size());
+        stats_.captured += cells.size();
+        const bool initial=preview_.empty();
+        if(pass_.size()==(initial?positions_.size():watchIndices_.size())){
+            ++stats_.capturePasses;
+            if(initial){
+                preview_.swap(pass_);latest_.clear();
+                for(std::size_t i=0;i<preview_.size();++i)if(preview_[i].kind==CellKind::block)watchIndices_.push_back(i);
+                token_.generation=nextGeneration();
+                if(watchIndices_.empty()){stop(Phase::failed,StopReason::noTargets);return true;}
+            }else{
                 latest_.swap(pass_);
-                pass_.clear();
-                if (!frozen_)
-                {
-                    preview_.swap(latest_);
-                    // A worker result from an earlier complete pass is now stale.
-                    token_.generation = nextGeneration();
-                }
-                phase_ = Phase::waiting;
             }
-            return true;
+            pass_.clear();phase_=Phase::waiting;
         }
-        std::optional<PreviewSnapshot> previewSnapshot() const
-        {
-            checkThread();
-            if (preview_.empty())
-                return std::nullopt;
-            return PreviewSnapshot{token_, center_, options_.radius, options_.maxBlocks, preview_, baselineHotbar_};
-        }
-        std::optional<ObservationSnapshot> observationSnapshot(bool previewGone) const
-        {
-            checkThread();
-            if (latest_.empty())
-                return std::nullopt;
-            return ObservationSnapshot{token_, latest_, previewGone};
-        }
-        bool previewFrozen() const
-        {
-            checkThread();
-            return frozen_;
-        }
+        return true;
+    }
+    std::optional<PreviewSnapshot> previewSnapshot() const {
+        checkThread();
+        if (preview_.empty()) return std::nullopt;
+        return PreviewSnapshot{token_,center_,options_.radius,options_.maxBlocks,preview_,baselineHotbar_};
+    }
+    std::optional<ObservationSnapshot> observationSnapshot(bool previewGone) const {
+        checkThread();
+        if (latest_.empty()) return std::nullopt;
+        return ObservationSnapshot{token_,latest_,previewGone,true};
+    }
+    bool previewFrozen() const { checkThread(); return frozen_; }
+    std::size_t observationCellCount() const {checkThread();return watchIndices_.size();}
 
-        // Call repeatedly with current hotbar while waiting for a grant. Prepared data
-        // must come from prepareCandidates, using this model's unchanged snapshot.
-        bool acceptCandidates(const PreparedCandidates &prepared, Tick tick, const Hotbar &hotbar)
-        {
-            checkThread();
-            if (!(prepared.token == token_) || !advance(tick) || phase_ != Phase::waiting || !frozen_)
-                return false;
-            if (prepared.status == DiffStatus::tooManyBlocks)
-            {
-                stop(Phase::failed, StopReason::oversized);
-                return false;
-            }
-            if (prepared.status != DiffStatus::ready || prepared.removed.empty())
-                return false;
-            if (prepared.removed.size() > options_.maxBlocks)
-                return false;
-            std::map<BlockPos, const Cell *> baseline;
-            for (const auto &c : preview_)
-                baseline.emplace(c.position, &c);
-            std::map<BlockPos, bool> unique;
-            std::map<std::string, std::uint64_t> needed;
-            std::vector<Task> tasks;
-            std::size_t skipped = 0;
-            for (const auto &c : prepared.removed)
-            {
-                const auto it = baseline.find(c.position);
-                if (it == baseline.end() || !(*it->second == c) || !unique.emplace(c.position, true).second)
-                    return false;
-                if (!candidateForPlacement(c) || !supportPosition(c))
-                {
-                    ++skipped;
-                    continue;
-                }
-                ++needed[c.placement->itemIdentifier];
-                tasks.push_back(Task{c});
-            }
-            stats_.removed = prepared.removed.size();
-            stats_.persistent = prepared.persistent;
-            stats_.unsupported = skipped;
-            if (tasks.empty())
-            {
-                stop(Phase::failed, StopReason::noTargets);
-                return false;
-            }
-            const auto &before = grantFloor_;
-            const auto now = counts(hotbar);
-            bool granted = false;
-            for (const auto &[id, count] : needed)
-                granted |= countOf(now, id) > countOf(before, id);
-            if (!granted)
-                return false; // Require a round grant, not every scenery block's item.
-            // Keep missing item tasks pending: grants may arrive across several slots/ticks.
-            // The placement scheduler already skips missing items and visits other tasks.
-            tasks_ = std::move(tasks);
-            stats_.queued = stats_.remaining = tasks_.size();
-            buildStarted_ = tick;
-            phase_ = Phase::building;
-            return true;
-        }
-
-        void observeHotbar(const Hotbar &hotbar)
-        {
-            checkThread();
-            if (phase_ != Phase::capturing && phase_ != Phase::waiting)
-                return;
-            const auto now = counts(hotbar);
-            for (auto &[id, amount] : grantFloor_)
-                amount = std::min(amount, countOf(now, id));
-        }
-        // Pump every tick, even without a placement opportunity, to enforce deadlines.
-        void update(WorldId world, Tick tick)
-        {
-            checkThread();
-            if (world != token_.world)
-            {
-                clear(world);
-                reason_ = StopReason::worldChanged;
-                return;
-            }
-            advance(tick);
-        }
-        std::vector<BlockPos> inspectionPositions() const
-        {
-            checkThread();
-            std::vector<BlockPos> out;
-            if (phase_ != Phase::building || tasks_.empty())
-                return out;
-            const auto budget = std::min<std::size_t>(options_.maxStepsPerTick, tasks_.size());
-            for (std::size_t i = 0; i < budget; ++i)
-            {
-                const auto &task = tasks_[(cursor_ + i) % tasks_.size()];
-                if (task.done || task.failed)
-                    continue;
-                out.push_back(task.cell.position);
-                for (unsigned face = 0; face < 6; ++face)
-                {
-                    auto cell = task.cell;
-                    cell.placement->face = static_cast<Face>(face);
-                    if (auto support = supportPosition(cell))
-                        out.push_back(*support);
-                }
-            }
-            std::sort(out.begin(), out.end());
-            out.erase(std::unique(out.begin(), out.end()), out.end());
-            return out;
-        }
-        bool deferPlacement(SessionToken token, std::uint64_t actionId, Tick tick)
-        {
-            checkThread();
-            if (!(token == token_) || !advance(tick) || activeAction_ != actionId)
-                return false;
-            for (auto &task : tasks_)
-                if (task.action == actionId)
-                {
-                    activeAction_.reset();
-                    task.inFlight = false;
-                    if (task.attempts)
-                        --task.attempts;
-                    if (stats_.attempts)
-                        --stats_.attempts;
-                    lastPlacement_.reset();
-                    return true;
-                }
+    // Call repeatedly with current hotbar while waiting for a grant. Prepared data
+    // must come from prepareCandidates, using this model's unchanged snapshot.
+    bool acceptCandidates(const PreparedCandidates& prepared, Tick tick, const Hotbar& hotbar) {
+        checkThread();
+        if (!(prepared.token == token_) || !advance(tick) || phase_ != Phase::waiting || !frozen_)
             return false;
+        if (prepared.status == DiffStatus::tooManyBlocks) {
+            stop(Phase::failed,StopReason::oversized); return false;
         }
-        std::optional<PlacementRequest> nextPlacement(const BuildFrame &frame)
-        {
-            checkThread();
-            update(frame.world, frame.tick);
-            if (phase_ != Phase::building)
-                return std::nullopt;
-            if (stepTick_ && *stepTick_ == frame.tick)
-                return std::nullopt;
-            stepTick_ = frame.tick;
-            scan_ = {};
-            std::map<BlockPos, const Cell *> current;
-            for (const auto &c : frame.cells)
-                if (!current.emplace(c.position, &c).second)
-                    return std::nullopt;
-            // Each call visits at most maxStepsPerTick tasks. The cursor ensures fairness.
-            const auto budget = std::min<std::size_t>(options_.maxStepsPerTick, tasks_.size());
-            for (std::size_t step = 0; step < budget; ++step)
-            {
-                auto &task = tasks_[cursor_++ % tasks_.size()];
-                if (task.done || task.failed)
-                    continue;
-                ++scan_.visited;
-                const auto target = current.find(task.cell.position);
-                if (target != current.end() && sameState(task.cell, *target->second))
-                {
-                    if (!task.inFlight || frame.tick - task.sent >= 3)
-                        confirm(task);
-                    continue;
-                }
-                const bool typeObserved = target != current.end() && sameType(task.cell, *target->second);
-                if (typeObserved && !task.provisional)
-                {
-                    task.provisional = true;
-                    ++stats_.provisional;
-                }
-                if (typeObserved && target->second->stateIdentity != task.lastObserved)
-                {
-                    task.lastObserved = target->second->stateIdentity;
-                    task.attempts = 0;
-                }
-                const bool augment = typeObserved && canAugment(task.cell, *target->second);
-                if (task.inFlight)
-                {
-                    const bool progressed = typeObserved && target->second->stateIdentity != task.sentState && frame.tick - task.sent >= 3;
-                    if (!progressed && frame.tick - task.sent < options_.confirmationTicks)
-                    {
-                        ++scan_.inFlight;
-                        continue;
-                    }
-                    task.inFlight = false;
-                    if (progressed)
-                        task.attempts = 0;
-                }
-                if (typeObserved && !augment)
-                {
-                    ++scan_.statePending;
-                    continue;
-                }
-                if (task.attempts >= options_.maxAttempts)
-                {
-                    exhaust(task);
-                    continue;
-                }
-                if (activeAction_ || (lastPlacement_ && frame.tick - *lastPlacement_ < options_.buildIntervalTicks))
-                {
-                    ++scan_.cooldown;
-                    continue;
-                }
-                if (target == current.end() || target->second->kind == CellKind::unknown)
-                {
-                    ++scan_.unknown;
-                    continue;
-                }
-                if (target->second->kind != CellKind::air && !augment)
-                {
-                    ++scan_.occupied;
-                    continue;
-                }
-                auto recipe = *task.cell.placement;
-                auto support = *supportPosition(task.cell);
-                auto supportCell = current.find(support);
-                if (augment)
-                {
-                    support = task.cell.position;
-                    supportCell = target;
-                    recipe.face = Face::up;
-                    recipe.hitX = recipe.hitZ = .5f;
-                    recipe.hitY = 1.f;
-                    recipe.augment = true;
-                    recipe.deferredState = true;
-                }
-                else if (task.cell.nativePlacementCandidate)
-                {
-                    bool found = false;
-                    double bestDistance = std::numeric_limits<double>::infinity();
-                    for (unsigned candidate : {1u, 2u, 3u, 4u, 5u, 0u})
-                    {
-                        auto c = task.cell;
-                        c.placement->face = static_cast<Face>(candidate);
-                        auto pos = supportPosition(c);
-                        if (!pos)
-                            continue;
-                        auto it = current.find(*pos);
-                        if (it == current.end() || it->second->kind != CellKind::block || !it->second->supportsPlacement)
-                            continue;
-                        auto proposed = recipe;
-                        proposed.face = static_cast<Face>(candidate);
-                        proposed.hitX = candidate == 4 ? 0.f : candidate == 5 ? 1.f
-                                                                              : .5f;
-                        proposed.hitY = candidate == 0 ? 0.f : candidate == 1 ? 1.f
-                                                                              : .5f;
-                        proposed.hitZ = candidate == 2 ? 0.f : candidate == 3 ? 1.f
-                                                                              : .5f;
-                        const double x = double(pos->x) + proposed.hitX - frame.eye.x, y = double(pos->y) + proposed.hitY - frame.eye.y, z = double(pos->z) + proposed.hitZ - frame.eye.z;
-                        const double distance = x * x + y * y + z * z;
-                        if (distance < bestDistance)
-                        {
-                            bestDistance = distance;
-                            support = *pos;
-                            supportCell = it;
-                            recipe = proposed;
-                            found = true;
-                        }
-                    }
-                    if (!found)
-                    {
-                        ++scan_.noSupport;
-                        continue;
-                    }
-                }
-                if (supportCell == current.end() || supportCell->second->kind != CellKind::block || (!augment && !supportCell->second->supportsPlacement))
-                {
-                    ++scan_.noSupport;
-                    continue;
-                }
-                // A planned support is usable only after its exact state is observed.
-                const auto dependency = std::find_if(tasks_.begin(), tasks_.end(), [&](const Task &t)
-                                                     { return t.cell.position == support; });
-                if (dependency != tasks_.end() && !sameType(dependency->cell, *supportCell->second))
-                {
-                    ++scan_.dependency;
-                    continue;
-                }
-                const double dx = double(support.x) + recipe.hitX - frame.eye.x;
-                const double dy = double(support.y) + recipe.hitY - frame.eye.y;
-                const double dz = double(support.z) + recipe.hitZ - frame.eye.z;
-                const double distance2 = dx * dx + dy * dy + dz * dz;
-                if (!std::isfinite(distance2) || distance2 > options_.maxReach * options_.maxReach)
-                {
-                    ++scan_.outOfReach;
-                    continue;
-                }
-                std::optional<unsigned> slot;
-                for (unsigned i = 0; i < frame.hotbar.size(); ++i)
-                    if (frame.hotbar[i].count && frame.hotbar[i].identifier == recipe.itemIdentifier)
-                    {
-                        slot = i;
-                        break;
-                    }
-                if (!slot)
-                {
-                    ++scan_.missingItem;
-                    continue;
-                }
-                const auto action = ++actionSequence_;
-                ++task.attempts;
-                ++stats_.attempts;
-                task.action = action;
-                task.sent = frame.tick;
-                task.sentState = target->second->stateIdentity;
-                task.inFlight = true;
-                activeAction_ = action;
-                lastPlacement_ = frame.tick;
-                return PlacementRequest{token_, action, task.cell.position, support, recipe, *slot, Hand::main};
+        if (prepared.status != DiffStatus::ready || prepared.removed.empty()) return false;
+        if (prepared.removed.size() > options_.maxBlocks) return false;
+        std::map<BlockPos,const Cell*> baseline;
+        for (const auto& c : preview_) baseline.emplace(c.position,&c);
+        std::map<BlockPos,bool> unique;
+        std::map<std::string,std::uint64_t> needed;
+        std::vector<Task> tasks;
+        std::size_t skipped = 0;
+        for (const auto& c : prepared.removed) {
+            const auto it = baseline.find(c.position);
+            if (it == baseline.end() || !(*it->second == c) || !unique.emplace(c.position,true).second)
+                return false;
+            if (!candidateForPlacement(c) || !supportPosition(c)) { ++skipped; continue; }
+            ++needed[c.placement->itemIdentifier];
+            tasks.push_back(Task{c});
+        }
+        stats_.removed = prepared.removed.size();
+        stats_.persistent = prepared.persistent;
+        stats_.unsupported = skipped;
+        if (tasks.empty()) { stop(Phase::failed,StopReason::noTargets); return false; }
+        const auto now=counts(hotbar);bool available=false;
+        for(const auto& [id,count]:needed)available|=countOf(now,id)>0;
+        if(!available)return false; // Prompt + removal observations establish the round; accept available matching slots.
+        // Keep missing item tasks pending: grants may arrive across several slots/ticks.
+        // The placement scheduler already skips missing items and visits other tasks.
+        tasks_ = std::move(tasks);
+        stats_.queued = stats_.remaining = tasks_.size();
+        buildStarted_ = tick;
+        phase_ = Phase::building;
+        return true;
+    }
+
+    void observeHotbar(const Hotbar& hotbar){
+        checkThread();(void)hotbar; // Compatibility API; matching slot availability is checked at acceptCandidates.
+    }
+    // Pump every tick, even without a placement opportunity, to enforce deadlines.
+    void update(WorldId world, Tick tick) {
+        checkThread();
+        if (world != token_.world) { clear(world); reason_ = StopReason::worldChanged; return; }
+        advance(tick);
+    }
+    std::vector<BlockPos> inspectionPositions() const {
+        checkThread(); std::vector<BlockPos> out;
+        if(phase_!=Phase::building || tasks_.empty())return out;
+        const auto budget=std::min<std::size_t>(options_.maxStepsPerTick,tasks_.size());
+        for(std::size_t i=0;i<budget;++i){const auto& task=tasks_[(cursor_+i)%tasks_.size()];
+            if(task.done||task.failed)continue;
+            out.push_back(task.cell.position);
+            for(unsigned face=0;face<6;++face){auto cell=task.cell;cell.placement->face=static_cast<Face>(face);
+                if(auto support=supportPosition(cell))out.push_back(*support);}
+        }
+        std::sort(out.begin(),out.end());out.erase(std::unique(out.begin(),out.end()),out.end());return out;
+    }
+    bool deferPlacement(SessionToken token,std::uint64_t actionId,Tick tick) {
+        checkThread();if(!(token==token_)||!advance(tick)||activeAction_!=actionId)return false;
+        for(auto& task:tasks_)if(task.action==actionId){activeAction_.reset();task.inFlight=false;
+            if(task.attempts)--task.attempts;if(stats_.attempts)--stats_.attempts;lastPlacement_.reset();return true;}
+        return false;
+    }
+    std::optional<PlacementRequest> nextPlacement(const BuildFrame& frame) {
+        checkThread();
+        update(frame.world,frame.tick);
+        if (phase_ != Phase::building) return std::nullopt;
+        if (stepTick_ && *stepTick_ == frame.tick) return std::nullopt;
+        stepTick_ = frame.tick;
+        scan_={};
+        std::map<BlockPos,const Cell*> current;
+        for (const auto& c : frame.cells)
+            if (!current.emplace(c.position,&c).second) return std::nullopt;
+        // Each call visits at most maxStepsPerTick tasks. The cursor ensures fairness.
+        const auto budget = std::min<std::size_t>(options_.maxStepsPerTick,tasks_.size());
+        for (std::size_t step = 0; step < budget; ++step) {
+            auto& task = tasks_[cursor_++ % tasks_.size()];
+            if (task.done || task.failed) continue;
+            ++scan_.visited;
+            const auto target = current.find(task.cell.position);
+            if (target != current.end() && sameState(task.cell,*target->second)) {
+                if(!task.inFlight || frame.tick-task.sent>=3)confirm(task);
+                continue;
             }
+            const bool typeObserved=target!=current.end()&&sameType(task.cell,*target->second);
+            if(typeObserved&&!task.provisional){task.provisional=true;++stats_.provisional;}
+            if(typeObserved&&target->second->stateIdentity!=task.lastObserved){task.lastObserved=target->second->stateIdentity;task.attempts=0;}
+            const bool augment=typeObserved&&canAugment(task.cell,*target->second);
+            if(task.inFlight){
+                const bool progressed=typeObserved&&target->second->stateIdentity!=task.sentState&&frame.tick-task.sent>=3;
+                if(!progressed&&frame.tick-task.sent<options_.confirmationTicks){++scan_.inFlight;continue;}
+                task.inFlight=false;if(progressed)task.attempts=0;
+            }
+            if(typeObserved&&!augment){++scan_.statePending;continue;}
+            if (task.attempts >= options_.maxAttempts) { exhaust(task); continue; }
+            if (activeAction_ || (lastPlacement_ && frame.tick-*lastPlacement_ < options_.buildIntervalTicks)) {++scan_.cooldown;continue;}
+            if (target == current.end() || target->second->kind == CellKind::unknown) {++scan_.unknown;continue;}
+            if (target->second->kind != CellKind::air&&!augment) {++scan_.occupied;continue;}
+            auto recipe = *task.cell.placement;
+            auto support = *supportPosition(task.cell);
+            auto supportCell = current.find(support);
+            if(augment){support=task.cell.position;supportCell=target;recipe.face=Face::up;recipe.hitX=recipe.hitZ=.5f;recipe.hitY=1.f;recipe.augment=true;recipe.deferredState=true;}
+            else if(task.cell.nativePlacementCandidate){
+                bool found=false;double bestDistance=std::numeric_limits<double>::infinity();
+                for(unsigned candidate:{1u,2u,3u,4u,5u,0u}){auto c=task.cell;c.placement->face=static_cast<Face>(candidate);
+                    auto pos=supportPosition(c);if(!pos)continue;auto it=current.find(*pos);
+                    if(it==current.end()||it->second->kind!=CellKind::block||!it->second->supportsPlacement)continue;
+                    auto proposed=recipe;proposed.face=static_cast<Face>(candidate);
+                    proposed.hitX=candidate==4?0.f:candidate==5?1.f:.5f;
+                    proposed.hitY=candidate==0?0.f:candidate==1?1.f:.5f;
+                    proposed.hitZ=candidate==2?0.f:candidate==3?1.f:.5f;
+                    const double x=double(pos->x)+proposed.hitX-frame.eye.x,y=double(pos->y)+proposed.hitY-frame.eye.y,z=double(pos->z)+proposed.hitZ-frame.eye.z;
+                    const double distance=x*x+y*y+z*z;
+                    if(distance<bestDistance){bestDistance=distance;support=*pos;supportCell=it;recipe=proposed;found=true;}
+                }
+                if(!found){++scan_.noSupport;continue;}
+            }
+            if(supportCell==current.end()||supportCell->second->kind!=CellKind::block||(!augment&&!supportCell->second->supportsPlacement)){++scan_.noSupport;continue;}
+            // A planned support is usable only after its exact state is observed.
+            const auto dependency = std::find_if(tasks_.begin(),tasks_.end(),[&](const Task& t) {
+                return t.cell.position == support;
+            });
+            if (dependency != tasks_.end() && !sameType(dependency->cell,*supportCell->second)) {++scan_.dependency;continue;}
+            const double dx = double(support.x)+recipe.hitX-frame.eye.x;
+            const double dy = double(support.y)+recipe.hitY-frame.eye.y;
+            const double dz = double(support.z)+recipe.hitZ-frame.eye.z;
+            const double distance2 = dx*dx+dy*dy+dz*dz;
+            if (!std::isfinite(distance2) || distance2 > options_.maxReach*options_.maxReach) {++scan_.outOfReach;continue;}
+            std::optional<unsigned> slot;
+            for (unsigned i = 0; i < frame.hotbar.size(); ++i)
+                if (frame.hotbar[i].count && frame.hotbar[i].identifier == recipe.itemIdentifier) { slot = i; break; }
+            if (!slot) {++scan_.missingItem;continue;}
+            const auto action = ++actionSequence_;
+            ++task.attempts;
+            ++stats_.attempts;
+            task.action = action;
+            task.sent = frame.tick;task.sentState=target->second->stateIdentity;
+            task.inFlight = true;
+            activeAction_ = action;
+            lastPlacement_ = frame.tick;
+            return PlacementRequest{token_,action,task.cell.position,support,recipe,*slot,Hand::main};
+        }
+        finishIfDone();
+        return std::nullopt;
+    }
+    bool placementResult(SessionToken token, std::uint64_t actionId, bool dispatched, Tick tick) {
+        checkThread();
+        if (!(token == token_) || !advance(tick) || phase_ != Phase::building || activeAction_ != actionId)
+            return false;
+        for (auto& task : tasks_) if (task.action == actionId && task.inFlight) {
+            activeAction_.reset();
+            if (!dispatched) { task.inFlight = false; ++stats_.dispatchFailures; }
+            if(dispatched)task.sent=tick;
+            // A successful native return is NOT server confirmation.
+            return true;
+        }
+        return false;
+    }
+    bool observeBlock(SessionToken token, Tick tick, const Cell& cell) {
+        checkThread();
+        if (!(token == token_) || !advance(tick) || phase_ != Phase::building) return false;
+        for (auto& task : tasks_) if (!task.done && !task.failed && sameState(task.cell,cell) &&
+                                     task.cell.position == cell.position) {
+            confirm(task);
             finishIfDone();
-            return std::nullopt;
+            return true;
         }
-        bool placementResult(SessionToken token, std::uint64_t actionId, bool dispatched, Tick tick)
-        {
-            checkThread();
-            if (!(token == token_) || !advance(tick) || phase_ != Phase::building || activeAction_ != actionId)
-                return false;
-            for (auto &task : tasks_)
-                if (task.action == actionId && task.inFlight)
-                {
-                    activeAction_.reset();
-                    if (!dispatched)
-                    {
-                        task.inFlight = false;
-                        ++stats_.dispatchFailures;
-                    }
-                    if (dispatched)
-                        task.sent = tick;
-                    // A successful native return is NOT server confirmation.
-                    return true;
-                }
-            return false;
-        }
-        bool observeBlock(SessionToken token, Tick tick, const Cell &cell)
-        {
-            checkThread();
-            if (!(token == token_) || !advance(tick) || phase_ != Phase::building)
-                return false;
-            for (auto &task : tasks_)
-                if (!task.done && !task.failed && sameState(task.cell, cell) &&
-                    task.cell.position == cell.position)
-                {
-                    confirm(task);
-                    finishIfDone();
-                    return true;
-                }
-            return false;
-        }
-        const Cell *recordedCell(BlockPos pos) const
-        {
-            checkThread();
-            const auto r = static_cast<std::int64_t>(options_.radius), side = 2 * r + 1;
-            const auto x = std::int64_t(pos.x) - center_.x + r, y = std::int64_t(pos.y) - center_.y + r, z = std::int64_t(pos.z) - center_.z + r;
-            if (x < 0 || x >= side || y < 0 || y >= side || z < 0 || z >= side)
-                return nullptr;
-            const auto index = static_cast<std::size_t>((z * side + y) * side + x);
-            return index < preview_.size() ? &preview_[index] : nullptr;
-        }
-        std::optional<std::uint64_t> recordedState(BlockPos pos) const
-        {
-            checkThread();
-            const auto r = static_cast<std::int64_t>(options_.radius);
-            const auto x = std::int64_t(pos.x) - center_.x + r, y = std::int64_t(pos.y) - center_.y + r, z = std::int64_t(pos.z) - center_.z + r;
-            const auto side = 2 * r + 1;
-            if (x < 0 || x >= side || y < 0 || y >= side || z < 0 || z >= side)
-                return {};
-            const auto index = static_cast<std::size_t>((z * side + y) * side + x);
-            return index < preview_.size() ? preview_[index].stateIdentity : std::nullopt;
-        }
-        bool actionPending(SessionToken token, std::uint64_t id) const
-        {
-            checkThread();
-            return token == token_ && phase_ == Phase::building && activeAction_ == id;
-        }
-        bool refreshPlacement(SessionToken token, std::uint64_t id, Tick tick)
-        {
-            checkThread();
-            if (!actionPending(token, id))
-                return false;
-            for (auto &task : tasks_)
-                if (task.action == id)
-                {
-                    task.sent = tick;
-                    return true;
-                }
-            return false;
-        }
-        SessionToken token() const
-        {
-            checkThread();
-            return token_;
-        }
-        Phase phase() const
-        {
-            checkThread();
-            return phase_;
-        }
-        StopReason stopReason() const
-        {
-            checkThread();
-            return reason_;
-        }
-        Stats stats() const
-        {
-            checkThread();
-            return stats_;
-        }
-        PlacementScan placementScan() const
-        {
-            checkThread();
-            return scan_;
-        }
+        return false;
+    }
+    const Cell* recordedCell(BlockPos pos)const{
+        checkThread();const auto r=static_cast<std::int64_t>(options_.radius),side=2*r+1;
+        const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
+        if(x<0||x>=side||y<0||y>=side||z<0||z>=side)return nullptr;
+        const auto index=static_cast<std::size_t>((z*side+y)*side+x);return index<preview_.size()?&preview_[index]:nullptr;
+    }
+    std::optional<std::uint64_t> recordedState(BlockPos pos) const {
+        checkThread();const auto r=static_cast<std::int64_t>(options_.radius);
+        const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
+        const auto side=2*r+1;if(x<0||x>=side||y<0||y>=side||z<0||z>=side)return {};
+        const auto index=static_cast<std::size_t>((z*side+y)*side+x);
+        return index<preview_.size()?preview_[index].stateIdentity:std::nullopt;
+    }
+    bool actionPending(SessionToken token,std::uint64_t id) const {
+        checkThread();return token==token_&&phase_==Phase::building&&activeAction_==id;
+    }
+    bool refreshPlacement(SessionToken token,std::uint64_t id,Tick tick) {
+        checkThread();if(!actionPending(token,id))return false;
+        for(auto& task:tasks_)if(task.action==id){task.sent=tick;return true;}return false;
+    }
+    SessionToken token() const { checkThread(); return token_; }
+    Phase phase() const { checkThread(); return phase_; }
+    StopReason stopReason() const { checkThread(); return reason_; }
+    Stats stats() const { checkThread(); return stats_; }
+    PlacementScan placementScan() const {checkThread();return scan_;}
 
-    private:
-        static std::uint64_t nextGeneration()
-        {
-            static std::atomic<std::uint64_t> counter{};
-            return counter.fetch_add(1, std::memory_order_relaxed) + 1;
-        }
-        struct Task
-        {
-            Cell cell;
-            unsigned attempts{};
-            Tick sent{};
-            std::uint64_t action{};
-            std::optional<std::uint64_t> sentState, lastObserved;
-            bool inFlight{}, done{}, failed{}, provisional{};
-        };
-        using Counts = std::map<std::string, std::uint64_t>;
-        static Counts counts(const Hotbar &hotbar)
-        {
-            Counts result;
-            for (const auto &slot : hotbar)
-                if (!slot.identifier.empty())
-                    result[slot.identifier] += slot.count;
-            return result;
-        }
-        static std::uint64_t countOf(const Counts &c, const std::string &id)
-        {
-            const auto it = c.find(id);
-            return it == c.end() ? 0 : it->second;
-        }
-        void checkThread() const
-        {
-            if (std::this_thread::get_id() != owner_)
-                throw std::logic_error("SpeedBuilder Model accessed off owner thread");
-        }
-        void clear(WorldId world)
-        {
-            token_ = {world, nextGeneration()};
-            phase_ = Phase::idle;
-            reason_ = StopReason::none;
-            stats_ = {};
-            scan_ = {};
-            positions_.clear();
-            requested_.clear();
-            pass_.clear();
-            preview_.clear();
-            latest_.clear();
-            tasks_.clear();
-            baselineHotbar_ = {};
-            grantFloor_.clear();
-            frozen_ = promptVisible_ = false;
-            cursor_ = 0;
-            captureTick_.reset();
-            stepTick_.reset();
-            lastPlacement_.reset();
-            activeAction_.reset();
-            started_ = buildStarted_ = lastTick_ = 0;
-        }
-        void stop(Phase phase, StopReason reason)
-        {
-            token_.generation = nextGeneration();
-            phase_ = phase;
-            reason_ = reason;
-            requested_.clear();
-            activeAction_.reset();
-        }
-        bool advance(Tick tick)
-        {
-            if (tick < lastTick_)
-                return false;
-            lastTick_ = tick;
-            if ((phase_ == Phase::capturing || phase_ == Phase::waiting) && tick - started_ >= options_.maxWaitTicks)
-                stop(Phase::failed, StopReason::timeout);
-            if (phase_ == Phase::building && tick - buildStarted_ >= options_.maxBuildTicks)
-                stop(Phase::failed, StopReason::timeout);
-            if (activeAction_)
-            {
-                for (auto &task : tasks_)
-                    if (task.action == *activeAction_ && tick - task.sent >= options_.confirmationTicks)
-                    {
-                        activeAction_.reset();
-                        task.inFlight = false;
-                        ++stats_.dispatchFailures;
-                        break;
-                    }
-            }
-            return phase_ != Phase::failed && phase_ != Phase::cancelled;
-        }
-        void confirm(Task &task)
-        {
-            task.done = true;
-            task.inFlight = false;
-            if (activeAction_ == task.action)
-                activeAction_.reset();
-            if (task.provisional)
-            {
-                --stats_.provisional;
-                task.provisional = false;
-            }
-            ++stats_.confirmed;
-            --stats_.remaining;
-        }
-        void exhaust(Task &task)
-        {
-            task.failed = true;
-            ++stats_.exhausted;
-            --stats_.remaining;
-        }
-        void finishIfDone()
-        {
-            if (stats_.remaining == 0)
-            {
-                phase_ = stats_.exhausted ? Phase::failed : Phase::complete;
-            }
-        }
-        Options options_;
-        std::thread::id owner_;
-        SessionToken token_;
-        std::uint64_t actionSequence_{};
-        PlacementScan scan_{};
-        Phase phase_ = Phase::idle;
-        StopReason reason_ = StopReason::none;
-        Stats stats_;
-        BlockPos center_;
-        Hotbar baselineHotbar_;
-        Counts grantFloor_;
-        std::vector<BlockPos> positions_, requested_;
-        std::vector<Cell> pass_, preview_, latest_;
-        std::vector<Task> tasks_;
-        bool frozen_{}, promptVisible_{};
-        std::size_t cursor_{};
-        Tick started_{}, buildStarted_{}, lastTick_{};
-        std::optional<Tick> captureTick_, stepTick_, lastPlacement_;
-        std::optional<std::uint64_t> activeAction_;
+private:
+    static std::uint64_t nextGeneration(){static std::atomic<std::uint64_t> counter{};return counter.fetch_add(1,std::memory_order_relaxed)+1;}
+    struct Task {
+        Cell cell;
+        unsigned attempts{};
+        Tick sent{};
+        std::uint64_t action{};
+        std::optional<std::uint64_t> sentState,lastObserved;
+        bool inFlight{}, done{}, failed{}, provisional{};
     };
+    using Counts = std::map<std::string,std::uint64_t>;
+    static Counts counts(const Hotbar& hotbar) {
+        Counts result;
+        for (const auto& slot : hotbar) if (!slot.identifier.empty()) result[slot.identifier] += slot.count;
+        return result;
+    }
+    static std::uint64_t countOf(const Counts& c, const std::string& id) {
+        const auto it = c.find(id);
+        return it == c.end() ? 0 : it->second;
+    }
+    void checkThread() const {
+        if (std::this_thread::get_id() != owner_) throw std::logic_error("SpeedBuilder Model accessed off owner thread");
+    }
+    void clear(WorldId world) {
+        token_ = {world,nextGeneration()};
+        phase_ = Phase::idle;
+        reason_ = StopReason::none;
+        stats_ = {};scan_={};
+        positions_.clear(); watchIndices_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
+        baselineHotbar_={};
+        frozen_ = promptVisible_ = false;
+        cursor_ = 0;
+        captureTick_.reset(); stepTick_.reset(); lastPlacement_.reset(); activeAction_.reset();
+        started_ = buildStarted_ = lastTick_ = 0;
+    }
+    void stop(Phase phase, StopReason reason) {
+        token_.generation = nextGeneration();
+        phase_ = phase;
+        reason_ = reason;
+        requested_.clear();
+        activeAction_.reset();
+    }
+    bool advance(Tick tick) {
+        if (tick < lastTick_) return false;
+        lastTick_ = tick;
+        if ((phase_ == Phase::capturing || phase_ == Phase::waiting) && tick-started_ >= options_.maxWaitTicks)
+            stop(Phase::failed,StopReason::timeout);
+        if (phase_ == Phase::building && tick-buildStarted_ >= options_.maxBuildTicks)
+            stop(Phase::failed,StopReason::timeout);
+        if (activeAction_) {
+            for (auto& task : tasks_) if (task.action == *activeAction_ && tick-task.sent >= options_.confirmationTicks) {
+                activeAction_.reset();
+                task.inFlight = false;
+                ++stats_.dispatchFailures;
+                break;
+            }
+        }
+        return phase_ != Phase::failed && phase_ != Phase::cancelled;
+    }
+    void confirm(Task& task) {
+        task.done = true;
+        task.inFlight = false;
+        if (activeAction_ == task.action) activeAction_.reset();
+        if(task.provisional){--stats_.provisional;task.provisional=false;}
+        ++stats_.confirmed;
+        --stats_.remaining;
+    }
+    void exhaust(Task& task) {
+        task.failed = true;
+        ++stats_.exhausted;
+        --stats_.remaining;
+    }
+    void finishIfDone() {
+        if (stats_.remaining == 0) {
+            phase_ = stats_.exhausted ? Phase::failed : Phase::complete;
+        }
+    }
+    Options options_;
+    std::thread::id owner_;
+    SessionToken token_;
+    std::uint64_t actionSequence_{};
+    PlacementScan scan_{};
+    Phase phase_ = Phase::idle;
+    StopReason reason_ = StopReason::none;
+    Stats stats_;
+    BlockPos center_;
+    Hotbar baselineHotbar_;
+    std::vector<BlockPos> positions_, requested_;
+    std::vector<std::size_t> watchIndices_;
+    std::vector<Cell> pass_, preview_, latest_;
+    std::vector<Task> tasks_;
+    bool frozen_{}, promptVisible_{};
+    std::size_t cursor_{};
+    Tick started_{}, buildStarted_{}, lastTick_{};
+    std::optional<Tick> captureTick_, stepTick_, lastPlacement_;
+    std::optional<std::uint64_t> activeAction_;
+};
 
 } // namespace speed_builder

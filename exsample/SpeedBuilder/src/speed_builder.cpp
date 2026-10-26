@@ -29,7 +29,7 @@ std::atomic<void*> client{};std::atomic<std::uint64_t> epoch{1};std::atomic<unsi
 std::atomic<std::shared_ptr<const sb::Config>> config{std::make_shared<const sb::Config>()};
 std::atomic<unsigned> configRevision{};
 std::mutex logMutex;std::deque<std::string> logs;std::atomic<unsigned> lostLogs{},lostTitles{},titleQueued{};
-void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}logs.emplace_back(std::move(value));}
+void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}value+=" at_ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());logs.emplace_back(std::move(value));}
 struct TitleCopy{std::uint64_t epoch{};int type{};native::StringCopy text;};
 std::mutex titleMutex;std::deque<TitleCopy> titles;
 using TitleReadFn=void*(__fastcall*)(void*,void*,void*);TitleReadFn originalTitleRead{};BDS_HookToken titleToken{};
@@ -70,10 +70,13 @@ std::string titleText(const native::StringCopy& text,int type){
         };visit(visit,j);return plain(result);
     }catch(...){return {};}
 }
-struct DiffJob{sb::PreviewSnapshot before;sb::ObservationSnapshot after;std::uint64_t serial{};};
-struct DiffResult{sb::PreparedCandidates candidates;std::uint64_t serial{};bool stable{};};
+struct DiffJob{std::shared_ptr<const sb::PreviewSnapshot> before;sb::ObservationSnapshot after;std::uint64_t serial{};};
+struct DiffResult{sb::PreparedCandidates candidates;std::uint64_t serial{};};
+struct RemovalCheck{sb::PreparedCandidates candidates;std::uint64_t serial{},started{};std::size_t cursor{};};
+std::optional<RemovalCheck> removalCheck;std::uint64_t rejectedResult{};
 std::mutex diffMutex;std::shared_ptr<const DiffJob> diffInput;std::shared_ptr<const DiffResult> diffOutput;
 std::unique_ptr<sb::Model> model;
+std::shared_ptr<const sb::PreviewSnapshot> immutablePreview;
 std::uint64_t generation{},runtime{},tick{},jobSequence{},capturePass{},lastQueuedPass{},acceptedResult{};
 unsigned seenConfig{};void* playerIdentity{};void* sourceIdentity{};
 std::string currentTitle,currentSubtitle;std::uint64_t subtitleTick{};
@@ -88,6 +91,7 @@ std::optional<Probe> probe;
 struct Pending{sb::PlacementRequest request;std::uint64_t runtime{};void* player{};void* source{};std::uint64_t prepared{};
     float yaw{},pitch{},oldYaw{},oldPitch{};Vec hit{};int oldSlot=-1;bool dispatched{},rotationApplied{};};
 std::optional<Pending> pending;
+std::map<sb::BlockPos,std::pair<std::uint64_t,std::uint64_t>> mismatchLogs;
 unsigned nativeCalls{},nativeAccepted{},placementDeferred{};std::string lastDeferred;
 void restoreProbe(void* player,std::uint64_t liveRuntime){
     if(!probe)return;
@@ -110,9 +114,9 @@ void restorePending(void* player,std::uint64_t liveRuntime){
 }
 void resetRound(std::uint64_t world){
     // Cross-world pointers are discarded; never restore into an expired world.
-    pending.reset();probe.reset();reader.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
+    pending.reset();probe.reset();removalCheck.reset();immutablePreview.reset();rejectedResult=0;reader.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
     currentTitle.clear();currentSubtitle.clear();lastQueuedPass=capturePass=acceptedResult=0;lastPhase=sb::Phase::idle;
-    nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();
+    nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();mismatchLogs.clear();
     {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
 }
 void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
@@ -130,12 +134,13 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
         }
         const sb::BlockPos center{static_cast<int>(std::floor(position.x)),static_cast<int>(std::floor(position.y)),static_cast<int>(std::floor(position.z))};
         if(model->onPrompt(generation,tick,center,hotbar.copied,currentTitle,currentSubtitle)){
-            restoreProbe(playerIdentity,runtime);restorePending(playerIdentity,runtime);lastQueuedPass=0;
+            restoreProbe(playerIdentity,runtime);restorePending(playerIdentity,runtime);removalCheck.reset();immutablePreview.reset();rejectedResult=0;lastQueuedPass=0;
             note("memorizing: topic="+currentTitle+" subtitle="+currentSubtitle+" radius="+std::to_string(roundConfig->radius));
         }
     }
 }
 void capture(void* source){
+    const auto beforePass=model->stats().capturePasses;
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
     const auto deadline=Clock::now()+std::chrono::microseconds(1000);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
     for(const auto& pos:request.positions){auto cell=reader.cell(source,pos);
@@ -143,10 +148,17 @@ void capture(void* source){
         cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
     const auto stats=model->stats();capturePass=stats.capturePasses;
-    if(model->phase()!=sb::Phase::waiting||!model->previewFrozen()||capturePass==lastQueuedPass)return;
-    auto before=model->previewSnapshot();auto after=model->observationSnapshot(true);if(!before||!after)return;
-    // Publish at most one immutable copied snapshot per completed pass.
-    auto job=std::make_shared<DiffJob>(DiffJob{std::move(*before),std::move(*after),++jobSequence});
+    if(capturePass==1&&beforePass==0)note("capture ready: initial_cells="+std::to_string(stats.captured)+" observation_cells="+std::to_string(model->observationCellCount())+
+        " cap_per_tick="+std::to_string(roundConfig->captureCellsPerTick)+" cooperative_budget_us=1000");
+    if(model->phase()!=sb::Phase::waiting||!model->previewFrozen()||capturePass==beforePass||capturePass==lastQueuedPass)return;
+    if(!immutablePreview||immutablePreview->token!=model->token()){
+        auto before=model->previewSnapshot();if(!before)return;
+        immutablePreview=std::make_shared<const sb::PreviewSnapshot>(std::move(*before));
+    }
+    auto after=model->observationSnapshot(true);if(!after)return;
+    // Copy the full baseline once per round; subsequent worker jobs share it
+    // and transfer only the original non-air observations.
+    auto job=std::make_shared<DiffJob>(DiffJob{immutablePreview,std::move(*after),++jobSequence});
     std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput=std::move(job);lastQueuedPass=capturePass;}
 }
 std::string propertyText(const sb::Cell& cell){
@@ -193,7 +205,13 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         // A fallback may have come from another matching hotbar slot. Select it
         // again and retain the normal one-tick main-hand boundary before use.
         if(!bindings.select(player,action.request.hotbarSlot))return false;
-        pending=std::move(action);probe.reset();return true;
+        p.heldSlot=static_cast<int>(action.request.hotbarSlot);
+        auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
+        if(!native::read(rot,bindings.actors.rotationYawOffset,action.oldYaw)||!native::read(rot,bindings.actors.rotationPitchOffset,action.oldPitch))return false;
+        if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch)){
+            native::write(rot,bindings.actors.rotationYawOffset,action.oldYaw);native::write(rot,bindings.actors.rotationPitchOffset,action.oldPitch);return false;
+        }
+        action.rotationApplied=true;pending=std::move(action);probe.reset();return true;
     };
     if(p.request.recipe.augment){
         PlacementPlan plan;plan.request=p.request;plan.request.support=target;plan.request.recipe.face=sb::Face::up;
@@ -261,17 +279,46 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load()){restoreProbe(player,id);restorePending(player,id);return;}
     native::NativeHotbar hotbar;if(!reader.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
     processTitles(hotbar,position);model->observeHotbar(hotbar.copied);
-    if(model->phase()==sb::Phase::capturing||model->phase()==sb::Phase::waiting)capture(source);
+    if(removalCheck&&removalCheck->candidates.token!=model->token())removalCheck.reset();
+    if(model->phase()==sb::Phase::capturing||(model->phase()==sb::Phase::waiting&&!removalCheck))capture(source);
     if(model->phase()==sb::Phase::waiting){std::shared_ptr<const DiffResult> ready;
         {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock)ready=diffOutput;}
-        if(ready&&ready->serial!=acceptedResult&&ready->candidates.token==model->token()){
-            if(ready->stable&&model->acceptCandidates(ready->candidates,tick,hotbar.copied)){acceptedResult=ready->serial;note("building: removed preview blocks="+std::to_string(model->stats().queued)+" permanent scenery excluded="+std::to_string(model->stats().persistent));for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("build hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count)+" effective_aux="+std::to_string(hotbar.aux[slot]));}
+        if(!removalCheck&&ready&&ready->serial!=rejectedResult&&ready->serial!=acceptedResult&&
+           ready->candidates.token==model->token()&&ready->candidates.status==sb::DiffStatus::ready){
+            bool matchingItem=false;
+            for(const auto& c:ready->candidates.removed)if(c.placement)for(const auto& slot:hotbar.copied)
+                matchingItem|=slot.count&&slot.identifier==c.placement->itemIdentifier;
+            if(matchingItem)removalCheck=RemovalCheck{ready->candidates,ready->serial,tick,0};
+        }
+        if(removalCheck&&tick>removalCheck->started){
+            const auto deadline=Clock::now()+std::chrono::microseconds(750);unsigned checked=0;bool invalid=false;
+            auto& check=*removalCheck;
+            while(check.cursor<check.candidates.removed.size()&&checked++<128){
+                const auto cell=reader.cell(source,check.candidates.removed[check.cursor].position);
+                if(cell.kind==sb::CellKind::unknown)break;
+                if(cell.kind!=sb::CellKind::air){invalid=true;break;}
+                ++check.cursor;if(Clock::now()>=deadline)break;
+            }
+            if(invalid){rejectedResult=check.serial;removalCheck.reset();note("removal confirmation changed; resume sparse observation");}
+            else if(check.cursor==check.candidates.removed.size()&&model->acceptCandidates(check.candidates,tick,hotbar.copied)){
+                acceptedResult=check.serial;removalCheck.reset();
+                note("building: removed preview blocks="+std::to_string(model->stats().queued)+" permanent scenery excluded="+std::to_string(model->stats().persistent)+" [target-only second observation]");
+                for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("build hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count)+" effective_aux="+std::to_string(hotbar.aux[slot]));
+            }
         }
     }
     Vec eye=position; // Native Player origin; reach/ray semantics still require live confirmation.
     if(pending){
         if(pending->dispatched){restorePending(player,id);}
-        else if(tick>pending->prepared){
+        else if(tick<=pending->prepared+1){
+            // Keep the selected pose across two client ticks before dispatch.
+            // Immediate predictor writes can otherwise be restored before normal input serialization.
+            auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
+            if(!native::write(rot,bindings.actors.rotationYawOffset,pending->yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,pending->pitch)){
+                model->deferPlacement(pending->request.token,pending->request.actionId,tick);restorePending(player,id);
+            }
+        }
+        else {
             auto& action=*pending;const auto token=action.request.token;const auto aid=action.request.actionId;
             float yaw{},pitch{};auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
             const auto target=reader.cell(source,action.request.target);const auto support=reader.cell(source,action.request.support,true);void* predicted{};
@@ -286,7 +333,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             else if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)reason="out_of_reach";
             else if(!native::read(rot,bindings.actors.rotationYawOffset,yaw)||!native::read(rot,bindings.actors.rotationPitchOffset,pitch))reason="rotation_read_failed";
             if(!reason){
-                action.oldYaw=yaw;action.oldPitch=pitch;action.rotationApplied=true;
+                if(!action.rotationApplied){action.oldYaw=yaw;action.oldPitch=pitch;action.rotationApplied=true;}
                 if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch))reason="rotation_write_failed";
                 else if(!recipe.augment){
                     if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
@@ -300,6 +347,8 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 if(dispatched)++nativeCalls;if(dispatched&&accepted)++nativeAccepted;
                 model->placementResult(token,aid,dispatched&&accepted,tick);action.dispatched=true;
                 note(std::string("placement native: called=")+(dispatched?"1":"0")+" accepted="+(accepted?"1":"0")+" game_mode="+(gm?"valid":"unavailable")+
+                    " yaw="+std::to_string(action.yaw)+" pitch="+std::to_string(action.pitch)+" face="+std::to_string(static_cast<unsigned>(recipe.face))+
+                    " support="+std::to_string(action.request.support.x)+","+std::to_string(action.request.support.y)+","+std::to_string(action.request.support.z)+
                     " deferred_state="+std::to_string(recipe.deferredState)+" augment="+std::to_string(recipe.augment)+" item="+recipe.itemIdentifier+" slot="+std::to_string(slot)+" target="+std::to_string(action.request.target.x)+","+std::to_string(action.request.target.y)+","+std::to_string(action.request.target.z));
             }else {++placementDeferred;lastDeferred=reason;model->deferPlacement(token,aid,tick);restorePending(player,id);}
 
@@ -307,7 +356,16 @@ void tickGame(const bedrock::LevelTickEvent& event){
     }
     if(model->phase()==sb::Phase::building&&!pending){
         if(!probe){sb::BuildFrame frame;frame.world=generation;frame.tick=tick;frame.eye={eye.x,eye.y,eye.z};frame.hotbar=hotbar.copied;
-            for(const auto& pos:model->inspectionPositions())frame.cells.push_back(reader.cell(source,pos,true));
+            for(const auto& pos:model->inspectionPositions()){
+                auto observed=reader.cell(source,pos,true);
+                if(const auto* goal=model->recordedCell(pos);goal&&sb::sameType(*goal,observed)&&!sb::sameState(*goal,observed)){
+                    auto& last=mismatchLogs[pos];const auto state=observed.stateIdentity.value_or(0);
+                    if(last.first!=state||tick-last.second>=100){last={state,tick};
+                        note("state mismatch: item="+goal->identifier+" target="+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+
+                            " expected="+propertyText(*goal)+" actual="+propertyText(observed));}
+                }
+                frame.cells.push_back(std::move(observed));
+            }
             if(auto request=model->nextPlacement(frame)){
                 const auto desired=model->recordedState(request->target);
                 if(desired){probe=Probe{*request,desired,0};probe->player=player;probe->runtime=id;probe->world=generation;
@@ -325,11 +383,11 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(phase==sb::Phase::waiting&&tick%100==0){
         std::shared_ptr<const DiffResult> ready;{std::unique_lock lock(diffMutex,std::try_to_lock);if(lock)ready=diffOutput;}
         const auto reason=!model->previewFrozen()?"preview_not_removed":!ready?"diff_pending":
-            ready->candidates.token!=model->token()?"stale_diff":!ready->stable?"await_second_removal_pass":
-            ready->candidates.status!=sb::DiffStatus::ready?"diff_not_ready":"await_matching_item_grant";
+            ready->candidates.token!=model->token()?"stale_diff":removalCheck&&removalCheck->cursor<removalCheck->candidates.removed.size()?"target_confirmation":
+            ready->candidates.status!=sb::DiffStatus::ready?"diff_not_ready":"await_matching_hotbar_item";
         note(std::string("build wait: reason=")+reason+" passes="+std::to_string(model->stats().capturePasses)+
             " frozen="+std::to_string(model->previewFrozen())+" diff="+(ready?std::to_string(static_cast<int>(ready->candidates.status)):"none")+
-            " removed="+std::to_string(ready?ready->candidates.removed.size():0)+" changed_excluded="+std::to_string(ready?ready->candidates.changedExcluded:0));
+            " confirmation="+std::to_string(removalCheck?removalCheck->cursor:0)+" removed="+std::to_string(ready?ready->candidates.removed.size():0)+" changed_excluded="+std::to_string(ready?ready->candidates.changedExcluded:0));
         for(unsigned slot=0;slot<9;++slot)if(hotbar.copied[slot].count)note("waiting hotbar: slot="+std::to_string(slot)+" item="+hotbar.copied[slot].identifier+" count="+std::to_string(hotbar.copied[slot].count));
     }
     if(phase==sb::Phase::building&&tick%100==0){
@@ -346,16 +404,12 @@ void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(con
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
-    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision6; native reads/writes on client tick; copied diff worker\n";
+    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision5; native reads/writes on client tick; copied diff worker\n";
     const auto path=dir/L"config.json";auto modified=std::filesystem::last_write_time(path);auto nextReload=Clock::now();
     while(!stopped.load()){
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
-        if(job&&job->before.token.world==epoch.load()){
-            auto result=std::make_shared<DiffResult>(DiffResult{sb::prepareCandidates(job->before,job->after),job->serial});
-            // A fresh second removal pass prevents acting on an incomplete disappearance animation.
-            static std::vector<sb::Cell> previous;static sb::SessionToken previousToken{};
-            const bool stable=previousToken==result->candidates.token&&previous==result->candidates.removed;
-            previousToken=result->candidates.token;previous=result->candidates.removed;result->stable=stable;
+        if(job&&job->before->token.world==epoch.load()){
+            auto result=std::make_shared<DiffResult>(DiffResult{sb::prepareCandidates(*job->before,job->after),job->serial});
             if(result->candidates.token.world==epoch.load()){std::lock_guard lock(diffMutex);diffOutput=std::move(result);}
         }
         std::deque<std::string> batch;{std::lock_guard lock(logMutex);batch.swap(logs);}
@@ -372,7 +426,9 @@ DWORD WINAPI start(void*){
     try{
         const auto dir=directory();std::filesystem::create_directories(dir);const auto path=dir/L"config.json";
         if(!std::filesystem::exists(path)){std::ofstream out(path);out<<sb::configJson(sb::Config{}).dump(2)<<'\n';}
-        {std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});config.store(std::make_shared<const sb::Config>(sb::parseConfig(text)));}
+        {std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});in.close();auto parsed=std::make_shared<const sb::Config>(sb::parseConfig(text));config.store(parsed);
+            auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
+                std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
         std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         if(!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);

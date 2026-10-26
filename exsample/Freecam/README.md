@@ -89,11 +89,11 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 }
 ```
 
-## スペクテイターの地形カリング（visual revision 5）
+## スペクテイターの地形カリング（visual revision 6）
 
 本物のスペクテイターとの比較で、通常時はmode3/Vtable0xE8E3B10、スペクテイター時はmode5/Vtable0xE8DFE00を観測しました。
 この組み合わせをEXEの生成処理・非同期更新関数と照合しました。
-`spectator_mode: true`かつFreecam中だけ、主カメラの本体関数へmode5を渡します。以前のmode0は使用しません。
+revision5では本体が毎フレームmode3を再指定し、約5秒で1600回の再生成が発生していました。revision6では主カメラの本体関数へのmode3要求を、Freecam中だけ入口でmode5へ置き換えます。すでにmode5なら本体の処理で再生成を避けます。以前のmode0は使用しません。
 覆い抑制・GameType変更は行いません。この切替だけで地下の見え方が再現されるかは実機確認が必要です。
 
 解除・被弾・停止時は、同一ワールド・同一カメラで保存した方式へ戻します。
@@ -101,7 +101,8 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 本体の非同期カリングが実行中なら次のフレームで再試行し、待機ループは回しません。
 
 ログ `Freecam spectator culler` の `mode=5 pending=0 faults=0` が方式切替の確認値です。視認成功そのものは意味しません。
-`restored`は保存方式へ戻った回数です。`visual_revision=5`が今回の版です。
+`native_requests`/`rewritten`は本体の要求数/置換数、`changed`は実際の切替回数です。要求が増えても`changed`が増え続けないことを確認してください。1回の起動で8回切り替わった場合は`churn_guard=1`として今回の上書きを停止します。
+`restored`は保存方式へ戻った回数です。`visual_revision=6`が今回の版です。
 
 古いDLLのHookが残るため、Minecraftを完全終了してから差し替えてください。
 `full_bright`は独立したガンマ設定です。Runtimeが`actual owner=4.3.0 ABI=4`なら互換Runtimeへ接続しています。
@@ -110,7 +111,7 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 ## スペクテイター比較用の記録
 
 `visibility_diagnostics: true`で、通常視点でもFreecam中でも0.5秒ごとにカメラの候補フィールド・カリング方式・Actor GameTypeを記録します。
-出力はDocuments/PEXData/Freecam/visibility.jsonlです。既定false。画面表示やゲームモードを変更しません。
+出力はDocuments/PEXData/Freecam/visibility.jsonlです。revision6は本体のカメラ描画から読み取った`raw_view_flags_7c_88`、`camera_view_flags_valid`、`draw_inside_cubes`も記録します。読み取りだけで描画フラグは変更しません。既定false。画面表示やゲームモードを変更しません。
 ScanClientの既存監視はEXEの書き込み可能セクションが対象で、カメラのヒープを追わないため、この補助記録も必要です。
 比較時はfull_bright=falseとし、同一ローカルワールド・同一描画方式で、通常の地上→本物のspectator地上→spectator地中→通常に戻してFreecam地中を、それぞれ10秒ずつ記録してください。
 GameType=-1やvalid_camera_read=falseは読み取り不成立です。候補フィールドの意味・視認効果はこの記録だけで確定しません。
