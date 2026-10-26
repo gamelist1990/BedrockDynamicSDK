@@ -31,7 +31,7 @@ PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム�
 | `allow_interaction` | false | 手動の攻撃・使用・ホイール等の入力をゲームに渡す |
 | `disable_on_damage` | true | 自身のhurt time増加で解除。取得不能時も解除 |
 | `player_hitboxes` | true | Freecam中のみ付近のPlayerに簡易枠を表示 |
-| `spectator_mode` | false | 互換用設定。地下視界は未対応。旧カリング切替・覆い抑制は撤去 |
+| `spectator_mode` | false | Freecam中だけ、本物のspectatorで観測した地形カリング方式5を使用（描画結果は実機確認待ち） |
 | `full_bright` | true | Freecam中だけガンマを25へ上書き。解除時は本来の取得値 |
 | `speed_blocks_per_second` | 8 | 移動速度 |
 | `fast_multiplier` | 3 | 高速移動倍率 |
@@ -89,20 +89,23 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 }
 ```
 
-## 地中表示の現状（visual revision 4）
+## スペクテイターの地形カリング（visual revision 5）
 
-実機報告でrevision3のカリング方式変更は地形欠けを起こし、地中の視界も改善しませんでした。
-そのためカリング切替、inside-cube描画スキップ、カメラ許可判定の上書きを撤去しました。
-`spectator_mode`は既存configとの互換用に読み込みますが、現在は地下視界に作用しません。
-`terrain_visibility=unavailable visual_revision=4`が現在の状態です。
+本物のスペクテイターとの比較で、通常時はmode3/Vtable0xE8E3B10、スペクテイター時はmode5/Vtable0xE8DFE00を観測しました。
+この組み合わせをEXEの生成処理・非同期更新関数と照合しました。
+`spectator_mode: true`かつFreecam中だけ、主カメラの本体関数へmode5を渡します。以前のmode0は使用しません。
+覆い抑制・GameType変更は行いません。この切替だけで地下の見え方が再現されるかは実機確認が必要です。
 
-本体のスペクテイターと同じ地形描画経路は未特定です。GameTypeの変更や無条件カリング無効化を行いません。
-通常のFreecam移動、インタラクション、簡易Player枠、ガンマ25の明るさ設定は継続します。
-`full_bright`はOptionsのガンマ取得値だけを上書きし、options.txtを変更しません。
+解除・被弾・停止時は、同一ワールド・同一カメラで保存した方式へ戻します。
+本体側のゲームモード変更や別のカリング方式への変更を観測した場合は、保存値で上書きせず本体へ任せます。
+本体の非同期カリングが実行中なら次のフレームで再試行し、待機ループは回しません。
 
-古いDLLのHookが残るため、差し替え前にMinecraftを完全終了してください。
-Runtimeのsidecarがエラー126でも、`actual owner=4.3.0 ABI=4`ならロード済みModの互換Runtimeが動作しています。
-調査記録は[docs/freecam-native.md](../../docs/freecam-native.md)を参照してください。
+ログ `Freecam spectator culler` の `mode=5 pending=0 faults=0` が方式切替の確認値です。視認成功そのものは意味しません。
+`restored`は保存方式へ戻った回数です。`visual_revision=5`が今回の版です。
+
+古いDLLのHookが残るため、Minecraftを完全終了してから差し替えてください。
+`full_bright`は独立したガンマ設定です。Runtimeが`actual owner=4.3.0 ABI=4`なら互換Runtimeへ接続しています。
+詳細は[解析記録](../../docs/freecam-native.md)を参照してください。
 
 ## スペクテイター比較用の記録
 

@@ -178,3 +178,27 @@ LeviLamina client headers (src-client, not empty server/common placeholders) dis
 Remaining unknown: the exact native path that gives vanilla spectator its underground terrain visibility on the user's renderer. None of these findings is promoted to an ABI-verified terrain symbol. A controlled comparison of ordinary camera and real spectator camera on the same world/render mode is still needed before claiming equivalent rendering.
 
 Evidence is outside Git under `~/Documents/PEXData/REA/freecam-spectator-1.26.52.3/` and `freecam-terrain-1.26.52.3/`. This revision fixes the introduced culling regression; it does not implement underground visibility.
+
+
+## Revision5 — runtime-correlated spectator culler
+
+The user's comparison recording SHA256 `9dcb928b7838451fcc2467c835c1fe4e1a4143ad6397c6bcf0af180ad1a1ab10` contains76 valid camera samples over37.628s with matching exact-EXE fingerprint. All samples have Freecam OFF and epoch2. It includes two recorded spectator intervals; chat history in the screenshot alone is not a timestamped record of every transition.
+
+| Native Actor GameType | Culler enum | Culler vtable RVA | Samples |
+| --- | --- | --- | --- |
+| 0 (survival) | 3 | 0xE8E3B10 | 14 |
+| 1 (creative) | 3 | 0xE8E3B10 | 20 |
+| 6 (spectator) | 5 | 0xE8DFE00 | 19 |
+| -1 (unavailable/stale) | 3 or5 | matching mode3/5 table | 23 |
+
+Observed culler transitions relative to the first record:approximately12.0s 3→5,19.1s 5→3,25.1s 3→5,31.1s 5→3 (see retained raw timestamps for exact milliseconds). Unknown GameType samples are not assigned a mode. Raw camera+0x974 toggles within spectator periods as position changes; it is not adopted as a persistent spectator switch.
+
+Static correlation: native factory0x4690B80 case5 dispatches at0x4690E58. It constructs the native cached/async base then installs0xE8DFE00 through RIP-relative LEA at0x46911F0. Vtable slot1 is0x47E40B0; REA/Ghidra evidence `ev_dbb58e05697d13e67c057b0a586e5cdba95b6b93c30d10c6c549deecb6c8b47e` shows scheduling of an async task. The task table0xE8E3EC8 slot2 targets0x4809A70, evidence `ev_15ce07b37b64de3891a74801345de843639d3f7bf7df1bb13c81586737544331`. Do not name this implementation NoneAsync without further semantic evidence.
+
+Implementation uses the guarded native setter0x4690910 (`void __fastcall(LevelRendererPlayer*, unsigned char)`, RCX camera / DL mode). Its already analyzed idle check, native shared_ptr replacement and visibility-cache invalidation remain unchanged. Request5 only during active Freecam with spectator_mode enabled. When busy the native method returns without switching; retry on a later render frame. Only scalar copies cross to workers. No worker accesses native camera/culler pointers.
+
+Lease ownership is tied to camera pointer, SDK world epoch and copied native Actor GameType context. Restore only an owned mode5 lease; discard it across camera/world/native-mode changes. Do not restore an old mode3 over an observed transition into a real spectator. Keep the render callback pinned after Stop for pending restoration. No game-type writes, global spectator predicate override, overlay suppression or mode0 request.
+
+This verifies the *vanilla selection* of mode5 for this capture, not that applying mode5 alone reproduces underground rendering in Freecam. That effect and restoration still require live confirmation. The active profile remains candidate/runtime_verified=false. Logs report selected mode and post-call state separately from visual success.
+
+Retained runtime summary and REA output: `~/Documents/PEXData/REA/freecam-spectator-mode5-1.26.52.3/`.

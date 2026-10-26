@@ -687,10 +687,54 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; Latite Options_getGamma signature and Fullbright(25) corroborate meaning"
       ],
       "legacy_game_type_fields_unused": true,
-      "spectator_mode_behavior": "spectator_terrain_pending",
-      "revision": 4,
-      "terrain_visibility_status": "unavailable; revision3 culler override and overlay suppression retired after failed live observations",
-      "notes": "Revision4 retires ineffective inside-block suppression and the live-failing forced culler type0. Spectator terrain visibility remains unavailable; no game-type writes or global game-type predicate overrides."
+      "spectator_mode_behavior": "native_spectator_culler_mode5",
+      "revision": 5,
+      "terrain_visibility_status": "candidate: vanilla spectator mode5/vtable observed twice; Freecam underground effect unverified",
+      "notes": "Use observed native spectator culler mode5 through the exact-build setter. Mode0 and overlay-suppression hooks remain retired. No game-type writes.",
+      "terrain_culling": {
+        "schema": 1,
+        "status": "candidate",
+        "runtime_verified": false,
+        "spectator_mode": 5,
+        "camera_culler_offset": "0x9A8",
+        "camera_culler_type_offset": "0x9B8",
+        "spectator_vtable_rva": "0xE8DFE00",
+        "set_culler": {
+          "rva": "0x4690910",
+          "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
+          "abi": "void __fastcall(LevelRendererPlayer*, unsigned char cullerType)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "factory_check": {
+          "rva": "0x4690b80",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
+          "abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "spectator_update_check": {
+          "rva": "0x47E40B0",
+          "entry_check": "55 56 57 53 48 81 EC 68 01 00 00 48 8D AC 24 80 00 00 00 0F 29 B5 D0 00 00 00 48"
+        },
+        "abi": "void __fastcall(LevelRendererPlayer*, unsigned char mode)",
+        "observed_vanilla_modes": {
+          "normal": {
+            "mode": 3,
+            "vtable_rva": "0xE8E3B10"
+          },
+          "spectator": {
+            "mode": 5,
+            "vtable_rva": "0xE8DFE00"
+          }
+        },
+        "evidence": [
+          "User visibility.jsonl SHA256 recorded in docs/freecam-native.md: exact exe fingerprint, 76 samples, mode3/5 and corresponding native vtables; two spectator intervals.",
+          "REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680: setter idle check and native replacement/cache invalidation.",
+          "REA/Ghidra ev_dbb58e05697d13e67c057b0a586e5cdba95b6b93c30d10c6c549deecb6c8b47e: mode5 vtable slot1 update0x47E40B0 schedules asynchronous task.",
+          "REA/Ghidra ev_15ce07b37b64de3891a74801345de843639d3f7bf7df1bb13c81586737544331: mode5 task0x4809A70. Factory mode5 installs vtable0xE8DFE00 by RIP-relative LEA at0x46911F0."
+        ]
+      }
     }
   },
   "native_player_identity": {
