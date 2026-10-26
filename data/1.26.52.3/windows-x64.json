@@ -945,7 +945,7 @@
   },
   "native_top": {
     "schema": 1,
-    "revision": 1,
+    "revision": 2,
     "status": "candidate",
     "runtime_verified": false,
     "command_vtable_rva": "0xE897420",
@@ -977,6 +977,87 @@
       "runtime_verified": false,
       "evidence": "GuiData displaySystemMessage candidate. Calling closure0x878310 passes message, empty optional, empty TTS and stack context4; ev_88e76570b9a11e33d34759c9436ebba76b71ad2ee98cc633c41c51331d64cd50. Raw x64 instruction/caller evidence required because raw slice decompiler uses gcc calling conventions."
     },
-    "evidence": "SHA256 4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4; original PE .pdata ranges extracted and inspected through REA/Ghidra. Heights source+0x38 max exclusive/source+0x3A min inclusive in existing getBlock ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5. Runtime command routing, messages and teleport validation pending."
+    "evidence": "SHA256 4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4; original PE .pdata ranges extracted and inspected through REA/Ghidra. Heights source+0x38 max exclusive/source+0x3A min inclusive in existing getBlock ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5. Runtime command routing, messages and teleport validation pending.",
+    "commands": {
+      "schema": 1,
+      "status": "candidate",
+      "runtime_verified": false,
+      "register_command": {
+        "rva": "0x4a78840",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 02 00 00 48 8D AC 24 80",
+        "abi": "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "ev_72b721b2d99f368a86f80c6217c57fe5a34a12eb3a83d540d0d06f19b866ca1e"
+      },
+      "find_command": {
+        "rva": "0x4a56630",
+        "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45 00 FE FF FF FF 48 89 CB",
+        "abi": "Signature* __fastcall(CommandRegistry*, std::string const*)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "ev_131f6e121ee6efabddbca73c5a98b58a9e252ea991f3a97bb19a7914d0a3bab5"
+      },
+      "make_parameter": {
+        "rva": "0x4a47c80",
+        "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC 28 4C 89 CF 48 89 CE 0F B7 02 66 89",
+        "abi": "CommandParameterData* __fastcall(void* out_0x78, uint16 const* type_id, ParamParseRule const*, char const* name, int type, char const* enum_name, char const* subchain, int offset, bool optional, int set_offset)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "ev_021470f8834c2fd4b4e816cc8332790e256566d80dabe48b2a68a9855c145b98"
+      },
+      "register_optional_parameter": {
+        "rva": "0x4a224d0",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80",
+        "abi": "Overload* __fastcall(CommandRegistry*, char const* name, uint64 packed_version, brstd_copyable_callable_64* factory, CommandParameterData const* one_param)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "ev_768d5883b24cf069aac46a82804b4311d47ed3702538485b71e3604e4110e744"
+      },
+      "factory_vtable_rva": "0xE8EEE40",
+      "factory_copy": {
+        "rva": "0x791d0",
+        "entry_check": "48 8B 41 08 48 89 42 08 C3 CC CC CC CC CC CC CC",
+        "abi": "void __fastcall(void* source, void* destination); copies callable free-function at +8",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "Native Help registration and callable vtable instructions; see docs/top-native.md"
+      },
+      "factory_destroy": {
+        "rva": "0x76bc0",
+        "entry_check": "C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC",
+        "abi": "void __fastcall(void*); no-op for free-function storage",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "Native Help registration and callable vtable instructions; see docs/top-native.md"
+      },
+      "factory_invoke": {
+        "rva": "0x9b7880",
+        "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 42 08 FF 15 16 42",
+        "abi": "unique_ptr<Command>* __fastcall(void* hidden_result, void const* callable); invokes callable free function with hidden_result RCX",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "Native Help registration and callable vtable instructions; see docs/top-native.md"
+      },
+      "client_commands_anchor": {
+        "rva": "0x5db9f00",
+        "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 10 FE",
+        "abi": "void __fastcall(ClientInstance*); reads Minecraft+0xC0 Commands, writes Commands+0x18 output sender",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "ev_fc0c0ccbd2548e064fedb0c1b353b63b7139c76603ba192004677516b3613ba3"
+      },
+      "has_commands_anchor": {
+        "rva": "0x5dc2120",
+        "entry_check": "48 8B 81 B0 01 00 00 48 83 B8 C0 00 00 00 00 0F 95 C0 C3",
+        "abi": "bool __fastcall(ClientInstance*); Client+0x1B0 -> Minecraft+0xC0 non-null",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "Native Help registration and callable vtable instructions; see docs/top-native.md"
+      },
+      "integer_type_rva": "0x11E141D0",
+      "integer_rule_rva": "0x11E145F8",
+      "evidence": "Exact-build Help setup0x80E7250 registers SyncLocal0x10 + NotCheat0x80, then optional page:int via make_parameter and one-param overload helper. Helper uses native allocator/copy constructors; 64-byte brstd callable has vtable + free-function prefix. Native Command base0x20; int +0x20, is_set +0x24. Help factory0x811DAC0 and Help vtable0xEA0D0C0 corroborate virtual destructor/collectOptionalArguments/execute. Client+0x1B0 -> Minecraft+0xC0 -> MinecraftCommands+0x10 registry; output success counter+0x28 observed in native Help execute. No runtime verification yet."
+    }
   }
 }

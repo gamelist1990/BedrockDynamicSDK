@@ -5,6 +5,7 @@
 #include <bedrock/generated_symbols.hpp>
 #include <bedrock/remote_catalog.hpp>
 #include "native.hpp"
+#include "native_commands.hpp"
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <atomic>
@@ -21,7 +22,7 @@
 namespace {
 namespace n=speedbuilder_native;namespace tn=top_native;
 using Clock=std::chrono::steady_clock;using Vec=bedrock::Vec3;using Bounds=bedrock::ActorBounds;
-tn::Bindings bindings;n::Reader reader(bindings);tn::Safety safety(bindings,reader);
+tn::Bindings bindings;n::Reader reader(bindings);tn::Safety safety(bindings,reader);tn::NativeCommands nativeCommands(bindings);
 bedrock::GameApi api;bedrock::ClientCommands commands;std::unique_ptr<bedrock::GameHooks> hooks;
 std::atomic<bool> stopped{};std::atomic<unsigned> status{};std::atomic<void*> client{},sender{},sendTarget{};
 std::atomic<std::uint64_t> epoch{1};std::uint64_t seenWorld{};
@@ -29,6 +30,33 @@ BDS_HookToken packetToken{};std::atomic<void*> installedTarget{};
 std::mutex mailMutex,logMutex;
 struct Input{std::uint64_t epoch{};std::string line;};std::deque<Input> input;
 std::deque<std::string> logs;std::atomic<bool> overflow{};
+std::string recentLine;Clock::time_point recentTime{};std::uint64_t recentEpoch{};bool recentNative{},recentPaired{};
+std::uint64_t clientTicks{},nextRegistration{};int lastRegistration=-1;
+std::string canonical(std::string_view line){
+    if(!line.starts_with("/top"))return std::string(line);
+    auto arg=line.substr(4);auto a=arg.find_first_not_of(" \t\r\n");if(a==arg.npos)return "/top";
+    arg=arg.substr(a,arg.find_last_not_of(" \t\r\n")-a+1);int n{};
+    const auto parsed=std::from_chars(arg.data(),arg.data()+arg.size(),n);
+    if(parsed.ec==std::errc{}&&parsed.ptr==arg.data()+arg.size())return "/top "+std::to_string(n);
+    return std::string(line);
+}
+bool enqueue(std::string_view line,bool fromNative){
+    const auto normalized=canonical(line);const auto world=epoch.load();const auto now=Clock::now();
+    std::lock_guard lock(mailMutex);if(stopped.load())return false;
+    // Some client routes also forward a packet after local execution. Pair only
+    // opposite sources; two deliberate commands from the same source still run.
+    if(!recentPaired&&recentEpoch==world&&recentNative!=fromNative&&recentLine==normalized&&now-recentTime<std::chrono::milliseconds(200)){
+        recentPaired=true;return true;
+    }
+    if(input.size()>=16){overflow.store(true);return false;}
+    input.push_back({world,normalized});recentLine=normalized;recentTime=now;recentEpoch=world;recentNative=fromNative;recentPaired=false;return true;
+}
+void onNativeCommand(const tn::NativeTopCommand& command,void* output){
+    try{if(command.registry!=nativeCommands.registry())return;
+        const auto line=command.hasBlocks?"/top "+std::to_string(command.blocks):std::string("/top");
+        if(enqueue(line,true))nativeCommands.markAccepted(output);
+    }catch(...){overflow.store(true);}
+}
 unsigned maxRise{},levelsPerTick{8},budgetUs{500};bool enabled=true;
 void note(std::string s){std::lock_guard lock(logMutex);if(logs.size()<128)logs.push_back(std::move(s));}
 void reply(const std::string& text){note(text);const std::optional<std::string> filtered;const std::string tts;
@@ -43,8 +71,7 @@ void BDS_HOOK_CALL onPacket(void*,void* raw,BDS_HookNext next,void* frame)noexce
     if(!n::read(args.packet,0,vt)||vt!=bindings.commandVtable||
        !n::copyString(static_cast<const std::byte*>(args.packet)+bindings.commandOffset,&copy)){next(frame,raw);return;}
     try{const std::string_view line(copy.bytes,copy.size);if(!commands.contains(line)){next(frame,raw);return;}
-        std::lock_guard lock(mailMutex);
-        if(input.size()<16)input.push_back({epoch.load(),std::string(line)});else overflow.store(true);
+        enqueue(line,false);
         // Only commands registered locally are consumed. The packet is neither
         // retained nor modified; execution is deferred to the owning level tick.
     }catch(...){overflow.store(true);}
@@ -102,9 +129,17 @@ void execute(std::string_view args){
 }
 void tickGame(const bedrock::LevelTickEvent& e){
     const auto world=epoch.load();
-    if(seenWorld!=world){search.reset();reader.clear();{std::lock_guard lock(mailMutex);input.clear();}seenWorld=world;}
+    if(seenWorld!=world){search.reset();reader.clear();{std::lock_guard lock(mailMutex);input.clear();}seenWorld=world;nativeCommands.reset();nextRegistration=0;lastRegistration=-1;}
     if(stopped.load()){search.reset();return;}
     observeSender();
+    if(++clientTicks>=nextRegistration){
+        nextRegistration=clientTicks+20;
+        const auto result=nativeCommands.update(client.load());const auto value=static_cast<int>(result);
+        if(result==tn::NativeCommands::Result::registered)note("/top native CommandRegistry registered [SyncLocal + NotCheat; blocks: optional int; native autocomplete + local execution]");
+        else if(value!=lastRegistration&&result==tn::NativeCommands::Result::collision)note("/top native command name already exists; existing metadata preserved; packet fallback remains available");
+        else if(value!=lastRegistration&&result==tn::NativeCommands::Result::failed)note("/top native registration failed: "+nativeCommands.error());
+        lastRegistration=value;
+    }
     std::optional<Input> command;{std::lock_guard lock(mailMutex);if(!input.empty()){command=std::move(input.front());input.pop_front();}}
     if(overflow.exchange(false))fail("コマンドが多すぎます。少し待ってから実行してください");
     if(!search&&!command)return; // No Actor, ECS, region or block reads while idle.
@@ -144,14 +179,15 @@ DWORD WINAPI start(void*){
     status.store(1);
     try{const auto dir=directory();std::filesystem::create_directories(dir);loadConfig(dir);std::string error;
         std::string profile;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_top"))profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_top")||nlohmann::json::parse(profile).at("native_top").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        bindings.loadTop(profile);commands.add("top",execute);
+        bindings.loadTop(profile);commands.add("top",execute);tn::commandReceiver=&onNativeCommand;
+        if(!nativeCommands.load(profile,error))note("native autocomplete unavailable: "+error);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){if(e.clientInstance)client.store(e.clientInstance);});
-        api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& e){if(e.clientInstance)client.store(e.clientInstance);sender.store(nullptr);sendTarget.store(nullptr);++epoch;});
+        api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& e){if(e.clientInstance)client.store(e.clientInstance);nativeCommands.reset();sender.store(nullptr);sendTarget.store(nullptr);++epoch;});
         api.Event.Enum.LevelTick.then(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);
         if(!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
-        note("Top 1.26.52.3 candidate revision1; /top and /top N; safe destinations only; no background native reads");note("Press Esc and return to gameplay if the client has not been observed yet.");note(BDS_HookRuntimeDiagnostic());status.store(2);
+        note("Top 1.26.52.3 candidate revision2; native registry + autocomplete; /top and /top N; world reads/writes on client tick only");note("Press Esc and return to gameplay if the client has not been observed yet.");note(BDS_HookRuntimeDiagnostic());status.store(2);
         std::ofstream out(dir/L"Top.log",std::ios::trunc);
         while(!stopped.load()){
             installPacket();std::deque<std::string> batch;{std::lock_guard lock(logMutex);batch.swap(logs);}for(const auto& line:batch)out<<line<<'\n';if(!batch.empty())out.flush();

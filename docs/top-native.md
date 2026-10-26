@@ -41,9 +41,9 @@ Saved evidence, extraction manifests and bytes:
 `/home/pexserver/Documents/PEXData/REA/top-1.26.52.3/`.
 
 LeviLamina getOrCreateCommand uses service::getCommandRegistry(isClient),
-registry.registerCommand, then SyncLocal on client registrations. This example
-instead adds a narrow immutable SDK ClientCommands table and packet interception;
-no native registry layouts/parse callbacks/command autocomplete are guessed.
+registry.registerCommand, then SyncLocal on client registrations. Revision1
+used a narrow immutable SDK ClientCommands table and packet interception.
+Revision2 adds guarded native registration as described below.
 Only registered names are consumed. No packet pointers or ECS objects move to
 workers. The bounded mailbox records the world epoch and stale commands expire.
 
@@ -52,3 +52,66 @@ be air; full support requires existing native solid flags and an explicit vanill
 identifier allowlist. Partial/hazardous/custom and unlisted support types are rejected. Runtime
 safety, integrated/multiplayer command routing, server corrections and Japanese
 chat display require live validation. A build success establishes none of these.
+
+## Revision2: native command registration and completion
+
+Exact-build evidence is retained under
+`/home/pexserver/Documents/PEXData/REA/top-completion-1.26.52.3/`.
+Discovery is literal builtin description strings -> recognized RIP-relative LEA
+references -> original `.pdata` ranges -> REA/Ghidra. The memory-mapped extractor
+avoids whole-image duplicate byte buffers. Full-image analysis is not repeated.
+
+| Entry | RVA | Evidence |
+|---|---|---|
+| Help setup | 0x80E7250 | `ev_71b7492a78659b9e2c0fcd6831d5edece2252b5e098cd73df86110fefebf1c48` |
+| registerCommand | 0x4A78840 | `ev_72b721b2d99f368a86f80c6217c57fe5a34a12eb3a83d540d0d06f19b866ca1e` |
+| findCommand | 0x4A56630 | `ev_131f6e121ee6efabddbca73c5a98b58a9e252ea991f3a97bb19a7914d0a3bab5` |
+| Parameter constructor | 0x4A47C80 | `ev_021470f8834c2fd4b4e816cc8332790e256566d80dabe48b2a68a9855c145b98` |
+| One-parameter overload helper | 0x4A224D0 | `ev_768d5883b24cf069aac46a82804b4311d47ed3702538485b71e3604e4110e744` |
+| Client initCommands | 0x5DB9F00 | `ev_fc0c0ccbd2548e064fedb0c1b353b63b7139c76603ba192004677516b3613ba3` |
+
+The builtin Help call supplies `Any=0`, flags `0x10 / 0x80`, corroborating the
+LeviLamina SyncLocal / NotCheat declaration. Its page:int constructor supplies the
+16-bit type-id global at0x11E141D0 and ParamParseRule at0x11E145F8. These are runtime
+BSS objects, not static file values; the adapter waits until the rule points to
+executable code. Parameter size0x78/name+0x18/offset+0x58/setOffset+0x5C/optional+0x60
+are observed in the constructor. The adapter uses int+0x20, hasValue+0x24 in a
+0x28-byte Command instance. Help factory0x811DAC0 corroborates a0x20-byte Command
+base and vtable0xEA0D0C0 with destructor / collectOptionalArguments / execute.
+The default collectOptionalArguments leaf0x848A0 returns true.
+
+The overload helper accepts registry RCX, name RDX, packed CommandVersion R8,
+callable R9 and one ParameterData pointer on the stack. It looks up the signature,
+appends a0x80-byte overload, deep-copies one0x78-byte parameter, then invokes
+registerOverloadInternal0x4A7C6A0. Signature overload vector begins at+0x40.
+All registry/vector/string allocation and copy construction happen in native code.
+The temporary name `blocks` remains short-string storage, so the temporary owns no
+native heap allocation that would need a foreign CRT destructor.
+
+The native64-byte small callable has vtable0xE8EEE40 and free-function pointer+8.
+Its four slots are copy0x791D0 / destroy0x76BC0 / invoke0x9B7880 / copy0x791D0.
+The copy thunk copies only+8; destruction is a no-op; invoke takes hidden unique_ptr
+output RCX and callable RDX and calls the function at+8 with RCX unchanged. The
+adapter supplies a pinned DLL factory with the matching hidden-return ABI. Its
+Command's virtual deleting destructor runs in that same DLL. It never inserts
+DLL-owned std::vector buffers or heap strings into game-owned containers.
+
+Client+0x1B0 -> Minecraft+0xC0 -> MinecraftCommands+0x10 is the registry path. The
+initCommands body also writes MinecraftCommands+0x18 as the output sender, matching
+the LeviLamina class declaration. The hasCommands leaf0x5DC2120 checks the same
+Minecraft+0xC0 pointer. Help execute0x80E7740 increments CommandOutput+0x28 on
+success; the callback marks an accepted queued request at that offset.
+
+Registration and checks run on the client tick, at most once per20ticks. Existing
+same-name foreign metadata is preserved. The factory is confirmed in the first
+native overload before treating an existing signature as ours. World changes
+invalidate the current registry lease; callbacks from an expired registry are
+ignored. Native and packet fallback requests are paired by canonical command,
+world epoch and opposite source within200ms to prevent double dispatch. Deliberate
+repeated commands from the same source are preserved. Top_Stop stops execution;
+DLL unload and live replacement are unsupported because native metadata retains
+factory callbacks until the registry is destroyed.
+
+These remain static candidates, not ABI/runtime-verified SDK symbols. Runtime
+completion, optional-argument parsing, local execution, output bookkeeping and
+re-registration after server metadata updates still require a game observation.
