@@ -22,8 +22,8 @@ struct Bindings : n::Bindings {
         commandOffset=n::number(t.at("command_offset"));guiOffset=n::number(t.at("gui_offset"));checked(t.at("command_get_id"));checked(t.at("gui_getter"));
     }
     bool message(void* client,const std::string& text,const std::optional<std::string>& filtered,const std::string& tts)const noexcept{
-        void* gui{};void* owner{};unsigned char alive{};
-        if(!n::read(client,guiOffset,gui)||!n::read(gui,0,alive)||!alive||!n::read(gui,0x98,owner)||owner!=client)return false;
+        void* gui{};void* owner{};void* life{};unsigned char alive{};
+        if(!n::read(client,guiOffset,gui)||!n::read(gui,0x30,life)||!n::read(life,0,alive)||!alive||!n::read(gui,0x98,owner)||owner!=client)return false;
         __try{reinterpret_cast<void(__fastcall*)(void*,const std::string*,const std::optional<std::string>*,const std::string*,int)>(messageFn)(gui,&text,&filtered,&tts,4);return true;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
     }
     bool heights(void* source,int& low,int& high)const noexcept{

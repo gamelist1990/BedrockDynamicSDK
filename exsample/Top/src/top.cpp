@@ -67,7 +67,8 @@ void observeSender(){
 }
 bool context(Search& out){
     out.player=currentPlayer;out.source=currentSource;out.runtime=currentRuntime;out.epoch=epoch.load();
-    return out.player&&out.source&&bindings.pose(out.player,out.position,out.runtime)&&bindings.bounds(out.player,out.bounds)&&bindings.heights(out.source,out.low,out.high);
+    return out.player&&out.source&&bindings.pose(out.player,out.position,out.runtime)&&bindings.bounds(out.player,out.bounds)&&bindings.heights(out.source,out.low,out.high)&&
+        std::abs(out.bounds.minimum.x-out.position.x)<4&&std::abs(out.bounds.minimum.y-out.position.y)<4&&std::abs(out.bounds.minimum.z-out.position.z)<4;
 }
 Bounds atFeet(const Search& s,float feet){auto b=s.bounds;const float dy=feet-b.minimum.y;b.minimum.y+=dy;b.maximum.y+=dy;return b;}
 bool finish(const Search& s,float feet){

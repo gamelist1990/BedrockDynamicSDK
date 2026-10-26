@@ -28,7 +28,9 @@ trampolines/imports and decompiler terminal-call assumptions limit pseudocode.
   Registers RCX/RDX/R8/R9 preserve self/message/optional/TTS; native body reads
   TTS+0x10. Cross-reference with LeviLamina displaySystemMessage declaration.
   Evidence `ev_88e76570b9a11e33d34759c9436ebba76b71ad2ee98cc633c41c51331d64cd50`.
-  Native entry bytes, GuiData alive flag, and GuiData+0x98 owner equality are checked.
+  Native entry bytes, the alive flag reached through GuiData+0x30, and
+  GuiData+0x98 owner equality are checked. GuiData is polymorphic: its first byte
+  is part of a vtable pointer, never an alive flag.
 - Existing BlockSource getBlock evidence `ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5`
   compares Y against source+0x3A signed min inclusive and+0x38 signed max exclusive.
 - Actor position/AABB/RuntimeID use the existing SDK layout. Previous position,
