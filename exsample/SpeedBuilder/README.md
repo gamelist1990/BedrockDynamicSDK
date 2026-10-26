@@ -25,6 +25,7 @@ Titleのお題が空でなく、Subtitleに `記憶しましょう` を含むと
 
 ## 導入・設定
 
+独立ビルド時のSDK既定参照は `codex/speedbuilder-native`（候補定義を含む開発ブランチ）です。
 MSVC Release x64でビルドした `BedrockSpeedBuilder.dll` をロードします。
 初回はEscメニューを開いてゲームへ戻り、SDKへClientInstanceを認識させてください。
 

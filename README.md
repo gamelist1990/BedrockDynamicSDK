@@ -7,6 +7,8 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 公開サンプル：
 
+- [SpeedBuilder example](exsample/SpeedBuilder/README.md) — お題の記録と消失差分による自動配置（1.26.52.3候補・実機未確認）
+
 - [BedrockAutoSprint](https://github.com/gamelist1990/BedrockAutoSprint)
 - [BedrockGuiDemo](https://github.com/gamelist1990/BedrockGuiDemo)
 - [BedrockZoom](https://github.com/gamelist1990/BedrockZoom)
