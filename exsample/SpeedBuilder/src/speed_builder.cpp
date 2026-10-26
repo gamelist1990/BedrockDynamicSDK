@@ -220,7 +220,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(seenConfig!=configRevision.load()){restoreProbe(player,id);restorePending(player,id);seenConfig=configRevision.load();resetRound(world);note("config applied; round cancelled");}
     model->update(generation,tick);
     if(stopped.load()||cancelRequested.exchange(false)||!gameplay.load()||!roundConfig->enabled){restoreProbe(player,id);restorePending(player,id);if(model->phase()!=sb::Phase::idle&&model->phase()!=sb::Phase::cancelled)model->cancel();return;}
-    if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load())return;
+    if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load()){restoreProbe(player,id);restorePending(player,id);return;}
     native::NativeHotbar hotbar;if(!reader.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
     processTitles(hotbar,position);model->observeHotbar(hotbar.copied);
     if(model->phase()==sb::Phase::capturing||model->phase()==sb::Phase::waiting)capture(source);

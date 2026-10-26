@@ -111,7 +111,7 @@ struct Bindings{
     int selected(void* player)const noexcept{void* supplies{};int slot=-1;if(read(player,items.localPlayerSuppliesOffset,supplies))read(supplies,items.suppliesSelectedSlotOffset,slot);return slot;}
     bool select(void* player,unsigned slot)const noexcept{
         void* supplies{};if(slot>8||!read(player,items.localPlayerSuppliesOffset,supplies)||!supplies)return false;
-        __try{return reinterpret_cast<bool(__fastcall*)(void*,int,signed char)>(selectFn)(supplies,slot,0);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+        __try{if(!reinterpret_cast<bool(__fastcall*)(void*,int,signed char)>(selectFn)(supplies,slot,0))return false;int selectedSlot=-1;return read(supplies,items.suppliesSelectedSlotOffset,selectedSlot)&&selectedSlot==static_cast<int>(slot);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
     }
     // Predictors run synchronously on the owning tick, restoring rotation on every exit.
     bool predict(void* type,void* player,const Pos& target,unsigned face,Vec fractional,int aux,float yaw,float pitch,void** result)const noexcept{
