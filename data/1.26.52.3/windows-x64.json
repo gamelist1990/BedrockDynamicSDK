@@ -681,68 +681,13 @@
       },
       "gamma_abi": "float __fastcall(Options*)",
       "evidence": [
-        "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; Latite Options_getGamma signature and Fullbright(25) corroborate meaning",
-        "REA/Ghidra ev_ea090acd1121f1290263e6499a802ee1f89998c0eeaa63d482c3de9e48db53e9: RVA0x9F6630 consumes ClientInstance in RCX, checks active camera AllowInsideBlockRenderComponent and returns boolean in AL",
-        "REA/Ghidra ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a: caller RVA0x47B0360 exits before overlapping-block scan/cube mesh when predicate returns false",
-        "REA/Ghidra ev_d258e0dfd3983f1dde91e0128ddb17123408fec346dcd55dc38578b6dac21a1e: same renderer construction references terrain_inside_block material; rendering classification inferred from these combined paths",
-        "Legacy game_type fields retained for old consumers only; current Freecam performs no GameType reads/writes. Inside-block visibility and rendering pipelines require live validation.",
-        "2026-10-26: prior permission-only implementation reported ineffective. Add direct inside-cube renderer suppression, remove cached ClientInstance pointer equality, and report observed render counts. Underground terrain visibility remains runtime-unverified; do not promote to verified."
+        "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; Latite Options_getGamma signature and Fullbright(25) corroborate meaning"
       ],
       "legacy_game_type_fields_unused": true,
-      "spectator_mode_behavior": "suppress_inside_block_overlay",
-      "inside_block_allowed": {
-        "rva": "0x9F6630",
-        "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45 00 FE FF FF FF 48 8B 01",
-        "abi": "bool __fastcall(ClientInstance*)",
-        "status": "candidate",
-        "runtime_verified": false,
-        "source": "Exact-build .pdata slice; EnTT MinecraftCamera::AllowInsideBlockRenderComponent hash 0x9BB661A0; direct caller 0x47B0360 gates camera-overlapping block cube drawing"
-      },
-      "inside_cube_render": {
-        "rva": "0x47B0360",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 68 04 00 00 48 8D AC 24 80 00 00 00",
-        "abi": "void __fastcall(InsideCubeRenderer*, ClientInstance*, ScreenContext*)",
-        "status": "candidate",
-        "runtime_verified": false,
-        "source": "Exact .pdata range 0x47B0360..0x47B123F; caller 0x468908E sets RCX renderer, RDX ClientInstance, R8 ScreenContext; false-permission path returns without drawing. REA/Ghidra ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a. Windows register ABI checked against PE assembly."
-      },
-      "revision": 3,
-      "terrain_culling": {
-        "schema": 1,
-        "status": "candidate",
-        "runtime_verified": false,
-        "none_mode": 0,
-        "camera_culler_offset": "0x9A8",
-        "camera_culler_type_offset": "0x9B8",
-        "none_vtable_rva": "0xE8DFD70",
-        "set_culler": {
-          "rva": "0x4690910",
-          "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
-          "abi": "void __fastcall(LevelRendererPlayer*, unsigned char cullerType)",
-          "status": "candidate",
-          "runtime_verified": false
-        },
-        "factory_check": {
-          "rva": "0x4690b80",
-          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
-          "abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)",
-          "status": "candidate",
-          "runtime_verified": false
-        },
-        "none_update_check": {
-          "rva": "0x47e37e0",
-          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC C8 00 00 00 48 8D AC 24 80",
-          "abi": "void __fastcall(LevelCullerNone*)",
-          "status": "candidate",
-          "runtime_verified": false
-        },
-        "evidence": [
-          "REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680: native setter at0x4690910 waits for idle culler, invokes factory, replaces native shared_ptr+0x9A8, updates type+0x9B8 and invalidates visibility cache via0x4691770.",
-          "REA/Ghidra ev_4a88f6267e755016f84f5255f47fab9e15cdd8b08c18f10f079d3e9af676cfef plus exact PE jump table at0xE8E06B8: mode0 targets0x4690BC6, final concrete vtable0xE8DFD70, shared object0x48 bytes. Raw Ghidra slice cannot read the external table; targets independently resolved from the exact PE.",
-          "REA/Ghidra ev_e68eabbbb6a59032b5fd333ce1b5f3e00c36b978192ee1e256503c6fc8b7bad8: mode0 culler update enumerates complete bounded chunk grid into its results without portal/flood occlusion tests. None classification inferred from behavior; not runtime verified.",
-          "Primary camera is existing native_world_render level_renderer_player offset0x468. Mode restored only for same observed render camera/world epoch and while value remains0. No ActorGameType writes or worker native-pointer reads."
-        ]
-      }
+      "spectator_mode_behavior": "spectator_terrain_pending",
+      "revision": 4,
+      "terrain_visibility_status": "unavailable; revision3 culler override and overlay suppression retired after failed live observations",
+      "notes": "Revision4 retires ineffective inside-block suppression and the live-failing forced culler type0. Spectator terrain visibility remains unavailable; no game-type writes or global game-type predicate overrides."
     }
   },
   "native_player_identity": {

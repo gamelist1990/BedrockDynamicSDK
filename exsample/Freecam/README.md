@@ -31,7 +31,7 @@ PlayerAuthInputの移動量・移動入力だけをゼロ化し、アイテム�
 | `allow_interaction` | false | 手動の攻撃・使用・ホイール等の入力をゲームに渡す |
 | `disable_on_damage` | true | 自身のhurt time増加で解除。取得不能時も解除 |
 | `player_hitboxes` | true | Freecam中のみ付近のPlayerに簡易枠を表示 |
-| `spectator_mode` | false | Freecam中だけブロック内の視界を覆う描画を抑制（ゲームモード変更なし） |
+| `spectator_mode` | false | 互換用設定。地下視界は未対応。旧カリング切替・覆い抑制は撤去 |
 | `full_bright` | true | Freecam中だけガンマを25へ上書き。解除時は本来の取得値 |
 | `speed_blocks_per_second` | 8 | 移動速度 |
 | `fast_multiplier` | 3 | 高速移動倍率 |
@@ -89,54 +89,17 @@ Freecamには送信point 14が必要です。Runtime 4.1以前の所有者では
 }
 ```
 
-既存のconfig.jsonにも不足している新設定を追記します。`spectator_mode`の既定はfalseです。
-ゲームモードを変えず、カメラがブロック内にあるときのブロックテクスチャ表示を抑制します。
-Freecam有効中はブロック内の立方体を描く処理を直接スキップし、カメラ側の許可判定もfalseにします。
-カメラとローカルPlayerでClientInstanceのインターフェースアドレスが異なっても適用します。
-解除・被弾・ワールド移動・停止で元の描画処理へ戻ります。ActorのGameTypeは読み書きしません。
-古いキャッシュプロファイルに直接描画Hookの定義がない場合は、内蔵の同一ビルド定義へ切り替えます。
-入口のバイト不一致・Hook競合時は、その経路を無効化し理由をログに出します。
-`Freecam underground view`を5秒ごとに記録します。
+## 地中表示の現状（visual revision 4）
 
-- `cube_calls` / `cube_skipped`: 立方体描画経路へ入った回数 / スキップ回数。
-- `permission_calls` / `permission_skipped`: カメラ許可判定の呼び出し / 抑制回数。
-- `other_client`: 許可判定を抑制したうち、保存したClientInstanceと異なった回数。
+実機報告でrevision3のカリング方式変更は地形欠けを起こし、地中の視界も改善しませんでした。
+そのためカリング切替、inside-cube描画スキップ、カメラ許可判定の上書きを撤去しました。
+`spectator_mode`は既存configとの互換用に読み込みますが、現在は地下視界に作用しません。
+`terrain_visibility=unavailable visual_revision=4`が現在の状態です。
 
-直接描画をスキップすると許可判定へ進まないため、`permission_calls=0`でも正常です。
-両方の抑制回数が0の場合は対象描画経路を観測できていない旨を記録します。
-Hook設置成功と実際の透過成功は区別します。地下の見え方は実機未確認です。
-この変更は地形全体の遮蔽・深度判定を無効化しません。両方が抑制されていても
-地形が見えない場合は、別の描画・カリング経路の調査が必要です。
-古いDLLのGameType変更が残らないよう、差し替え時はMinecraftを再起動してください。
+本体のスペクテイターと同じ地形描画経路は未特定です。GameTypeの変更や無条件カリング無効化を行いません。
+通常のFreecam移動、インタラクション、簡易Player枠、ガンマ25の明るさ設定は継続します。
+`full_bright`はOptionsのガンマ取得値だけを上書きし、options.txtを変更しません。
 
-`full_bright`はOptionsのガンマ取得Hookだけで上書きし、options.txtの値は保存変更しません。
-Hook競合や入口不一致の場合は、明るさ機能を使用せず理由をログへ出します。
-地中表示と描画方式ごとの明るさは実機未確認です。
-
-### 入口照合エラーの修正（定義 revision 2）
-
-前版のinside-cube入口列で、`lea rbp,[rsp+0x80]`のModR/Mを誤って登録していました。
-EXEから取得した正しい27バイトへ修正しました。入口照合は維持します。
-キャッシュに古い同名エントリがあっても、revision 2未満なら内蔵定義を使用します。
-`Freecam view`は`cube_hook`と`permission_hook`を別々に表示します。
-`visual_revision=2`で今回のDLLを識別できます。実際の地下表示は実機確認待ちです。
-
-Runtimeのsidecarがエラー126でも、`actual owner=4.3.0 ABI=4`が出ていれば
-ログに示されたロード済みModの互換ランタイムへ接続しています。
-更新したDLLの古いHookを残さないため、Minecraftを完全終了してから差し替えてください。
-
-## 地形の遮蔽カリング（visual revision 3）
-
-revision2の実機ログではcube_skippedが増えても地下が見えませんでした。
-revision3はspectator_mode=trueかつFreecam中、主カメラのネイティブカリングを
-type0（遮蔽でチャンクを除外しない方式）へ切り替えます。本体の切替関数が
-実行中のカリング処理を確認し、オブジェクトの生成・共有参照・可視性キャッシュを管理します。
-ゲームモードやブロック・パケットの内容は、この表示機能では変更しません。
-解除後は同じカメラ・同じワールドで元の方式へ戻します。ワールド境界を越えた
-カメラには触れません。Stop後も次の描画で復元できるよう、描画コールバックを保持します。
-
-`Freecam terrain visibility` の `mode=0 pending=0` が切替完了の確認値です。
-`changed`は方式変更、`restored`は復元、`faults`は呼出失敗の回数です。
-入口不一致では`Freecam terrain culling unavailable`が出て、この追加機能を使いません。
-読み込まれた描画範囲内の遮蔽除外を解除するため、地形描画の処理量は増えます。
-地下の視認結果と切替・復元は実機確認待ちです。
+古いDLLのHookが残るため、差し替え前にMinecraftを完全終了してください。
+Runtimeのsidecarがエラー126でも、`actual owner=4.3.0 ABI=4`ならロード済みModの互換Runtimeが動作しています。
+調査記録は[docs/freecam-native.md](../../docs/freecam-native.md)を参照してください。

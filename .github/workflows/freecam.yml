@@ -1,7 +1,7 @@
 name: Freecam underground view
 on:
   push:
-    branches: [codex/freecam-cube-render, codex/freecam-speedbuilder-live-fixes, codex/freecam-terrain-blockstates]
+    branches: [codex/freecam-cube-render, codex/freecam-speedbuilder-live-fixes, codex/freecam-terrain-blockstates, codex/freecam-spectator-render-path]
   workflow_dispatch:
 jobs:
   build:

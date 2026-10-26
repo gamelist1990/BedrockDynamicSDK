@@ -154,106 +154,27 @@ server inventory authority continue to apply. Nested transaction positions are
 left unchanged. The baseline is cleared by world/sender identity and age checks;
 vehicle packets and unsupported movement classes cause restoration.
 
-## View-only inside-block visibility and full brightness
+## Underground terrain investigation — revision 4
 
-`spectator_mode` (default false) no longer accesses ActorGameTypeComponent.
-During active Freecam only, the inside-block render permission getter returns false,
-and the inside-cube renderer is skipped directly. Outside that scope the original runs unchanged.
-No component writes, commands, mode changes, or geometry patches are used.
-The old game-type profile fields remain for older consumers; current Freecam
-ignores them. Restart Minecraft when replacing an older DLL.
+Live revision3 evidence: forcing camera culler type0 causes missing outside terrain and does not provide the requested underground spectator view. Earlier inside-cube suppression ran (`cube_skipped` increased) without fixing the view. Both paths are retired, including direct hooks on permission getter0x9F6630 and cube renderer0x47B0360. No culler setter is invoked by current Freecam. `spectator_mode` remains a compatibility option with unavailable terrain behavior. Gamma remains independent.
 
-The exact-build predicate RVA `0x9F6630` receives only ClientInstance in RCX
-and returns a boolean in AL. It resolves the active camera and checks EnTT tag
-`MinecraftCamera::AllowInsideBlockRenderComponent` hash `0x9BB661A0`.
-REA/Ghidra: `ev_ea090acd1121f1290263e6499a802ee1f89998c0eeaa63d482c3de9e48db53e9`.
-Its observed direct caller RVA `0x47B0360` exits when the predicate is false,
-before testing camera-overlapping solid blocks and producing cube geometry.
-REA/Ghidra: `ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a`.
-The renderer constructor RVA `0x47A5D30` references `terrain_inside_block`;
-REA/Ghidra: `ev_d258e0dfd3983f1dde91e0128ddb17123408fec346dcd55dc38578b6dac21a1e`.
-These combined observations support the screen-obscuring block-overlay
-classification; the hook and visible results remain runtime-unverified candidates.
-Normal terrain depth and occlusion culling are not changed.
+Exact executable: Minecraft.Windows.exe1.26.52.3, SHA256 `4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4`. REA/Ghidra raw slices use PE .pdata bounds except the leaf getter below. Windows register ABI must be checked against assembly; raw decompiler parameter order is not authoritative.
 
-Exact .pdata slices and complete evidence:
-`~/Documents/PEXData/REA/freecam-inside-block-1.26.52.3/`.
-Target Minecraft.Windows.exe 1.26.52.3 SHA-256:
-`4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4`.
-No cross-version guess is used. Entry bytes must match; hook conflicts disable
-only this optional feature. A worker logs suppression counts every five seconds;
-the render callback only checks state and increments an atomic counter.
+New static observations:
 
-`full_bright` (default true) hooks the Options getter at RVA `0xFB7880`,
-returning 25.0 only while active and otherwise forwarding the original float.
-REA/Ghidra `ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081`
-observes option ID 0x32, option inheritance traversal, and `MOVSS XMM0,[RAX+0x18]`
-return. No persisted gamma option is written. The full-bright rendering effect
-also requires live validation. Evidence: `~/Documents/PEXData/REA/freecam-visual-1.26.52.3/`.
+| RVA | Observed behavior | Evidence / limits |
+| --- | --- | --- |
+| 0x253D9E0 | Leaf reads ActorGameTypeComponent0x88D3EDDF via EntityContext; returns mode or-1. | PE assembly, RCX=context, EAX=mode. Not a terrain-specific API. |
+| 0x9F69B0 | Checks camera PlayerStateAffectsRenderingComponent0x21A688A4. | REA `ev_cef75338b60a81df004fd1aa2f0f5d0449e420fc924ae777b5528b4f793bdd45`. Broad rendering policy, not established spectator terrain switch. |
+| 0x4690310 | Reads mode6 / inherited mode5+level6 and selects fog / underwater / underlava variation. | REA `ev_789afa6e4675afafb60ddac2b9962816980d23496ecb61737f5e9aebda5f70ad`. Fog, not terrain visibility. |
+| 0x46BD0A0 | Camera fog predicate includes the spectator branch and liquid state+0x971. | REA `ev_b96c63fb6d20090f8f6b8c8df0a191a6c608e642308a9bb3acf45ebebea299a8`. Not selected for hooking. |
+| 0x4692740 | Builds actor queues and passes spectator state into a per-actor visitor. | REA `ev_b6f7841e2947100e794d8db2d0d14775d5d968767723866ef1ffe8e1236bdd40`. Does not establish terrain control. |
+| 0x46D7E90 | Filters actor queues, including non-spectator observer versus spectator target. | REA `ev_eddc186f3c23eae79ad39e0830731defd9ed402dca0445722a2135544f84e0b3`. Actor/shadow queues, not terrain. |
+| 0x4812B00 | Camera visibility-task visitor filters chunk positions by frustum/distance policy. | REA `ev_3047f72b70c033590071cedc625715e3d7605f6d42d905bd9a7041635453d68c`. No confirmed spectator condition. |
+| 0x4AFAED0 | Filters nearby actors by radius and excludes spectators. | REA `ev_fa9fd7cac545c57b12063ba6e0742b06119ffe1877f163b7b27c84e7d08cded8`. Not terrain. |
 
-### Follow-up after permission-only fix reported ineffective
+LeviLamina client headers (src-client, not empty server/common placeholders) distinguish ViewRenderData::mDrawInsideCubes, camera fog state, chunk queues and PlayerStateParams::mIsSpectator. Header names are useful leads, not evidence for exact-build offsets or hook ABI. Never globally override the game-type getter: its callers include gameplay/UI and unrelated actor rendering.
 
-The previous DLL is not considered live verified. The new implementation removes
-cached ClientInstance pointer equality from this rendering-only gate and hooks the
-actual cube-render function at RVA `0x47B0360`. RCX/RDX/R8 are renderer/client/screen
-context in the native caller at RVA `0x468908E`; the caller ignores the return and
-the false-permission branch returns without render state changes. Existing REA
-cube evidence above was reopened and correlated against the exact PE registers.
-No fourth or stack parameter is consumed. Saved snapshot: `cube-render.snapshot.json`.
-All new ABI metadata remains candidate. The predicate remains a fallback if the
-cube hook conflicts; optional hook failures are logged independently.
+Remaining unknown: the exact native path that gives vanilla spectator its underground terrain visibility on the user's renderer. None of these findings is promoted to an ABI-verified terrain symbol. A controlled comparison of ordinary camera and real spectator camera on the same world/render mode is still needed before claiming equivalent rendering.
 
-Worker diagnostics distinguish installed hooks from executed/suppressed draws.
-When the cube is skipped, the permission predicate naturally is not invoked.
-Zero suppressed counts explicitly report an unobserved renderer path. Different
-ClientInstance addresses are counted without logging raw addresses. No native
-reads, formatting, file I/O or mode changes occur inside the new render hook.
-A downloaded catalog lacking the new entry uses the embedded exact-build profile,
-still subject to Resolver identity/fingerprint checks and entry-byte guards.
-
-This change does not establish spectator terrain culling behavior. If draws are
-suppressed but the view remains blocked, the renderer/pipeline requires additional
-live evidence rather than marking these candidates verified. UI-layer game-type
-getters at RVAs `0x4932D20` and `0x42436C0` were inspected and deliberately not
-hooked: no underground-terrain semantics were established.
-
-### Exact entry correction, visual revision 2
-
-Live log reported `native entry guard mismatch`. The registered byte at offset21
-was `6C`; the exact PE byte is `AC` (LEA disp32 for positive0x80). The 27-byte
-entry guard is now copied directly from the exact executable rather than manually
-transcribed. Validation is not weakened. Catalogs below visual revision2 use the
-embedded exact-build profile even if they contain the formerly incorrect entry.
-Optional-hook installation status is logged independently for cube and permission.
-This repairs the observed guard error; it does not by itself establish that
-spectator terrain visibility works on the user's render pipeline.
-
-## Terrain visibility, visual revision 3
-
-Live evidence now establishes cube suppression executes while the underground view
-remains blocked. Cube suppression is insufficient; do not label it spectator terrain
-visibility. The new path invokes the engine's primary-camera culler setter0x4690910
-with RCX camera, EDX type0 from the render callback, before forwarding renderLevel.
-Primary camera is the established LevelRenderer+0x468 field. The native setter
-checks current culler activity, replaces its native shared_ptr at+0x9A8 only when
-appropriate, stores type+0x9B8 and calls0x4691770 to invalidate visibility caches.
-REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680.
-
-Factory0x4690B80's raw slice cannot resolve its external switch table. Exact PE
-int32 entries at0xE8E06B8 map selector0 to0x4690BC6; this path installs concrete
-vtable0xE8DFD70 on a native shared object. Its update virtual is0x47E37E0, which
-populates results by enumerating the complete bounded native chunk grid without
-portal connectivity filtering. REA ev_4a88f6267e755016f84f5255f47fab9e15cdd8b08c18f10f079d3e9af676cfef
-plus ev_e68eabbbb6a59032b5fd333ce1b5f3e00c36b978192ee1e256503c6fc8b7bad8.
-The None classification is inferred from behavior; runtime verification is pending.
-Evidence is in PEXData/REA/freecam-terrain-1.26.52.3 outside the repository.
-
-No foreign shared_ptr is copied, forged, directly replaced or freed. The callback
-only requests a native switch when needed, retries native busy transitions, checks
-mode0 and the expected concrete vtable, and restores only a held camera/epoch lease.
-An external nonzero choice is not overwritten on restoration. A try-lock protects
-lease bookkeeping from nested/concurrent render callbacks. Workers see atomic
-scalar diagnostics only. The pinned render subscriber stays alive after Stop to
-restore at the next valid frame; expired world pointers are discarded. Native calls
-have exact entry guards and SEH isolation. This does not establish crash immunity.
-The no-occlusion culler can increase visible geometry/work within the loaded grid.
+Evidence is outside Git under `~/Documents/PEXData/REA/freecam-spectator-1.26.52.3/` and `freecam-terrain-1.26.52.3/`. This revision fixes the introduced culling regression; it does not implement underground visibility.

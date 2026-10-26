@@ -6,7 +6,7 @@ if(WIN32 AND NOT MSVC)
     message(FATAL_ERROR "Freecam native components require the Microsoft C++ ABI; build MSVC Release x64.")
 endif()
 include(FetchContent)
-set(BEDROCK_SDK_REF "codex/freecam-terrain-blockstates" CACHE STRING "SDK branch/tag/commit")
+set(BEDROCK_SDK_REF "codex/freecam-spectator-render-path" CACHE STRING "SDK branch/tag/commit")
 set(BEDROCK_SDK_BUILD_TOOLS OFF CACHE BOOL "No SDK tools" FORCE)
 FetchContent_Declare(bedrock_sdk GIT_REPOSITORY https://github.com/gamelist1990/BedrockDynamicSDK.git
     GIT_TAG ${BEDROCK_SDK_REF} GIT_SHALLOW TRUE)
