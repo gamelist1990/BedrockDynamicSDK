@@ -156,6 +156,15 @@ std::string propertyText(const sb::Cell& cell){
 bool sameBlockType(const native::BlockInfo* expected,const native::BlockInfo* actual){
     return expected&&actual&&(expected->type==actual->type||expected->name==actual->name);
 }
+bool hasVerticalPlacementState(const sb::Cell& cell){
+    if(!cell.properties)return true;
+    for(const auto& [key,value]:cell.properties->values){
+        const auto name=sb::stateName(key);
+        if(name=="top_slot_bit"||name=="vertical_half"||name=="upper_block_bit"||name=="upside_down_bit")
+            return true;
+    }
+    return false;
+}
 bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
@@ -229,7 +238,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         for(unsigned next=slot+1;next<9;++next)if(hotbar.copied[next].count&&hotbar.copied[next].identifier==p.request.recipe.itemIdentifier){
             p.request.hotbarSlot=next;p.candidate=0;p.selectionReady=false;return false;
         }
-        if(p.fallback){auto plan=*p.fallback;note("placement deferred-state proposal: item="+plan.request.recipe.itemIdentifier+" slot="+std::to_string(plan.request.hotbarSlot)+" expected="+propertyText(*goal));return commit(plan);}
+        if(p.fallback&&!hasVerticalPlacementState(*goal)){auto plan=*p.fallback;note("placement deferred-state proposal: item="+plan.request.recipe.itemIdentifier+" slot="+std::to_string(plan.request.hotbarSlot)+" expected="+propertyText(*goal));return commit(plan);}
         note("placement unresolved: "+p.request.recipe.itemIdentifier+" no_support="+std::to_string(p.noSupport)+" reach_rejected="+std::to_string(p.outOfReach)+
             " predictions="+std::to_string(p.predictions)+" native_failures="+std::to_string(p.nativeFailures)+" state_mismatch="+std::to_string(p.mismatches)+" expected="+propertyText(*goal));
         model->placementResult(p.request.token,p.request.actionId,false,tick);restoreProbe(player,runtime);
@@ -337,7 +346,7 @@ void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(con
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
-    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision5; native reads/writes on client tick; copied diff worker\n";
+    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision6; native reads/writes on client tick; copied diff worker\n";
     const auto path=dir/L"config.json";auto modified=std::filesystem::last_write_time(path);auto nextReload=Clock::now();
     while(!stopped.load()){
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
