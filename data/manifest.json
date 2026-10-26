@@ -4,7 +4,7 @@
     "1.26.52.3": {
       "windows-x64": {
         "path": "data/1.26.52.3/windows-x64.json",
-        "sha256": "f31f79c2826433255fdaaf039e7b4d03796242191e57c1ed336cd67e62810b22",
+        "sha256": "9a5dcb9c5770610c8a163ae876996c7816e137f0db7f31128fbce1512c73521d",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
         "symbols": 15,
         "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",

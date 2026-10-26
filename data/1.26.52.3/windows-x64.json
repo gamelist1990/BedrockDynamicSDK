@@ -685,9 +685,9 @@
       ],
       "legacy_game_type_fields_unused": true,
       "spectator_mode_behavior": "native_spectator_culler_mode5",
-      "revision": 6,
-      "terrain_visibility_status": "candidate: revision5 switched mode5 but native preRenderUpdate repeatedly restored3; revision6 filters source requests; underground appearance unverified",
-      "notes": "Filter native primary-camera mode3 requests to mode5 only while Freecam spectator view is active. Retire mode0 and overlay-suppression hooks. No game-type writes. Read-only ViewRenderData diagnostics.",
+      "revision": 7,
+      "terrain_visibility_status": "candidate: stable mode5 plus exact primary-camera inside-cube draw bypass; appearance requires live confirmation",
+      "notes": "Keep revision6 source request filter. Revision7 bypasses the exact inside-cube draw while active Freecam spectator view, reproducing the disabled ViewRenderData gate without mutating shared view data or abilities. Retired permission hook and mode0 remain unused.",
       "terrain_culling": {
         "schema": 1,
         "status": "candidate",
@@ -746,6 +746,24 @@
         "view_flags_count": 13,
         "draw_inside_cubes_offset": "0x80",
         "evidence": "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: four register arguments preserved; ViewRenderObject R8 saved then read at+0x80 at0x4688F92 before inside-cube call0x468908E. Observe only; leave flags and original arguments unchanged."
+      },
+      "inside_cube_render": {
+        "rva": "0x47B0360",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 68 04 00 00 48 8D AC 24 80 00 00 00",
+        "abi": "void __fastcall(ScreenRenderer* RCX, IClientInstance* RDX, BaseActorRenderContext* R8)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "return_rva": "0x4689093",
+        "caller_check": {
+          "rva": "0x468908E",
+          "entry_check": "E8 CD 72 12 00 48 8B 8D 68 01 00 00 48 85 C9 74"
+        },
+        "scope": "active Freecam primary camera and exact camera-render call site only; bypass draw, no ViewRenderObject or abilities writes",
+        "evidence": [
+          "REA/Ghidra cube-render.snapshot.json retained for exact-build function0x47B0360: three input registers preserved; void return.",
+          "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: camera renderer tests view+0x80 and calls0x47B0360 at0x468908E.",
+          "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056: producer stores draw flag at frame+0x3950, reading layered twelve-byte ability at index17 (offset0xCC), layers stride0xF0; LeviLamina identifies index17 as NoClip. Header association is inference; runtime visual success unverified."
+        ]
       }
     }
   },

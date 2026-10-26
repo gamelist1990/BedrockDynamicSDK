@@ -53,6 +53,12 @@ using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
 using GammaFn=float(__fastcall*)(void*);GammaFn originalGamma{};
 using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn originalCameraRender{};
 BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
+using InsideCubeFn=void(__fastcall*)(void*,void*,void*);InsideCubeFn originalInsideCube{};
+BDS_HookToken insideCubeToken{};std::atomic<bool> insideCubeReady{};
+std::uintptr_t insideCubeCaller{};
+thread_local bool spectatorCameraScope=false;
+thread_local std::uint64_t spectatorCameraEpoch{};
+std::atomic<unsigned> cameraRenderCalls{},insideCubeCalls{},insideCubeSkipped{};
 BDS_HookToken gammaToken{};
 // All culler ownership bookkeeping below belongs to the native render callback.
 // Workers only read atomic diagnostics; they never access camera/culler pointers.
@@ -122,8 +128,24 @@ void captureVisibility(void* renderer,void* view=nullptr,bool directCamera=false
 // Read-only observation of the exact native ViewRenderData consumed by the
 // camera renderer. Arguments and flags are forwarded without modification.
 void __fastcall cameraRenderDetour(void* camera,void* context,void* view,void* instance){
-    if(camera==primaryCamera.load()&&primaryCameraEpoch.load()==epoch.load())captureVisibility(camera,view,true);
+    const auto world=epoch.load();const bool primary=camera==primaryCamera.load()&&primaryCameraEpoch.load()==world;
+    if(primary){cameraRenderCalls.fetch_add(1,std::memory_order_relaxed);captureVisibility(camera,view,true);}
+    // This scope never changes ViewRenderObject, abilities or the game mode.
+    // Nested renders retain their own primary-camera decision and restore it.
+    struct Scope {
+        bool previous;std::uint64_t previousEpoch;
+        Scope(bool value,std::uint64_t world):previous(spectatorCameraScope),previousEpoch(spectatorCameraEpoch){spectatorCameraScope=value;spectatorCameraEpoch=world;}
+        ~Scope(){spectatorCameraScope=previous;spectatorCameraEpoch=previousEpoch;}
+    } scope(primary&&active.load()&&!stop.load()&&config.load()->spectatorMode,world);
     originalCameraRender(camera,context,view,instance);
+}
+void __fastcall insideCubeDetour(void* renderer,void* instance,void* context){
+    insideCubeCalls.fetch_add(1,std::memory_order_relaxed);
+    if(reinterpret_cast<std::uintptr_t>(_ReturnAddress())==insideCubeCaller&&spectatorCameraScope&&
+       spectatorCameraEpoch==epoch.load()&&active.load()&&!stop.load()&&config.load()->spectatorMode){
+        insideCubeSkipped.fetch_add(1,std::memory_order_relaxed);return;
+    }
+    originalInsideCube(renderer,instance,context);
 }
 // Intercept the native selector BEFORE its update. Repeated native requests
 // then see an already selected mode5 and do not rebuild the async culler each frame.
@@ -679,7 +701,7 @@ void worker(const std::filesystem::path& path){
         if(config.load()->visibilityDiagnostics&&observed){
             if(!observations.is_open())observations.open(path.parent_path()/L"visibility.jsonl",std::ios::app);
             if(observations){auto vector=[](Vec v){return nlohmann::json::array({v.x,v.y,v.z});};
-                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",6},
+                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",7},
                     {"exe_sha256","4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4"},
                     {"monotonic_ms",sample.milliseconds},{"epoch",sample.epoch},{"freecam",sample.flying},{"actor_game_type",sample.gameType},
                     {"valid_camera_read",sample.valid},{"candidate_camera_654",vector(sample.camera654)},
@@ -712,12 +734,14 @@ void worker(const std::filesystem::path& path){
                 " faults="+std::to_string(terrainFaults.exchange(0))+" native_requests="+std::to_string(selectorRequests.exchange(0))+
                 " rewritten="+std::to_string(selectorRewrites.exchange(0))+" caller_rva="+std::to_string(selectorCaller.load())+
                 " churn_guard="+std::to_string(terrainRejected.load())+" [native selector mode5; underground view needs live confirmation]");
+            log("Freecam inside-cube render: ready="+std::to_string(insideCubeReady.load())+" camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+
+                " cube_calls="+std::to_string(insideCubeCalls.exchange(0))+" cube_skipped="+std::to_string(insideCubeSkipped.exchange(0))+" [exact primary-camera caller; 5s; visual_revision=7]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
-                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=6 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=7 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -745,7 +769,7 @@ DWORD WINAPI start(void*){
         if(!cached.contains("native_freecam")||!cached.at("native_freecam").contains("borion")||
            !cached.at("native_freecam").at("borion").contains("packet_motion")||
            !cached.at("native_freecam").contains("visual")||
-           cached.at("native_freecam").at("visual").value("revision",0)<6)
+           cached.at("native_freecam").at("visual").value("revision",0)<7)
             profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
@@ -781,14 +805,23 @@ DWORD WINAPI start(void*){
             if(!BDS_HookDirectInstall(reinterpret_cast<void*>(setCuller),reinterpret_cast<void*>(&cullerDetour),reinterpret_cast<void**>(&originalSetCuller),&cullerToken))
                 throw std::runtime_error("native culler selector hook conflict");
             setCuller=originalSetCuller;terrainReady.store(true);
-            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision6]");
+            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision7]");
         }catch(const std::exception& e){terrainReady.store(false);log(std::string("Freecam terrain culling unavailable: ")+e.what());}
         try{
             void* target=checkedFunction(f.at("visual").at("camera_render_observe"));
             cameraRenderReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&cameraRenderDetour),reinterpret_cast<void**>(&originalCameraRender),&cameraRenderToken)!=0);
             log(cameraRenderReady.load()?"Freecam native ViewRenderData observer ready [read only; no overlay suppression]":"Freecam ViewRenderData observer unavailable: hook conflict");
         }catch(const std::exception& e){log(std::string("Freecam ViewRenderData observer unavailable: ")+e.what());}
-        log("Freecam inside-block overlay suppression remains removed");
+        try{
+            if(!cameraRenderReady.load())throw std::runtime_error("primary-camera scope observer unavailable");
+            const auto& inside=f.at("visual").at("inside_cube_render");
+            checkedFunction(inside.at("caller_check"));
+            if(number(inside.at("return_rva"))!=0x4689093)throw std::runtime_error("unsupported inside-cube call site");
+            insideCubeCaller=base+number(inside.at("return_rva"));
+            void* target=checkedFunction(inside);
+            insideCubeReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&insideCubeDetour),reinterpret_cast<void**>(&originalInsideCube),&insideCubeToken)!=0);
+            log(insideCubeReady.load()?"Freecam inside-cube render bypass ready [primary-camera scope; exact caller0x4689093; no native flag writes; visual revision7]":"Freecam inside-cube render bypass unavailable: hook conflict");
+        }catch(const std::exception& e){log(std::string("Freecam inside-cube render bypass unavailable: ")+e.what());}
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){
