@@ -157,8 +157,8 @@ vehicle packets and unsupported movement classes cause restoration.
 ## View-only inside-block visibility and full brightness
 
 `spectator_mode` (default false) no longer accesses ActorGameTypeComponent.
-During active Freecam only, the current ClientInstance's inside-block render
-permission getter returns false. Outside that scope the original runs unchanged.
+During active Freecam only, the inside-block render permission getter returns false,
+and the inside-cube renderer is skipped directly. Outside that scope the original runs unchanged.
 No component writes, commands, mode changes, or geometry patches are used.
 The old game-type profile fields remain for older consumers; current Freecam
 ignores them. Restart Minecraft when replacing an older DLL.
@@ -190,3 +190,29 @@ REA/Ghidra `ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081`
 observes option ID 0x32, option inheritance traversal, and `MOVSS XMM0,[RAX+0x18]`
 return. No persisted gamma option is written. The full-bright rendering effect
 also requires live validation. Evidence: `~/Documents/PEXData/REA/freecam-visual-1.26.52.3/`.
+
+### Follow-up after permission-only fix reported ineffective
+
+The previous DLL is not considered live verified. The new implementation removes
+cached ClientInstance pointer equality from this rendering-only gate and hooks the
+actual cube-render function at RVA `0x47B0360`. RCX/RDX/R8 are renderer/client/screen
+context in the native caller at RVA `0x468908E`; the caller ignores the return and
+the false-permission branch returns without render state changes. Existing REA
+cube evidence above was reopened and correlated against the exact PE registers.
+No fourth or stack parameter is consumed. Saved snapshot: `cube-render.snapshot.json`.
+All new ABI metadata remains candidate. The predicate remains a fallback if the
+cube hook conflicts; optional hook failures are logged independently.
+
+Worker diagnostics distinguish installed hooks from executed/suppressed draws.
+When the cube is skipped, the permission predicate naturally is not invoked.
+Zero suppressed counts explicitly report an unobserved renderer path. Different
+ClientInstance addresses are counted without logging raw addresses. No native
+reads, formatting, file I/O or mode changes occur inside the new render hook.
+A downloaded catalog lacking the new entry uses the embedded exact-build profile,
+still subject to Resolver identity/fingerprint checks and entry-byte guards.
+
+This change does not establish spectator terrain culling behavior. If draws are
+suppressed but the view remains blocked, the renderer/pipeline requires additional
+live evidence rather than marking these candidates verified. UI-layer game-type
+getters at RVAs `0x4932D20` and `0x42436C0` were inspected and deliberately not
+hooked: no underground-terrain semantics were established.

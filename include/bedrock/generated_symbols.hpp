@@ -688,7 +688,8 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "REA/Ghidra ev_ea090acd1121f1290263e6499a802ee1f89998c0eeaa63d482c3de9e48db53e9: RVA0x9F6630 consumes ClientInstance in RCX, checks active camera AllowInsideBlockRenderComponent and returns boolean in AL",
         "REA/Ghidra ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a: caller RVA0x47B0360 exits before overlapping-block scan/cube mesh when predicate returns false",
         "REA/Ghidra ev_d258e0dfd3983f1dde91e0128ddb17123408fec346dcd55dc38578b6dac21a1e: same renderer construction references terrain_inside_block material; rendering classification inferred from these combined paths",
-        "Legacy game_type fields retained for old consumers only; current Freecam performs no GameType reads/writes. Inside-block visibility and rendering pipelines require live validation."
+        "Legacy game_type fields retained for old consumers only; current Freecam performs no GameType reads/writes. Inside-block visibility and rendering pipelines require live validation.",
+        "2026-10-26: prior permission-only implementation reported ineffective. Add direct inside-cube renderer suppression, remove cached ClientInstance pointer equality, and report observed render counts. Underground terrain visibility remains runtime-unverified; do not promote to verified."
       ],
       "legacy_game_type_fields_unused": true,
       "spectator_mode_behavior": "suppress_inside_block_overlay",
@@ -699,6 +700,14 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
         "status": "candidate",
         "runtime_verified": false,
         "source": "Exact-build .pdata slice; EnTT MinecraftCamera::AllowInsideBlockRenderComponent hash 0x9BB661A0; direct caller 0x47B0360 gates camera-overlapping block cube drawing"
+      },
+      "inside_cube_render": {
+        "rva": "0x47B0360",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 68 04 00 00 48 8D 6C 24 80",
+        "abi": "void __fastcall(InsideCubeRenderer*, ClientInstance*, ScreenContext*)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "source": "Exact .pdata range 0x47B0360..0x47B123F; caller 0x468908E sets RCX renderer, RDX ClientInstance, R8 ScreenContext; false-permission path returns without drawing. REA/Ghidra ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a. Windows register ABI checked against PE assembly."
       }
     }
   },

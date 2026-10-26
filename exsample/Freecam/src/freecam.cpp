@@ -51,16 +51,35 @@ BDS_HookToken localToken{},renderToken{};
 using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
 using GammaFn=float(__fastcall*)(void*);GammaFn originalGamma{};
 BDS_HookToken gammaToken{};
-// View-only camera predicate. Never changes ActorGameTypeComponent.
+// Render-only suppression. No ActorGameTypeComponent writes. ClientInstance
+// interface addresses can differ between the camera and local-player paths;
+// do not use cached pointer equality as a gate for this render-only option.
 using InsideBlockFn=bool(__fastcall*)(void*);
+using InsideCubeFn=void(__fastcall*)(void*,void*,void*);
 InsideBlockFn originalInsideBlock{};BDS_HookToken insideBlockToken{};
-std::atomic<bool> insideBlockReady{};
-std::atomic<unsigned> insideBlockSuppressed{};
+InsideCubeFn originalInsideCube{};BDS_HookToken insideCubeToken{};
+std::atomic<bool> insideBlockReady{},insideCubeReady{};
+std::atomic<unsigned> insideBlockCalls{},insideBlockSuppressed{},insideBlockOtherClient{};
+std::atomic<unsigned> insideCubeCalls{},insideCubeSuppressed{};
+bool undergroundViewEnabled(){
+    return active.load(std::memory_order_relaxed)&&!stop.load(std::memory_order_relaxed)&&config.load()->spectatorMode;
+}
 bool __fastcall insideBlockDetour(void* instance){
-    if(active.load()&&!stop.load()&&instance==client.load()&&config.load()->spectatorMode){
+    insideBlockCalls.fetch_add(1,std::memory_order_relaxed);
+    if(undergroundViewEnabled()){
+        if(instance!=client.load(std::memory_order_relaxed))insideBlockOtherClient.fetch_add(1,std::memory_order_relaxed);
         insideBlockSuppressed.fetch_add(1,std::memory_order_relaxed);return false;
     }
     return originalInsideBlock(instance);
+}
+void __fastcall insideCubeDetour(void* renderer,void* instance,void* screenContext){
+    insideCubeCalls.fetch_add(1,std::memory_order_relaxed);
+    // The original's false-permission branch also returns without touching any
+    // render state. Skip the cube itself even if the permission hook conflicts.
+    if(undergroundViewEnabled()){
+        insideCubeSuppressed.fetch_add(1,std::memory_order_relaxed);return;
+    }
+    originalInsideCube(renderer,instance,screenContext);
 }
 std::atomic<bool> gammaReady{};
 float __fastcall gammaDetour(void* options){
@@ -558,13 +577,20 @@ void worker(const std::filesystem::path& path){
         }
         if(!active.load())mesh.store(nullptr);
         if((active.load()||interactionPackets.load()||blockedPackets.load())&&now>=nextPacketLog){nextPacketLog=now+std::chrono::seconds(5);
-            if(active.load()&&config.load()->spectatorMode)
-                log("Freecam inside-block overlay suppressed="+std::to_string(insideBlockSuppressed.exchange(0))+" [view only; game mode unchanged]");
+            const auto cubeCalls=insideCubeCalls.exchange(0),cubeSkipped=insideCubeSuppressed.exchange(0);
+            const auto permissionCalls=insideBlockCalls.exchange(0),permissionSkipped=insideBlockSuppressed.exchange(0);
+            const auto otherClient=insideBlockOtherClient.exchange(0);
+            if(active.load()&&config.load()->spectatorMode){
+                log("Freecam underground view: cube_calls="+std::to_string(cubeCalls)+" cube_skipped="+std::to_string(cubeSkipped)+
+                    " permission_calls="+std::to_string(permissionCalls)+" permission_skipped="+std::to_string(permissionSkipped)+
+                    " other_client="+std::to_string(otherClient)+" [5s; render only]");
+                if(!cubeSkipped&&!permissionSkipped)log("Freecam underground view inactive: renderer path not observed; visibility is not confirmed");
+            }
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
-            const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?(insideBlockReady.load()?"inside-block overlay suppressed; game mode unchanged":"unavailable; game mode unchanged"):"off")+" full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+            const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?((insideCubeReady.load()||insideBlockReady.load())?"inside-cube suppression installed; awaiting render counters":"unavailable; game mode unchanged"):"off")+" full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -588,7 +614,7 @@ DWORD WINAPI start(void*){
         if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed"))profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_freecam") || !nlohmann::json::parse(profile).at("native_freecam").contains("borion") || !nlohmann::json::parse(profile).at("native_freecam").at("borion").contains("packet_motion") || !nlohmann::json::parse(profile).at("native_freecam").contains("visual") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_block_allowed") || !nlohmann::json::parse(profile).at("native_freecam").at("visual").contains("inside_cube_render"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
@@ -613,8 +639,14 @@ DWORD WINAPI start(void*){
         try {
             void* target=checkedFunction(f.at("visual").at("inside_block_allowed"));
             insideBlockReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&insideBlockDetour),reinterpret_cast<void**>(&originalInsideBlock),&insideBlockToken)!=0);
-            log(insideBlockReady.load()?"Freecam inside-block view hook ready [camera predicate; no GameType writes; static candidate]":"Freecam inside-block view unavailable: hook conflict");
+            log(insideBlockReady.load()?"Freecam inside-block permission hook installed [render only; static candidate]":"Freecam inside-block view unavailable: hook conflict");
         } catch(const std::exception& e){log(std::string("Freecam inside-block view unavailable: ")+e.what());}
+        try {
+            // Added in the candidate exact-build profile; optional for older catalogs.
+            void* target=checkedFunction(f.at("visual").at("inside_cube_render"));
+            insideCubeReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&insideCubeDetour),reinterpret_cast<void**>(&originalInsideCube),&insideCubeToken)!=0);
+            log(insideCubeReady.load()?"Freecam inside-cube renderer hook installed [direct draw suppression; static candidate]":"Freecam inside-cube renderer unavailable: hook conflict");
+        } catch(const std::exception& e){log(std::string("Freecam inside-cube renderer unavailable: ")+e.what());}
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){
