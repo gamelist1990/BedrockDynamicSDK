@@ -712,6 +712,95 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "uuid_offset": 8,
     "name_offset": 24,
     "evidence": "Existing exact-build TabList player roster layout; LeviLamina PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped."
+  },
+  "native_speed_builder": {
+    "schema": 1,
+    "status": "candidate",
+    "runtime_verified": false,
+    "pointer_size": 8,
+    "get_region": {
+      "rva": "0x5daebb0",
+      "entry_check": "56 57 48 83 EC 48 48 8D 91 48 02 00 00 48 8D 4C 24 28 E8 B9 17 81 FC 80",
+      "abi": "BlockSource* __fastcall(ClientInstance*)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "get_block": {
+      "rva": "0x2d80120",
+      "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05 50 9F A5 0E 48 31 E0 48 89 44 24 30",
+      "abi": "Block const* __fastcall(BlockSource*, BlockPos const*)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "select_hotbar": {
+      "rva": "0x1f4860",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80",
+      "abi": "bool __fastcall(PlayerInventory*, int slot, signed char ContainerID=0)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "get_hit_result": {
+      "rva": "0x117d580",
+      "entry_check": "48 8B 81 E8 01 00 00 C3",
+      "abi": "HitResult* __fastcall(Level*)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "build_block": {
+      "rva": "0x259bc60",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
+      "abi": "bool __fastcall(GameMode*, BlockPos const*, unsigned char face, unsigned char HandSlot=0, bool isSimTick=false)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "base_placement_state": {
+      "rva": "0x3184dc0",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 53 48 83 EC 40 44 89 CB 4C 89 C6 48 89 D7",
+      "abi": "Block const* __fastcall(BlockType*, Actor const*, BlockPos const*, unsigned char face, Vec3 const* fractionalClick, int aux)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "game_mode_vtables": [
+      "0xE827560",
+      "0xE827600"
+    ],
+    "title_vtable_rva": "0xE89D5E0",
+    "title_read": {
+      "rva": "0x3a83770",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 01 00 00 48 8D AC 24 80 00 00",
+      "abi": "void* __fastcall(SetTitlePacket*, Result<void>* hidden_result, ReadOnlyBinaryStream*)",
+      "status": "candidate",
+      "runtime_verified": false
+    },
+    "candidate_layouts": {
+      "player_game_mode_offset": "0xAA0",
+      "player_level_offset": "0x1D8",
+      "block_type_offset": "0x68",
+      "block_type_full_name_string_offset": "0xE8",
+      "block_type_flags_offset": "0x164",
+      "block_type_solid_mask": 2,
+      "item_stack_block_offset": "0x18",
+      "item_stack_aux_offset": "0x20",
+      "block_source_get_block_slot": 2,
+      "block_source_get_chunk_slot": 41,
+      "block_type_placement_state_slot": 79,
+      "level_hit_result_slot": 335,
+      "hit_result_scalar_prefix_size": 56,
+      "hit_type_offset": 24,
+      "hit_face_offset": 28,
+      "hit_block_offset": 32,
+      "hit_position_offset": 44
+    },
+    "evidence": [
+      "REA/Ghidra ev_af167bba2797b60ffe45d17af648fa2edcc644be90a65a64b07bf3d2d2959fff: current ClientInstance region getter resolves dimension and region through native virtual dispatch",
+      "REA/Ghidra ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5: BlockSource getBlock uses BlockPos, vertical bounds and virtual chunk slot41; unavailable chunks must be rejected before reading the fallback air block",
+      "REA/Ghidra ev_e7280da801fec58140c2eb36b18894b34cf02a2c2f8290891ae57279b5f5529d: native selectSlot bounds0..8, stores selected+0x10/container+0xB0, and follows HUD/selection notification path",
+      "REA/Ghidra ev_07f9860a4edc80ba3885f69bfe84649d59d1916b638291a4920a35e31edc4fab: base GameMode buildBlock consumes RCX this, RDX BlockPos, R8B face, R9B hand and stack boolean, preserving native inventory transaction machinery",
+      "REA/Ghidra ev_9cd48a09599490c10dd724724053b2f8351e790ea6334881e2540241be774c0c: build closure reads Player+0x5B8 selectedslot, Player+0x1D8 Level, Level vtable0xA78 HitResult type+0x18/face+0x1C/BlockPos+0x20/worldhit+0x2C, and subtracts support position for transaction click",
+      "REA/Ghidra ev_8bfbdd8e95a06043f5c9b662c3c7cf0b36c98b3a0847d2fc885b060393e96eaa: BlockType placement getter chooses aux state/default and executes const placement callbacks with actor, pos, face and click",
+      "REA/Ghidra ev_05c5c1018ab7d235651741c3bc7c4c5c623fc607ea3692b9f1ebb0ac504b619b and ev_b599387268910ce4ece43d8e0cc024e866c013c8cd1d966b39f79d34376cb444: SetTitlePacket constructor layout and stream read hidden result with success at0x40",
+      "BlockType NameInfo, flags and ItemStack field semantics corroborated with existing SDK/Latite/Solstice/LeviLamina declarations and render callsites. These layouts, prediction click coordinates, actual receive path, native placement and server acceptance remain runtime-unverified; no symbol promoted to verified."
+    ]
   }
 }
 )BDK_SYM_V1";
