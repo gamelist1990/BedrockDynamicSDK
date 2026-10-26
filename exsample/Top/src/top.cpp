@@ -139,10 +139,11 @@ void loadConfig(const std::filesystem::path& dir){
     levelsPerTick=static_cast<unsigned>(std::clamp(j.value("scan_levels_per_tick",8),1,32));budgetUs=static_cast<unsigned>(std::clamp(j.value("cooperative_budget_us",500),100,2000));
 }
 DWORD WINAPI start(void*){
+    HMODULE pinned{};GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&start),&pinned);
     status.store(1);
     try{const auto dir=directory();std::filesystem::create_directories(dir);loadConfig(dir);std::string error;
-        auto choice=bedrock::acquireWindowsMainModuleProfile(dir/L"profiles",bedrock::generated::kSymbolDatabase,{},error);if(!choice)throw std::runtime_error(error);
-        auto profile=choice.profileJson;if(!nlohmann::json::parse(profile).contains("native_top"))profile=bedrock::generated::kSymbolDatabase;
+        std::string profile;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
+        if(!nlohmann::json::parse(profile).contains("native_top"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         bindings.loadTop(profile);commands.add("top",execute);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){if(e.clientInstance)client.store(e.clientInstance);});
