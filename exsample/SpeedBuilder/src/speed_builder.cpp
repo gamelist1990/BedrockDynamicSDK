@@ -88,6 +88,9 @@ struct Probe{sb::PlacementRequest request;std::optional<std::uint64_t> targetSta
     float preferredYaw{},preferredPitch{};std::optional<PlacementPlan> fallback;
 };
 std::optional<Probe> probe;
+struct CachedRecipe{sb::PlacementRecipe recipe;void* type{};int aux{};};
+std::map<std::uint64_t,std::vector<CachedRecipe>> recipeCache;
+
 struct Pending{sb::PlacementRequest request;std::uint64_t runtime{};void* player{};void* source{};std::uint64_t prepared{};
     float yaw{},pitch{},oldYaw{},oldPitch{};Vec hit{};int oldSlot=-1;bool dispatched{},rotationApplied{};};
 std::optional<Pending> pending;
@@ -116,7 +119,7 @@ void resetRound(std::uint64_t world){
     // Cross-world pointers are discarded; never restore into an expired world.
     pending.reset();probe.reset();removalCheck.reset();immutablePreview.reset();rejectedResult=0;reader.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
     currentTitle.clear();currentSubtitle.clear();lastQueuedPass=capturePass=acceptedResult=0;lastPhase=sb::Phase::idle;
-    nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();mismatchLogs.clear();
+    nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();mismatchLogs.clear();recipeCache.clear();
     {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
 }
 void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
@@ -135,6 +138,8 @@ void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
         const sb::BlockPos center{static_cast<int>(std::floor(position.x)),static_cast<int>(std::floor(position.y)),static_cast<int>(std::floor(position.z))};
         if(model->onPrompt(generation,tick,center,hotbar.copied,currentTitle,currentSubtitle)){
             restoreProbe(playerIdentity,runtime);restorePending(playerIdentity,runtime);removalCheck.reset();immutablePreview.reset();rejectedResult=0;lastQueuedPass=0;
+            acceptedResult=0;mismatchLogs.clear();recipeCache.clear();
+            {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
             note("memorizing: topic="+currentTitle+" subtitle="+currentSubtitle+" radius="+std::to_string(roundConfig->radius));
         }
     }
@@ -162,11 +167,18 @@ void capture(void* source){
     std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput=std::move(job);lastQueuedPass=capturePass;}
 }
 std::string propertyText(const sb::Cell& cell){
-    if(!cell.properties)return "unavailable";nlohmann::json out=nlohmann::json::object();
-    for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){out[key]=v;},value);return out.dump();
+    nlohmann::json out=nlohmann::json::object();
+    out["legacy_data"]=cell.legacyData?nlohmann::json(*cell.legacyData):nlohmann::json(nullptr);
+    out["state_identity"]=cell.stateIdentity.value_or(0);
+    if(!cell.properties)out["properties"]=nullptr;
+    else {auto values=nlohmann::json::object();for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){values[key]=v;},value);out["properties"]=std::move(values);}
+    return out.dump();
 }
 bool sameBlockType(const native::BlockInfo* expected,const native::BlockInfo* actual){
     return expected&&actual&&(expected->type==actual->type||expected->name==actual->name);
+}
+bool neighborDerived(std::string_view id){
+    return id.ends_with("_fence")||id.ends_with("_wall")||id.ends_with("_pane")||id=="minecraft:iron_bars";
 }
 bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
@@ -202,6 +214,11 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch)){
             native::write(rot,bindings.actors.rotationYawOffset,action.oldYaw);native::write(rot,bindings.actors.rotationPitchOffset,action.oldPitch);return false;
         }
+        if(plan.request.recipe.exactStateSupported){
+            if(recipeCache.size()<2048){auto& choices=recipeCache[p.targetState.value_or(0)];
+                if(choices.size()<6&&std::none_of(choices.begin(),choices.end(),[&](const CachedRecipe& c){return c.recipe==plan.request.recipe&&c.type==hotbar.types[plan.request.hotbarSlot]&&c.aux==hotbar.aux[plan.request.hotbarSlot];}))
+                    choices.push_back({plan.request.recipe,hotbar.types[plan.request.hotbarSlot],hotbar.aux[plan.request.hotbarSlot]});}
+        }
         action.rotationApplied=true;pending=std::move(action);probe.reset();return true;
     };
     if(p.request.recipe.augment){
@@ -211,9 +228,22 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         plan.yaw=p.preferredYaw;plan.pitch=p.preferredPitch;plan.hit={target.x+.5f,target.y+1.f,target.z+.5f};
         return commit(plan);
     }
+    if(p.candidate==0)if(auto found=recipeCache.find(p.targetState.value_or(0));found!=recipeCache.end()){
+        for(const auto& c:found->second){if(c.type!=hotbar.types[slot]||c.aux!=hotbar.aux[slot])continue;
+            const auto n=sb::faceNormal(c.recipe.face);sb::BlockPos support{target.x-n.x,target.y-n.y,target.z-n.z};
+            const auto base=reader.cell(source,support,true);if(!base.supportsPlacement)continue;
+            Vec hit{support.x+c.recipe.hitX,support.y+c.recipe.hitY,support.z+c.recipe.hitZ};
+            const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
+            if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)continue;
+            void* predicted{};
+            if(bindings.predict(hotbar.types[slot],player,target,static_cast<unsigned>(c.recipe.face),{c.recipe.hitX,c.recipe.hitY,c.recipe.hitZ},hotbar.aux[slot],c.recipe.yaw,c.recipe.pitch,&predicted)&&
+               reinterpret_cast<std::uintptr_t>(predicted)==p.targetState){PlacementPlan plan;plan.request=p.request;plan.request.support=support;plan.request.recipe=c.recipe;
+                plan.yaw=c.recipe.yaw;plan.pitch=c.recipe.pitch;plan.hit=hit;return commit(plan);}
+        }
+    }
     constexpr unsigned faces[6]={1,2,3,4,5,0};constexpr float heights[3]={.5f,.25f,.75f};constexpr float pitches[3]={0.f,90.f,-90.f};
-    const auto deadline=Clock::now()+std::chrono::microseconds(350);
-    for(unsigned step=0;step<16&&p.candidate<216;++step){const unsigned n=p.candidate++;unsigned i=n;
+    const auto deadline=Clock::now()+std::chrono::microseconds(750);
+    for(unsigned step=0;step<48&&p.candidate<216&&Clock::now()<deadline;++step){const unsigned n=p.candidate++;unsigned i=n;
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
@@ -238,7 +268,9 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
             auto it=predictedCell.properties->values.find(key);if(it!=predictedCell.properties->values.end()&&value==it->second)plan.score+=sb::derivedState(key)?1.f:16.f;
         }
         if(exact||sb::samePlacementBasis(*goal,predictedCell))return commit(plan);
-        if(!p.fallback||plan.score>p.fallback->score)p.fallback=std::move(plan);
+        // Type-only proposals cannot establish slab half, stair facing, barrel
+        // facing or pillar axis. Only connection-derived blocks may settle later.
+        if(neighborDerived(goal->identifier)&&(!p.fallback||plan.score>p.fallback->score))p.fallback=std::move(plan);
         if(Clock::now()>=deadline)break;
     }
     if(p.candidate>=216){
@@ -250,7 +282,8 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         if(p.fallback){auto plan=*p.fallback;note("placement deferred-state proposal: item="+plan.request.recipe.itemIdentifier+" slot="+std::to_string(plan.request.hotbarSlot)+" expected="+propertyText(*goal));return commit(plan);}
         note("placement unresolved: "+p.request.recipe.itemIdentifier+" no_support="+std::to_string(p.noSupport)+" reach_rejected="+std::to_string(p.outOfReach)+
             " predictions="+std::to_string(p.predictions)+" native_failures="+std::to_string(p.nativeFailures)+" state_mismatch="+std::to_string(p.mismatches)+" expected="+propertyText(*goal));
-        model->placementResult(p.request.token,p.request.actionId,false,tick);restoreProbe(player,runtime);
+        ++placementDeferred;lastDeferred="await_exact_state_or_support";
+        model->deferPlacement(p.request.token,p.request.actionId,tick,20);restoreProbe(player,runtime);
     }return false;
 }
 void tickGame(const bedrock::LevelTickEvent& event){
@@ -329,7 +362,9 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 else if(!recipe.augment){
                     if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
                     else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
-                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);if(!sameBlockType(wanted,got))reason="prediction_type_changed";}
+                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);
+                        if(!sameBlockType(wanted,got))reason="prediction_type_changed";
+                        else if(!neighborDerived(recipe.itemIdentifier)&&(!model->recordedCell(action.request.target)||!sb::samePlacementBasis(*model->recordedCell(action.request.target),reader.describeCell(predicted,action.request.target))))reason="prediction_basis_changed";}
                 }
             }
             if(!reason){
@@ -341,7 +376,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
                     " yaw="+std::to_string(action.yaw)+" pitch="+std::to_string(action.pitch)+" face="+std::to_string(static_cast<unsigned>(recipe.face))+
                     " support="+std::to_string(action.request.support.x)+","+std::to_string(action.request.support.y)+","+std::to_string(action.request.support.z)+
                     " deferred_state="+std::to_string(recipe.deferredState)+" augment="+std::to_string(recipe.augment)+" item="+recipe.itemIdentifier+" slot="+std::to_string(slot)+" target="+std::to_string(action.request.target.x)+","+std::to_string(action.request.target.y)+","+std::to_string(action.request.target.z));
-            }else {++placementDeferred;lastDeferred=reason;model->deferPlacement(token,aid,tick);restorePending(player,id);}
+            }else {++placementDeferred;lastDeferred=reason;model->deferPlacement(token,aid,tick,10);restorePending(player,id);}
 
         }
     }
@@ -360,8 +395,9 @@ void tickGame(const bedrock::LevelTickEvent& event){
             if(auto request=model->nextPlacement(frame)){
                 const auto desired=model->recordedState(request->target);
                 if(desired){probe=Probe{*request,desired,0};probe->player=player;probe->runtime=id;probe->world=generation;
-                    auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-                    native::read(rot,bindings.actors.rotationYawOffset,probe->preferredYaw);native::read(rot,bindings.actors.rotationPitchOffset,probe->preferredPitch);
+                    // Canonical quadrant centres avoid boundary-dependent results
+                    // from the user's current arbitrary view angle.
+                    probe->preferredYaw=0.f;probe->preferredPitch=0.f;
                     if(const auto* goal=model->recordedCell(request->target))if(auto angles=sb::placementAngles(*goal)){probe->preferredYaw=angles->first;probe->preferredPitch=angles->second;}
                 }else model->deferPlacement(request->token,request->actionId,tick);
             }
@@ -395,7 +431,7 @@ void onTick(const bedrock::LevelTickEvent& event){try{tickGame(event);}catch(con
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
-    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision5; native reads/writes on client tick; copied diff worker\n";
+    std::ofstream file(dir/L"SpeedBuilder.log",std::ios::trunc);file<<"SpeedBuilder 1.26.52.3 candidate revision6; native reads/writes on client tick; copied diff worker\n";
     const auto path=dir/L"config.json";auto modified=std::filesystem::last_write_time(path);auto nextReload=Clock::now();
     while(!stopped.load()){
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}

@@ -202,6 +202,7 @@ public:
     speed_builder::Cell describeCell(void* state,Pos pos={}){
         speed_builder::Cell result;result.position=pos;auto* info=describe(state);if(!info)return result;
         result.identifier=info->name;result.stateIdentity=reinterpret_cast<std::uintptr_t>(state);result.properties=info->properties;
+        std::uint16_t data{};if(read(state,0x120,data))result.legacyData=data;
         if(info->name=="minecraft:air"||info->name=="minecraft:cave_air"||info->name=="minecraft:void_air")result.kind=speed_builder::CellKind::air;
         else{result.kind=speed_builder::CellKind::block;result.supportsPlacement=info->solid;result.nativePlacementCandidate=true;
             speed_builder::PlacementRecipe recipe;recipe.itemIdentifier=result.identifier;result.placement=recipe;}

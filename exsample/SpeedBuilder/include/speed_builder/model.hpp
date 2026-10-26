@@ -52,6 +52,7 @@ struct Cell {
     bool supportsPlacement = false;
     bool nativePlacementCandidate = false; // Adapter must resolve and recheck the exact state before dispatch.
     std::optional<PlacementRecipe> placement;
+    std::optional<std::uint16_t> legacyData; // diagnostic only; no inferred orientation bit masks
     bool operator==(const Cell&) const = default;
 };
 struct HotbarSlot { std::string identifier; unsigned count{}; };
@@ -131,7 +132,8 @@ inline bool canAugment(const Cell& goal,const Cell& current){
     return increase;
 }
 inline bool samePlacementBasis(const Cell& goal,const Cell& predicted){
-    if(!sameType(goal,predicted)||!goal.properties||!predicted.properties)return false;
+    if(!sameType(goal,predicted)||!goal.properties||!predicted.properties||
+       goal.properties->values.empty()||predicted.properties->values.empty())return false;
     for(const auto& [key,value]:goal.properties->values){if(derivedState(key)||countState(key))continue;
         auto it=predicted.properties->values.find(key);if(it==predicted.properties->values.end()||it->second!=value)return false;}
     return true;
@@ -309,8 +311,11 @@ public:
         for(int value:{center.x,center.y,center.z})if(std::int64_t(value)-r<std::numeric_limits<int>::min()||std::int64_t(value)+r>std::numeric_limits<int>::max()){
             stop(Phase::failed,StopReason::captureUnknown);return false;
         }
-        const auto side=std::size_t(r)*2+1;positions_.reserve(side*side*side);
-        const auto add=[&](int x,int y,int z){positions_.push_back({center.x+x,center.y+y,center.z+z});};
+        const auto side=std::size_t(r)*2+1;positions_.reserve(side*side*side);previewIndices_.resize(side*side*side);
+        const auto add=[&](int x,int y,int z){
+            const auto linear=(std::size_t(z+r)*side+std::size_t(y+r))*side+std::size_t(x+r);
+            previewIndices_[linear]=positions_.size();positions_.push_back({center.x+x,center.y+y,center.z+z});
+        };
         add(0,0,0);
         // Unique cube shells: center first, O(volume), no game-thread sort.
         for(int n=1;n<=r;++n){
@@ -328,7 +333,7 @@ public:
         if (!requested_.empty()) { captureTick_=tick; return {token_,requested_}; }
         if (captureTick_ && *captureTick_ == tick) return {token_,{}};
         captureTick_ = tick;
-        const bool sparse=phase_==Phase::waiting&&!preview_.empty();
+        const bool sparse=phase_==Phase::waiting&&!preview_.empty()&&discoveryComplete_;
         const auto total=sparse?watchIndices_.size():positions_.size();
         const auto count=std::min<std::size_t>(options_.captureCellsPerTick,total-pass_.size());
         requested_.clear();requested_.reserve(count);
@@ -349,8 +354,9 @@ public:
                 return false;
             }
         }
+        const bool sparse=!preview_.empty()&&discoveryComplete_;
         for (const auto& c : cells) {
-            const auto index=preview_.empty()?pass_.size():watchIndices_[pass_.size()];
+            const auto index=sparse?watchIndices_[pass_.size()]:pass_.size();
             if (!preview_.empty() && preview_[index].kind == CellKind::block && c.kind == CellKind::air)
                 frozen_ = true; // Never replace the last complete preview with a removal pass.
             pass_.push_back(c);
@@ -358,15 +364,28 @@ public:
         requested_.erase(requested_.begin(),requested_.begin()+cells.size());
         stats_.captured += cells.size();
         const bool initial=preview_.empty();
-        if(pass_.size()==(initial?positions_.size():watchIndices_.size())){
+        if(pass_.size()==(sparse?watchIndices_.size():positions_.size())){
             ++stats_.capturePasses;
             if(initial){
                 preview_.swap(pass_);latest_.clear();
                 for(std::size_t i=0;i<preview_.size();++i)if(preview_[i].kind==CellKind::block)watchIndices_.push_back(i);
                 token_.generation=nextGeneration();
                 if(watchIndices_.empty()){stop(Phase::failed,StopReason::noTargets);return true;}
+            }else if(!sparse&&!frozen_){
+                // Keep a complete second discovery, never a partly removed view.
+                preview_.swap(pass_);watchIndices_.clear();
+                for(std::size_t i=0;i<preview_.size();++i)if(preview_[i].kind==CellKind::block)watchIndices_.push_back(i);
+                discoveryComplete_=true;token_.generation=nextGeneration();latest_.clear();
             }else{
-                latest_.swap(pass_);
+                latest_.swap(pass_);latestSparse_=sparse;discoveryComplete_=true;
+                // While the intact preview still exists, follow settled native
+                // permutations (stairs/connections) instead of freezing spawn-time data.
+                if(!frozen_&&sparse){
+                    bool changed=false;
+                    for(std::size_t i=0;i<watchIndices_.size();++i){auto& before=preview_[watchIndices_[i]];const auto& now=latest_[i];
+                        if(before.kind!=now.kind||before.identifier!=now.identifier||before.stateIdentity!=now.stateIdentity){before=now;changed=true;}}
+                    if(changed)token_.generation=nextGeneration();
+                }
             }
             pass_.clear();phase_=Phase::waiting;
         }
@@ -380,7 +399,7 @@ public:
     std::optional<ObservationSnapshot> observationSnapshot(bool previewGone) const {
         checkThread();
         if (latest_.empty()) return std::nullopt;
-        return ObservationSnapshot{token_,latest_,previewGone,true};
+        return ObservationSnapshot{token_,latest_,previewGone,latestSparse_};
     }
     bool previewFrozen() const { checkThread(); return frozen_; }
     std::size_t observationCellCount() const {checkThread();return watchIndices_.size();}
@@ -447,10 +466,10 @@ public:
         }
         std::sort(out.begin(),out.end());out.erase(std::unique(out.begin(),out.end()),out.end());return out;
     }
-    bool deferPlacement(SessionToken token,std::uint64_t actionId,Tick tick) {
+    bool deferPlacement(SessionToken token,std::uint64_t actionId,Tick tick,Tick delay=0) {
         checkThread();if(!(token==token_)||!advance(tick)||activeAction_!=actionId)return false;
         for(auto& task:tasks_)if(task.action==actionId){activeAction_.reset();task.inFlight=false;
-            if(task.attempts)--task.attempts;if(stats_.attempts)--stats_.attempts;lastPlacement_.reset();return true;}
+            if(task.attempts)--task.attempts;if(stats_.attempts)--stats_.attempts;task.retryAfter=tick+std::min<Tick>(delay,1200);lastPlacement_.reset();return true;}
         return false;
     }
     std::optional<PlacementRequest> nextPlacement(const BuildFrame& frame) {
@@ -484,6 +503,7 @@ public:
                 task.inFlight=false;if(progressed)task.attempts=0;
             }
             if(typeObserved&&!augment){++scan_.statePending;continue;}
+            if(frame.tick<task.retryAfter){++scan_.cooldown;continue;}
             if (task.attempts >= options_.maxAttempts) { exhaust(task); continue; }
             if (activeAction_ || (lastPlacement_ && frame.tick-*lastPlacement_ < options_.buildIntervalTicks)) {++scan_.cooldown;continue;}
             if (target == current.end() || target->second->kind == CellKind::unknown) {++scan_.unknown;continue;}
@@ -563,14 +583,13 @@ public:
         checkThread();const auto r=static_cast<std::int64_t>(options_.radius),side=2*r+1;
         const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
         if(x<0||x>=side||y<0||y>=side||z<0||z>=side)return nullptr;
-        const auto index=static_cast<std::size_t>((z*side+y)*side+x);return index<preview_.size()?&preview_[index]:nullptr;
+        const auto linear=static_cast<std::size_t>((z*side+y)*side+x);
+        if(linear>=previewIndices_.size())return nullptr;
+        const auto index=previewIndices_[linear];
+        return index<preview_.size()&&preview_[index].position==pos?&preview_[index]:nullptr;
     }
     std::optional<std::uint64_t> recordedState(BlockPos pos) const {
-        checkThread();const auto r=static_cast<std::int64_t>(options_.radius);
-        const auto x=std::int64_t(pos.x)-center_.x+r,y=std::int64_t(pos.y)-center_.y+r,z=std::int64_t(pos.z)-center_.z+r;
-        const auto side=2*r+1;if(x<0||x>=side||y<0||y>=side||z<0||z>=side)return {};
-        const auto index=static_cast<std::size_t>((z*side+y)*side+x);
-        return index<preview_.size()?preview_[index].stateIdentity:std::nullopt;
+        const auto* cell=recordedCell(pos);return cell?cell->stateIdentity:std::nullopt;
     }
     bool actionPending(SessionToken token,std::uint64_t id) const {
         checkThread();return token==token_&&phase_==Phase::building&&activeAction_==id;
@@ -590,7 +609,7 @@ private:
     struct Task {
         Cell cell;
         unsigned attempts{};
-        Tick sent{};
+        Tick sent{},retryAfter{};
         std::uint64_t action{};
         std::optional<std::uint64_t> sentState,lastObserved;
         bool inFlight{}, done{}, failed{}, provisional{};
@@ -613,9 +632,9 @@ private:
         phase_ = Phase::idle;
         reason_ = StopReason::none;
         stats_ = {};scan_={};
-        positions_.clear(); watchIndices_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
+        positions_.clear(); previewIndices_.clear(); watchIndices_.clear(); requested_.clear(); pass_.clear(); preview_.clear(); latest_.clear(); tasks_.clear();
         baselineHotbar_={};
-        frozen_ = promptVisible_ = false;
+        frozen_ = promptVisible_ = discoveryComplete_ = latestSparse_ = false;
         cursor_ = 0;
         captureTick_.reset(); stepTick_.reset(); lastPlacement_.reset(); activeAction_.reset();
         started_ = buildStarted_ = lastTick_ = 0;
@@ -673,10 +692,10 @@ private:
     BlockPos center_;
     Hotbar baselineHotbar_;
     std::vector<BlockPos> positions_, requested_;
-    std::vector<std::size_t> watchIndices_;
+    std::vector<std::size_t> watchIndices_,previewIndices_;
     std::vector<Cell> pass_, preview_, latest_;
     std::vector<Task> tasks_;
-    bool frozen_{}, promptVisible_{};
+    bool frozen_{}, promptVisible_{}, discoveryComplete_{}, latestSparse_{};
     std::size_t cursor_{};
     Tick started_{}, buildStarted_{}, lastTick_{};
     std::optional<Tick> captureTick_, stepTick_, lastPlacement_;
