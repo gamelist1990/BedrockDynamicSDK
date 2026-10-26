@@ -308,9 +308,9 @@ void tickGame(const bedrock::LevelTickEvent& event){
     Vec eye=position; // Native Player origin; reach/ray semantics still require live confirmation.
     if(pending){
         if(pending->dispatched){restorePending(player,id);}
-        else if(tick<=pending->prepared+1){
-            // Keep the selected pose across two client ticks before dispatch.
-            // Immediate predictor writes can otherwise be restored before normal input serialization.
+        else if(tick<=pending->prepared){
+            // Keep the selected pose through the preparation tick. Dispatch on
+            // the next client tick instead of adding an unnecessary extra tick.
             auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
             if(!native::write(rot,bindings.actors.rotationYawOffset,pending->yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,pending->pitch)){
                 model->deferPlacement(pending->request.token,pending->request.actionId,tick);restorePending(player,id);
