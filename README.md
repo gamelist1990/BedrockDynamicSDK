@@ -441,15 +441,19 @@ SpeedBuilder / Top は共通ブロック層、Freecam / Top は共通位置更�
 ### Native client command registration
 
 Topで使用している本体CommandRegistryへの登録処理もSDKへ移動しました。
-`NativeClientCommands.add(name, description, integerArgument, handler)` で登録定義を作り、
-client tickで `update()` すると標準コマンド候補・ローカル実行へ接続します。
+`CommandBuilder(CommandName{"top"}, ArgumentName{"blocks"}).then(handler)` で定義し、
+`NativeCommandService.add(definition)` に登録します。候補表示・パケットfallback・
+実行キュー・二重実行防止はSDKが担当し、client tickの `dispatch()` で実行します。
+Topの安全な上方探索・移動も `NativeSafeTeleport` に共通化しました。
 詳細は [Native client commands](docs/native-client-commands.md) を参照してください。
 
 ## Typed SDK API and HTML guide
 
 - [HTML API guide](docs/site/index.html): command builders, typed values, World,
   Actor/event usage, and native profile updates with downloadable C++ examples.
-- `CommandBuilder` produces a complete `CommandDefinition` with a typed handler.
+- `CommandBuilder(...).then(handler)` produces a complete typed `CommandDefinition`.
+- `NativeCommandService` owns autocomplete registration, packet fallback and tick dispatch.
+- `NativeSafeTeleport` owns budgeted upward search, destination checks and guarded movement.
 - `ProfileManager` owns exact-build profile acquisition and capability checks;
   adapters can request a throttled GitHub refresh when their initialization fails.
 - `RuntimeProfile` carries an immutable validated snapshot and Resolver, so native
