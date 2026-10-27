@@ -54,6 +54,7 @@ public:
     std::optional<CameraFrame> advance(Yaw yaw, CameraInput input, CameraSpeed speed,
                                       std::chrono::duration<float> elapsed,
                                       std::uint64_t runtimeId, std::uint64_t worldEpoch) {
+        if (!active_ || runtimeId != runtime_ || worldEpoch != epoch_) { reset(); return std::nullopt; }
         const float seconds = elapsed.count();
         if (!std::isfinite(input.forward) || !std::isfinite(input.right) || !std::isfinite(input.up) ||
             std::abs(input.forward) > 1.f || std::abs(input.right) > 1.f || std::abs(input.up) > 1.f ||
