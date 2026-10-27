@@ -1,7 +1,6 @@
 name: API documentation
 on:
   push:
-    branches: [main]
     paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
   pull_request:
     paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
