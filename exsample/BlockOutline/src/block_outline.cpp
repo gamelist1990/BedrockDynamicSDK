@@ -127,12 +127,12 @@ private:
             !hooks_->installWorldEvents(profile->resolver(),profile->json(),error))throw std::runtime_error(error);
         if(!BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,renderer_.renderTarget(),renderCallback,this,&renderToken_))
             throw std::runtime_error("world render subscription failed");
-        note("BlockOutline ready; incremental native block capture + copied-geometry worker + Unicode labels");
+        note("BlockOutline ready; SubChunk storage scan + empty-section skip + copied-geometry worker + Unicode labels");
         note("Press Esc and return to gameplay if the client has not been observed yet."); note(BDS_HookRuntimeDiagnostic());
     }
     void restart(Vec position,const bo::Config& config) {
         anchor_={int(std::floor(position.x)),int(std::floor(position.y)),int(std::floor(position.z))};
-        cursor_.reset(int(std::ceil(config.range))); pending_.reset(); matches_.clear(); check_=matches_.end();
+        cursor_.reset(anchor_,config.range); pending_.reset(); matches_.clear(); check_=matches_.end();
     }
     void update(Pos position,const bedrock::BlockResult& result,const bo::Config& config,Vec player) {
         const auto old=matches_.find(position);
@@ -169,17 +169,21 @@ private:
                 position=check_->first;
             } else {
                 if(!pending_) {
-                    auto offset=cursor_.next();
-                    if(!offset) { cursor_.reset(int(std::ceil(config->range))); offset=cursor_.next(); ++sweeps_; }
-                    pending_=Pos{anchor_.x+offset->x,anchor_.y+offset->y,anchor_.z+offset->z};
+                    auto position=cursor_.next();
+                    if(!position) { cursor_.rewind(); position=cursor_.next(); ++sweeps_; }
+                    pending_=*position;
                 }
                 position=*pending_;
                 if(!inside(position,player,config->range)) { pending_.reset(); continue; }
             }
-            const auto result=world_.getBlock(position,bedrock::ReadPolicy::Cached);
+            const auto scan=world_.scanBlock(position);
+            const auto& result=scan.block;
             if(result.error==bedrock::BlockError::budgetExceeded)break;
             ++reads;
-            if(checking)++check_; else pending_.reset();
+            if(checking)++check_; else {
+                pending_.reset();
+                if(scan.emptySection||scan.unavailableSection) { cursor_.skipSection(); ++skippedSections_; }
+            }
             update(position,result,*config,player);
         }
         if(epoch_.load()!=epoch || scene_.load()!=scene)return;
@@ -193,7 +197,7 @@ private:
         }
         if(config->debug && Clock::now()>=nextDiagnostic_) {
             nextDiagnostic_=Clock::now()+5s;
-            note("scan: hits="+std::to_string(matches_.size())+" reads_this_tick="+std::to_string(reads)+" completed_sweeps="+std::to_string(sweeps_));
+            note("scan: hits="+std::to_string(matches_.size())+" reads_this_tick="+std::to_string(reads)+" skipped_sections="+std::to_string(skippedSections_)+" completed_sweeps="+std::to_string(sweeps_));
         }
     }
     struct Font { std::shared_ptr<const bedrock::world_text::NameMesh> mesh; Clock::time_point retry{}; };
@@ -289,7 +293,7 @@ private:
     std::map<Pos,unsigned> matches_;
     std::map<Pos,unsigned>::iterator check_=matches_.end();
     bo::ScanCursor cursor_; Pos anchor_{}; std::optional<Pos> pending_;
-    std::uint64_t generation_{},scanRevision_{},configRevision_{},sweeps_{}; unsigned schedule_{};
+    std::uint64_t generation_{},scanRevision_{},configRevision_{},sweeps_{},skippedSections_{}; unsigned schedule_{};
     Clock::time_point nextPublish_{},nextConfig_{},nextDiagnostic_{};
 };
 BlockOutline mod;

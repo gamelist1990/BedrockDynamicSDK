@@ -637,7 +637,31 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "REA/Ghidra ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b: ItemStackBase uses Block+0x120 data for block-backed stacks except raw aux sentinel0x7FFF. Renderer 0x47B0F4E..0x47B0F7F calls BlockType collision-shape slot4 with hidden AABB return in RDX, Block in R8, source in R9, BlockPos and null optional on stack (existing ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a). Native placement remains runtime-unverified.",
       "REA/Ghidra ev_7384df9c2cbd7961b2b68138bb1d131fbff5b3a9923acc5d5d609104aecf07ce at0x2548830 establishes CompoundTag tree head+8, root=head+8, nil+0x19, key+0x20/string length+0x30/capacity+0x38, TagVariant+0x40 and discriminator+0x68. Inline Block serialization tag+0xF0 is a layout candidate corroborated by Block.h field sizes and leaf LEA+0xF0 at0x640EF0/0xB57130. Runtime reader requires Compound type10, bounded valid tree, matching name and compound states before exposing owned property copies. No NBT vtable function is invoked or foreign STL object modified.",
       "Live revision2 user log: native build calls/returns4 and observed exact sandstone states4. Walls and hive sea_shells had successful type-compatible predictions but pre-placement state differed. Revision3 permits type-compatible proposals, uses named orientation when available, allows real observed supports before final connection states and candle/cluster count increases; completion still requires exact recorded state. Hive-specific server properties remain live-unverified."
-    ]
+    ],
+    "subchunk_scan": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "source": "Exact PE BlockSource::getBlock RVA 0x2D80120; REA/Ghidra assembly: source Y bounds, LevelChunk vector, 0x68 stride, layer-0 storage +0x30, virtual slot 3; no direct palette decoding",
+      "guard": {
+        "rva": "0x2D80186",
+        "entry_check": "44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 40 01 00 00 48 8B 80 48 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 3D 48 6B C1"
+      },
+      "source_min_y": "0x3A",
+      "source_max_y": "0x38",
+      "chunk_sections_begin": "0x140",
+      "chunk_sections_end": "0x148",
+      "section_stride": "0x68",
+      "section_storage": "0x30",
+      "storage_get_slot": 3,
+      "storage_get_abi": "Block const* __fastcall(BlockStorage*, unsigned local_index)",
+      "local_index": "(x & 15) << 8 | (z & 15) << 4 | (y & 15)",
+      "limitations": [
+        "Layer 0 only, matching existing getBlock API",
+        "Null storage is empty; no claim that allocated storage is uniform",
+        "Pointers valid for owning client tick only; runtime confirmation pending"
+      ]
+    }
   },
   "native_motion": {
     "schema": 1,

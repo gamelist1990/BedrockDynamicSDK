@@ -35,6 +35,43 @@ public:
         catch(const std::exception& e){error=e.what();return false;}
     }
     BlockResult getBlock(BlockPos pos,ReadPolicy policy){return getBlock(pos,policy==ReadPolicy::Fresh);}
+    struct BlockScanResult {
+        BlockResult block;
+        // Null layer-0 storage / outside vertical bounds. All 4096 cells
+        // in this section are empty; invalid pointers are never called empty.
+        bool emptySection{};
+        bool unavailableSection{};
+    };
+    // Search-only, tick-scoped. Borrowed chunk/storage pointers never escape
+    // the owning tick. No placement recipes or property/NBT tree traversal.
+    BlockScanResult scanBlock(BlockPos pos) {
+        const auto error=check(level_);if(error!=BlockError::none)return {{{},error}};
+        if(!consume())return {{{},BlockError::budgetExceeded}};
+        const auto div=[](int n){return int((std::int64_t(n)-(n<0?15:0))/16);};
+        const auto chunkKey=std::pair{div(pos.x),div(pos.z)};
+        auto chunk=scanChunks_.find(chunkKey);
+        if(chunk==scanChunks_.end())chunk=scanChunks_.emplace(chunkKey,bindings_.loadedChunk(source_,chunkKey.first,chunkKey.second)).first;
+        if(!chunk->second)return {{{},BlockError::unavailable},false,true};
+        void* state{};
+        if(bindings_.scanReady) {
+            const BlockPos key{chunkKey.first,div(pos.y),chunkKey.second};
+            auto section=scanSections_.find(key);
+            if(section==scanSections_.end())section=scanSections_.emplace(key,bindings_.section(source_,chunk->second,pos.y)).first;
+            if(section->second.unavailable)return {{{},BlockError::unavailable},false,true};
+            if(section->second.empty) {
+                Cell cell;cell.position=pos;cell.kind=CellKind::air;cell.identifier="minecraft:air";
+                return {{std::move(cell),BlockError::none},true};
+            }
+            const unsigned index=(unsigned(pos.x)&15)*256+(unsigned(pos.z)&15)*16+(unsigned(pos.y)&15);
+            state=bindings_.sectionBlock(section->second.storage,index);
+        } else state=bindings_.block(source_,pos,true);
+        void* type{};
+        if(!state||!world_native::read(state,bindings_.layout("block_type_offset"),type)||!type)return {{{},BlockError::unavailable}};
+        auto name=reader_.typeName(type);if(name.empty())return {{{},BlockError::unavailable}};
+        Cell cell;cell.position=pos;cell.identifier=std::move(name);
+        cell.kind=cell.identifier=="minecraft:air"||cell.identifier=="minecraft:cave_air"||cell.identifier=="minecraft:void_air"?CellKind::air:CellKind::block;
+        return {{std::move(cell),BlockError::none}};
+    }
     PlacementResult setBlock(BlockPos target,const BlockIdentifier& identifier,const BlockSetOptions& options={}){
         return setBlock(target,std::string_view(identifier.value()),options);
     }
@@ -169,6 +206,8 @@ private:
     unsigned remaining_{};
     std::chrono::steady_clock::time_point deadline_;
     std::map<BlockPos,BlockResult> cache_;
+    std::map<std::pair<int,int>,void*> scanChunks_;
+    std::map<BlockPos,world_native::Bindings::ScanSection> scanSections_;
     static bool unit(float v){return std::isfinite(v)&&v>=0&&v<=1;}
     BlockError check(void* world)const {
         if(!onOwnerThread())return BlockError::wrongThread;
@@ -188,8 +227,8 @@ private:
         lastLevel_=level;lastSource_=source;lastEpoch_=epoch;lastRuntime_=runtime;
         level_=level;source_=source;player_=player;runtime_=runtime;epoch_=epoch;position_=position;
         remaining_=std::min(budget.operations,4096u);deadline_=std::chrono::steady_clock::now()+std::chrono::microseconds(std::min(budget.microseconds,5000u));
-        cache_.clear();active_=true;return true;
+        cache_.clear();scanChunks_.clear();scanSections_.clear();active_=true;return true;
     }
-    void leave(){active_=false;level_=source_=player_=nullptr;cache_.clear();}
+    void leave(){active_=false;level_=source_=player_=nullptr;cache_.clear();scanChunks_.clear();scanSections_.clear();}
 };
 } // namespace bedrock

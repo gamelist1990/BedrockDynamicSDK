@@ -54,7 +54,9 @@ inline std::uint32_t number(const nlohmann::json& j){auto n=j.is_string()?std::s
 struct Bindings{
     std::uintptr_t base{},textBegin{},textEnd{};
     bedrock::NativeActorLayout actors;bedrock::NativeItemLayout items;
-    bool placementReady{};
+    bool placementReady{},scanReady{};
+    struct ScanLayout { std::size_t minY{},maxY{},begin{},end{},stride{},storage{},getSlot{}; } scan;
+    struct ScanSection { void* storage{}; bool empty{},unavailable{}; };
     void* regionFn{};void* getBlockFn{};void* selectFn{};void* getHitFn{};
     void* titleReadFn{};std::uintptr_t titleVtable{};
     std::array<std::uintptr_t,2> gameTables{};
@@ -112,6 +114,16 @@ struct Bindings{
         (void)layout("tree_right_offset");
         (void)layout("tree_tag_variant_offset");
         regionFn=checked(f.at("get_region"));getBlockFn=checked(f.at("get_block"));
+        scanReady=false;
+        if(f.contains("subchunk_scan")) {
+            const auto& j=f.at("subchunk_scan");checked(j.at("guard"));
+            scan={number(j.at("source_min_y")),number(j.at("source_max_y")),number(j.at("chunk_sections_begin")),
+                number(j.at("chunk_sections_end")),number(j.at("section_stride")),number(j.at("section_storage")),number(j.at("storage_get_slot"))};
+            if(scan.minY>65536||scan.maxY>65536||scan.begin>65536||scan.end!=scan.begin+8||
+               scan.stride<8||scan.stride>4096||scan.storage+8>scan.stride||scan.getSlot>256)
+                throw std::runtime_error("invalid SubChunk scan layout");
+            scanReady=true;
+        }
         placementReady=false;
         try{selectFn=checked(f.at("select_hotbar"));getHitFn=checked(f.at("get_hit_result"));
         checked(f.at("build_block"));checked(f.at("base_placement_state"));
@@ -149,11 +161,36 @@ struct Bindings{
         void* gm{};std::uintptr_t vt{};void* owner{};
         if(!read(player,layout("player_game_mode_offset"),gm)||!read(gm,0,vt)||(vt!=gameTables[0]&&vt!=gameTables[1])||!read(gm,8,owner)||owner!=player)return nullptr;return gm;
     }
-    void* block(void* source,const Pos& pos)const noexcept{
+    void* loadedChunk(void* source,int x,int z)const noexcept {
+        void** vt{};void* fn{};
+        if(!read(source,0,vt)||!read(vt,layout("block_source_get_chunk_slot")*8,fn)||!executable(fn))return nullptr;
+        const std::array<int,2> chunk{x,z};
+        __try{return reinterpret_cast<void*(__fastcall*)(void*,const void*)>(fn)(source,&chunk);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
+    }
+    ScanSection section(void* source,void* chunk,int y)const noexcept {
+        std::int16_t low{},high{};
+        if(!scanReady||!read(source,scan.minY,low)||!read(source,scan.maxY,high)||low>=high||(low&15))return {nullptr,false,true};
+        if(y<low||y>=high)return {nullptr,true,false};
+        if(!chunk)return {nullptr,false,true};
+        std::uintptr_t begin{},end{};
+        if(!read(chunk,scan.begin,begin)||!read(chunk,scan.end,end)||!begin||end<begin||
+           (end-begin)%scan.stride||(end-begin)/scan.stride>4096)return {nullptr,false,true};
+        const auto index=static_cast<unsigned>(y-low)/16;
+        if(index>=(end-begin)/scan.stride)return {nullptr,true,false};
+        void* storage{};
+        if(!read(reinterpret_cast<void*>(begin),index*scan.stride+scan.storage,storage))return {nullptr,false,true};
+        return {storage,!storage,false};
+    }
+    void* sectionBlock(void* storage,unsigned index)const noexcept {
+        void** vt{};void* fn{};
+        if(index>=4096||!read(storage,0,vt)||!read(vt,scan.getSlot*8,fn)||!executable(fn))return nullptr;
+        __try{return reinterpret_cast<void*(__fastcall*)(void*,unsigned)>(fn)(storage,index);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
+    }
+    void* block(void* source,const Pos& pos,bool loaded=false)const noexcept{
         void** vt{};void* fn{};void* chunkFn{};
         if(!read(source,0,vt)||!read(vt,layout("block_source_get_block_slot")*8,fn)||fn!=getBlockFn||!read(vt,layout("block_source_get_chunk_slot")*8,chunkFn)||!executable(chunkFn))return nullptr;
         const std::array<int,2> chunk{pos.x>>4,pos.z>>4};
-        __try{if(!reinterpret_cast<void*(__fastcall*)(void*,const void*)>(chunkFn)(source,&chunk))return nullptr;
+        __try{if(!loaded&&!reinterpret_cast<void*(__fastcall*)(void*,const void*)>(chunkFn)(source,&chunk))return nullptr;
             return reinterpret_cast<void*(__fastcall*)(void*,const Pos*)>(fn)(source,&pos);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
     }
     // Same hidden-return ABI used by InsideCubeRenderer. Query only support
