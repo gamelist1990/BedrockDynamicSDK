@@ -15,9 +15,9 @@ struct Layout {
     std::uint32_t fallHash{};
     static Layout fromProfile(const std::string& profile){
         const auto root=nlohmann::json::parse(profile);
-        const auto& parent=root.contains("native_motion")?root.at("native_motion"):root.at("native_freecam");
+        const auto& parent=root.at("native_motion");
         if(parent.at("schema")!=1)throw std::runtime_error("unsupported actor motion schema");
-        const auto& b=parent.at("borion");
+        const auto& b=parent.at("state_vector");
         const auto number=[](const nlohmann::json& v){auto n=v.is_string()?std::stoull(v.get<std::string>(),nullptr,0):v.get<std::uint64_t>();
             if(n>UINT32_MAX)throw std::runtime_error("motion layout overflow");return std::uint32_t(n);};
         Layout result{number(b.at("state_previous_position_offset")),number(b.at("state_velocity_offset")),number(b.at("fall_distance_value_offset")),number(b.at("fall_distance_component_hash"))};

@@ -73,7 +73,7 @@ struct Bindings{
         const auto guard=fn.at("entry_check").get<std::string>();if(guard.size()<23||guard.size()>191||(guard.size()+1)%3)throw std::runtime_error("bad native guard");
         for(std::size_t i=0;i<guard.size();i+=3){unsigned char value{};if(!read(p,i/3,value)||value!=std::stoul(guard.substr(i,2),nullptr,16))throw std::runtime_error("native entry mismatch");}return p;
     }
-    void loadWorld(const std::string& profile){const auto j=nlohmann::json::parse(profile);const auto& f=j.contains("native_world")?j.at("native_world"):j.at("native_speed_builder");
+    void loadWorld(const std::string& profile){const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_world");
         if(f.at("schema")!=1||f.value("revision",0)<3)throw std::runtime_error("unsupported native world schema");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+number(j.at("target").at("text_rva"));textEnd=textBegin+number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
@@ -124,8 +124,8 @@ struct Bindings{
     void load(const std::string& profile){
         loadWorld(profile);
         if(!placementReady)throw std::runtime_error("native block placement unavailable");
-        const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_speed_builder");
-        titleReadFn=checked(f.at("title_read"));titleVtable=base+number(f.at("title_vtable_rva"));
+        const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_packets").at("title");
+        titleReadFn=checked(f.at("read"));titleVtable=base+number(f.at("vtable_rva"));
     }
     void* component(void* actor,std::uint32_t hash)const noexcept{
         void* registry{};std::uint32_t id{};

@@ -11,6 +11,8 @@ Per version there is **exactly one JSON file**: `data/<version>/windows-x64.json
   `abi`. The resolver returns slots only after an exact executable hash match; callers
   must still validate the instance vtable and use candidate slots only when explicitly
   allowed. A slot is not an AOB signature and must be refreshed for each affected build.
+- Native sections use **SDK capability names**, never example/mod names.
+  See [native section layout](native-profile-layout.md) for their order and ownership.
 - `native_keyboard`: verified callback-context offsets, processor virtual slots,
   and InputOrigin for the native gameplay keyboard route. See
   [native keyboard input](native-keyboard-input.md).

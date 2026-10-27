@@ -111,8 +111,9 @@ unavailable / invalidRequest / missingItem / stateMismatch / nativeRejected を�
 ## バージョン対応の範囲
 
 `native_world`は既存の解析済みSpeedBuilder関数・構造定義をSDK用に移したものです。
-`native_motion`も既存のFreecam構造定義を共有します。古いJSONの読み取り用に
-`native_speed_builder` / `native_freecam`からのフォールバックを残しています。
+`native_motion`も姿勢更新の構造定義を共有します。JSONは機能別のセクションだけを持ち、
+旧Mod名のセクションは廃止しました。旧キャッシュを取得したサンプルは、EXEの一致確認を
+行ったうえで新しい埋め込み定義に切り替えます。
 
 新しいゲーム版では、対応するプロファイルとエントリガード・ABIを確認して追加します。
 JSONだけで吸収できないABI・EnTT・HitResult形状変更はアダプター更新が必要です。

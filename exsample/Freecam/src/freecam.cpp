@@ -652,23 +652,23 @@ void* checkedFunction(const nlohmann::json& j){
     return const_cast<std::byte*>(ptr);
 }
 void prepareProfile(const std::string& profile){
-    const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
+    const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
     if(f.at("schema")!=1||f.at("pointer_size")!=8)throw std::runtime_error("unsupported Freecam layout");
     hurtHash=number(f.at("hurt_time_component_hash"));hurtOffset=number(f.at("hurt_time_value_offset"));
     if(hurtOffset>4096||f.at("hurt_time_value_size")!=4)throw std::runtime_error("invalid camera/hurt layout");
     const auto& visual=f.at("visual");
     if(visual.at("schema")!=1||visual.at("spectator_mode_behavior")!="native_spectator_culler_mode5")
         throw std::runtime_error("unsupported view-only spectator profile");
-    const auto& b=f.at("borion");
+    const auto& b=j.at("native_packets").at("sender");
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
-    statePositionOffset=number(b.at("state_position_offset"));statePreviousOffset=motionLayout.previous;
+    statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
     senderOffset=number(b.at("client_packet_sender_offset"));sendSlot=number(b.at("sender_send_to_server_slot"));packetIdSlot=number(b.at("packet_id_slot"));
     if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||senderOffset!=0x1d0||sendSlot!=4||packetIdSlot!=1)
         throw std::runtime_error("unsupported Borion native layout");
     checkedFunction(b.at("packet_sender_getter"));
     const auto packetBase=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    const auto& motion=b.at("packet_motion");
+    const auto& motion=j.at("native_packets").at("motion");
     if(motion.at("schema")!=1)throw std::runtime_error("unsupported packet motion schema");
     const auto loadPacket=[&](const nlohmann::json& data,MotionPacketLayout& layout,bool auth){
         layout.vtable=packetBase+number(data.at("vtable_rva"));layout.position=number(data.at("position_offset"));
@@ -794,14 +794,14 @@ DWORD WINAPI start(void*){
         // An old downloaded exact-build profile can lack a new native section.
         // Embedded fallback is attached and fingerprint-checked by Resolver below.
         const auto cached=nlohmann::json::parse(profile);
-        if(!cached.contains("native_freecam")||!cached.at("native_freecam").contains("borion")||
-           !cached.at("native_freecam").at("borion").contains("packet_motion")||
-           !cached.at("native_freecam").contains("visual")||
-           cached.at("native_freecam").at("visual").value("revision",0)<9)
+        if(!cached.contains("native_camera")||!cached.contains("native_motion")||!cached.contains("native_packets")||
+           !cached.at("native_packets").contains("motion")||
+           !cached.at("native_camera").contains("visual")||
+           cached.at("native_camera").at("visual").value("revision",0)<9)
             profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;
         if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_freecam");
+        prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
         // Include selection/load errors even when an old owner's capabilities
         // stop startup before the normal ready message.
         log(BDS_HookRuntimeDiagnostic());

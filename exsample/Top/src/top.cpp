@@ -179,7 +179,9 @@ DWORD WINAPI start(void*){
     status.store(1);
     try{const auto dir=directory();std::filesystem::create_directories(dir);loadConfig(dir);std::string error;
         std::string profile;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_client_commands")||!nlohmann::json::parse(profile).contains("native_world")||!nlohmann::json::parse(profile).contains("native_top")||nlohmann::json::parse(profile).at("native_top").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
+        const auto metadata=nlohmann::json::parse(profile);
+        if(!metadata.contains("native_client_commands")||!metadata.contains("native_world")||!metadata.contains("native_gui")||
+           !metadata.contains("native_motion")||!metadata.contains("native_packets"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         bindings.loadTop(profile);commands.add("top",execute);
         if(!nativeCommands.add("top","安全な上方移動 / safe upward teleport",{"blocks",true},onNativeCommand))

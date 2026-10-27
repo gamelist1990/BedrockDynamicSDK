@@ -459,7 +459,9 @@ DWORD WINAPI start(void*){
             auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
                 std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
         std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_world")||!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
+        const auto metadata=nlohmann::json::parse(profile);
+        if(!metadata.contains("native_world")||metadata.at("native_world").value("revision",0)<3||
+           !metadata.contains("native_packets")||!metadata.at("native_packets").contains("title"))profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         bindings.load(profile);reader.states.reserve(4096);reader.names.reserve(512);
         if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");

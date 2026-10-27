@@ -13,14 +13,14 @@ struct Bindings : n::Bindings {
     void* messageFn{};std::uintptr_t commandVtable{};std::size_t commandOffset{},guiOffset{};
     void loadTop(const std::string& profile){
         loadWorld(profile);
-        const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_top");
+        const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_gui");const auto& packet=j.at("native_packets").at("command_request");const auto& heights=j.at("native_world").at("height_limits");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+n::number(j.at("target").at("text_rva"));textEnd=textBegin+n::number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
         const auto motion=bedrock::native_motion::Layout::fromProfile(profile);
         previousOffset=motion.previous;velocityOffset=motion.velocity;fallHash=motion.fallHash;fallOffset=motion.fall;
-        minHeightOffset=n::number(t.at("min_height_offset"));maxHeightOffset=n::number(t.at("max_height_offset"));
-        messageFn=checked(t.at("display_message"));commandVtable=base+n::number(t.at("command_vtable_rva"));
-        commandOffset=n::number(t.at("command_offset"));guiOffset=n::number(t.at("gui_offset"));checked(t.at("command_get_id"));checked(t.at("gui_getter"));
+        minHeightOffset=n::number(heights.at("min_height_offset"));maxHeightOffset=n::number(heights.at("max_height_offset"));
+        messageFn=checked(t.at("display_message"));commandVtable=base+n::number(packet.at("vtable_rva"));
+        commandOffset=n::number(packet.at("command_offset"));guiOffset=n::number(t.at("client_gui_offset"));checked(packet.at("get_id"));checked(t.at("get_gui"));
     }
     bool message(void* client,const std::string& text,const std::optional<std::string>& filtered,const std::string& tts)const noexcept{
         void* gui{};void* owner{};void* life{};unsigned char alive{};
