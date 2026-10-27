@@ -1,20 +1,15 @@
 name: API documentation
 on:
   push:
-    paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
+    branches: ["main"]
   pull_request:
     paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Deploy to GitHub Pages (configure Settings > Pages > GitHub Actions first)'
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
-  group: api-documentation-${{ github.ref }}
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 jobs:
   cpp-examples:
     runs-on: windows-2025
@@ -40,7 +35,7 @@ jobs:
         with:
           path: _site
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [build, cpp-examples]
     runs-on: ubuntu-latest
     permissions:
@@ -53,4 +48,4 @@ jobs:
       - uses: actions/configure-pages@v5
       - name: Deploy API documentation
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

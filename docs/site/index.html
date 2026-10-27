@@ -204,7 +204,7 @@ const auto frame = rig.update(yaw,
 <p>JSONで表せるRVA・オフセット差はSDKアダプターで吸収します。引数の渡し方・native構造サイズ・EnTT ABIが変化した場合は、その形に対応するアダプターが必要です。ModへRVAを追加する代わりにSDK側を更新する方針ですが、全将来版のバイナリ互換を保証するものではありません。</p>
 </section>
 <section id="publishing" data-title="GitHub Pages HTML 公開 デプロイ">
-<p class="eyebrow">STATIC & PORTABLE</p><h2>GitHub Pagesで公開</h2><p>このサイトは <code>docs/site</code> 内のHTML・CSS・JavaScriptだけで動作します。外部CDN・Node・生成サービスは不要です。相対リンクなのでGitHub Pagesのリポジトリ配下でも使用できます。</p><ol><li>GitHubのSettings → PagesでSourceをGitHub Actionsに設定。</li><li>mainの「API documentation」workflowを実行し、publishを有効にします。通常のpushではサイトとC++例をビルドし、公開は手動実行に限定します。</li><li>成功したdeployジョブのURLを開く。</li></ol><p><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">GitHub公式：カスタムworkflowによるPages公開 ↗</a></p></section>
+<p class="eyebrow">STATIC & PORTABLE</p><h2>GitHub Pagesで公開</h2><p>このサイトは <code>docs/site</code> 内のHTML・CSS・JavaScriptだけで動作します。外部CDN・Node・生成サービスは不要です。相対リンクなのでGitHub Pagesのリポジトリ配下でも使用できます。</p><ol><li>GitHubのSettings → PagesでSourceをGitHub Actionsに設定。</li><li>mainへpushすると「API documentation」workflowがサイトとC++例をビルドし、成功後に自動公開します。Actionsからの手動実行にも対応しています。</li><li>成功したdeployジョブのURLを開く。</li></ol><p><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">GitHub公式：カスタムworkflowによるPages公開 ↗</a></p></section>
 <p id="no-results" hidden role="status">一致する項目がありません。別のキーワードで検索してください。</p>
 <footer>BedrockDynamicSDK <span>Typed APIs · versioned native adapters</span></footer>
 </main></div>
