@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <bedrock/game_api.hpp>
 #include <bedrock/native_actors.hpp>
 #include <bedrock/native_items.hpp>
 #include <entt/entt.hpp>
