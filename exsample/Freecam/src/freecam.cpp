@@ -7,6 +7,9 @@
 #include <shlobj.h>
 #include <bedrock/game_api.hpp>
 #include <bedrock/native_motion.hpp>
+#include <bedrock/native_brightness.hpp>
+#include <bedrock/native_camera.hpp>
+#include <bedrock/native_game_type.hpp>
 #include <bedrock/game_hooks.hpp>
 #include <bedrock/generated_symbols.hpp>
 #include <bedrock/native_actors.hpp>
@@ -52,7 +55,7 @@ bedrock::NativeActorLayout actors;bedrock::NativeItemLayout items;bedrock::World
 std::size_t hurtOffset{};std::uint32_t hurtHash{};
 BDS_HookToken localToken{},renderToken{};
 using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
-using GammaFn=float(__fastcall*)(void*);GammaFn originalGamma{};
+bedrock::NativeBrightness brightness;bedrock::NativeCamera nativeCamera;bedrock::NativeGameType gameTypes;
 using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn originalCameraRender{};
 BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
 using CreateViewFn=void*(__fastcall*)(void*,void*,void*,unsigned char);CreateViewFn originalCreateView{};
@@ -63,7 +66,7 @@ std::array<std::uintptr_t,2> effectTables{},effectCallers{};
 std::atomic<unsigned> effectCalls{},effectEligible{},effectSkipped{},effectOtherCaller{};
 std::atomic<std::uintptr_t> effectLastCaller{};
 std::atomic<unsigned> cameraRenderCalls{},viewCreated{},viewChanged{},viewWriteFailed{};
-BDS_HookToken gammaToken{};
+
 // All culler ownership bookkeeping below belongs to the native render callback.
 // Workers only read atomic diagnostics; they never access camera/culler pointers.
 using SetCullerFn=void(__fastcall*)(void*,unsigned char);
@@ -84,10 +87,7 @@ void resetCullerBudgetLocked(){const auto serial=flightSerial.load();if(serial!=
 void recordCullerSwitchLocked(){terrainChanges.fetch_add(1,std::memory_order_relaxed);if(++budgetSwitches>=8)terrainRejected.store(true);}
 
 std::atomic<bool> gammaReady{};
-float __fastcall gammaDetour(void* options){
-    const float value=originalGamma(options);
-    return active.load()&&!stop.load()&&config.load()->fullBright?25.f:value;
-}
+
 std::mutex mailboxMutex,logMutex;Capture mailbox{};bool mailboxReady{};
 std::atomic<std::shared_ptr<const Mesh>> mesh;
 std::ofstream logFile;
@@ -256,8 +256,8 @@ void updateTerrainCulling(void* renderer){
         }
     }else terrainPending.store(false,std::memory_order_relaxed);
 }
-void disable(unsigned reason=Disabled){restoreRequested.store(true);desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
-void reset(){disable(World);epoch.fetch_add(1);local.store(nullptr);for(auto& key:keys)key.store(false);}
+void disable(unsigned reason=Disabled){brightness.reset();restoreRequested.store(true);desired.store(false);active.store(false);mesh.store(nullptr);note(reason);}
+void reset(){disable(World);nativeCamera.reset();gameTypes.reset();epoch.fetch_add(1);local.store(nullptr);for(auto& key:keys)key.store(false);}
 void* component(void* actor,std::uint32_t hash) noexcept {
     void* registry{};std::uint32_t id{};
     if(!read(actor,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||
@@ -351,7 +351,7 @@ struct BorionState {
 };
 BorionState borion;
 bedrock::native_motion::Layout motionLayout;
-bedrock::FreeCameraRig cameraRig;
+bedrock::CameraRig cameraRig;
 std::mutex borionMutex;
 std::atomic<bool> suppressMovement{},packetReady{};
 std::atomic<void*> observedSender{};
@@ -530,13 +530,15 @@ void borionTick(const bedrock::LevelTickEvent&) {
     std::unique_lock guard(borionMutex,std::try_to_lock);if(!guard.owns_lock())return;
     observePacketSender(client.load());
     const auto c=config.load();void* player=local.load();
+    auto cameraScope=nativeCamera.tick(client.load(),bedrock::WorldEpoch{epoch.load()});
+    auto typeScope=gameTypes.tick(client.load(),bedrock::WorldEpoch{epoch.load()});
     if((c->spectatorMode||terrainLeaseActive.load())&&gameplay.load()&&player){
-        int type{};if(read(component(player,0x88d3eddf),0,type)&&type>=0&&type<=6)
-            nativeModeContext.store((epoch.load()<<8)|static_cast<std::uint64_t>(type+1));
+        if(const auto type=gameTypes.gameType())
+            nativeModeContext.store((epoch.load()<<8)|static_cast<std::uint64_t>(static_cast<int>(*type)+1));
     }
     if(c->visibilityDiagnostics&&!stop.load()){
         static Clock::time_point next{};const auto now=Clock::now();if(now>=next){next=now+std::chrono::milliseconds(500);
-            int type=-1;if(gameplay.load()&&player){int candidate{};if(read(component(player,0x88d3eddf),0,candidate)&&candidate>=0&&candidate<=6)type=candidate;}
+            int type=-1;if(gameplay.load()&&player){if(const auto current=gameTypes.gameType())type=static_cast<int>(*current);}
             diagnosticGameType.store(type);diagnosticGameTime.store(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());diagnosticGameEpoch.store(epoch.load());
         }
     }
@@ -547,16 +549,10 @@ void borionTick(const bedrock::LevelTickEvent&) {
     if(!borion.saved)restoreRequested.store(false);
     if(stop.load()||!desired.load()||!gameplay.load()||!c->enabled||!player)return;
     if(!packetReady.load()||!movementPacketsSeen.load()){note(Waiting);return;}
-    auto* state=component(player,actors.stateVectorComponentHash);
-    auto* shape=component(player,actors.aabbShapeComponentHash);auto* fall=component(player,fallHash);
-    auto* rotation=component(player,actors.actorRotationComponentHash);
-    Vec position{},previous{},velocity{};bedrock::ActorBounds bounds{};float fallDistance{},yaw{};int hurt{};
-    if(!state||!shape||!fall||!rotation||!read(state,statePositionOffset,position)||!finite(position)||
-       !read(state,statePreviousOffset,previous)||!finite(previous)||!read(state,stateVelocityOffset,velocity)||!finite(velocity)||
-       !read(shape,actors.aabbMinimumOffset,bounds.minimum)||!read(shape,actors.aabbMaximumOffset,bounds.maximum)||
-       !read(fall,fallOffset,fallDistance)||!std::isfinite(fallDistance)||
-       !read(rotation,actors.rotationYawOffset,yaw)||!std::isfinite(yaw)||
-       (c->disableOnDamage&&!hurtTime(player,hurt))) {disable(ReadFailed);restoreBorionLocked();return;}
+    const auto pose=nativeCamera.readPlayerProxy();int hurt{};
+    if(!cameraScope||!pose||(c->disableOnDamage&&!hurtTime(player,hurt))){disable(ReadFailed);restoreBorionLocked();return;}
+    const auto position=pose->position,previous=pose->previous,velocity=pose->velocity;
+    const auto bounds=pose->bounds;const float fallDistance=pose->fallDistance,yaw=pose->rotation.yaw;
     if(c->disableOnDamage&&hurt>0){disable(Damage);restoreBorionLocked();return;}
     if(!borion.saved) {
         const auto runtime=actorRuntime(player);if(!runtime||!bounds.valid()) {disable(ReadFailed);return;}
@@ -573,15 +569,13 @@ void borionTick(const bedrock::LevelTickEvent&) {
     const auto down=[](unsigned key){return keys[key].load()?1.f:0.f;};
     const float forward=down(c->forward)-down(c->back),side=down(c->right)-down(c->left);
     const float speed=c->speed/20.f*(keys[c->fast].load()?c->fastMultiplier:1.f);
-    const Vec old=borion.position;
-    const auto cameraFrame=cameraRig.update(yaw,{forward,side,down(c->up)-down(c->down)},
-        {speed,.5f},borion.runtime,epoch.load());
+    if(c->fullBright)brightness.fullBright();else brightness.reset();
+    const auto cameraFrame=cameraRig.advance(bedrock::Yaw{yaw},{forward,side,down(c->up)-down(c->down)},
+        {speed*20.f,10.f},std::chrono::duration<float>{.05f},borion.runtime,epoch.load());
     if(!cameraFrame){disable(ReadFailed);restoreBorionLocked();return;}
     borion.position=cameraFrame->position;
     if(!finite(borion.position)){disable(ReadFailed);restoreBorionLocked();return;}
-    const auto movedBounds=cameraFrame->bounds;
-    const bedrock::native_motion::Snapshot next{borion.position,old,Vec{},movedBounds,0.f};
-    if(!bedrock::native_motion::apply(player,actors,motionLayout,component,next)) {
+    if(nativeCamera.applyPlayerProxy(*cameraFrame,borion.runtime,bedrock::WorldEpoch{epoch.load()})!=bedrock::CameraChange::Applied) {
         disable(ReadFailed);restoreBorionLocked();return;
     }
     if(c->playerHitboxes){Capture batch;batch.epoch=epoch.load();batch.origin=borion.position;
@@ -795,7 +789,7 @@ DWORD WINAPI start(void*){
             bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldRender,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
-            try{prepareProfile(selected.json());return true;}catch(const std::exception& e){failure=e.what();return false;}
+            try{prepareProfile(selected.json());return nativeCamera.load(selected,failure)&&gameTypes.load(selected,failure);}catch(const std::exception& e){failure=e.what();return false;}
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
@@ -813,9 +807,9 @@ DWORD WINAPI start(void*){
         begin=reinterpret_cast<BeginFn>(functions[1]);vertex=reinterpret_cast<VertexFn>(functions[2]);submit=reinterpret_cast<MeshFn>(functions[4]);
         nameCtor=reinterpret_cast<NameCtor>(functions[5]);materialCtor=reinterpret_cast<MaterialCtor>(functions[6]);materialGroup=reinterpret_cast<void*>(base+render.commonMaterialGroup);
         try {
-            void* gammaTarget=checkedFunction(f.at("visual").at("gamma"));
-            gammaReady.store(BDS_HookDirectInstall(gammaTarget,reinterpret_cast<void*>(&gammaDetour),reinterpret_cast<void**>(&originalGamma),&gammaToken)!=0);
-            log(gammaReady.load()?"Freecam full brightness hook ready [gamma 25 only while active]":"Freecam full brightness unavailable: gamma hook conflict");
+            if(!brightness.load(*selected,error)||!brightness.install(error))throw std::runtime_error(error);
+            gammaReady.store(true);
+            log("SDK brightness API ready [owner-scoped gamma override]");
         } catch(const std::exception& e){log(std::string("Freecam full brightness unavailable: ")+e.what());}
         try {
             const auto& culling=f.at("visual").at("terrain_culling");

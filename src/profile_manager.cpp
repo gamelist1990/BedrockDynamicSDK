@@ -18,7 +18,7 @@ FeaturePath path(Feature f){
     case Feature::PlayerIdentity:return {"native_player_identity",nullptr};
     case Feature::World:return {"native_world",nullptr};
     case Feature::Motion:return {"native_motion","state_vector"};
-    case Feature::Camera:return {"native_camera","visual"};
+    case Feature::Camera:case Feature::Brightness:case Feature::GameType:return {"native_camera","visual"};
     case Feature::PacketSender:return {"native_packets","sender"};
     case Feature::MovementPackets:return {"native_packets","motion"};
     case Feature::TitlePackets:return {"native_packets","title"};
@@ -43,7 +43,7 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
         auto expanded=requirements;
         for(const auto f:requirements.features()){
             if(f==Feature::World){expanded.require(Feature::Actors).require(Feature::Items);}
-            if(f==Feature::Motion||f==Feature::Camera)expanded.require(Feature::Actors);
+            if(f==Feature::Motion||f==Feature::Camera||f==Feature::GameType)expanded.require(Feature::Actors);
         }
         for(const auto f:expanded.features()){
             const auto p=path(f);

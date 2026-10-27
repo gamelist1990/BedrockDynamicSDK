@@ -1031,7 +1031,19 @@
       "evidence": [
         "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; reference client Options_getGamma signature and Fullbright(25) corroborate meaning"
       ],
-      "notes": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator detached camera returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes."
+      "notes": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator detached camera returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes.",
+      "set_player_game_type": {
+        "rva": "0x1E1570",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 06 00 00 48 8D AC 24 80 00 00 00 48 C7 85 80 05",
+        "abi": "void __fastcall(Player*, int)",
+        "status": "candidate",
+        "runtime_verified": false,
+        "abi_verified": false,
+        "required_component_hash": "0x68B75D48",
+        "player_level_offset": "0x1D8",
+        "scope": "local Player game-mode core setter; does not grant server authority",
+        "source": "Exact 1.26.52.3 .pdata range 0x1E1570-0x1E1B0A; Player::_setPlayerGameType candidate. RCX Player and EDX int checked in PE assembly. Reads ActorGameTypeComponent, replaces Player+0xAA0 GameMode, calls 0x2096F0 to update game type and layered abilities; handles default5/spectator6. REA ev_ffd7bbccb01e8ba335eedcab861753f22d5a4ab2ffc988ff9e25aae6db144bdb and ev_3f502740423ae916ab45e21e355d2e6b68a16a2a7111cf3002659742ffec8d3c. Raw Ghidra import uses gcc convention; Windows ABI conclusion uses register-level PE assembly. Runtime pending."
+      }
     },
     "evidence": "docs/native-profile-layout.md; exact EXE reference client _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation."
   },

@@ -43,7 +43,8 @@ add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
 option(BEDROCK_SDK_BUILD_DOC_EXAMPLES "Compile documentation examples without executing them" OFF)
 if(BEDROCK_SDK_BUILD_DOC_EXAMPLES)
     add_library(bedrock_doc_examples OBJECT
-        docs/site/examples/typed_command.cpp docs/site/examples/world_options.cpp)
+        docs/site/examples/typed_command.cpp docs/site/examples/world_options.cpp
+        docs/site/examples/camera_options.cpp)
     target_link_libraries(bedrock_doc_examples PRIVATE bedrock::sdk)
     if(WIN32 AND MSVC AND BEDROCK_SDK_ENABLE_NATIVE_WORLD)
         target_sources(bedrock_doc_examples PRIVATE docs/site/examples/native_bootstrap.cpp)
