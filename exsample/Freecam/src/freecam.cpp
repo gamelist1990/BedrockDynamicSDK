@@ -13,6 +13,7 @@
 #include <bedrock/native_items.hpp>
 #include <bedrock/native_world_render.hpp>
 #include <bedrock/remote_catalog.hpp>
+#include <bedrock/profile_manager.hpp>
 #include <entt/entt.hpp>
 #include "freecam/config.hpp"
 #include <array>
@@ -789,19 +790,15 @@ DWORD WINAPI start(void*){
         const auto dir=directory();std::filesystem::create_directories(dir);logFile.open(dir/L"Freecam.log",std::ios::trunc);
         const auto path=dir/L"config.json";if(!std::filesystem::exists(path)){std::ofstream out(path);out<<freecam::configJson(freecam::Config{}).dump(2)<<'\n';}
         if(!loadConfig(path))throw std::runtime_error("initial config invalid");
-        std::string profile,error;bedrock::ProfileChoice choice;
-        if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        // An old downloaded exact-build profile can lack a new native section.
-        // Embedded fallback is attached and fingerprint-checked by Resolver below.
-        const auto cached=nlohmann::json::parse(profile);
-        if(!cached.contains("native_camera")||!cached.contains("native_motion")||!cached.contains("native_packets")||
-           !cached.at("native_packets").contains("motion")||
-           !cached.at("native_camera").contains("visual")||
-           cached.at("native_camera").at("visual").value("revision",0)<9)
-            profile=bedrock::generated::kSymbolDatabase;
-        bedrock::Resolver resolver;
-        if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        prepareProfile(profile);const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
+        std::string error;bedrock::ProfileManager profiles;
+        const bedrock::ProfileRequirements required{bedrock::Feature::Camera,bedrock::Feature::Motion,bedrock::Feature::Items,
+            bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldRender,bedrock::Feature::WorldEvents};
+        const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
+        if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
+            try{prepareProfile(selected.json());return true;}catch(const std::exception& e){failure=e.what();return false;}
+        },error))throw std::runtime_error(error);
+        const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
+        const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
         // Include selection/load errors even when an old owner's capabilities
         // stop startup before the normal ready message.
         log(BDS_HookRuntimeDiagnostic());

@@ -30,7 +30,7 @@ endif()
 
 
 
-add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp src/native_keyboard.cpp src/native_items.cpp src/native_actors.cpp src/native_world_events.cpp)
+add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp src/profile_manager.cpp src/native_keyboard.cpp src/native_items.cpp src/native_actors.cpp src/native_world_events.cpp)
 if(NOT PROJECT_IS_TOP_LEVEL)
     set_target_properties(bedrock_resolver PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
@@ -39,6 +39,18 @@ target_compile_features(bedrock_resolver PUBLIC cxx_std_20)
 target_link_libraries(bedrock_resolver PUBLIC bedrock::game_api)
 add_library(bedrock::symbols ALIAS bedrock_resolver)
 add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
+
+option(BEDROCK_SDK_BUILD_DOC_EXAMPLES "Compile documentation examples without executing them" OFF)
+if(BEDROCK_SDK_BUILD_DOC_EXAMPLES)
+    add_library(bedrock_doc_examples OBJECT
+        docs/site/examples/typed_command.cpp docs/site/examples/world_options.cpp)
+    target_link_libraries(bedrock_doc_examples PRIVATE bedrock::sdk)
+    if(WIN32 AND MSVC AND BEDROCK_SDK_ENABLE_NATIVE_WORLD)
+        target_sources(bedrock_doc_examples PRIVATE docs/site/examples/native_bootstrap.cpp)
+        target_link_libraries(bedrock_doc_examples PRIVATE EnTT::EnTT)
+    endif()
+endif()
+
 
 # Opt-in header adapter for world/block operations. EnTT must match the exact
 # layout consumed by the versioned adapter; ordinary SDK users do not fetch it.

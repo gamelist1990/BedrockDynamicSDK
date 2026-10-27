@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="BedrockDynamicSDKの型付きC++20 API。コマンドBuilder、World、Actor、イベント、GitHubプロファイル更新のガイドと使用例。">
+<title>BedrockDynamicSDK — API Guide</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">本文へ</a>
+<aside class="sidebar">
+<a class="brand" href="#overview"><span class="brand-mark">B</span><span>Bedrock<span class="brand-sub">Dynamic SDK</span></span></a>
+<div class="version">C++20 <span>Windows x64</span></div>
+<label class="search-label" for="search">ドキュメント内を検索</label><input id="search" type="search" placeholder="API・機能を探す…" autocomplete="off">
+<nav aria-label="ドキュメント"><a href="#overview">はじめに</a><a href="#quickstart">導入と初期化</a><a href="#types">型とエラー</a><a href="#commands">Command Builder</a><a href="#profiles">プロファイル更新</a><a href="#world">World / ブロック配置</a><a href="#actors">Actor / Player</a><a href="#events">イベントとスレッド</a><a href="#camera">Camera / Freecam</a><a href="#reference">APIリファレンス</a><a href="#migration">移行とバージョン対応</a><a href="#publishing">このドキュメントの公開</a></nav>
+<div class="sidebar-footer"><a href="https://github.com/gamelist1990/BedrockDynamicSDK">GitHub ↗</a><p>本体定義はSDKへ。<br>Modは機能の実装に集中。</p></div>
+</aside>
+<div class="content"><header class="topbar"><span>Documentation / API Guide</span><a href="examples/native_bootstrap.cpp" download>サンプルをダウンロード ↓</a></header>
+<main id="main">
+<section id="overview" data-title="はじめに SDK API 概要">
+<p class="eyebrow">BUILD ON A STABLE INTERFACE</p><h1>読みやすく、<br><span>間違えにくいAPI。</span></h1>
+<p class="lead">Minecraft Bedrockのネイティブ処理を、型付きのC++ APIから。プロファイルの選択と取得はSDKへまとめ、Modごとのバージョン依存コードを減らします。</p>
+<div class="hero-links"><a class="button" href="#quickstart">使い始める <span>→</span></a><a href="#commands">コマンドを作る ↗</a></div>
+<div class="cards"><article><span class="card-number">01 / TYPE</span><h3>型で意図を表す</h3><p>名前・引数・スロット・角度を区別。暗黙の変換や引数の取り違えを防ぎます。</p></article><article><span class="card-number">02 / PROFILE</span><h3>更新処理を一箇所へ</h3><p>EXE指紋、キャッシュ、GitHub、埋め込み定義をProfileManagerが扱います。</p></article><article><span class="card-number">03 / LIFETIME</span><h3>実行場所を明確に</h3><p>native操作は所有tickで。workerへはコピー済みの値を渡します。</p></article></div>
+<div class="note"><strong>対応範囲</strong> 同じABIを使うゲーム版はプロファイル追加で対応しやすくなります。ABI・EnTT・構造の形が変わる場合はSDK側の更新とModの再ビルドが必要です。未知の版を自動で安全と判定する仕組みではありません。</div>
+</section>
+<section id="quickstart" data-title="導入 CMake 初期化 RuntimeProfile ProfileManager">
+<p class="eyebrow">GET STARTED</p><h2>導入と初期化</h2><p>Windows x64 / MSVC Release / C++20がnativeアダプターの対象です。Worldを使う場合は、SDKのFetchContent取り込み前にオプションを指定します。</p>
+<pre><code>set(BEDROCK_SDK_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BEDROCK_SDK_ENABLE_NATIVE_WORLD ON CACHE BOOL "" FORCE)
+FetchContent_Declare(bedrock_sdk
+    GIT_REPOSITORY https://github.com/gamelist1990/BedrockDynamicSDK.git
+    GIT_TAG main)
+FetchContent_MakeAvailable(bedrock_sdk)
+target_link_libraries(MyMod PRIVATE bedrock::world)</code></pre>
+<p>コマンド登録・ProfileManagerだけなら <code>bedrock::sdk</code> をリンクします。EnTTは不要です。再現可能な配布ビルドでは、<code>GIT_TAG</code>を検証したコミットに固定してください。</p>
+<pre><code>#include &lt;bedrock/profile_manager.hpp&gt;
+#include &lt;bedrock/native_world.hpp&gt;
+
+bedrock::ProfileManager profiles;
+bedrock::NativeWorld world;
+std::string error;
+const bedrock::ProfileOptions options{
+    bedrock::UpdatePolicy::RefreshIfNeeded,
+    bedrock::CandidatePolicy::AllowCandidates
+};
+const bool ready = profiles.prepare(
+    {bedrock::Feature::World}, options,
+    [&amp;](const bedrock::RuntimeProfile&amp; selected, std::string&amp; failure) {
+        return world.load(selected, failure);
+    }, error);
+if (!ready) { /* errorをログへ。機能を有効にしない */ }</code></pre>
+<p><code>prepare</code> はHook設置前の初期化処理です。ネットワーク取得やEXEの確認があるため、描画・tick・native読み取りHookから呼ばないでください。<a href="examples/native_bootstrap.cpp">イベント接続まで含むサンプル →</a></p>
+</section>
+<section id="types" data-title="型 エラー CommandName ArgumentName BlockIdentifier HotbarIndex Yaw Pitch Reach ReadPolicy">
+<p class="eyebrow">EXPLICIT BY DESIGN</p><h2>型とエラー</h2><p>新しい入口では、文字列・数値・boolの並びを用途ごとの型へ置き換えています。これらの型への暗黙変換はありません。</p>
+<div class="table-wrap"><table><thead><tr><th>型</th><th>意味 / 制約</th><th>例</th></tr></thead><tbody>
+<tr><td>CommandName</td><td>1〜64バイト、小文字英数字・_・-、/なし</td><td><code>CommandName{"top"}</code></td></tr>
+<tr><td>ArgumentName</td><td>1〜15バイト、同じASCII文字種</td><td><code>ArgumentName{"blocks"}</code></td></tr>
+<tr><td>CommandDescription</td><td>1024バイト以下、NULなし</td><td><code>CommandDescription{"説明"}</code></td></tr>
+<tr><td>BlockIdentifier</td><td>namespace:path、小文字ASCII</td><td><code>BlockIdentifier{"minecraft:stone"}</code></td></tr>
+<tr><td>HotbarIndex</td><td>0〜8。既存HotbarSlotはアイテムの値型</td><td><code>HotbarIndex{0}</code></td></tr>
+<tr><td>Yaw / Pitch</td><td>有限の度数。Pitchは−90〜90</td><td><code>Yaw{90.f}, Pitch{0.f}</code></td></tr>
+<tr><td>Reach</td><td>0より大きく16以下の距離</td><td><code>Reach{4.5}</code></td></tr>
+<tr><td>WorldEpoch / TickBudget</td><td>ワールド世代 / 件数と時間の予算</td><td><code>TickBudget{64, 250us}</code></td></tr>
+<tr><td>ReadPolicy</td><td>Cached / Fresh</td><td><code>ReadPolicy::Fresh</code></td></tr>
+</tbody></table></div>
+<p>不正な値の構築は <code>std::invalid_argument</code> または <code>std::out_of_range</code>。構築は初期化時かnative境界の外で行います。native操作は結果値・エラーコードを返し、コマンドのハンドラー例外はnative境界へ伝播させません。</p>
+</section>
+<section id="commands" data-title="CommandBuilder コマンド 登録 autocomplete optionalInteger requiredInteger handles">
+<p class="eyebrow">DECLARE → ARGUMENT → HANDLER</p><h2>Command Builder</h2><p>名前・説明・引数・ハンドラーを順に指定します。引数定義とハンドラーが揃うまでは登録可能な <code>CommandDefinition</code> ができません。</p>
+<pre><code>#include &lt;bedrock/native_client_commands.hpp&gt;
+
+bedrock::NativeClientCommands commands;
+auto top = bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+    .description(bedrock::CommandDescription{"安全な上方移動"})
+    .optionalInteger(bedrock::ArgumentName{"blocks"})
+    .handles([](std::optional&lt;int&gt; blocks) -&gt; bedrock::CommandDecision {
+        // /top → nullopt、/top 3 → 3
+        // コピーした値を自分のtick用キューへ渡す。
+        return bedrock::CommandDecision::Accepted;
+    });
+const bool added = commands.add(std::move(top));</code></pre>
+<p>上のハンドラーは型を示す最小例です。実際の処理では、キューに受付できた時だけAcceptedを返してください。必須引数なら <code>.requiredInteger(...)</code> と <code>(int value) -&gt; CommandDecision</code> を組み合わせます。</p>
+<pre><code>const bool ready = profiles.prepare(
+    {bedrock::Feature::ClientCommands}, options,
+    [&amp;](const bedrock::RuntimeProfile&amp; selected, std::string&amp; failure) {
+        return commands.load(selected, failure);
+    }, error);
+
+// owning clientのLevelTickで、20tick程度の間隔で呼ぶ
+const auto registration = commands.update(clientInstance);
+// ワールド変更イベント時
+commands.reset();</code></pre>
+<div class="note"><strong>現在のnativeアダプター</strong> 整数引数1個に対応。文字列・enum・複数引数・引数なし専用overloadは未対応です。同名コマンドを上書きせず、1 DLLあたり最大32定義。nativeの参照が残るためDLLはpinされます。</div>
+<p>コマンド受付は <code>CommandDecision::Accepted / Rejected</code>。登録結果は <code>unavailable / waiting / unchanged / registered / collision / failed</code>。文字列を振り分ける旧 <code>ClientCommands</code> は本体の候補登録を行いません。</p>
+<a class="download-link" href="examples/typed_command.cpp">型付きコマンド例のソース →</a>
+</section>
+<section id="profiles" data-title="GitHub windows-x64.json manifest refresh 自動更新 ProfileManager Feature 要件 キャッシュ">
+<p class="eyebrow">ONE OWNER FOR VERSION DATA</p><h2>プロファイルの取得と更新</h2>
+<ol class="steps"><li><strong>ロード中のEXEを識別</strong><span>バージョン名だけに依存せず、ファイルまたはmapped .textのSHA-256とPE形状を確認。</span></li><li><strong>必要な機能を確認</strong><span>Feature、スキーマ、レイアウトのrevision、candidate利用方針を照合。</span></li><li><strong>アダプターを初期化</strong><span>必要なエントリガード・vtable・ABI形状を確認してからHook設置へ。</span></li><li><strong>不足時にGitHubへ再照会</strong><span>manifestとwindows-x64.jsonを再取得。失敗時は一致する埋め込み定義を確認。</span></li></ol>
+<pre><code>const bedrock::ProfileRequirements required{
+    bedrock::Feature::World,
+    bedrock::Feature::Motion,
+    bedrock::Feature::ClientCommands,
+    bedrock::Feature::WorldEvents
+};
+const auto selected = profiles.snapshot();
+// 読み取り専用スナップショット。選択後に使用。
+const bedrock::Resolver&amp; resolver = selected-&gt;resolver();
+const bedrock::ProfileSource source = selected-&gt;choice().source;</code></pre>
+<div class="table-wrap"><table><thead><tr><th>UpdatePolicy</th><th>動作</th></tr></thead><tbody><tr><td>CacheFirst</td><td>通常のSDK選択。キャッシュ・埋め込みを優先し、必要ならネットワーク。機能不足による強制再照会はしない。</td></tr><tr><td>RefreshIfNeeded</td><td>アダプターの初期化や必要定義の確認に失敗した場合、GitHubへ再照会する。</td></tr><tr><td>ForceRemote</td><td>最初から再照会経路を使う。既存の同時取得抑制・24時間制限は適用される。</td></tr></tbody></table></div>
+<p>取得先は既存SDKのGitHubカタログに固定。HTTPS、リダイレクト制限、manifestのJSONチェックサム、EXE指紋、PE形状の確認を維持します。更新対象はデータです。稼働中のHookを背景で書き換えず、新しい定義は初期化時に適用します。単なる「最新バージョン」のプロファイルを別ビルドへ流用しません。</p>
+<p><code>CandidatePolicy::VerifiedOnly</code> が既定です。候補のnative機能を利用するModは <code>AllowCandidates</code> を明示します。<code>supports</code> は必要なメタデータの存在確認であり、実機動作の確認ではありません。</p>
+</section>
+<section id="world" data-title="World getBlock setBlock placeBlock BlockSetBuilder ホットバー 状態 角度">
+<p class="eyebrow">READ & PLACE</p><h2>Worldとブロック配置</h2>
+<pre><code>const bedrock::BlockPos target{10, 65, 20};
+const bedrock::BlockResult block = world.getBlock(target, bedrock::ReadPolicy::Fresh);
+if (block) {
+    // block.block.identifier / properties / kind
+}
+const bedrock::BlockSetOptions placement = bedrock::BlockSetBuilder{}
+    .slot(bedrock::HotbarIndex{0})
+    .orientation(bedrock::Yaw{90.f}, bedrock::Pitch{0.f})
+    .reach(bedrock::Reach{4.5})
+    .build();
+const bedrock::PlacementResult result = world.setBlock(
+    target, bedrock::BlockIdentifier{"minecraft:stone"}, placement);</code></pre>
+<p><code>World</code>ファサードと <code>NativeWorld</code>の両方で型付き呼び出しを使えます。WorldファサードはGameAccessアダプターがブロック機能を提供する必要があります。標準の未実装アダプターはunsupportedを返します。</p>
+<pre><code>// NativeWorldを使用する場合、ローカルclientのLevelTick内だけで有効化
+using namespace std::chrono_literals;
+auto scope = world.tick(clientInstance, event.level,
+    bedrock::WorldEpoch{game.worldEpoch()}, bedrock::TickBudget{64, 250us});
+if (!scope) return;
+// このスコープ内でgetBlock / setBlockを呼ぶ</code></pre>
+<p><code>setBlock</code>はホットバーの実アイテムを選択して本体の配置処理を呼びます。空気への置換・既存ブロックの破壊は未対応。<code>accepted</code>はnative受付であり、サーバー確定ではありません。後続tickで状態を確認してください。接続状態・階段などの厳密な属性には <code>expect(properties)</code> を指定できます。</p>
+<p>エラー：<code>unsupported</code> / <code>wrongThread</code> / <code>staleWorld</code> / <code>budgetExceeded</code> / <code>unavailable</code> / <code>invalidRequest</code> / <code>missingItem</code> / <code>stateMismatch</code> / <code>nativeRejected</code>。</p>
+<a class="download-link" href="examples/world_options.cpp">World操作例のソース →</a>
+</section>
+<section id="actors" data-title="Actor LocalPlayer アイテム 名前 RuntimeID EntityID">
+<p class="eyebrow">ACTOR & PLAYER</p><h2>ActorとPlayer</h2>
+<pre><code>const bedrock::LocalPlayer player = game.localPlayer();
+const auto position = player.getPosition();
+const auto runtimeId = player.getRuntimeId();
+const bedrock::World currentWorld = player.getWorld();
+for (const bedrock::Actor&amp; actor : currentWorld.getActors()) {
+    const std::string name = actor.getName();
+    const auto held = actor.getHeldItem();
+    // 返された値だけを別スレッドの処理に渡す
+}</code></pre>
+<p>Actorのハンドル・RuntimeID・EnTT EntityIDは別物です。ワールド変更時に照合をやり直し、同じIDを別ワールドの同一人物と断定しないでください。nativeアクセスはGameAccess実装が担当します。API名を使っただけで全アダプターが取得能力を持つわけではありません。</p>
+</section>
+<section id="events" data-title="イベント GameHooks WorldChange LevelTick Keyboard threading worker">
+<p class="eyebrow">OWNERSHIP & THREADS</p><h2>イベントとスレッド</h2>
+<pre><code>game.Event.Enum.WorldChange.then([&amp;](const bedrock::WorldChangeEvent&amp; event) {
+    commands.reset();
+    // 自分のコピー済みキュー・ワールド固有キャッシュを失効させる
+});
+game.Event.Enum.LevelTick.then([&amp;](const bedrock::LevelTickEvent&amp; event) {
+    // 自分のキューから要求を取り出し、予算内でnative操作
+});
+const auto selected = profiles.snapshot();
+hooks = std::make_unique&lt;bedrock::GameHooks&gt;(game);
+hooks-&gt;installGameplay(selected-&gt;resolver(), error);
+hooks-&gt;installLevelTick(selected-&gt;resolver(), error);
+hooks-&gt;installWorldEvents(selected-&gt;resolver(), selected-&gt;json(), error);</code></pre>
+<div class="table-wrap"><table><thead><tr><th>実行場所</th><th>処理</th></tr></thead><tbody><tr><td>初期化スレッド</td><td>型の構築・ProfileManager・アダプターの準備・Hook接続</td></tr><tr><td>owning clientのtick</td><td>Actor / world読取・予測・配置・位置更新</td></tr><tr><td>worker</td><td>コピーした座標・状態・文字列の比較、計画、ログ整形</td></tr><tr><td>描画callback</td><td>準備した描画データの消費。ネットワークや全Actor走査を持ち込まない</td></tr></tbody></table></div>
+<p>イベント・Hookの停止より先に捕捉したオブジェクトを破棄しないでください。時間予算は協調的で、開始済みの本体関数を途中で打ち切る保証はありません。</p>
+</section>
+<section id="camera" data-title="Camera FreeCameraRig moveCamera interpolation native_motion">
+<p class="eyebrow">CAMERA VALUES</p><h2>カメラと姿勢更新</h2>
+<pre><code>bedrock::FreeCameraRig rig;
+const bool started = rig.begin(position, bounds, runtimeId, epoch);
+const auto frame = rig.update(yaw,
+    bedrock::CameraInput{1.f, 0.f, 0.f},
+    bedrock::CameraSpeed{0.4f, 0.5f}, runtimeId, epoch);
+// frameのコピーを利用。native操作はtick側のアダプターで行う。</code></pre>
+<p><code>moveCamera</code>・<code>interpolateCamera</code>・<code>translateBounds</code>は値だけの計算です。<code>native_motion::capture/apply</code>は姿勢の読取・更新用。パケット固定、RenderDragonの視点Hook、ゲームモードの変更はRig自身の機能ではありません。</p>
+</section>
+<section id="reference" data-title="API reference include headers resolver logger GUI input">
+<p class="eyebrow">REFERENCE MAP</p><h2>ヘッダー別リファレンス</h2><div class="table-wrap"><table><thead><tr><th>ヘッダー</th><th>主な型 / 役割</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/include/bedrock/api_types.hpp">api_types.hpp ↗</a></td><td>用途別の型・CandidatePolicy・UpdatePolicy・ReadPolicy</td></tr>
+<tr><td>command_builder.hpp</td><td>CommandBuilder・IntegerCommandBuilder・CommandDefinition</td></tr>
+<tr><td>native_client_commands.hpp</td><td>NativeClientCommands、本体の候補・実行登録</td></tr>
+<tr><td>profile_manager.hpp</td><td>ProfileManager・RuntimeProfile・ProfileRequirements・Feature</td></tr>
+<tr><td>native_world.hpp / blocks.hpp</td><td>NativeWorld・BlockPos・BlockResult・BlockSetBuilder・TickBudget</td></tr>
+<tr><td>game_api.hpp / game_hooks.hpp</td><td>GameApi・GameAccess・World・Actor・LocalPlayer・GameHooks</td></tr>
+<tr><td>camera.hpp / native_motion.hpp</td><td>FreeCameraRig・CameraFrame・座標計算・native姿勢更新</td></tr>
+<tr><td>keyboard.hpp / native_keyboard.hpp</td><td>キー状態・nativeゲーム入力</td></tr>
+<tr><td>events.hpp / world_events.hpp</td><td>イベントの購読・ワールド世代</td></tr>
+<tr><td>logger.hpp / console.hpp / file_log_sink.hpp</td><td>ログ・コンソール・ファイル出力</td></tr>
+<tr><td>gui.hpp / gui_overlay.hpp / native_world_render.hpp</td><td>任意導入のGUI・ワールド描画</td></tr>
+<tr><td>remote_catalog.hpp / resolver.hpp</td><td>高度な統合向けの取得・解決プリミティブ</td></tr>
+</tbody></table></div>
+<p>関数の完全な宣言・既存APIは <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/include/bedrock">公開ヘッダー一覧</a>、実例は <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample">サンプルMod</a> を参照してください。</p>
+</section>
+<section id="migration" data-title="移行 バージョン ABI 後方互換 更新 legacy">
+<p class="eyebrow">EVOLVE THE ADAPTER</p><h2>既存コードからの移行</h2>
+<div class="table-wrap"><table><thead><tr><th>これまで</th><th>新しい入口</th></tr></thead><tbody><tr><td>add(name, description, {name, true}, handler)</td><td>CommandBuilder → 型付き引数 → handles → add(definition)</td></tr><tr><td>fetch / JSONキー確認 / refresh / embeddedを各Modへ実装</td><td>ProfileManager.prepare(requirements, options, adapter, error)</td></tr><tr><td>load(json, true, error)</td><td>load(const RuntimeProfile&amp;, error)</td></tr><tr><td>getBlock(pos, true)</td><td>getBlock(pos, ReadPolicy::Fresh)</td></tr><tr><td>setBlock(pos, "minecraft:stone", aggregate)</td><td>BlockIdentifier + BlockSetBuilder</td></tr></tbody></table></div>
+<p>旧オーバーロードは移行用に維持しています。新コードは型付き入口を使用してください。GameAccessをDLL間で共有する場合は、利用側も同じSDKで再ビルドします。BedrockHookRuntimeのC ABIをこの変更で拡張するものではありません。</p>
+<p>JSONで表せるRVA・オフセット差はSDKアダプターで吸収します。引数の渡し方・native構造サイズ・EnTT ABIが変化した場合は、その形に対応するアダプターが必要です。ModへRVAを追加する代わりにSDK側を更新する方針ですが、全将来版のバイナリ互換を保証するものではありません。</p>
+</section>
+<section id="publishing" data-title="GitHub Pages HTML 公開 デプロイ">
+<p class="eyebrow">STATIC & PORTABLE</p><h2>GitHub Pagesで公開</h2><p>このサイトは <code>docs/site</code> 内のHTML・CSS・JavaScriptだけで動作します。外部CDN・Node・生成サービスは不要です。相対リンクなのでGitHub Pagesのリポジトリ配下でも使用できます。</p><ol><li>GitHubのSettings → PagesでSourceをGitHub Actionsに設定。</li><li>mainの「API documentation」workflowを実行し、publishを有効にします。通常のpushではサイトとC++例をビルドし、公開は手動実行に限定します。</li><li>成功したdeployジョブのURLを開く。</li></ol><p><a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">GitHub公式：カスタムworkflowによるPages公開 ↗</a></p></section>
+<p id="no-results" hidden role="status">一致する項目がありません。別のキーワードで検索してください。</p>
+<footer>BedrockDynamicSDK <span>Typed APIs · versioned native adapters</span></footer>
+</main></div>
+</body></html>

@@ -51,11 +51,11 @@ bool enqueue(std::string_view line,bool fromNative){
     if(input.size()>=16){overflow.store(true);return false;}
     input.push_back({world,normalized});recentLine=normalized;recentTime=now;recentEpoch=world;recentNative=fromNative;recentPaired=false;return true;
 }
-bool onNativeCommand(const bedrock::NativeCommandInvocation& command){
+bedrock::CommandDecision onNativeCommand(std::optional<int> blocks){
     try{
-        const auto line=command.integer?"/top "+std::to_string(*command.integer):std::string("/top");
-        return enqueue(line,true);
-    }catch(...){overflow.store(true);return false;}
+        const auto line=blocks?"/top "+std::to_string(*blocks):std::string("/top");
+        return enqueue(line,true)?bedrock::CommandDecision::Accepted:bedrock::CommandDecision::Rejected;
+    }catch(...){overflow.store(true);return bedrock::CommandDecision::Rejected;}
 }
 unsigned maxRise{},levelsPerTick{8},budgetUs{500};bool enabled=true;
 void note(std::string s){std::lock_guard lock(logMutex);if(logs.size()<128)logs.push_back(std::move(s));}
@@ -178,15 +178,20 @@ DWORD WINAPI start(void*){
     HMODULE pinned{};GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&start),&pinned);
     status.store(1);
     try{const auto dir=directory();std::filesystem::create_directories(dir);loadConfig(dir);std::string error;
-        std::string profile;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        const auto metadata=nlohmann::json::parse(profile);
-        if(!metadata.contains("native_client_commands")||!metadata.contains("native_world")||!metadata.contains("native_gui")||
-           !metadata.contains("native_motion")||!metadata.contains("native_packets"))profile=bedrock::generated::kSymbolDatabase;
-        bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        bindings.loadTop(profile);commands.add("top",execute);
-        if(!nativeCommands.add("top","安全な上方移動 / safe upward teleport",{"blocks",true},onNativeCommand))
-            throw std::runtime_error("native command definition rejected");
-        if(!nativeCommands.load(profile,true,error))note("native autocomplete unavailable: "+error);
+        bedrock::ProfileManager profiles;
+        commands.add("top",execute);
+        auto definition=bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+            .description(bedrock::CommandDescription{"安全な上方移動 / safe upward teleport"})
+            .optionalInteger(bedrock::ArgumentName{"blocks"}).handles(onNativeCommand);
+        if(!nativeCommands.add(std::move(definition)))throw std::runtime_error("native command definition rejected");
+        const bedrock::ProfileRequirements required{bedrock::Feature::World,bedrock::Feature::Motion,bedrock::Feature::Gui,
+            bedrock::Feature::WorldHeight,bedrock::Feature::CommandPackets,bedrock::Feature::ClientCommands,bedrock::Feature::WorldEvents};
+        const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
+        if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
+            try{bindings.loadTop(selected.json());return nativeCommands.load(selected,failure);}
+            catch(const std::exception& e){failure=e.what();return false;}
+        },error))throw std::runtime_error(error);
+        const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){if(e.clientInstance)client.store(e.clientInstance);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& e){if(e.clientInstance)client.store(e.clientInstance);nativeCommands.reset();sender.store(nullptr);sendTarget.store(nullptr);++epoch;});
         api.Event.Enum.LevelTick.then(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);

@@ -10,6 +10,8 @@
 #endif
 #include <windows.h>
 #include <bedrock/resolver.hpp>
+#include <bedrock/command_builder.hpp>
+#include <bedrock/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #include <array>
 #include <atomic>
@@ -104,17 +106,35 @@ public:
         route->parameter=std::move(parameter);route->handler=std::move(handler);
         entries_.push_back({slot,route});command_native::routes[slot].store(std::move(route));return true;
     }
+    bool add(CommandDefinition definition){
+        const auto name=definition.name().value(),description=definition.description().value(),argument=definition.argument().value();
+        const bool optional=definition.optional();
+        return add(name,description,{argument,optional},[value=std::move(definition)](const NativeCommandInvocation& invocation){
+            return value.invoke(invocation.integer)==CommandDecision::Accepted;
+        });
+    }
+    bool load(const RuntimeProfile& profile,std::string& error){
+        ready_=false;reset();
+        if(!profile.supports({Feature::ClientCommands},error))return false;
+        return initialize(profile.json(),error);
+    }
+    bool load(const std::string& profile,CandidatePolicy policy,std::string& error){
+        return load(profile,policy==CandidatePolicy::AllowCandidates,error);
+    }
+    // Compatibility entry point. New clients use ProfileManager + RuntimeProfile.
     bool load(const std::string& profile,bool allowCandidates,std::string& error){
         ready_=false;reset();
+        if(!allowCandidates){error="native command registration requires candidate opt-in";return false;}
+        Resolver resolver;
+        if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(error)||!resolver.exactBuild())return false;
+        return initialize(profile,error);
+    }
+private:
+    bool initialize(const std::string& profile,std::string& error){
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
         error="native commands require MSVC Release STL ABI";return false;
 #endif
-        if(!allowCandidates){error="native command registration requires candidate opt-in";return false;}
         try{
-            Resolver resolver;
-            if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(error)||!resolver.exactBuild()){
-                if(error.empty())error="native commands require exact executable identity";return false;
-            }
             const auto j=nlohmann::json::parse(profile);const auto& c=j.at("native_client_commands");
             if(c.at("schema")!=1)throw std::runtime_error("unsupported native command schema");
             base_=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin_=base_+number(j.at("target").at("text_rva"));textEnd_=textBegin_+number(j.at("target").at("text_size"));
@@ -142,6 +162,7 @@ public:
             ready_=true;error.clear();return true;
         }catch(const std::exception& e){error=e.what();return false;}
     }
+public:
     void reset()noexcept{for(auto& entry:entries_)entry.route->registry.store(nullptr);}
     const std::string& error()const noexcept{return error_;}
     // Low-rate owning-client-tick poll: resolves/re-registers after registry

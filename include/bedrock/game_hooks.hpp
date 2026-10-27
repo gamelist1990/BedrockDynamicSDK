@@ -23,7 +23,7 @@ public:
     GameHooks(const GameHooks&) = delete;
     GameHooks& operator=(const GameHooks&) = delete;
 
-    bool install(Resolver& resolver, std::string& error) {
+    bool install(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (active()) { error.clear(); return true; }
         if (!installInput(resolver, error) || !installActorNameTag(resolver, error)) {
@@ -33,7 +33,7 @@ public:
         return true;
     }
 
-    bool installInput(Resolver& resolver, std::string& error) {
+    bool installInput(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[0] && tokens_[1]) { error.clear(); return true; }
         const auto keyboard = resolveSharedHook(
@@ -52,7 +52,7 @@ public:
         return true;
     }
 
-    bool installActorNameTag(Resolver& resolver, std::string& error) {
+    bool installActorNameTag(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[2]) { error.clear(); return true; }
         const auto nameTag = resolveSharedHook(
@@ -78,7 +78,7 @@ public:
         return true;
     }
 
-    bool installFov(Resolver& resolver, std::string& error) {
+    bool installFov(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[3]) { error.clear(); return true; }
         const auto fov = resolveSharedHook(resolver, "LevelRendererPlayer::getFov",
@@ -91,7 +91,7 @@ public:
         return true;
     }
 
-    bool installGameplay(Resolver& resolver, std::string& error) {
+    bool installGameplay(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[4] && tokens_[5]) { error.clear(); return true; }
         const auto grab = resolveSharedHook(resolver, "ClientInstance::grabCursor",
@@ -108,7 +108,7 @@ public:
         return true;
     }
 
-    bool installLevelTick(Resolver& resolver, std::string& error) {
+    bool installLevelTick(const Resolver& resolver, std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[7]) { error.clear(); return true; }
         const auto level = resolveSharedHook(resolver, "MultiPlayerLevel::_subTick",
@@ -124,7 +124,7 @@ public:
 
     // Opt-in native lifecycle source. Resolve all four guarded exact-build
     // entries before subscribing, and roll back only this group on failure.
-    bool installWorldEvents(Resolver& resolver, std::string_view profile,
+    bool installWorldEvents(const Resolver& resolver, std::string_view profile,
                             std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (worldEventsActive()) { error.clear(); return true; }
@@ -164,7 +164,7 @@ public:
         return tokens_[8] && tokens_[9] && tokens_[10] && tokens_[11];
     }
 
-    bool installNativeKeyboard(Resolver& resolver, std::string_view profile,
+    bool installNativeKeyboard(const Resolver& resolver, std::string_view profile,
                                std::string& error) {
         if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[6]) { error.clear(); return true; }

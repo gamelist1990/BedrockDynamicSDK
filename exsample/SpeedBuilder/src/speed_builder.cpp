@@ -3,6 +3,7 @@
 #include <bedrock/game_hooks.hpp>
 #include <bedrock/generated_symbols.hpp>
 #include <bedrock/remote_catalog.hpp>
+#include <bedrock/profile_manager.hpp>
 #include "native.hpp"
 #include "speed_builder/config.hpp"
 #include <knownfolders.h>
@@ -458,12 +459,14 @@ DWORD WINAPI start(void*){
         {std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});in.close();auto parsed=std::make_shared<const sb::Config>(sb::parseConfig(text));config.store(parsed);
             auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
                 std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
-        std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        const auto metadata=nlohmann::json::parse(profile);
-        if(!metadata.contains("native_world")||metadata.at("native_world").value("revision",0)<3||
-           !metadata.contains("native_packets")||!metadata.at("native_packets").contains("title"))profile=bedrock::generated::kSymbolDatabase;
-        bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        bindings.load(profile);reader.states.reserve(4096);reader.names.reserve(512);
+        std::string error;bedrock::ProfileManager profiles;
+        const bedrock::ProfileRequirements required{bedrock::Feature::World,bedrock::Feature::TitlePackets,bedrock::Feature::WorldEvents};
+        const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
+        if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
+            try{bindings.load(selected.json());return true;}catch(const std::exception& e){failure=e.what();return false;}
+        },error))throw std::runtime_error(error);
+        const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
+        reader.states.reserve(4096);reader.names.reserve(512);
         if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});

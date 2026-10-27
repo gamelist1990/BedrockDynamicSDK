@@ -2,6 +2,7 @@
 // Owned block snapshots. Safe to process on workers; stateIdentity is an opaque,
 // world-scoped comparison token, never a dereferenceable pointer.
 #include <array>
+#include <bedrock/api_types.hpp>
 #include <compare>
 #include <cstdint>
 #include <map>
@@ -86,5 +87,35 @@ public:
     virtual BlockResult worldBlock(void*, BlockPos, bool = false) { return {{},BlockError::unsupported}; }
     virtual PlacementResult worldPlaceBlock(void*, const BlockPlacement&) { return {}; }
     virtual PlacementResult worldSetBlock(void*, BlockPos, std::string_view, const BlockSetOptions&) { return {}; }
+};
+} // namespace bedrock
+
+namespace bedrock {
+// Typed construction for the stable placement options; legacy aggregate remains
+// source-compatible while new callers cannot swap yaw/pitch/slot argument types.
+class BlockSetBuilder {
+    BlockSetOptions options_;
+public:
+    BlockSetBuilder& slot(HotbarIndex slot){options_.hotbarSlot=slot.value();return *this;}
+    BlockSetBuilder& orientation(Yaw yaw,Pitch pitch){options_.yaw=yaw.degrees();options_.pitch=pitch.degrees();return *this;}
+    BlockSetBuilder& reach(Reach reach){options_.maxReach=reach.blocks();return *this;}
+    BlockSetBuilder& expect(std::shared_ptr<const BlockProperties> properties){options_.expectedProperties=std::move(properties);return *this;}
+    BlockSetOptions build()const{return options_;}
+};
+class WorldEpoch {
+    std::uint64_t value_;
+public:
+    explicit WorldEpoch(std::uint64_t value):value_(value){}
+    std::uint64_t value()const noexcept{return value_;}
+};
+class TickBudget {
+    unsigned operations_;
+    std::chrono::microseconds time_;
+public:
+    explicit TickBudget(unsigned operations=256,std::chrono::microseconds time=std::chrono::microseconds{500}):operations_(operations),time_(time){
+        if(operations==0||operations>4096||time.count()<1||time.count()>5000)throw std::out_of_range("tick budget: 1..4096 operations, 1..5000 microseconds");
+    }
+    unsigned operations()const noexcept{return operations_;}
+    std::chrono::microseconds time()const noexcept{return time_;}
 };
 } // namespace bedrock

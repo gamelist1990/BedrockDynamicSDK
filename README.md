@@ -444,3 +444,19 @@ Topで使用している本体CommandRegistryへの登録処理もSDKへ移動�
 `NativeClientCommands.add(name, description, integerArgument, handler)` で登録定義を作り、
 client tickで `update()` すると標準コマンド候補・ローカル実行へ接続します。
 詳細は [Native client commands](docs/native-client-commands.md) を参照してください。
+
+## Typed SDK API and HTML guide
+
+- [HTML API guide](docs/site/index.html): command builders, typed values, World,
+  Actor/event usage, and native profile updates with downloadable C++ examples.
+- `CommandBuilder` produces a complete `CommandDefinition` with a typed handler.
+- `ProfileManager` owns exact-build profile acquisition and capability checks;
+  adapters can request a throttled GitHub refresh when their initialization fails.
+- `RuntimeProfile` carries an immutable validated snapshot and Resolver, so native
+  adapters do not need to rehash the executable for every feature.
+- GitHub Pages deployment: `.github/workflows/docs.yml`; configure Pages to use
+  GitHub Actions. This is a static HTML/CSS/JS site without a Node build step.
+
+Legacy overloads remain available for source migration. Future RVA/layout updates
+within a supported ABI can be delivered through the profile; new ABIs still need
+an SDK adapter update and may require rebuilding consumer mods.

@@ -1,6 +1,7 @@
 #pragma once
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/resolver.hpp>
+#include <bedrock/profile_manager.hpp>
 #include <chrono>
 #include <thread>
 #include <map>
@@ -27,6 +28,16 @@ public:
             bindings_.loadWorld(profile);reader_.clear();ready_=true;error.clear();return true;
         }catch(const std::exception& e){error=e.what();return false;}
     }
+    bool load(const RuntimeProfile& profile,std::string& error){
+        ready_=false;
+        if(!profile.supports({Feature::World},error))return false;
+        try{bindings_.loadWorld(profile.json());reader_.clear();ready_=true;error.clear();return true;}
+        catch(const std::exception& e){error=e.what();return false;}
+    }
+    BlockResult getBlock(BlockPos pos,ReadPolicy policy){return getBlock(pos,policy==ReadPolicy::Fresh);}
+    PlacementResult setBlock(BlockPos target,const BlockIdentifier& identifier,const BlockSetOptions& options={}){
+        return setBlock(target,std::string_view(identifier.value()),options);
+    }
     Capabilities capabilities()const noexcept{return {ready_,ready_&&bindings_.placementReady,true};}
     // Construct ONLY inside the local client LevelTick callback. Nested scopes
     // are denied. Destruction revokes all native access until the next tick.
@@ -42,6 +53,9 @@ public:
     };
     TickScope tick(void* client,void* level,std::uint64_t epoch,Budget budget){return TickScope(*this,client,level,epoch,budget);}
     TickScope tick(void* client,void* level,std::uint64_t epoch){return tick(client,level,epoch,Budget{});}
+    TickScope tick(void* client,void* level,WorldEpoch epoch,TickBudget budget=TickBudget{}){
+        return tick(client,level,epoch.value(),Budget{budget.operations(),static_cast<unsigned>(budget.time().count())});
+    }
     BlockResult getBlock(BlockPos pos,bool fresh=false){if(!onOwnerThread())return {{},BlockError::wrongThread};return worldBlock(level_,pos,fresh);}
     PlacementResult placeBlock(const BlockPlacement& request){if(!onOwnerThread())return {BlockError::wrongThread};return worldPlaceBlock(level_,request);}
     // setBlock is an inventory-backed placement, not a local terrain mutation.

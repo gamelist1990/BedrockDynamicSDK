@@ -4,7 +4,12 @@
 本体CommandRegistry登録処理をSDKへ移したものです。`bedrock::sdk`で利用できます。
 EnTTやWorld APIへの依存はありません。Windows x64 / MSVC Release向けです。
 
-## 使用例
+## 新しい型付き入口
+
+新しいModでは [HTML APIガイド](site/index.html#commands) のCommandBuilderと
+ProfileManagerを使用してください。以下の文字列/boolを使う入口は移行用です。
+
+## 互換APIの使用例
 
 ```cpp
 #include <bedrock/native_client_commands.hpp>

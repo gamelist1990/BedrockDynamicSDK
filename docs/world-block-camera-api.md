@@ -1,5 +1,8 @@
 # World / Block / Camera API
 
+型付きの新しい入口は [HTML APIガイド](site/index.html#world) と
+[移行ガイド](typed-sdk-api.md) を参照してください。
+
 ## 設計
 
 ModにRVA・vtableスロット・メモリオフセットを複製せず、SDKのアダプターと

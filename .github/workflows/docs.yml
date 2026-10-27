@@ -1,0 +1,57 @@
+name: API documentation
+on:
+  push:
+    branches: [main]
+    paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
+  pull_request:
+    paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Deploy to GitHub Pages (configure Settings > Pages > GitHub Actions first)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: api-documentation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cpp-examples:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile public C++ documentation examples
+        shell: pwsh
+        run: |
+          cmake -S . -B build-docs -A x64 -DBEDROCK_SDK_BUILD_TOOLS=OFF -DBEDROCK_SDK_BUILD_DOC_EXAMPLES=ON -DBEDROCK_SDK_ENABLE_NATIVE_WORLD=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-docs --target bedrock_doc_examples --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package static documentation
+        run: |
+          mkdir -p _site
+          cp -R docs/site/. _site/
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [build, cpp-examples]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy API documentation
+        id: deployment
+        uses: actions/deploy-pages@v4

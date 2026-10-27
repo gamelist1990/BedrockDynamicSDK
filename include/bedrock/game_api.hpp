@@ -280,6 +280,10 @@ public:
     [[nodiscard]] std::vector<std::string> getPlayerNames() const;
     [[nodiscard]] BlockResult getBlock(BlockPos position, bool fresh=false) const;
     PlacementResult placeBlock(const BlockPlacement& request) const;
+    BlockResult getBlock(BlockPos position,ReadPolicy policy)const{return getBlock(position,policy==ReadPolicy::Fresh);}
+    PlacementResult setBlock(BlockPos position,const BlockIdentifier& identifier,const BlockSetOptions& options={})const{
+        return setBlock(position,std::string_view(identifier.value()),options);
+    }
     PlacementResult setBlock(const BlockPlacement& request) const { return placeBlock(request); }
     PlacementResult setBlock(BlockPos position,std::string_view identifier,const BlockSetOptions& options={}) const;
 
