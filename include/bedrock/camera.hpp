@@ -37,7 +37,7 @@ struct CameraFrame { Vec3 position{}, previous{}; ActorBounds bounds{}; };
 class CameraRig {
 public:
     bool begin(Vec3 position,ActorBounds bounds,std::uint64_t runtimeId,std::uint64_t worldEpoch){
-        reset();if(!finite(position)||!bounds.valid()||!runtimeId)return false;
+        reset();if(!finite(position)||!bounds.valid()||bounds.minimum.x>=bounds.maximum.x||bounds.minimum.y>=bounds.maximum.y||bounds.minimum.z>=bounds.maximum.z||!runtimeId)return false;
         anchor_=position;anchorBounds_=bounds;frame_={position,position,bounds};runtime_=runtimeId;epoch_=worldEpoch;active_=true;return true;
     }
     std::optional<CameraFrame> update(float yaw,CameraInput input,CameraSpeed speed,
@@ -55,10 +55,14 @@ public:
                                       std::chrono::duration<float> elapsed,
                                       std::uint64_t runtimeId, std::uint64_t worldEpoch) {
         const float seconds = elapsed.count();
-        if (!std::isfinite(seconds) || seconds < 0.f || seconds > .25f ||
+        if (!std::isfinite(input.forward) || !std::isfinite(input.right) || !std::isfinite(input.up) ||
+            std::abs(input.forward) > 1.f || std::abs(input.right) > 1.f || std::abs(input.up) > 1.f ||
+            !std::isfinite(seconds) || seconds < 0.f || seconds > .25f ||
             !std::isfinite(speed.horizontal) || !std::isfinite(speed.vertical) ||
             speed.horizontal < 0.f || speed.vertical < 0.f) return std::nullopt;
-        return update(yaw.degrees(), input, {speed.horizontal * seconds, speed.vertical * seconds}, runtimeId, worldEpoch);
+        const auto result = update(yaw.degrees(), input, {speed.horizontal * seconds, speed.vertical * seconds}, runtimeId, worldEpoch);
+        if (result) rotation_.yaw = yaw.degrees();
+        return result;
     }
     bool look(Yaw yaw, Pitch pitch) noexcept {
         if (!active_) return false;

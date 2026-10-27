@@ -2,6 +2,12 @@
 #if !defined(_WIN32) || !defined(_MSC_VER) || !defined(_WIN64)
 #error Native profile functions require Windows x64 MSVC.
 #endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <bedrock/profile_manager.hpp>
 #include <nlohmann/json.hpp>

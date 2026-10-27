@@ -173,15 +173,42 @@ hooks-&gt;installWorldEvents(selected-&gt;resolver(), selected-&gt;json(), error
 <div class="table-wrap"><table><thead><tr><th>実行場所</th><th>処理</th></tr></thead><tbody><tr><td>初期化スレッド</td><td>型の構築・ProfileManager・アダプターの準備・Hook接続</td></tr><tr><td>owning clientのtick</td><td>Actor / world読取・予測・配置・位置更新</td></tr><tr><td>worker</td><td>コピーした座標・状態・文字列の比較、計画、ログ整形</td></tr><tr><td>描画callback</td><td>準備した描画データの消費。ネットワークや全Actor走査を持ち込まない</td></tr></tbody></table></div>
 <p>イベント・Hookの停止より先に捕捉したオブジェクトを破棄しないでください。時間予算は協調的で、開始済みの本体関数を途中で打ち切る保証はありません。</p>
 </section>
-<section id="camera" data-title="Camera FreeCameraRig moveCamera interpolation native_motion">
-<p class="eyebrow">CAMERA VALUES</p><h2>カメラと姿勢更新</h2>
-<pre><code>bedrock::FreeCameraRig rig;
-const bool started = rig.begin(position, bounds, runtimeId, epoch);
-const auto frame = rig.update(yaw,
-    bedrock::CameraInput{1.f, 0.f, 0.f},
-    bedrock::CameraSpeed{0.4f, 0.5f}, runtimeId, epoch);
-// frameのコピーを利用。native操作はtick側のアダプターで行う。</code></pre>
-<p><code>moveCamera</code>・<code>interpolateCamera</code>・<code>translateBounds</code>は値だけの計算です。<code>native_motion::capture/apply</code>は姿勢の読取・更新用。パケット固定、RenderDragonの視点Hook、ゲームモードの変更はRig自身の機能ではありません。</p>
+<section id="camera" data-title="CameraRig NativeCamera NativeGameType GameType Gamma NativeBrightness full_bright カメラ ガンマ">
+<p class="eyebrow">CAMERA • GAME TYPE • BRIGHTNESS</p><h2>Camera / GameType / Brightness</h2>
+<p>Freecamは汎用APIの組合せで実装します。<code>CameraRig</code> はコピー値の移動と補間、<code>NativeCamera</code> はローカルPlayerプロキシの操作、<code>NativeGameType</code> は本体のゲームモード変更、<code>NativeBrightness</code> はガンマを担当します。旧 <code>FreeCameraRig</code> は互換名です。</p>
+<pre><code>bedrock::CameraRig rig;
+rig.begin(saved.position, saved.bounds, saved.runtimeId, saved.worldEpoch);
+auto frame = rig.advance(bedrock::Yaw{90.f}, {1.f, 0.f, 0.f}, {10.f, 5.f},
+    std::chrono::duration&lt;float&gt;{0.05f}, saved.runtimeId, saved.worldEpoch);
+rig.look(bedrock::Yaw{90.f}, bedrock::Pitch{-15.f});
+auto interpolated = rig.sample(0.5f);</code></pre>
+<p>速度はblock/秒、入力各軸は−1..1。時間は0..0.25秒。ワールド・RuntimeIDの変更で失効します。<code>moveTo</code> / <code>frame</code> / <code>anchor</code> / <code>rotation</code> / <code>reset</code> も使用できます。</p>
+<pre><code>// load(profile,error)で準備後、LevelTick内でscopeを保持する
+const bedrock::WorldEpoch world{epoch};
+auto scope = camera.tick(client, world);
+if (!scope) return;
+auto saved = camera.readPlayerProxy();
+if (saved &amp;&amp; frame) camera.applyPlayerProxy(*frame, saved-&gt;runtimeId, world);
+camera.setRotation(bedrock::Yaw{90.f}, bedrock::Pitch{0.f});
+// camera.restorePlayerProxy(savedSnapshot);</code></pre>
+<p>AABB・前回位置・速度・落下距離の更新と、ワールド・RuntimeID・スレッド確認はSDKが担当します。scopeはLevelTick中に保持し、WorldChangeで <code>camera.reset()</code> と <code>rig.reset()</code> を呼びます。パケットの元位置保持・入力・インタラクション・地形の描画方針は独立した責務です。</p>
+<h3>GameTypeを取得・変更</h3>
+<pre><code>auto scope = types.tick(client, bedrock::WorldEpoch{epoch});
+if (!scope) return;
+std::optional&lt;bedrock::GameType&gt; current = types.gameType();
+if (types.canChangeGameType()) {
+    const bedrock::GameTypeChange result = types.setGameType(bedrock::GameType::Creative);
+}</code></pre>
+<p><code>NativeGameType</code> の値はSurvival=0 / Creative=1 / Adventure=2 / Default=5 / Spectator=6。WorldChangeで <code>types.reset()</code> を呼びます。本体のGameModeと能力設定を更新する候補関数を呼びます。1.26.52.3のsetterは静的解析済み・実行未確認のcandidateで、ローカル変更がサーバーの権限や受理を保証するものではありません。未対応の版は <code>Unsupported</code> を返します。</p>
+<h3>ガンマとFull bright</h3>
+<pre><code>bedrock::NativeBrightness brightness;
+// prepare内: brightness.load(profile,error)
+// 全アダプターの検証後: brightness.install(error)
+brightness.setGamma(bedrock::Gamma{2.f});
+brightness.fullBright(); // 25.f
+brightness.reset();     // 自分の要求を解除し、元のgetterの値へ</code></pre>
+<p>Gammaは有限値0..25。同じSDKモジュール内の要求を最大値で合成し、Optionsの保存値は変更しません。Hookは寿命中保持し、要求のない間は元のgetterを使用します。必要FeatureはCamera+Motion / GameType / Brightness。nativeカメラ・GameTypeには <code>bedrock::world</code>、Brightnessだけなら <code>bedrock::sdk</code> を使います。</p>
+<a class="download-link" href="examples/camera_options.cpp">コンパイル対象のC++使用例 →</a>
 </section>
 <section id="reference" data-title="API reference include headers resolver logger GUI input">
 <p class="eyebrow">REFERENCE MAP</p><h2>ヘッダー別リファレンス</h2><div class="table-wrap"><table><thead><tr><th>ヘッダー</th><th>主な型 / 役割</th></tr></thead><tbody>

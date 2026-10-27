@@ -454,6 +454,9 @@ Topの安全な上方探索・移動も `NativeSafeTeleport` に共通化しま�
 - `CommandBuilder(...).then(handler)` produces a complete typed `CommandDefinition`.
 - `NativeCommandService` owns autocomplete registration, packet fallback and tick dispatch.
 - `NativeSafeTeleport` owns budgeted upward search, destination checks and guarded movement.
+- `CameraRig` + `NativeCamera` provide time-based camera movement, interpolation and guarded player-proxy operations.
+- `NativeGameType` invokes the native game-mode core setter; `NativeBrightness` manages owner-scoped gamma overrides.
+  See [Camera / GameType / Brightness](docs/camera-game-type-brightness.md) for candidate status and examples.
 - `ProfileManager` owns exact-build profile acquisition and capability checks;
   adapters can request a throttled GitHub refresh when their initialization fails.
 - `RuntimeProfile` carries an immutable validated snapshot and Resolver, so native
