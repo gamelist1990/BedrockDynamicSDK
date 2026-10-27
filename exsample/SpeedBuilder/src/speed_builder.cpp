@@ -460,7 +460,7 @@ DWORD WINAPI start(void*){
             auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
                 std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
         std::string error;bedrock::ProfileManager profiles;
-        const bedrock::ProfileRequirements required{bedrock::Feature::World,bedrock::Feature::TitlePackets,bedrock::Feature::WorldEvents};
+        const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::World,bedrock::Feature::TitlePackets,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
             try{bindings.load(selected.json());return true;}catch(const std::exception& e){failure=e.what();return false;}

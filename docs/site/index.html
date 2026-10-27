@@ -72,7 +72,7 @@ if (!ready) { /* errorをログへ。機能を有効にしない */ }</code></pr
 <pre><code>#include &lt;bedrock/native_client_commands.hpp&gt;
 
 bedrock::NativeClientCommands commands;
-auto top = bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+bedrock::CommandDefinition top = bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
     .description(bedrock::CommandDescription{"安全な上方移動"})
     .optionalInteger(bedrock::ArgumentName{"blocks"})
     .handles([](std::optional&lt;int&gt; blocks) -&gt; bedrock::CommandDecision {
@@ -98,8 +98,10 @@ commands.reset();</code></pre>
 </section>
 <section id="profiles" data-title="GitHub windows-x64.json manifest refresh 自動更新 ProfileManager Feature 要件 キャッシュ">
 <p class="eyebrow">ONE OWNER FOR VERSION DATA</p><h2>プロファイルの取得と更新</h2>
-<ol class="steps"><li><strong>ロード中のEXEを識別</strong><span>バージョン名だけに依存せず、ファイルまたはmapped .textのSHA-256とPE形状を確認。</span></li><li><strong>必要な機能を確認</strong><span>Feature、スキーマ、レイアウトのrevision、candidate利用方針を照合。</span></li><li><strong>アダプターを初期化</strong><span>必要なエントリガード・vtable・ABI形状を確認してからHook設置へ。</span></li><li><strong>不足時にGitHubへ再照会</strong><span>manifestとwindows-x64.jsonを再取得。失敗時は一致する埋め込み定義を確認。</span></li></ol>
+<ol class="steps"><li><strong>ロード中のEXEを識別</strong><span>バージョン名だけに依存せず、ファイルまたはmapped .textのSHA-256とPE形状を確認。</span></li><li><strong>必要な機能を確認</strong><span>Feature、スキーマ、レイアウトのrevision、candidate利用方針を照合。Gameplay / LevelTick / Input等を要求すると、Hookの解決可否も先に確認します。</span></li><li><strong>アダプターを初期化</strong><span>必要なエントリガード・vtable・ABI形状を確認してからHook設置へ。</span></li><li><strong>不足時にGitHubへ再照会</strong><span>manifestとwindows-x64.jsonを再取得。失敗時は一致する埋め込み定義を確認。</span></li></ol>
 <pre><code>const bedrock::ProfileRequirements required{
+    bedrock::Feature::Gameplay,
+    bedrock::Feature::LevelTick,
     bedrock::Feature::World,
     bedrock::Feature::Motion,
     bedrock::Feature::ClientCommands,

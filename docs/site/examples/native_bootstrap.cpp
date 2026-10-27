@@ -33,7 +33,7 @@ public:
             });
         if(!commands.add(std::move(definition))){error="command definition rejected";return false;}
         const bedrock::ProfileRequirements required{
-            bedrock::Feature::World,bedrock::Feature::ClientCommands,bedrock::Feature::WorldEvents};
+            bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::World,bedrock::Feature::ClientCommands,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{
             bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[this](const bedrock::RuntimeProfile& profile,std::string& failure){

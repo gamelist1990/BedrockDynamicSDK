@@ -26,7 +26,7 @@ commands.add(std::move(definition));
 キャッシュ・埋め込み・GitHub取得をModごとに実装する必要はありません。
 
 1. ロードされたEXEを識別し、既存の安全な取得経路で候補を選択。
-2. 必要なFeature・schema・revision・CandidatePolicyを確認。
+2. 必要なFeature・schema・revision・CandidatePolicyを確認。Gameplay / LevelTick / Inputなど、要求したHookの解決も事前に確認。
 3. nativeアダプターのレイアウト・エントリ検査を実行。
 4. 不足/不一致なら既存のsingle-flight・24時間制限の範囲でGitHubへ再照会。
 5. 一致する埋め込み定義も確認し、成功した不変スナップショットだけを公開。

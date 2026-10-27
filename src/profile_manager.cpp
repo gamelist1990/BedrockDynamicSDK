@@ -1,6 +1,9 @@
 #include <bedrock/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #ifdef _WIN32
+#include <bedrock/hook_runtime.h>
+#endif
+#ifdef _WIN32
 #include <bedrock/generated_symbols.hpp>
 #endif
 namespace bedrock {
@@ -8,6 +11,7 @@ namespace {
 struct FeaturePath {const char* root;const char* child;};
 FeaturePath path(Feature f){
     switch(f){
+    case Feature::Input:case Feature::Gameplay:case Feature::LevelTick:case Feature::NameTags:case Feature::Fov:return {"symbols",nullptr};
     case Feature::Keyboard:return {"native_keyboard",nullptr};
     case Feature::Actors:return {"native_actors",nullptr};
     case Feature::Items:return {"native_items",nullptr};
@@ -28,7 +32,11 @@ FeaturePath path(Feature f){
     return {nullptr,nullptr};
 }
 }
-std::string_view featureName(Feature f)noexcept{const auto p=path(f);return p.root?std::string_view{p.root}:std::string_view{"unknown feature"};}
+std::string_view featureName(Feature f)noexcept{
+    switch(f){case Feature::Input:return "input hooks";case Feature::Gameplay:return "gameplay hooks";
+    case Feature::LevelTick:return "level tick hook";case Feature::NameTags:return "name tag hook";case Feature::Fov:return "FOV hook";default:break;}
+    const auto p=path(f);return p.root?std::string_view{p.root}:std::string_view{"unknown feature"};
+}
 bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::string& error)const{
     try{
         const auto root=nlohmann::json::parse(json_);
@@ -41,6 +49,32 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
             const auto p=path(f);
             if(!p.root||!root.contains(p.root)||!root.at(p.root).is_object()){error="missing profile capability: "+std::string(featureName(f));return false;}
             const auto& node=root.at(p.root);
+#ifdef _WIN32
+            const auto hook=[&](const char* name,BDS_HookPoint point){
+                const auto target=resolveSharedHook(resolver_,name,point);
+                if(!target||!isUsableSharedHookResolution(*target)||
+                   (candidates_==CandidatePolicy::VerifiedOnly&&!target->verified)){
+                    error=std::string("required hook unavailable: ")+name;return false;
+                }
+                return true;
+            };
+            switch(f){
+            case Feature::Input:
+                if(!hook("Keyboard::feed",BDS_HOOK_KEYBOARD_FEED)||!hook("MouseDevice::feed",BDS_HOOK_MOUSE_FEED))return false;break;
+            case Feature::Gameplay:
+                if(!hook("ClientInstance::grabCursor",BDS_HOOK_GRAB_CURSOR)||!hook("ClientInstance::releaseCursor",BDS_HOOK_RELEASE_CURSOR))return false;break;
+            case Feature::LevelTick:if(!hook("MultiPlayerLevel::_subTick",BDS_HOOK_LEVEL_SUB_TICK))return false;break;
+            case Feature::NameTags:if(!hook("Actor::getNameTag",BDS_HOOK_ACTOR_GET_NAME_TAG))return false;break;
+            case Feature::Fov:if(!hook("LevelRendererPlayer::getFov",BDS_HOOK_GET_FOV))return false;break;
+            case Feature::Keyboard:if(!hook("GameCore::keyboardEvent",BDS_HOOK_GAMECORE_KEYBOARD_EVENT))return false;break;
+            case Feature::WorldEvents:
+                if(!hook("ClientInstance::onPlayerLoaded",BDS_HOOK_CLIENT_PLAYER_LOADED)||!hook("ClientInstance::onLevelExit",BDS_HOOK_CLIENT_LEVEL_EXIT)||
+                   !hook("ClientInstance::onDimensionChangedEvent",BDS_HOOK_CLIENT_DIMENSION_CHANGED)||!hook("ClientInstance::onCancelJoinGame",BDS_HOOK_CLIENT_JOIN_CANCELLED))return false;break;
+            default:break;
+            }
+#endif
+            if(std::string_view{p.root}=="symbols")continue;
+
             if(node.value("schema",0)!=1||node.value("pointer_size",8)!=8){error="unsupported capability schema: "+std::string(p.root);return false;}
             if(p.child&&(!node.contains(p.child)||!node.at(p.child).is_object())){error=std::string("missing capability layout: ")+p.root+"."+p.child;return false;}
             if((f==Feature::World||f==Feature::WorldHeight)&&node.value("revision",0)<3){error="world adapter requires layout revision >=3";return false;}

@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 namespace bedrock {
-enum class Feature { Keyboard, Actors, Items, PlayerIdentity, World, Motion, Camera,
+enum class Feature { Input, Gameplay, LevelTick, NameTags, Fov, Keyboard, Actors, Items, PlayerIdentity, World, Motion, Camera,
     PacketSender, MovementPackets, TitlePackets, CommandPackets, ClientCommands, Gui, WorldRender, WorldEvents, WorldHeight };
 std::string_view featureName(Feature feature) noexcept;
 class ProfileRequirements {

@@ -791,7 +791,7 @@ DWORD WINAPI start(void*){
         const auto path=dir/L"config.json";if(!std::filesystem::exists(path)){std::ofstream out(path);out<<freecam::configJson(freecam::Config{}).dump(2)<<'\n';}
         if(!loadConfig(path))throw std::runtime_error("initial config invalid");
         std::string error;bedrock::ProfileManager profiles;
-        const bedrock::ProfileRequirements required{bedrock::Feature::Camera,bedrock::Feature::Motion,bedrock::Feature::Items,
+        const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::Camera,bedrock::Feature::Motion,bedrock::Feature::Items,
             bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldRender,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){

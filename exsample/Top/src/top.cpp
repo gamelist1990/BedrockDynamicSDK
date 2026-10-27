@@ -184,7 +184,7 @@ DWORD WINAPI start(void*){
             .description(bedrock::CommandDescription{"安全な上方移動 / safe upward teleport"})
             .optionalInteger(bedrock::ArgumentName{"blocks"}).handles(onNativeCommand);
         if(!nativeCommands.add(std::move(definition)))throw std::runtime_error("native command definition rejected");
-        const bedrock::ProfileRequirements required{bedrock::Feature::World,bedrock::Feature::Motion,bedrock::Feature::Gui,
+        const bedrock::ProfileRequirements required{bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::World,bedrock::Feature::Motion,bedrock::Feature::Gui,
             bedrock::Feature::WorldHeight,bedrock::Feature::CommandPackets,bedrock::Feature::ClientCommands,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
