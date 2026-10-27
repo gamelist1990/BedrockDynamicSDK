@@ -164,3 +164,11 @@ Minecraftを完全終了して差し替えてください。設定は引き続�
 速度・当たり判定の更新は `native_motion::apply` に共通化しました。
 [World / Block / Camera API](../../docs/world-block-camera-api.md) を参照してください。
 パケット固定と描画Hookは引き続きFreecam側で管理します。
+
+### 汎用SDK APIへの移行
+
+移動・補間は`CameraRig`、位置/AABBの適用は`NativeCamera`、GameTypeの読取は
+`NativeGameType`、明るさは`NativeBrightness`を使用します。
+Freecamの`spectator_mode`は従来どおり描画用で、GameTypeを変更しません。
+ガンマ要求はFreecam解除時・ワールド変更時に解除し、元のgetterの値へ戻します。
+[Camera / GameType / Brightness API](../../docs/camera-game-type-brightness.md)を参照してください。

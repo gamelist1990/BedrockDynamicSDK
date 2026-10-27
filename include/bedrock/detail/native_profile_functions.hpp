@@ -12,6 +12,9 @@
 #include <bedrock/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #include <cstring>
+#include <cstddef>
+#include <cstdint>
+#include <stdexcept>
 
 namespace bedrock::native_profile {
 template<class T> bool read(const void* pointer, std::size_t offset, T& output) noexcept {

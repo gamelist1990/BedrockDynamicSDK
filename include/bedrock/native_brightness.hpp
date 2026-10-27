@@ -2,6 +2,7 @@
 #include <bedrock/brightness.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/hook_runtime.h>
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <mutex>
