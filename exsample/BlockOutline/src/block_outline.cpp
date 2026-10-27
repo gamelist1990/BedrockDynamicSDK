@@ -172,7 +172,8 @@ private:
             } else {
                 if(!pending_) {
                     auto position=cursor_.next();
-                    if(!position) { cursor_.rewind(); position=cursor_.next(); ++sweeps_; }
+                    if(!position && cursor_.finished()) { cursor_.rewind(); position=cursor_.next(); ++sweeps_; }
+                    if(!position)break; // bounded section scheduling yielded
                     pending_=*position;
                 }
                 position=*pending_;

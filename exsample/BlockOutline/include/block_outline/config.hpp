@@ -37,10 +37,10 @@ inline Config parse(const nlohmann::json& value) {
         if(n<low || n>high)throw std::invalid_argument(std::string(key)+" out of range");
         return static_cast<unsigned>(n);
     };
-    c.reads=bounded("scan_blocks_per_tick",128,1,512); c.budgetUs=bounded("scan_budget_us",400,100,2000);
+    c.reads=bounded("scan_blocks_per_tick",128,1,4096); c.budgetUs=bounded("scan_budget_us",400,100,5000);
     c.maximum=bounded("max_results",256,1,1024); c.labels=bounded("max_labels",64,0,128);
-    if(!std::isfinite(c.range)||c.range<1||c.range>128||!std::isfinite(c.nameScale)||c.nameScale<.1f||c.nameScale>1.f)
-        throw std::invalid_argument("range must be 1..128, name_scale .1..1");
+    if(!std::isfinite(c.range)||c.range<1||c.range>500||!std::isfinite(c.nameScale)||c.nameScale<.1f||c.nameScale>1.f)
+        throw std::invalid_argument("range must be 1..500, name_scale .1..1");
     const auto common=color(value.value("color",std::string{"#4CE684"}));
     const auto& blocks=value.at("blocks");
     if(!blocks.is_array()||blocks.size()>64)throw std::invalid_argument("blocks must contain at most 64 entries");
@@ -58,38 +58,58 @@ inline Config parse(const nlohmann::json& value) {
     }
     return c;
 }
-// Near-first 16^3 sections; only intersecting sections are queued. Each cell
-// belongs to exactly one section, including negative world coordinates.
+// Constant-memory, expanding section shells. Reset is O(1), even at radius
+// 500. At most 32 section candidates are examined per call; callers may yield
+// on nullopt unless finished() is true. Cell order matches native Y-Z-X indices.
 class ScanCursor {
 public:
-    void reset(bedrock::BlockPos anchor,float range) {
-        sections_.clear(); section_=0; cell_=0;
+    void reset(bedrock::BlockPos anchor,float range) noexcept {
+        anchor_=anchor;range_=range;
         const auto div=[](int n){return int((std::int64_t(n)-(n<0?15:0))/16);};
-        const int r=int(std::ceil(range))+1;
-        for(int y=div(anchor.y-r);y<=div(anchor.y+r);++y)
-            for(int z=div(anchor.z-r);z<=div(anchor.z+r);++z)
-                for(int x=div(anchor.x-r);x<=div(anchor.x+r);++x) {
-                    bedrock::BlockPos p{x*16,y*16,z*16};
-                    const auto axis=[](int a,int lo){return std::max({float(lo)-float(a),0.f,float(a)-float(lo+16)});};
-                    const float dx=axis(anchor.x,p.x),dy=axis(anchor.y,p.y),dz=axis(anchor.z,p.z);
-                    if(dx*dx+dy*dy+dz*dz<=(range+2)*(range+2))sections_.push_back(p);
-                }
-        const auto distance=[&](bedrock::BlockPos p){
-            const double x=double(p.x)+8-anchor.x,y=double(p.y)+8-anchor.y,z=double(p.z)+8-anchor.z;
-            return x*x+y*y+z*z;
-        };
-        std::sort(sections_.begin(),sections_.end(),[&](auto a,auto b){return distance(a)<distance(b);});
+        origin_={div(anchor.x),div(anchor.y),div(anchor.z)};
+        limit_=int(std::ceil(range/16))+1;
+        rewind();
     }
-    void skipSection() noexcept { if(cell_){cell_=0;++section_;} }
-    void rewind() noexcept {section_=0;cell_=0;}
+    void skipSection() noexcept { cell_=4096; }
+    void rewind() noexcept { radius_=face_=index_=0;cell_=4096;finished_=false; }
+    bool finished() const noexcept { return finished_; }
     std::optional<bedrock::BlockPos> next() noexcept {
-        if(section_>=sections_.size())return std::nullopt;
-        const auto p=sections_[section_];const unsigned n=cell_++;
-        if(cell_==4096){cell_=0;++section_;}
-        return bedrock::BlockPos{p.x+int(n&15),p.y+int(n>>8),p.z+int((n>>4)&15)};
+        if(finished_)return std::nullopt;
+        if(cell_==4096) {
+            bool selected=false;
+            for(unsigned attempts=0;attempts<32;++attempts) {
+                const auto offset=nextSection();
+                if(!offset){finished_=true;return std::nullopt;}
+                const bedrock::BlockPos p{(origin_.x+offset->x)*16,(origin_.y+offset->y)*16,(origin_.z+offset->z)*16};
+                const auto axis=[](int a,int lo){return std::max({float(lo)-float(a),0.f,float(a)-float(lo+16)});};
+                const float dx=axis(anchor_.x,p.x),dy=axis(anchor_.y,p.y),dz=axis(anchor_.z,p.z);
+                if(dx*dx+dy*dy+dz*dz>(range_+2)*(range_+2))continue;
+                section_=p;cell_=0;selected=true;break;
+            }
+            if(!selected)return std::nullopt;
+        }
+        const unsigned n=cell_++;
+        return bedrock::BlockPos{section_.x+int(n>>8),section_.y+int(n&15),section_.z+int((n>>4)&15)};
     }
 private:
-    std::vector<bedrock::BlockPos> sections_;
-    std::size_t section_{};unsigned cell_{};
+    std::optional<bedrock::BlockPos> nextSection() noexcept {
+        if(!radius_){radius_=1;return bedrock::BlockPos{};}
+        while(radius_<=limit_) {
+            if(face_==6){++radius_;face_=index_=0;continue;}
+            const int side=radius_*2+1,inner=side-2;
+            const int width=face_<2?side:inner,height=face_<4?side:inner;
+            if(index_>=width*height){++face_;index_=0;continue;}
+            const int a=index_%width,b=index_/width;++index_;
+            if(face_<2)return bedrock::BlockPos{face_?-radius_:radius_,a-radius_,b-radius_};
+            if(face_<4)return bedrock::BlockPos{a-radius_+1,face_==2?-radius_:radius_,b-radius_};
+            return bedrock::BlockPos{a-radius_+1,b-radius_+1,face_==4?-radius_:radius_};
+        }
+        return std::nullopt;
+    }
+    bedrock::BlockPos anchor_{},origin_{},section_{};
+    float range_{};
+    int limit_{},radius_{},face_{},index_{};
+    unsigned cell_=4096;
+    bool finished_{};
 };
 } // namespace block_outline
