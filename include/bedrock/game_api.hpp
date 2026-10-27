@@ -4,6 +4,7 @@
 // deliberately isolated behind GameAccess: wrappers never guess offsets or
 // call an unverified game method themselves.
 #include <bedrock/events.hpp>
+#include <bedrock/blocks.hpp>
 #include <bedrock/hook_runtime.h>
 #include <bedrock/native_keyboard.hpp>
 
@@ -85,7 +86,7 @@ struct ActorRotation { float pitch{}, yaw{}; };
 
 // Implemented by the game-specific adapter after it has validated the live
 // pointers/layout for the exact executable. All returned pointers are borrowed.
-class GameAccess {
+class GameAccess : public BlockAccess {
 public:
     virtual ~GameAccess() = default;
     [[nodiscard]] virtual bool isActorValid(void* actor) const noexcept = 0;
@@ -277,6 +278,11 @@ public:
     [[nodiscard]] void* handle() const noexcept { return isValid() ? handle_ : nullptr; }
     [[nodiscard]] std::vector<Actor> getActors() const;
     [[nodiscard]] std::vector<std::string> getPlayerNames() const;
+    [[nodiscard]] BlockResult getBlock(BlockPos position, bool fresh=false) const;
+    PlacementResult placeBlock(const BlockPlacement& request) const;
+    PlacementResult setBlock(const BlockPlacement& request) const { return placeBlock(request); }
+    PlacementResult setBlock(BlockPos position,std::string_view identifier,const BlockSetOptions& options={}) const;
+
 private:
     GameApi* api_{};
     void* handle_{};
@@ -1183,3 +1189,18 @@ inline bool Mouse::move(int deltaX, int deltaY) const noexcept {
 }
 
 } // namespace bedrock
+
+namespace bedrock {
+inline BlockResult World::getBlock(BlockPos position,bool fresh) const {
+    return isValid()?api_->access_->worldBlock(handle_,position,fresh):BlockResult{{},BlockError::staleWorld};
+}
+inline PlacementResult World::placeBlock(const BlockPlacement& request) const {
+    return isValid()?api_->access_->worldPlaceBlock(handle_,request):PlacementResult{BlockError::staleWorld};
+}
+} // namespace bedrock
+
+namespace bedrock {
+inline PlacementResult World::setBlock(BlockPos position,std::string_view identifier,const BlockSetOptions& options) const {
+    return isValid()?api_->access_->worldSetBlock(handle_,position,identifier,options):PlacementResult{BlockError::staleWorld};
+}
+}

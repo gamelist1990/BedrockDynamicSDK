@@ -1,22 +1,23 @@
 #pragma once
 // Reuse the SDK examples' guarded ECS/BlockSource reader, with a narrower
 // binding set: no SpeedBuilder placement, inventory writes or Title hooks.
-#include "../../SpeedBuilder/src/native.hpp"
+#include <bedrock/native_world.hpp>
+#include <bedrock/native_motion.hpp>
 #include "top/planner.hpp"
 namespace top_native {
-namespace n=speedbuilder_native;
-using Vec=bedrock::Vec3;using Pos=speed_builder::BlockPos;
+namespace n=bedrock::world_native;
+using Vec=bedrock::Vec3;using Pos=bedrock::BlockPos;
 struct Bindings : n::Bindings {
     std::size_t previousOffset{},velocityOffset{},fallOffset{},minHeightOffset{},maxHeightOffset{};
     std::uint32_t fallHash{};
     void* messageFn{};std::uintptr_t commandVtable{};std::size_t commandOffset{},guiOffset{};
     void loadTop(const std::string& profile){
+        loadWorld(profile);
         const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_top");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+n::number(j.at("target").at("text_rva"));textEnd=textBegin+n::number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
-        const auto& w=j.at("native_speed_builder");regionFn=checked(w.at("get_region"));getBlockFn=checked(w.at("get_block"));
-        const auto& f=j.at("native_freecam").at("borion");
-        previousOffset=n::number(f.at("state_previous_position_offset"));velocityOffset=n::number(f.at("state_velocity_offset"));fallHash=n::number(f.at("fall_distance_component_hash"));fallOffset=n::number(f.at("fall_distance_value_offset"));
+        const auto motion=bedrock::native_motion::Layout::fromProfile(profile);
+        previousOffset=motion.previous;velocityOffset=motion.velocity;fallHash=motion.fallHash;fallOffset=motion.fall;
         minHeightOffset=n::number(t.at("min_height_offset"));maxHeightOffset=n::number(t.at("max_height_offset"));
         messageFn=checked(t.at("display_message"));commandVtable=base+n::number(t.at("command_vtable_rva"));
         commandOffset=n::number(t.at("command_offset"));guiOffset=n::number(t.at("gui_offset"));checked(t.at("command_get_id"));checked(t.at("gui_getter"));
@@ -39,16 +40,14 @@ struct Bindings : n::Bindings {
     // One owner-tick transaction. Preserve x/z, translate the existing AABB,
     // clear velocity and fall distance, and prevent interpolation through stone.
     bool move(void* player,float dy)const noexcept{
-        auto* state=component(player,actors.stateVectorComponentHash);auto* shape=component(player,actors.aabbShapeComponentHash);auto* fall=component(player,fallHash);
-        Vec pos{},prev{},vel{},a{},z{};float distance{};
-        if(!std::isfinite(dy)||!n::read(state,actors.statePositionOffset,pos)||!n::read(state,previousOffset,prev)||!n::read(state,velocityOffset,vel)||
-           !n::read(shape,actors.aabbMinimumOffset,a)||!n::read(shape,actors.aabbMaximumOffset,z)||!n::read(fall,fallOffset,distance))return false;
-        Vec next=pos;next.y+=dy;Vec nextA=a,nextZ=z;nextA.y+=dy;nextZ.y+=dy;
-        const bool ok=n::write(state,actors.statePositionOffset,next)&&n::write(state,previousOffset,next)&&n::write(state,velocityOffset,Vec{})&&
-            n::write(shape,actors.aabbMinimumOffset,nextA)&&n::write(shape,actors.aabbMaximumOffset,nextZ)&&n::write(fall,fallOffset,0.f);
-        if(!ok){n::write(state,actors.statePositionOffset,pos);n::write(state,previousOffset,prev);n::write(state,velocityOffset,vel);
-            n::write(shape,actors.aabbMinimumOffset,a);n::write(shape,actors.aabbMaximumOffset,z);n::write(fall,fallOffset,distance);}
-        return ok;
+        if(!std::isfinite(dy))return false;
+        const bedrock::native_motion::Layout motion{previousOffset,velocityOffset,fallOffset,fallHash};
+        const auto get=[this](void* actor,std::uint32_t hash){return component(actor,hash);};
+        bedrock::native_motion::Snapshot next;
+        if(!bedrock::native_motion::capture(player,actors,motion,get,next))return false;
+        const auto old=next.position;next.position.y+=dy;next.previous=next.position;next.velocity={};next.fallDistance=0;
+        next.bounds=bedrock::translateBounds(next.bounds,old,next.position);
+        return bedrock::native_motion::apply(player,actors,motion,get,next);
     }
 };
 inline bool air(std::string_view id){return id=="minecraft:air"||id=="minecraft:cave_air"||id=="minecraft:void_air";}

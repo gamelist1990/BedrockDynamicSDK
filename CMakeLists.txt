@@ -40,12 +40,34 @@ target_link_libraries(bedrock_resolver PUBLIC bedrock::game_api)
 add_library(bedrock::symbols ALIAS bedrock_resolver)
 add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
 
+# Opt-in header adapter for world/block operations. EnTT must match the exact
+# layout consumed by the versioned adapter; ordinary SDK users do not fetch it.
+option(BEDROCK_SDK_ENABLE_NATIVE_WORLD "Expose Windows native world/block adapter" OFF)
+if(BEDROCK_SDK_ENABLE_NATIVE_WORLD)
+    if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR "Native world access requires MSVC Windows x64")
+    endif()
+    include(FetchContent)
+    FetchContent_Declare(entt GIT_REPOSITORY https://github.com/skypjack/entt.git
+        GIT_TAG fe8d7d78c4823e8a66a050bf86f5c6318cf76ce7 GIT_SHALLOW FALSE)
+    FetchContent_MakeAvailable(entt)
+    target_sources(bedrock_resolver PRIVATE src/native_world.cpp)
+    target_link_libraries(bedrock_resolver PRIVATE EnTT::EnTT)
+    add_library(bedrock_native_world INTERFACE)
+    target_link_libraries(bedrock_native_world INTERFACE bedrock::sdk EnTT::EnTT)
+    add_library(bedrock::world ALIAS bedrock_native_world)
+endif()
+
+
 
 # When consumed through FetchContent, only expose the reusable C++ SDK.
 # Tools, hooks and tests are for this repo's own CI, not plugin consumers.
 option(BEDROCK_SDK_BUILD_TOOLS "Build SDK diagnostic DLLs and tests" ${PROJECT_IS_TOP_LEVEL})
 if(WIN32)
     target_sources(bedrock_resolver PRIVATE src/windows.cpp src/http_catalog.cpp)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_sources(bedrock_resolver PRIVATE src/native_client_commands.cpp)
+    endif()
     target_link_libraries(bedrock_resolver PUBLIC bcrypt winhttp user32)
     # No external VC++ runtime redistributable necessary for the probe DLL.
     if(MSVC)

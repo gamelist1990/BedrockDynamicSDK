@@ -4,7 +4,8 @@ on:
     branches: [codex/freecam-spectator-render-path]
     paths:
       - 'exsample/Top/**'
-      - 'include/bedrock/client_commands.hpp'
+      - 'include/bedrock/**'
+      - 'CMakeLists.txt'
       - 'data/**'
       - 'include/bedrock/generated_symbols.hpp'
       - '.github/workflows/top.yml'

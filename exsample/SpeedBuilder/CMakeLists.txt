@@ -10,14 +10,14 @@ set(BEDROCK_SDK_REF "codex/freecam-spectator-render-path" CACHE STRING "SDK bran
 set(BEDROCK_SDK_BUILD_TOOLS OFF CACHE BOOL "No SDK tools" FORCE)
 FetchContent_Declare(bedrock_sdk GIT_REPOSITORY https://github.com/gamelist1990/BedrockDynamicSDK.git
     GIT_TAG ${BEDROCK_SDK_REF} GIT_SHALLOW TRUE)
+if(WIN32)
+    set(BEDROCK_SDK_ENABLE_NATIVE_WORLD ON CACHE BOOL "Use SDK native world adapter" FORCE)
+endif()
 FetchContent_MakeAvailable(bedrock_sdk)
 if(WIN32)
-    FetchContent_Declare(entt GIT_REPOSITORY https://github.com/skypjack/entt.git
-        GIT_TAG fe8d7d78c4823e8a66a050bf86f5c6318cf76ce7 GIT_SHALLOW FALSE)
-    FetchContent_MakeAvailable(entt)
     add_library(BedrockSpeedBuilder SHARED src/speed_builder.cpp)
     target_include_directories(BedrockSpeedBuilder PRIVATE include)
-    target_link_libraries(BedrockSpeedBuilder PRIVATE bedrock::symbols bedrock::logging bedrock::hook_runtime EnTT::EnTT shell32 ole32)
+    target_link_libraries(BedrockSpeedBuilder PRIVATE bedrock::world bedrock::logging bedrock::hook_runtime EnTT::EnTT shell32 ole32)
     bedrock_enable_hook_runtime(BedrockSpeedBuilder)
     target_compile_options(BedrockSpeedBuilder PRIVATE /utf-8)
     set_property(TARGET BedrockSpeedBuilder PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

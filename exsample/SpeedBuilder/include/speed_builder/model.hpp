@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bedrock/blocks.hpp>
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -23,40 +24,16 @@ namespace speed_builder {
 
 using Tick = std::uint64_t;
 using WorldId = std::uint64_t;
-struct BlockPos {
-    int x{}, y{}, z{};
-    auto operator<=>(const BlockPos&) const = default;
-};
-enum class CellKind { unknown, air, block };
-enum class Face { down, up, north, south, west, east };
-enum class Hand { main };
-using StateValue=std::variant<int,std::string>;
-struct BlockProperties {std::map<std::string,StateValue> values;};
-struct PlacementRecipe {
-    std::string itemIdentifier;
-    Face face = Face::up;
-    float yaw{}, pitch{};
-    float hitX = .5f, hitY = .5f, hitZ = .5f;
-    bool deferredState = false;
-    bool augment = false;
-    bool orientationKnown = false;
-    bool exactStateSupported = false;
-    bool operator==(const PlacementRecipe&) const = default;
-};
-struct Cell {
-    BlockPos position;
-    std::string identifier;
-    std::optional<std::uint64_t> stateIdentity;
-    CellKind kind = CellKind::unknown;
-    std::shared_ptr<const BlockProperties> properties; // owned immutable copies, never native pointers
-    bool supportsPlacement = false;
-    bool nativePlacementCandidate = false; // Adapter must resolve and recheck the exact state before dispatch.
-    std::optional<PlacementRecipe> placement;
-    std::optional<std::uint16_t> legacyData; // diagnostic only; no inferred orientation bit masks
-    bool operator==(const Cell&) const = default;
-};
-struct HotbarSlot { std::string identifier; unsigned count{}; };
-using Hotbar = std::array<HotbarSlot, 9>;
+using bedrock::BlockPos;
+using bedrock::CellKind;
+using bedrock::Face;
+using bedrock::Hand;
+using bedrock::StateValue;
+using bedrock::BlockProperties;
+using bedrock::PlacementRecipe;
+using bedrock::Cell;
+using bedrock::HotbarSlot;
+using bedrock::Hotbar;
 struct SessionToken {
     WorldId world{};
     std::uint64_t generation{};

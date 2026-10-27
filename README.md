@@ -429,3 +429,18 @@ damage auto-disable, and bounded nearby Player boxes for Windows x64.
 The current Borion backend moves a local Player proxy and anchors outgoing movement to its pre-flight pose while forwarding interactions; live validation is pending.
 Runtime 4.3.0 compares compatible runtime providers in loaded Mod DLLs and shares renderLevel/sendToServer middleware. Place the compatible optional
 `BedrockHookRuntime.dll` beside the mods and restart the game when upgrading the owner.
+
+### World / block / camera SDK APIs
+
+[World・配置・Camera API](docs/world-block-camera-api.md) を追加しました。
+`World.getBlock()` / `World.setBlock()` / `World.placeBlock()` と、tick単位の
+`NativeWorld` アダプターを利用できます。ブロック状態・NBT属性は所有コピー、
+バージョン依存の配置処理はSDKの `native_world` プロファイルへ集約しています。
+SpeedBuilder / Top は共通ブロック層、Freecam / Top は共通位置更新層を使用します。
+
+### Native client command registration
+
+Topで使用している本体CommandRegistryへの登録処理もSDKへ移動しました。
+`NativeClientCommands.add(name, description, integerArgument, handler)` で登録定義を作り、
+client tickで `update()` すると標準コマンド候補・ローカル実行へ接続します。
+詳細は [Native client commands](docs/native-client-commands.md) を参照してください。

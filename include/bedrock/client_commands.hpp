@@ -6,6 +6,8 @@
 #include <utility>
 
 namespace bedrock {
+// Text dispatch only. For native suggestions/metadata registration use
+// <bedrock/native_client_commands.hpp> and NativeClientCommands.
 // Register before native callbacks start. Dispatch on the owning game thread.
 // Unknown names are not consumed; the adapter forwards them to vanilla.
 class ClientCommands {

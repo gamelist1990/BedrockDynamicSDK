@@ -83,3 +83,12 @@ cmake --build build-top --config Release --parallel 2
 
 参考: [Borion TopCommand](https://github.com/Borion-Updated/Borion-OSS/blob/master/Horion/Command/Commands/TopCommand.cpp)、
 [LeviLamina CommandRegistrar](https://github.com/LiteLDev/LeviLamina/blob/main/src/ll/api/command/CommandRegistrar.cpp)。
+
+### SDK共通World API
+
+SpeedBuilderの内部ヘッダーへの依存を除去しました。SDK共通ブロック読取と
+`native_motion::capture/apply`を使用します。
+[World / Block / Camera API](../../docs/world-block-camera-api.md) を参照してください。
+
+コマンド登録はSDKの `bedrock::NativeClientCommands` に共通化しました。
+[SDK登録API](../../docs/native-client-commands.md) から他のModでも利用できます。

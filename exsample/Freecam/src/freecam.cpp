@@ -6,6 +6,7 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <bedrock/game_api.hpp>
+#include <bedrock/native_motion.hpp>
 #include <bedrock/game_hooks.hpp>
 #include <bedrock/generated_symbols.hpp>
 #include <bedrock/native_actors.hpp>
@@ -348,6 +349,8 @@ struct BorionState {
     float oldFall{};
 };
 BorionState borion;
+bedrock::native_motion::Layout motionLayout;
+bedrock::FreeCameraRig cameraRig;
 std::mutex borionMutex;
 std::atomic<bool> suppressMovement{},packetReady{};
 std::atomic<void*> observedSender{};
@@ -505,7 +508,7 @@ bool restoreBorionLocked() noexcept {
     if(borion.epoch!=epoch.load()||borion.actor!=local.load()||actorRuntime(borion.actor)!=borion.runtime||
        !read(borion.actor,actors.actorEntityContextOffset+actors.contextRegistryOffset,registry)||registry!=borion.registry||
        !read(borion.actor,actors.actorEntityContextOffset+actors.contextEntityIdOffset,entity)||entity!=borion.entity) {
-        borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);return true;
+        cameraRig.reset();borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);return true;
     }
     auto* state=component(borion.actor,actors.stateVectorComponentHash);
     auto* shape=component(borion.actor,actors.aabbShapeComponentHash);
@@ -513,11 +516,9 @@ bool restoreBorionLocked() noexcept {
     if(!state||!shape||!fall)return false;
     // Position restore is a teleport, not a frame-long interpolation across
     // the flight path. Borion also clears motion/fall distance when returning.
-    const bool ok=write(state,statePositionOffset,borion.oldPosition)&&
-        write(state,statePreviousOffset,borion.oldPosition)&&write(state,stateVelocityOffset,Vec{})&&
-        write(shape,actors.aabbMinimumOffset,borion.oldBounds.minimum)&&
-        write(shape,actors.aabbMaximumOffset,borion.oldBounds.maximum)&&write(fall,fallOffset,0.f);
-    if(ok){borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);}
+    const bedrock::native_motion::Snapshot restored{borion.oldPosition,borion.oldPosition,Vec{},borion.oldBounds,0.f};
+    const bool ok=bedrock::native_motion::apply(borion.actor,actors,motionLayout,component,restored);
+    if(ok){cameraRig.reset();borion.saved=false;suppressMovement.store(false);movementAnchor.store(nullptr);active.store(false);}
     return ok;
 }
 void restoreBorionBeforeBoundary() noexcept {
@@ -564,29 +565,22 @@ void borionTick(const bedrock::LevelTickEvent&) {
         std::unique_lock phase(packetMotionMutex);
         if(!prepareMovementAnchor(runtime,position)){note(Waiting);return;}
         borion={true,player,epoch.load(),runtime,registry,entity,position,previous,velocity,position,bounds,fallDistance};
+        if(!cameraRig.begin(position,bounds,runtime,borion.epoch)){disable(ReadFailed);restoreBorionLocked();return;}
         suppressMovement.store(true);flightSerial.fetch_add(1);active.store(true);note(Activated);
     }
     if(actorRuntime(player)!=borion.runtime){disable(ReadFailed);restoreBorionLocked();return;}
     const auto down=[](unsigned key){return keys[key].load()?1.f:0.f;};
     const float forward=down(c->forward)-down(c->back),side=down(c->right)-down(c->left);
-    const float radians=yaw*0.0174532925199433f;
-    const float length=std::max(1.f,std::sqrt(forward*forward+side*side));
     const float speed=c->speed/20.f*(keys[c->fast].load()?c->fastMultiplier:1.f);
     const Vec old=borion.position;
-    // Bedrock yaw: right is the forward vector rotated +90 degrees.
-    borion.position.x+=(-std::sin(radians)*forward-std::cos(radians)*side)*speed/length;
-    borion.position.z+=(std::cos(radians)*forward-std::sin(radians)*side)*speed/length;
-    borion.position.y+=(down(c->up)-down(c->down))*0.5f;
+    const auto cameraFrame=cameraRig.update(yaw,{forward,side,down(c->up)-down(c->down)},
+        {speed,.5f},borion.runtime,epoch.load());
+    if(!cameraFrame){disable(ReadFailed);restoreBorionLocked();return;}
+    borion.position=cameraFrame->position;
     if(!finite(borion.position)){disable(ReadFailed);restoreBorionLocked();return;}
-    const Vec lower{borion.oldBounds.minimum.x+borion.position.x-borion.oldPosition.x,
-        borion.oldBounds.minimum.y+borion.position.y-borion.oldPosition.y,
-        borion.oldBounds.minimum.z+borion.position.z-borion.oldPosition.z};
-    const Vec upper{borion.oldBounds.maximum.x+borion.position.x-borion.oldPosition.x,
-        borion.oldBounds.maximum.y+borion.position.y-borion.oldPosition.y,
-        borion.oldBounds.maximum.z+borion.position.z-borion.oldPosition.z};
-    if(!write(state,statePositionOffset,borion.position)||!write(state,statePreviousOffset,old)||
-       !write(state,stateVelocityOffset,Vec{})||!write(fall,fallOffset,0.f)||
-       !write(shape,actors.aabbMinimumOffset,lower)||!write(shape,actors.aabbMaximumOffset,upper)) {
+    const auto movedBounds=cameraFrame->bounds;
+    const bedrock::native_motion::Snapshot next{borion.position,old,Vec{},movedBounds,0.f};
+    if(!bedrock::native_motion::apply(player,actors,motionLayout,component,next)) {
         disable(ReadFailed);restoreBorionLocked();return;
     }
     if(c->playerHitboxes){Capture batch;batch.epoch=epoch.load();batch.origin=borion.position;
@@ -666,8 +660,9 @@ void prepareProfile(const std::string& profile){
     if(visual.at("schema")!=1||visual.at("spectator_mode_behavior")!="native_spectator_culler_mode5")
         throw std::runtime_error("unsupported view-only spectator profile");
     const auto& b=f.at("borion");
-    statePositionOffset=number(b.at("state_position_offset"));statePreviousOffset=number(b.at("state_previous_position_offset"));
-    stateVelocityOffset=number(b.at("state_velocity_offset"));fallHash=number(b.at("fall_distance_component_hash"));fallOffset=number(b.at("fall_distance_value_offset"));
+    motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
+    statePositionOffset=number(b.at("state_position_offset"));statePreviousOffset=motionLayout.previous;
+    stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
     senderOffset=number(b.at("client_packet_sender_offset"));sendSlot=number(b.at("sender_send_to_server_slot"));packetIdSlot=number(b.at("packet_id_slot"));
     if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||senderOffset!=0x1d0||sendSlot!=4||packetIdSlot!=1)
         throw std::runtime_error("unsupported Borion native layout");

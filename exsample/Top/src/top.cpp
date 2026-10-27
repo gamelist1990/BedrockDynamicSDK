@@ -20,9 +20,9 @@
 #error Top requires MSVC Release STL ABI.
 #endif
 namespace {
-namespace n=speedbuilder_native;namespace tn=top_native;
+namespace n=bedrock::world_native;namespace tn=top_native;
 using Clock=std::chrono::steady_clock;using Vec=bedrock::Vec3;using Bounds=bedrock::ActorBounds;
-tn::Bindings bindings;n::Reader reader(bindings);tn::Safety safety(bindings,reader);tn::NativeCommands nativeCommands(bindings);
+tn::Bindings bindings;n::Reader reader(bindings);tn::Safety safety(bindings,reader);bedrock::NativeClientCommands nativeCommands;
 bedrock::GameApi api;bedrock::ClientCommands commands;std::unique_ptr<bedrock::GameHooks> hooks;
 std::atomic<bool> stopped{};std::atomic<unsigned> status{};std::atomic<void*> client{},sender{},sendTarget{};
 std::atomic<std::uint64_t> epoch{1};std::uint64_t seenWorld{};
@@ -51,11 +51,11 @@ bool enqueue(std::string_view line,bool fromNative){
     if(input.size()>=16){overflow.store(true);return false;}
     input.push_back({world,normalized});recentLine=normalized;recentTime=now;recentEpoch=world;recentNative=fromNative;recentPaired=false;return true;
 }
-void onNativeCommand(const tn::NativeTopCommand& command,void* output){
-    try{if(command.registry!=nativeCommands.registry())return;
-        const auto line=command.hasBlocks?"/top "+std::to_string(command.blocks):std::string("/top");
-        if(enqueue(line,true))nativeCommands.markAccepted(output);
-    }catch(...){overflow.store(true);}
+bool onNativeCommand(const bedrock::NativeCommandInvocation& command){
+    try{
+        const auto line=command.integer?"/top "+std::to_string(*command.integer):std::string("/top");
+        return enqueue(line,true);
+    }catch(...){overflow.store(true);return false;}
 }
 unsigned maxRise{},levelsPerTick{8},budgetUs{500};bool enabled=true;
 void note(std::string s){std::lock_guard lock(logMutex);if(logs.size()<128)logs.push_back(std::move(s));}
@@ -135,9 +135,9 @@ void tickGame(const bedrock::LevelTickEvent& e){
     if(++clientTicks>=nextRegistration){
         nextRegistration=clientTicks+20;
         const auto result=nativeCommands.update(client.load());const auto value=static_cast<int>(result);
-        if(result==tn::NativeCommands::Result::registered)note("/top native CommandRegistry registered [SyncLocal + NotCheat; blocks: optional int; native autocomplete + local execution]");
-        else if(value!=lastRegistration&&result==tn::NativeCommands::Result::collision)note("/top native command name already exists; existing metadata preserved; packet fallback remains available");
-        else if(value!=lastRegistration&&result==tn::NativeCommands::Result::failed)note("/top native registration failed: "+nativeCommands.error());
+        if(result==bedrock::NativeClientCommands::Result::registered)note("/top native CommandRegistry registered [SyncLocal + NotCheat; blocks: optional int; native autocomplete + local execution]");
+        else if(value!=lastRegistration&&result==bedrock::NativeClientCommands::Result::collision)note("/top native command name already exists; existing metadata preserved; packet fallback remains available");
+        else if(value!=lastRegistration&&result==bedrock::NativeClientCommands::Result::failed)note("/top native registration failed: "+nativeCommands.error());
         lastRegistration=value;
     }
     std::optional<Input> command;{std::lock_guard lock(mailMutex);if(!input.empty()){command=std::move(input.front());input.pop_front();}}
@@ -179,10 +179,12 @@ DWORD WINAPI start(void*){
     status.store(1);
     try{const auto dir=directory();std::filesystem::create_directories(dir);loadConfig(dir);std::string error;
         std::string profile;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_top")||nlohmann::json::parse(profile).at("native_top").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_client_commands")||!nlohmann::json::parse(profile).contains("native_world")||!nlohmann::json::parse(profile).contains("native_top")||nlohmann::json::parse(profile).at("native_top").value("revision",0)<2)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
-        bindings.loadTop(profile);commands.add("top",execute);tn::commandReceiver=&onNativeCommand;
-        if(!nativeCommands.load(profile,error))note("native autocomplete unavailable: "+error);
+        bindings.loadTop(profile);commands.add("top",execute);
+        if(!nativeCommands.add("top","安全な上方移動 / safe upward teleport",{"blocks",true},onNativeCommand))
+            throw std::runtime_error("native command definition rejected");
+        if(!nativeCommands.load(profile,true,error))note("native autocomplete unavailable: "+error);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){if(e.clientInstance)client.store(e.clientInstance);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& e){if(e.clientInstance)client.store(e.clientInstance);nativeCommands.reset();sender.store(nullptr);sendTarget.store(nullptr);++epoch;});
         api.Event.Enum.LevelTick.then(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);

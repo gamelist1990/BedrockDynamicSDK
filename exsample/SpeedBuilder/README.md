@@ -171,3 +171,10 @@ Hive独自の`custom:facing_direction`とyawの対応は未確定です。角度
 今回の実機配置、サーバー反映、全ブロックの向きは未確認です。`await_exact_state_or_support`や`placement unresolved`が続く場合はその行を含むログで切り分けます。
 
 - ハーフ・階段などの支持面を「完全な立方体ではない」だけで事前除外せず、ネイティブ予測で配置状態を確認します。空気・未取得の支持面は使用しません。
+
+### SDK共通World API
+
+ブロック値型・ガード付きBlockSource読取・状態属性・配置予測・ホットバー選択・
+本体配置呼出しはSDKへ移動しました。`src/native.hpp`は互換エイリアスのみです。
+参照先は [World / Block / Camera API](../../docs/world-block-camera-api.md)。
+ラウンド検出・配置順序・段階的探索のスケジューラーはSpeedBuilderが担当します。

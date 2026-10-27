@@ -149,7 +149,7 @@ void capture(void* source){
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
     const auto captureBudget=model->phase()==sb::Phase::capturing?2000:1000;
     const auto deadline=Clock::now()+std::chrono::microseconds(captureBudget);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
-    for(const auto& pos:request.positions){auto cell=reader.cell(source,pos);
+    for(const auto& pos:request.positions){auto cell=reader.getBlock(source,pos);
         if(cell.kind==sb::CellKind::unknown)note("capture unavailable at "+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+" [chunk/layout/native read]");
         cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
@@ -185,7 +185,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
     const auto slot=p.request.hotbarSlot;const auto target=p.request.target;const auto* goal=model->recordedCell(target);
-    const auto now=reader.cell(source,target);
+    const auto now=reader.getBlock(source,target);
     if(!goal||(p.request.recipe.augment?!sb::canAugment(*goal,now):now.kind!=sb::CellKind::air)){
         model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
@@ -232,7 +232,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     if(p.candidate==0)if(auto found=recipeCache.find(p.targetState.value_or(0));found!=recipeCache.end()){
         for(const auto& c:found->second){if(c.type!=hotbar.types[slot]||c.aux!=hotbar.aux[slot])continue;
             const auto n=sb::faceNormal(c.recipe.face);sb::BlockPos support{target.x-n.x,target.y-n.y,target.z-n.z};
-            const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate))continue;
+            const auto base=reader.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate))continue;
             Vec hit{support.x+c.recipe.hitX,support.y+c.recipe.hitY,support.z+c.recipe.hitZ};
             const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
             if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)continue;
@@ -248,7 +248,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
-        const auto base=reader.cell(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate)){++p.noSupport;continue;}
+        const auto base=reader.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate)){++p.noSupport;continue;}
         Vec fractional{.5f,height,.5f};if(face==0)fractional.y=0;else if(face==1)fractional.y=1;
         else if(face==2)fractional.z=0;else if(face==3)fractional.z=1;else if(face==4)fractional.x=0;else fractional.x=1;
         Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
@@ -260,7 +260,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         auto* predictedInfo=reader.describe(predicted);if(!sameBlockType(wanted,predictedInfo))continue;
         const auto predictedCell=reader.describeCell(predicted,target);
         const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
-        if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,0x120,data))p.lastData=data;}
+        if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,bindings.layout("block_state_data_offset"),data))p.lastData=data;}
         PlacementPlan plan;plan.request=p.request;plan.request.support=support;auto& recipe=plan.request.recipe;
         recipe.face=static_cast<sb::Face>(face);recipe.orientationKnown=true;recipe.exactStateSupported=exact;recipe.deferredState=!exact;
         recipe.yaw=yaw;recipe.pitch=pitch;recipe.hitX=fractional.x;recipe.hitY=fractional.y;recipe.hitZ=fractional.z;
@@ -289,7 +289,7 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
 }
 void tickGame(const bedrock::LevelTickEvent& event){
     void* instance=client.load();void* player=bindings.local(instance);void* level{};
-    if(!player||!native::read(player,0x1d8,level)||level!=event.level)return;
+    if(!player||!native::read(player,bindings.layout("player_level_offset"),level)||level!=event.level)return;
     Vec position{};std::uint64_t id{};if(!bindings.pose(player,position,id))return;
     auto* source=bindings.region(instance);if(!source)return;
     const auto world=epoch.load();
@@ -319,7 +319,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const auto deadline=Clock::now()+std::chrono::microseconds(1500);unsigned checked=0;bool invalid=false;
             auto& check=*removalCheck;
             while(check.cursor<check.candidates.removed.size()&&checked++<128){
-                const auto cell=reader.cell(source,check.candidates.removed[check.cursor].position);
+                const auto cell=reader.getBlock(source,check.candidates.removed[check.cursor].position);
                 if(cell.kind==sb::CellKind::unknown)break;
                 if(cell.kind!=sb::CellKind::air){invalid=true;break;}
                 ++check.cursor;if(Clock::now()>=deadline)break;
@@ -346,7 +346,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
         else {
             auto& action=*pending;const auto token=action.request.token;const auto aid=action.request.actionId;
             float yaw{},pitch{};auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-            const auto target=reader.cell(source,action.request.target);const auto support=reader.cell(source,action.request.support,true);void* predicted{};
+            const auto target=reader.getBlock(source,action.request.target);const auto support=reader.getBlock(source,action.request.support,true);void* predicted{};
             const auto desired=model->recordedState(action.request.target).value_or(0);
             const auto& recipe=action.request.recipe;const unsigned slot=action.request.hotbarSlot;
             const double dx=double(action.hit.x)-eye.x,dy=double(action.hit.y)-eye.y,dz=double(action.hit.z)-eye.z;
@@ -385,7 +385,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(model->phase()==sb::Phase::building&&!pending){
         if(!probe){sb::BuildFrame frame;frame.world=generation;frame.tick=tick;frame.eye={eye.x,eye.y,eye.z};frame.hotbar=hotbar.copied;
             for(const auto& pos:model->inspectionPositions()){
-                auto observed=reader.cell(source,pos,true);
+                auto observed=reader.getBlock(source,pos,true);
                 if(const auto* goal=model->recordedCell(pos);goal&&sb::sameType(*goal,observed)&&!sb::sameState(*goal,observed)){
                     auto& last=mismatchLogs[pos];const auto state=observed.stateIdentity.value_or(0);
                     if(last.first!=state||tick-last.second>=100){last={state,tick};
@@ -459,7 +459,7 @@ DWORD WINAPI start(void*){
             auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
                 std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
         std::string profile,error;bedrock::ProfileChoice choice;if(!bedrock::fetchSupportedProfile(profile,choice,error))throw std::runtime_error(error);
-        if(!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
+        if(!nlohmann::json::parse(profile).contains("native_world")||!nlohmann::json::parse(profile).contains("native_speed_builder")||nlohmann::json::parse(profile).at("native_speed_builder").value("revision",0)<3)profile=bedrock::generated::kSymbolDatabase;
         bedrock::Resolver resolver;if(!resolver.loadJson(profile,error)||!resolver.attachWindowsMainModule(choice.identity,error)||!resolver.exactBuild())throw std::runtime_error("exact-build attach failed: "+error);
         bindings.load(profile);reader.states.reserve(4096);reader.names.reserve(512);
         if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");

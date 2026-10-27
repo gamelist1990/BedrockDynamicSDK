@@ -157,3 +157,10 @@ revision9はその型の呼び出しテーブルと2つの正確な呼出元が�
 `other_caller`は未対応呼出元のため本体へ任せた数で、`caller_rva`も記録します。通常のvisibility診断をOFFにしてもFreecam稼働中はこのログを出します。
 `skipped>0`は対象の除外を確認する値であり、視覚的改善の保証ではありません。実機の到達性と地下表示は未確認です。
 Minecraftを完全終了して差し替えてください。設定は引き続き`spectator_mode: true`です。
+
+### SDK共通Camera API
+
+移動計算は `bedrock::moveCamera`、AABB追従は `translateBounds`、位置・前位置・
+速度・当たり判定の更新は `native_motion::apply` に共通化しました。
+[World / Block / Camera API](../../docs/world-block-camera-api.md) を参照してください。
+パケット固定と描画Hookは引き続きFreecam側で管理します。
