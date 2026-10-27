@@ -1,7 +1,7 @@
 # Top — 安全な上方テレポート
 
 Minecraft **1.26.52.3 / Windows x64 / MSVC Release** のSDK example DLLです。
-revision2は本体のCommandRegistryへ登録して候補表示・Tab補完・引数ガイドを接続します。
+revision3はSDKのCommandBuilder・NativeCommandService・NativeSafeTeleportを使い、候補表示・Tab補完・安全な移動を接続します。
 新しいネイティブ定義は候補であり、今回のDLLでの実ゲーム確認はこれからです。
 
 ## コマンド
@@ -26,7 +26,7 @@ X/Zは維持します。引数付きで移動先が安全でなければ、近�
 - 移動時は現在位置・前回位置・AABBを同じだけ動かし、速度と落下距離をリセット。
 
 探索の上限は既定で無制限です。ただしディメンション本来の高さ範囲と、読み込まれたブロックの範囲内で動作します。
-スキャンはtickごとに分割。待機中はActor/ECS/ブロックを走査せず、ワーカーはログ保存とHook登録だけを行います。
+スキャンはtickごとに分割。待機中はActor/ECS/ブロックを走査せず、ワーカーはログ保存だけを行います。Hook設置・登録更新もSDKのLevelTick上で実行します。
 単一のネイティブ呼び出しが協調時間予算を超える可能性はあります。
 
 ## 設定
@@ -52,7 +52,7 @@ SDKの既存ディスパッチに加え、本体の **CommandRegistry** に次�
 - 名前 `top`、説明、省略可能な整数引数 `blocks`。
 - 本体Helpと同じ `SyncLocal` / `NotCheat` フラグ。
 - `/t`・`/to` で標準の候補一覧に `top`、Tab補完、`/top [blocks: int]` の引数ガイドを表示するための構文情報。
-- ネイティブの実行コールバックは文字列をキューへコピーするだけ。安全判定と移動は次のメインtickで行います。
+- ネイティブの実行コールバックは型付きの整数引数をSDKキューへコピーするだけ。安全判定と移動は次のメインtickで行います。
 
 本体の登録・引数作成・オーバーロード登録関数を使い、名前や配列のメモリは本体側で確保します。
 独自Commandインスタンスは固定したDLL側で確保し、仮想デストラクタも同じDLLで処理します。
@@ -60,7 +60,7 @@ SDKの既存ディスパッチに加え、本体の **CommandRegistry** に次�
 登録に成功するとログへ次の行が出ます。
 
 ```text
-/top native CommandRegistry registered [SyncLocal + NotCheat; blocks: optional int; native autocomplete + local execution]
+native CommandRegistry registered [autocomplete + local execution]
 ```
 
 旧版の送信前パケット処理もフォールバックとして残します。ネイティブ実行とパケットの両方を通る場合は同じ要求を二度実行しません。
@@ -79,7 +79,7 @@ cmake --build build-top --config Release --parallel 2
 ```
 
 `build-top/Release/BedrockTop.dll` を生成します。
-共通のガード付きECS/BlockSource読み取りをSpeedBuilder exampleから再利用しますが、Title Hook・配置・アイテム操作は使いません。
+ガード付きECS/BlockSource読み取りと安全な上方移動はSDKが担当します。Topは独自のnativeメモリ読み取りを実装しません。
 
 参考: [Borion TopCommand](https://github.com/Borion-Updated/Borion-OSS/blob/master/Horion/Command/Commands/TopCommand.cpp)、
 [LeviLamina CommandRegistrar](https://github.com/LiteLDev/LeviLamina/blob/main/src/ll/api/command/CommandRegistrar.cpp)。
@@ -90,5 +90,17 @@ SpeedBuilderの内部ヘッダーへの依存を除去しました。SDK共通�
 `native_motion::capture/apply`を使用します。
 [World / Block / Camera API](../../docs/world-block-camera-api.md) を参照してください。
 
-コマンド登録はSDKの `bedrock::NativeClientCommands` に共通化しました。
+コマンド登録・パケットfallback・二重実行防止はSDKの `bedrock::NativeCommandService` に共通化しました。
 [SDK登録API](../../docs/native-client-commands.md) から他のModでも利用できます。
+
+### コンパクトな登録
+
+```cpp
+commands.add(bedrock::CommandBuilder(bedrock::CommandName{"top"}, bedrock::ArgumentName{"blocks"})
+    .description(bedrock::CommandDescription{"安全な上方移動"})
+    .then([&](std::optional<int> blocks) -> bedrock::CommandDecision {
+        return teleport.request(blocks);
+    }));
+```
+
+Modに残すのは設定、イベント接続、日本語の通知、ログ、DLLエントリーです。

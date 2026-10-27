@@ -67,33 +67,36 @@ if (!ready) { /* errorをログへ。機能を有効にしない */ }</code></pr
 </tbody></table></div>
 <p>不正な値の構築は <code>std::invalid_argument</code> または <code>std::out_of_range</code>。構築は初期化時かnative境界の外で行います。native操作は結果値・エラーコードを返し、コマンドのハンドラー例外はnative境界へ伝播させません。</p>
 </section>
-<section id="commands" data-title="CommandBuilder コマンド 登録 autocomplete optionalInteger requiredInteger handles">
+<section id="commands" data-title="CommandBuilder コマンド 登録 autocomplete optionalInteger requiredInteger then NativeCommandService NativeSafeTeleport">
 <p class="eyebrow">DECLARE → ARGUMENT → HANDLER</p><h2>Command Builder</h2><p>名前・説明・引数・ハンドラーを順に指定します。引数定義とハンドラーが揃うまでは登録可能な <code>CommandDefinition</code> ができません。</p>
-<pre><code>#include &lt;bedrock/native_client_commands.hpp&gt;
+<pre><code>#include &lt;bedrock/native_command_service.hpp&gt;
+#include &lt;bedrock/native_safe_teleport.hpp&gt;
 
-bedrock::NativeClientCommands commands;
-bedrock::CommandDefinition top = bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+bedrock::NativeCommandService commands;
+bedrock::NativeSafeTeleport teleport;
+commands.add(bedrock::CommandBuilder(bedrock::CommandName{"top"}, bedrock::ArgumentName{"blocks"})
     .description(bedrock::CommandDescription{"安全な上方移動"})
-    .optionalInteger(bedrock::ArgumentName{"blocks"})
-    .handles([](std::optional&lt;int&gt; blocks) -&gt; bedrock::CommandDecision {
-        // /top → nullopt、/top 3 → 3
-        // コピーした値を自分のtick用キューへ渡す。
-        return bedrock::CommandDecision::Accepted;
-    });
-const bool added = commands.add(std::move(top));</code></pre>
-<p>上のハンドラーは型を示す最小例です。実際の処理では、キューに受付できた時だけAcceptedを返してください。必須引数なら <code>.requiredInteger(...)</code> と <code>(int value) -&gt; CommandDecision</code> を組み合わせます。</p>
-<pre><code>const bool ready = profiles.prepare(
-    {bedrock::Feature::ClientCommands}, options,
+    .then([&amp;](std::optional&lt;int&gt; blocks) -&gt; bedrock::CommandDecision {
+        return teleport.request(blocks);
+    }));</code></pre>
+<p><code>CommandBuilder(名前, 引数名).then(...)</code> は整数引数1個を省略可能として定義します。引数名を省略したコンストラクターでは <code>value</code> が使われます。必須整数は <code>.requiredInteger(...).then(intハンドラー)</code> で宣言します。旧 <code>named</code> / <code>handles</code> も利用できます。</p>
+<p><code>NativeCommandService</code> は候補登録の再試行、パケットfallback、型付きキュー、二重経路の組合せ抑制をまとめます。定義はHook前に固定し、<code>load(profile,error)</code> で準備します。次はLevelTick内の処理です。</p>
+<pre><code>auto scope = teleport.tick(client, level, epoch);
+if (!scope) return;
+commands.update(client, epoch);
+commands.dispatch(); // thenのハンドラーを最大1件実行</code></pre>
+<p><code>WorldChange</code> では両方に <code>reset(epoch)</code> を呼びます。待機キューは最大16件。逆経路から同じ要求が200ms以内に届いた場合にだけ一対をまとめ、同じ経路の連続入力は保持します。<code>onRejected</code> は不正引数・キュー超過、<code>onDiagnostic</code> は登録状態を通知します。</p>
+<p><code>NativeSafeTeleport</code> は移動距離・RuntimeID・ワールド・当たり判定・安全な床を確認し、上方探索をtick予算内で進めます。<code>onResult</code> の <code>TeleportError</code> をMod側で翻訳できます。階段や半ブロックなど未対応の支持面は拒否します。ローカル位置の更新がサーバーに受理される保証はありません。</p>
+<pre><code>// 初期化時: サービスに必要な定義もまとめて検証
+const bool ready = profiles.prepare(
+    {bedrock::Feature::ClientCommands, bedrock::Feature::CommandPackets,
+     bedrock::Feature::PacketSender}, options,
     [&amp;](const bedrock::RuntimeProfile&amp; selected, std::string&amp; failure) {
         return commands.load(selected, failure);
-    }, error);
-
-// owning clientのLevelTickで、20tick程度の間隔で呼ぶ
-const auto registration = commands.update(clientInstance);
-// ワールド変更イベント時
-commands.reset();</code></pre>
+    }, error);</code></pre>
+<p>上の初期化例はコマンドサービス単独の要件です。移動も使う場合はWorld・Motion・WorldHeight・Guiとイベント用要件を加え、<code>teleport.load</code> も呼びます。<a href="examples/native_bootstrap.cpp">イベント接続を含む全体例 →</a></p>
 <div class="note"><strong>現在のnativeアダプター</strong> 整数引数1個に対応。文字列・enum・複数引数・引数なし専用overloadは未対応です。同名コマンドを上書きせず、1 DLLあたり最大32定義。nativeの参照が残るためDLLはpinされます。</div>
-<p>コマンド受付は <code>CommandDecision::Accepted / Rejected</code>。登録結果は <code>unavailable / waiting / unchanged / registered / collision / failed</code>。文字列を振り分ける旧 <code>ClientCommands</code> は本体の候補登録を行いません。</p>
+<p>コマンド受付は <code>CommandDecision::Accepted / Rejected</code>。低水準のNativeClientCommandsの登録結果は <code>unavailable / waiting / unchanged / registered / collision / failed</code>、NativeCommandServiceは状態変化をonDiagnosticへ通知します。文字列を振り分ける旧 <code>ClientCommands</code> は本体の候補登録を行いません。</p>
 <a class="download-link" href="examples/typed_command.cpp">型付きコマンド例のソース →</a>
 </section>
 <section id="profiles" data-title="GitHub windows-x64.json manifest refresh 自動更新 ProfileManager Feature 要件 キャッシュ">
@@ -184,7 +187,7 @@ const auto frame = rig.update(yaw,
 <p class="eyebrow">REFERENCE MAP</p><h2>ヘッダー別リファレンス</h2><div class="table-wrap"><table><thead><tr><th>ヘッダー</th><th>主な型 / 役割</th></tr></thead><tbody>
 <tr><td><a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/include/bedrock/api_types.hpp">api_types.hpp ↗</a></td><td>用途別の型・CandidatePolicy・UpdatePolicy・ReadPolicy</td></tr>
 <tr><td>command_builder.hpp</td><td>CommandBuilder・IntegerCommandBuilder・CommandDefinition</td></tr>
-<tr><td>native_client_commands.hpp</td><td>NativeClientCommands、本体の候補・実行登録</td></tr>
+<tr><td>native_command_service.hpp / command_queue.hpp</td><td>候補登録・パケットfallback・型付きキュー</td></tr><tr><td>native_safe_teleport.hpp / safe_teleport.hpp</td><td>予算付き上方探索・安全検査・型付き結果</td></tr><tr><td>native_client_commands.hpp</td><td>低水準の本体CommandRegistry登録</td></tr>
 <tr><td>profile_manager.hpp</td><td>ProfileManager・RuntimeProfile・ProfileRequirements・Feature</td></tr>
 <tr><td>native_world.hpp / blocks.hpp</td><td>NativeWorld・BlockPos・BlockResult・BlockSetBuilder・TickBudget</td></tr>
 <tr><td>game_api.hpp / game_hooks.hpp</td><td>GameApi・GameAccess・World・Actor・LocalPlayer・GameHooks</td></tr>
@@ -199,7 +202,7 @@ const auto frame = rig.update(yaw,
 </section>
 <section id="migration" data-title="移行 バージョン ABI 後方互換 更新 legacy">
 <p class="eyebrow">EVOLVE THE ADAPTER</p><h2>既存コードからの移行</h2>
-<div class="table-wrap"><table><thead><tr><th>これまで</th><th>新しい入口</th></tr></thead><tbody><tr><td>add(name, description, {name, true}, handler)</td><td>CommandBuilder → 型付き引数 → handles → add(definition)</td></tr><tr><td>fetch / JSONキー確認 / refresh / embeddedを各Modへ実装</td><td>ProfileManager.prepare(requirements, options, adapter, error)</td></tr><tr><td>load(json, true, error)</td><td>load(const RuntimeProfile&amp;, error)</td></tr><tr><td>getBlock(pos, true)</td><td>getBlock(pos, ReadPolicy::Fresh)</td></tr><tr><td>setBlock(pos, "minecraft:stone", aggregate)</td><td>BlockIdentifier + BlockSetBuilder</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>これまで</th><th>新しい入口</th></tr></thead><tbody><tr><td>add(name, description, {name, true}, handler)</td><td>CommandBuilder(名前, 引数名).then(handler) → add(definition)</td></tr><tr><td>fetch / JSONキー確認 / refresh / embeddedを各Modへ実装</td><td>ProfileManager.prepare(requirements, options, adapter, error)</td></tr><tr><td>load(json, true, error)</td><td>load(const RuntimeProfile&amp;, error)</td></tr><tr><td>getBlock(pos, true)</td><td>getBlock(pos, ReadPolicy::Fresh)</td></tr><tr><td>setBlock(pos, "minecraft:stone", aggregate)</td><td>BlockIdentifier + BlockSetBuilder</td></tr></tbody></table></div>
 <p>旧オーバーロードは移行用に維持しています。新コードは型付き入口を使用してください。GameAccessをDLL間で共有する場合は、利用側も同じSDKで再ビルドします。BedrockHookRuntimeのC ABIをこの変更で拡張するものではありません。</p>
 <p>JSONで表せるRVA・オフセット差はSDKアダプターで吸収します。引数の渡し方・native構造サイズ・EnTT ABIが変化した場合は、その形に対応するアダプターが必要です。ModへRVAを追加する代わりにSDK側を更新する方針ですが、全将来版のバイナリ互換を保証するものではありません。</p>
 </section>

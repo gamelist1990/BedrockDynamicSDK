@@ -4,8 +4,7 @@
 
 bedrock::CommandDefinition makeTopCommand(
     std::function<bedrock::CommandDecision(std::optional<int>)> queueRequest) {
-    return bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+    return bedrock::CommandBuilder(bedrock::CommandName{"top"}, bedrock::ArgumentName{"blocks"})
         .description(bedrock::CommandDescription{"安全な上方移動"})
-        .optionalInteger(bedrock::ArgumentName{"blocks"})
-        .handles(std::move(queueRequest));
+        .then(std::move(queueRequest));
 }

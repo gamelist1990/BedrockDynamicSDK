@@ -1,26 +1,24 @@
 #pragma once
-// Reuse the SDK examples' guarded ECS/BlockSource reader, with a narrower
-// binding set: no SpeedBuilder placement, inventory writes or Title hooks.
+// Guarded owner-tick adapter used by NativeSafeTeleport. No placement or inventory writes.
 #include <bedrock/native_world.hpp>
 #include <bedrock/native_motion.hpp>
-#include "top/planner.hpp"
-namespace top_native {
+#include <bedrock/safe_teleport.hpp>
+namespace bedrock::teleport_native {
 namespace n=bedrock::world_native;
 using Vec=bedrock::Vec3;using Pos=bedrock::BlockPos;
 struct Bindings : n::Bindings {
     std::size_t previousOffset{},velocityOffset{},fallOffset{},minHeightOffset{},maxHeightOffset{};
     std::uint32_t fallHash{};
-    void* messageFn{};std::uintptr_t commandVtable{};std::size_t commandOffset{},guiOffset{};
-    void loadTop(const std::string& profile){
+    void* messageFn{};std::size_t guiOffset{};
+    void loadTeleport(const std::string& profile){
         loadWorld(profile);
-        const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_gui");const auto& packet=j.at("native_packets").at("command_request");const auto& heights=j.at("native_world").at("height_limits");
+        const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_gui");const auto& heights=j.at("native_world").at("height_limits");
         base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin=base+n::number(j.at("target").at("text_rva"));textEnd=textBegin+n::number(j.at("target").at("text_size"));
         std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error))throw std::runtime_error(error);
         const auto motion=bedrock::native_motion::Layout::fromProfile(profile);
         previousOffset=motion.previous;velocityOffset=motion.velocity;fallHash=motion.fallHash;fallOffset=motion.fall;
         minHeightOffset=n::number(heights.at("min_height_offset"));maxHeightOffset=n::number(heights.at("max_height_offset"));
-        messageFn=checked(t.at("display_message"));commandVtable=base+n::number(packet.at("vtable_rva"));
-        commandOffset=n::number(packet.at("command_offset"));guiOffset=n::number(t.at("client_gui_offset"));checked(packet.at("get_id"));checked(t.at("get_gui"));
+        messageFn=checked(t.at("display_message"));guiOffset=n::number(t.at("client_gui_offset"));checked(t.at("get_gui"));
     }
     bool message(void* client,const std::string& text,const std::optional<std::string>& filtered,const std::string& tts)const noexcept{
         void* gui{};void* owner{};void* life{};unsigned char alive{};
@@ -34,7 +32,7 @@ struct Bindings : n::Bindings {
     bool bounds(void* player,bedrock::ActorBounds& out)const noexcept{
         auto* p=component(player,actors.aabbShapeComponentHash);
         return n::read(p,actors.aabbMinimumOffset,out.minimum)&&n::read(p,actors.aabbMaximumOffset,out.maximum)&&
-            top_mod::valid({{out.minimum.x,out.minimum.y,out.minimum.z},{out.maximum.x,out.maximum.y,out.maximum.z}})&&
+            out.valid()&&
             out.maximum.x-out.minimum.x<=4&&out.maximum.z-out.minimum.z<=4&&out.maximum.y-out.minimum.y<=4;
     }
     // One owner-tick transaction. Preserve x/z, translate the existing AABB,
@@ -77,32 +75,32 @@ class Safety {
     Bindings& b;n::Reader& reader;
 public:
     Safety(Bindings& bindings,n::Reader& r):b(bindings),reader(r){}
-    std::string check(void* source,const bedrock::ActorBounds& bounds,int low,int high){
+    TeleportError check(void* source,const bedrock::ActorBounds& bounds,int low,int high){
         const auto& a=bounds.minimum;const auto& z=bounds.maximum;
-        if(a.y<low||z.y>high)return "ディメンションの高さ範囲外です";
+        if(a.y<low||z.y>high)return TeleportError::HeightLimit;
         const int x0=static_cast<int>(std::floor(a.x+.0001f)),x1=static_cast<int>(std::floor(z.x-.0001f));
         const int z0=static_cast<int>(std::floor(a.z+.0001f)),z1=static_cast<int>(std::floor(z.z-.0001f));
         const int y0=static_cast<int>(std::floor(a.y+.0001f)),y1=static_cast<int>(std::floor(z.y-.0001f));
         for(int x=x0;x<=x1;++x)for(int k=z0;k<=z1;++k)for(int y=y0;y<=y1;++y){
             auto* state=b.block(source,{x,y,k});auto* info=reader.describe(state);
-            if(!info)return "移動先のチャンクまたはブロックを読み取れません";
-            if(!air(info->name))return "移動先に体・頭が埋まるブロックまたは液体があります";
+            if(!info)return TeleportError::ChunkUnavailable;
+            if(!air(info->name))return TeleportError::BodyObstructed;
         }
-        if(std::abs(a.y-std::round(a.y))>.005f)return "足元の安全な支持面を確認できません";
+        if(std::abs(a.y-std::round(a.y))>.005f)return TeleportError::UnsupportedHeight;
         const int floorY=static_cast<int>(std::round(a.y))-1;
-        if(floorY<low)return "足元に床がありません";
+        if(floorY<low)return TeleportError::MissingFloor;
         for(int x=x0;x<=x1;++x)for(int k=z0;k<=z1;++k){
             auto* state=b.block(source,{x,floorY,k});auto* info=reader.describe(state);
-            if(!info)return "足元のチャンクを読み取れません";
-            if(air(info->name))return "足元に床がありません";
-            if(dangerous(info->name))return "足元が危険または安全性未確認のブロックです";
+            if(!info)return TeleportError::ChunkUnavailable;
+            if(air(info->name))return TeleportError::MissingFloor;
+            if(dangerous(info->name))return TeleportError::UnsafeFloor;
             // Only solid full cubes. Bounding-shape unions of stairs/fences can
             // overstate their support; do not use them as safe full floors.
             if(!info->solid||!knownFullFloor(info->name)||info->name.find("stairs")!=info->name.npos||info->name.find("slab")!=info->name.npos||
                info->name.find("fence")!=info->name.npos||info->name.find("wall")!=info->name.npos||info->name.find("trapdoor")!=info->name.npos)
-                return "足元が安全な全面支持ブロックではありません";
+                return TeleportError::UnsupportedFloor;
         }
-        return {};
+        return TeleportError::None;
     }
 };
 }

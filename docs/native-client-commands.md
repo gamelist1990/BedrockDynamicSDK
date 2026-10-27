@@ -57,7 +57,7 @@ commands.reset();
 
 既存の `ClientCommands` は入力文字列のローカル振り分け用として残します。
 それだけでは本体の候補登録は行われません。Topはnative登録と従来のpacket fallbackを
-併用し、二重実行の抑制はTop側で継続しています。
+併用し、二重実行の抑制はNativeCommandServiceが担当します。
 
 ## 衝突・所有権・終了
 
@@ -77,7 +77,8 @@ SDKのコマンドオブジェクトはSDK側で確保・破棄し、allocator�
 
 ## 移行と確認状況
 
-Topの `src/native_commands.hpp` はSDKヘッダーへの互換includeだけになりました。
+Topは `NativeCommandService` と `NativeSafeTeleport` を直接使います。
+Mod固有のnativeヘッダーやコマンド文字列への再変換は不要です。
 専用のNativeTopCommandやグローバルcommandReceiverはSDKの汎用factory/handlerへ置換しました。
 元の解析根拠は [Top解析メモ](top-native.md) に保持しています。
 新しい型・複数定義でのWindows実行と候補表示は、別途MSVCビルドと実機確認が必要です。

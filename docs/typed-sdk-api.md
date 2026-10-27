@@ -5,20 +5,43 @@ HTMLの説明・使用例は [API guide](site/index.html) を参照してくだ�
 ## コマンドBuilder
 
 ```cpp
-auto definition = bedrock::CommandBuilder::named(bedrock::CommandName{"top"})
+auto definition = bedrock::CommandBuilder(bedrock::CommandName{"top"}, bedrock::ArgumentName{"blocks"})
     .description(bedrock::CommandDescription{"安全な上方移動"})
-    .optionalInteger(bedrock::ArgumentName{"blocks"})
-    .handles([](std::optional<int> blocks) -> bedrock::CommandDecision {
-        return queueRequest(blocks) ? bedrock::CommandDecision::Accepted
-                                    : bedrock::CommandDecision::Rejected;
+    .then([](std::optional<int> blocks) -> bedrock::CommandDecision {
+        return teleport.request(blocks); // NativeCommandServiceがLevelTickへ配送
     });
-commands.add(std::move(definition));
+commands.add(std::move(definition)); // bedrock::NativeCommandService
 ```
 
 名前・説明・引数名は用途ごとの型です。optionalIntegerのハンドラーは
 `optional<int> -> CommandDecision`、requiredIntegerは `int -> CommandDecision`。
 ハンドラーを指定していないBuilderはNativeClientCommandsへ登録できません。
 現在のnativeアダプターは整数引数1個に限定しています。
+
+## 実行・ワールド切替をまとめるAPI
+
+`NativeCommandService`はネイティブ候補表示、20tickごとの登録再試行、
+パケットfallback、整数解析、16件の実行待ちキュー、200ms内の逆経路重複の組合せ抑制を担当します。
+同じ経路からの連続入力は捨てません。引数はコピー済みの整数として保持します。
+
+```cpp
+auto scope = teleport.tick(client, level, epoch); // NativeSafeTeleport
+if (!scope) return;
+commands.update(client, epoch); // NativeCommandService
+commands.dispatch(); // 最大1件。Builderのthenをこのスレッド上で実行
+```
+
+初期化時に`onDiagnostic`と`onRejected`で通知を接続できます。
+`WorldChange`では両方に`reset(epoch)`を呼び、古いキューと探索を破棄します。
+登録定義はHook開始前に固定し、サービスをModの寿命中保持してください。
+低水準の`NativeClientCommands`は従来どおり残しています。
+
+`NativeSafeTeleport`は`request(optional<int>)`で正確な上移動、引数省略で安全な上方の床を探索します。
+`configure(SafeTeleportOptions)`で距離上限・tickごとの件数・時間予算を指定します。
+`onResult`は型付きの`TeleportResult`/`TeleportError`を返し、Modが表示言語を決めます。
+読込・RuntimeID・ワールド・移動中断・当たり判定・床・高さ・直前の再検査はSDKが担当します。
+階段や半ブロック等の支持面を安全と推測せず、未対応の床形状は拒否します。
+ネイティブ位置の更新後にサーバーが移動を受理することを保証するAPIではありません。
 
 ## SDKのプロファイル取得
 
