@@ -1,7 +1,7 @@
 name: SpeedBuilder example
 on:
   push:
-    branches: [codex/speedbuilder-native, codex/freecam-speedbuilder-live-fixes, codex/freecam-terrain-blockstates, codex/freecam-spectator-render-path]
+    branches: [main, codex/consolidate-main-20261027]
   workflow_dispatch:
 jobs:
   build:

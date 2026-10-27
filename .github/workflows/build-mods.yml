@@ -1,7 +1,7 @@
 name: All mod DLLs
 on:
   push:
-    branches: [codex/runtime43-interaction]
+    branches: [main, codex/consolidate-main-20261027]
   workflow_dispatch:
 jobs:
   mods:
@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mod: [Freecam, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
+        mod: [Freecam, SpeedBuilder, Top, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
     steps:
       - uses: actions/checkout@v4
         with:

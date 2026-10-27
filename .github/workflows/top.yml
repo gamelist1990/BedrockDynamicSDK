@@ -1,7 +1,7 @@
 name: Top example
 on:
   push:
-    branches: [codex/freecam-spectator-render-path]
+    branches: [main, codex/consolidate-main-20261027]
     paths:
       - 'exsample/Top/**'
       - 'include/bedrock/**'
