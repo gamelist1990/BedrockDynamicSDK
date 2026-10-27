@@ -39,6 +39,14 @@ public:
         return setBlock(target,std::string_view(identifier.value()),options);
     }
     Capabilities capabilities()const noexcept{return {ready_,ready_&&bindings_.placementReady,true};}
+    // Changes when Level, BlockSource, local RuntimeID or caller epoch changes.
+    std::optional<std::uint64_t> worldGeneration() const {
+        return onOwnerThread() && active_ ? std::optional{generation_} : std::nullopt;
+    }
+    // Copied once at tick entry; no additional native Actor read.
+    std::optional<Vec3> localPosition() const {
+        return onOwnerThread() && active_ ? std::optional{position_} : std::nullopt;
+    }
     // Construct ONLY inside the local client LevelTick callback. Nested scopes
     // are denied. Destruction revokes all native access until the next tick.
     class TickScope {
@@ -156,6 +164,8 @@ private:
     bool onOwnerThread()const noexcept{return owner_.load(std::memory_order_acquire)==GetCurrentThreadId();}
     void* level_{};void* source_{};void* player_{};void* lastLevel_{};void* lastSource_{};
     std::uint64_t epoch_{},runtime_{},lastEpoch_{},lastRuntime_{};
+    Vec3 position_{};
+    std::uint64_t generation_{};
     unsigned remaining_{};
     std::chrono::steady_clock::time_point deadline_;
     std::map<BlockPos,BlockResult> cache_;
@@ -174,9 +184,9 @@ private:
         auto* player=bindings_.local(client);void* actualLevel{};
         auto* source=bindings_.region(client);Vec3 position{};std::uint64_t runtime{};
         if(!source||!bindings_.pose(player,position,runtime)||!world_native::read(player,bindings_.layout("player_level_offset"),actualLevel)||actualLevel!=level)return false;
-        if(lastLevel_!=level||lastSource_!=source||lastEpoch_!=epoch||lastRuntime_!=runtime)reader_.clear();
+        if(lastLevel_!=level||lastSource_!=source||lastEpoch_!=epoch||lastRuntime_!=runtime){reader_.clear();++generation_;}
         lastLevel_=level;lastSource_=source;lastEpoch_=epoch;lastRuntime_=runtime;
-        level_=level;source_=source;player_=player;runtime_=runtime;epoch_=epoch;
+        level_=level;source_=source;player_=player;runtime_=runtime;epoch_=epoch;position_=position;
         remaining_=std::min(budget.operations,4096u);deadline_=std::chrono::steady_clock::now()+std::chrono::microseconds(std::min(budget.microseconds,5000u));
         cache_.clear();active_=true;return true;
     }

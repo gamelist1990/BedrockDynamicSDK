@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mod: [Freecam, SpeedBuilder, Top, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
+        mod: [BlockOutline, Freecam, SpeedBuilder, Top, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
     steps:
       - uses: actions/checkout@v4
         with:
