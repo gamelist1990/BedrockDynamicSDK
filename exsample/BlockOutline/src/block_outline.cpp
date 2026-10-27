@@ -110,7 +110,9 @@ private:
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         std::string error;
         if(!profiles.prepare(required,options,[this](const bedrock::RuntimeProfile& profile,std::string& failure) {
-            return world_.load(profile,failure)&&renderer_.load(profile,failure);
+            if(!world_.load(profile,failure)||!renderer_.load(profile,failure))return false;
+            if(!world_.supportsSubChunkScan()) { failure="SubChunk scan layout missing; refresh exact-build profile"; return false; }
+            return true;
         },error))throw std::runtime_error(error);
         api_.Event.Enum.Gameplay.then([this](const bedrock::GameplayEvent& event) { if(event.clientInstance)client_.store(event.clientInstance); });
         api_.Event.Enum.WorldChange.then([this](const bedrock::WorldChangeEvent& event) {

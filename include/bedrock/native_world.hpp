@@ -35,6 +35,7 @@ public:
         catch(const std::exception& e){error=e.what();return false;}
     }
     BlockResult getBlock(BlockPos pos,ReadPolicy policy){return getBlock(pos,policy==ReadPolicy::Fresh);}
+    bool supportsSubChunkScan() const noexcept { return ready_ && bindings_.scanReady; }
     struct BlockScanResult {
         BlockResult block;
         // Null layer-0 storage / outside vertical bounds. All 4096 cells
