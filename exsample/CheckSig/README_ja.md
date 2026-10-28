@@ -84,6 +84,9 @@ probe Keyboard::feed
 scan "55 48 83 EC ??"
 hook Keyboard::feed
 unhook Keyboard::feed
+hook Level::getRuntimeActorList
+read actor:0+0x20 bytes:16
+unhook Level::getRuntimeActorList
 read rva:0x331C20 bytes:16
 read 0x00007FF612345678 f32
 identity
@@ -91,8 +94,13 @@ help
 quit
 ```
 
-`read` はVA、`rva:0x...`、`u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64/bytes:N`
-を受け付けます。ポインター値を読んでも、その先を自動でたどりません。
+`read` はVA、`rva:0x...`、およびActor一覧Hookが最後に記録した最大8件のActorを基準にする
+`actor:<index>+<offset>`（例: `actor:0+0x20`）を受け付けます。Actor相対読み取りは
+`VirtualQuery` と `ReadProcessMemory` で指定範囲だけを確認します。サンプル後にオブジェクトの
+寿命が続いていることまでは保証せず、結果にも `lifetime_verified: false` と記録します。
+ポインター値を読んでも、その先を自動でたどりません。値を確認した後は、必要な場合だけ
+別の `read <VA> <type>` を明示してください。読み取り型は
+`u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64/bytes:N` です。
 `scan` は任意のmasked patternを `.text` から検索し、ヒット数、対応する `.pdata` 関数、
 相対参照と `.rdata` 文字列を記録します。512件を超える検索は部分結果を候補にしません。
 関数の引数や戻り値の値を追う場合は、`hook` が成功した後に `events.jsonl` の

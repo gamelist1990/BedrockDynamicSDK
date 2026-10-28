@@ -654,6 +654,9 @@ struct HookState {
     std::string symbol;
     std::atomic<std::uint64_t> calls{};
     std::atomic<std::int64_t> lastSampleNs{};
+    std::array<std::uintptr_t, 8> actorSamples{};
+    std::size_t actorSampleCount{};
+    std::uint64_t actorSampleCallNumber{};
     bool actorContextCandidate{};
     std::uint32_t actorRegistryOffset{};
     std::uint32_t actorEntityIdOffset{};
@@ -788,9 +791,22 @@ private:
         return hex(reinterpret_cast<std::uintptr_t>(value));
     }
 
-    static void setLatest(HookState& state, json values) noexcept {
+    static void setLatest(HookState& state, json values,
+                          const std::array<std::uintptr_t, 8>* actorSamples = nullptr,
+                          std::size_t actorSampleCount = 0,
+                          bool replaceActorSamples = false) noexcept {
         try {
             std::lock_guard lock(state.mutex);
+            if (replaceActorSamples) {
+                state.actorSamples.fill(0);
+                state.actorSampleCount = 0;
+                if (actorSamples) {
+                    state.actorSampleCount = std::min(actorSampleCount, state.actorSamples.size());
+                    std::copy_n(actorSamples->begin(), state.actorSampleCount,
+                                state.actorSamples.begin());
+                }
+                state.actorSampleCallNumber = state.calls.load(std::memory_order_relaxed);
+            }
             state.latest = std::move(values);
             state.dirty = true;
         } catch (...) {}
@@ -810,6 +826,9 @@ private:
                 previous, nowNs, std::memory_order_relaxed)) return;
         try {
             json values = json::object();
+            std::array<std::uintptr_t, 8> sampledActors{};
+            std::size_t sampledActorCount = 0;
+            bool replaceActorSamples = false;
             switch (state->point) {
             case BDS_HOOK_KEYBOARD_FEED: {
                 const auto* a = static_cast<const BDS_KeyboardArgs*>(raw);
@@ -841,6 +860,7 @@ private:
                 break;
             }
             case BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST: {
+                replaceActorSamples = true;
                 const auto* a = static_cast<const BDS_RuntimeActorListArgs*>(raw);
                 if (!a) break;
                 values = {{"level", pointerString(a->level)},
@@ -864,6 +884,7 @@ private:
                 for (std::size_t i = 0; i < std::min<std::size_t>(count, 8); ++i) {
                     std::uintptr_t actor{};
                     if (!safeRead(begin + i * sizeof(void*), &actor, sizeof(actor))) break;
+                    sampledActors[sampledActorCount++] = actor;
                     actors.push_back(hex(actor));
                     if (state->actorContextCandidate) {
                         std::uintptr_t registry{};
@@ -925,7 +946,8 @@ private:
                 break;
             }
             values["call_number"] = state->calls.load(std::memory_order_relaxed);
-            setLatest(*state, std::move(values));
+            setLatest(*state, std::move(values), &sampledActors,
+                      sampledActorCount, replaceActorSamples);
         } catch (...) {}
     }
 
@@ -1316,7 +1338,7 @@ private:
                 "identity", "source <old-profile.json>", "profile <target-profile.json>",
                 "port [version]", "list", "probe <symbol>", "hook <symbol>",
                 "unhook <symbol>", "scan <masked-pattern>",
-                "read <VA|rva:0xRVA> <type>", "quit"
+                "read <VA|rva:0xRVA|actor:index+offset> <type>", "quit"
             })}});
         } else if (command == "identity") {
             writeEvent("identity", {{"identity", moduleIdentityJson(*image_, identity_)}});
@@ -1696,7 +1718,44 @@ private:
 
     void readValue(const std::string& addressToken, const std::string& type) {
         std::uintptr_t address{};
-        if (addressToken.rfind("rva:", 0) == 0) {
+        json source = json::object();
+        if (addressToken.rfind("actor:", 0) == 0) {
+            const std::string_view expression(addressToken);
+            const auto plus = expression.find('+', 6);
+            if (plus == std::string_view::npos || plus == 6 || plus + 1 == expression.size())
+                throw std::runtime_error("usage: read actor:<index>+<offset> <type>");
+            const auto index = parseUnsigned(expression.substr(6, plus - 6), 10);
+            const auto offset = parseUnsigned(expression.substr(plus + 1));
+            if (index >= 8 || offset > 0x10000)
+                throw std::runtime_error("actor sample index must be 0..7 and offset at most 0x10000");
+            std::uintptr_t actor{};
+            std::uint64_t sampleCallNumber{};
+            bool foundSample = false;
+            {
+                std::lock_guard mapLock(hookMapMutex_);
+                for (const auto& [name, holder] : hooks_) {
+                    (void)name;
+                    if (holder->point != BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST) continue;
+                    std::lock_guard sampleLock(holder->mutex);
+                    if (index >= holder->actorSampleCount) break;
+                    actor = holder->actorSamples[static_cast<std::size_t>(index)];
+                    sampleCallNumber = holder->actorSampleCallNumber;
+                    foundSample = actor != 0;
+                    break;
+                }
+            }
+            if (!foundSample)
+                throw std::runtime_error("no recent Actor sample; install hook Level::getRuntimeActorList first");
+            if (actor > UINTPTR_MAX - static_cast<std::uintptr_t>(offset))
+                throw std::runtime_error("actor-relative address exceeds x64 range");
+            address = actor + static_cast<std::uintptr_t>(offset);
+            source = {
+                {"kind", "sampled_actor"}, {"actor_index", index},
+                {"actor_pointer", hex(actor)}, {"offset", hex(offset)},
+                {"sample_call_number", sampleCallNumber},
+                {"lifetime_verified", false}
+            };
+        } else if (addressToken.rfind("rva:", 0) == 0) {
             const auto value = parseUnsigned(std::string_view(addressToken).substr(4));
             if (value >= image_->imageSize || image_->base > UINTPTR_MAX - value)
                 throw std::runtime_error("RVA is outside the loaded image");
@@ -1724,6 +1783,7 @@ private:
             {"address", hex(address)}, {"type", type}, {"size", size},
             {"bytes", bytesHex(data.data(), size)}, {"readable", true}
         };
+        if (!source.empty()) result["source"] = std::move(source);
         if (type == "u8") result["value"] = std::to_integer<std::uint8_t>(data[0]);
         else if (type == "i8") { std::int8_t v{}; std::memcpy(&v, data.data(), 1); result["value"] = v; }
         else if (type == "u16") { std::uint16_t v{}; std::memcpy(&v, data.data(), 2); result["value"] = v; }
