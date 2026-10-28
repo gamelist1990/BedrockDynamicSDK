@@ -75,9 +75,16 @@ struct PeImage {
     Section rdata;
 };
 
+enum class HookAdapter {
+    Middleware,
+    LocalPlayerReturn,
+    CameraRenderArguments
+};
+
 struct HookSpec {
     const char* symbol;
     BDS_HookPoint point;
+    HookAdapter adapter{HookAdapter::Middleware};
 };
 
 constexpr HookSpec kHookSpecs[] = {
@@ -95,6 +102,10 @@ constexpr HookSpec kHookSpecs[] = {
     {"ClientInstance::onDimensionChangedEvent", BDS_HOOK_CLIENT_DIMENSION_CHANGED},
     {"ClientInstance::onCancelJoinGame", BDS_HOOK_CLIENT_JOIN_CANCELLED},
     {"native_world_render.functions.render_level", BDS_HOOK_RENDER_LEVEL},
+    {"native_camera.local_player", static_cast<BDS_HookPoint>(0),
+        HookAdapter::LocalPlayerReturn},
+    {"native_camera.visual.camera_render_observe", static_cast<BDS_HookPoint>(0),
+        HookAdapter::CameraRenderArguments},
 };
 
 DWORD WINAPI worker(void*);
@@ -651,7 +662,10 @@ json moduleIdentityJson(const PeImage& image, const bedrock::GameIdentity& ident
 struct HookState {
     BDS_HookToken token{};
     BDS_HookPoint point{};
+    HookAdapter adapter{HookAdapter::Middleware};
     std::string symbol;
+    bool providesActorSamples{};
+    std::atomic<bool> observing{};
     std::atomic<std::uint64_t> calls{};
     std::atomic<std::int64_t> lastSampleNs{};
     std::array<std::uintptr_t, 8> actorSamples{};
@@ -738,6 +752,13 @@ private:
     std::mutex fileMutex_;
     std::mutex hookMapMutex_;
 
+    using LocalPlayerFn = void* (__fastcall*)(void*);
+    using CameraRenderFn = void (__fastcall*)(void*, void*, const void*, void*);
+    inline static std::atomic<HookState*> localPlayerState_{};
+    inline static std::atomic<HookState*> cameraRenderState_{};
+    inline static LocalPlayerFn originalLocalPlayer_{};
+    inline static CameraRenderFn originalCameraRender_{};
+
     static fs::path documentsDirectory() {
         PWSTR path{};
         if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_CREATE, nullptr, &path)))
@@ -777,6 +798,8 @@ private:
             std::lock_guard lock(hookMapMutex_);
             for (const auto& [name, holder] : hooks_) {
                 json entry = {{"symbol", name}, {"installed", holder->token != nullptr},
+                              {"observing", holder->observing.load(std::memory_order_relaxed)},
+                              {"adapter", hookAdapterName(hookSpec(name))},
                               {"calls", holder->calls.load(std::memory_order_relaxed)}};
                 std::lock_guard stateLock(holder->mutex);
                 if (!holder->latest.empty()) entry["latest_values"] = holder->latest;
@@ -789,6 +812,62 @@ private:
 
     static std::string pointerString(const void* value) {
         return hex(reinterpret_cast<std::uintptr_t>(value));
+    }
+
+    bool observerAbiMatches(const HookSpec* spec, const json& symbolEntry) const {
+        if (!spec) return false;
+        if (spec->adapter == HookAdapter::Middleware) return true;
+        if (!symbolEntry.is_object() ||
+            lower(identity_.fileSha256) != k126605ExeSha256 ||
+            symbolEntry.value("status", std::string{}) != "candidate" ||
+            symbolEntry.value("abi_verified", false) ||
+            symbolEntry.value("runtime_verified", false)) return false;
+        const std::uint32_t expectedRva =
+            spec->adapter == HookAdapter::LocalPlayerReturn ? 0x659E470u :
+            spec->adapter == HookAdapter::CameraRenderArguments ? 0x5376690u : 0u;
+        try {
+            if (!expectedRva || !symbolEntry.contains("rva") ||
+                jsonU32(symbolEntry.at("rva")) != expectedRva) return false;
+        } catch (...) {
+            return false;
+        }
+        const auto abi = symbolEntry.value("source_abi",
+            symbolEntry.value("abi", std::string{}));
+        switch (spec->adapter) {
+        case HookAdapter::LocalPlayerReturn:
+            return std::string_view(spec->symbol) == "native_camera.local_player" &&
+                abi == "Actor* __fastcall(ClientInstance*)";
+        case HookAdapter::CameraRenderArguments:
+            return std::string_view(spec->symbol) ==
+                "native_camera.visual.camera_render_observe" &&
+                abi == "void __fastcall(LevelRendererCamera* RCX, BaseActorRenderContext* RDX, ViewRenderObject const* R8, IClientInstance* R9)";
+        case HookAdapter::Middleware:
+            return true;
+        }
+        return false;
+    }
+
+    static const char* hookAdapterName(const HookSpec* spec) noexcept {
+        if (!spec) return "none";
+        switch (spec->adapter) {
+        case HookAdapter::Middleware: return "sdk-middleware";
+        case HookAdapter::LocalPlayerReturn: return "direct-local-player-return";
+        case HookAdapter::CameraRenderArguments: return "direct-camera-render-arguments";
+        }
+        return "unknown";
+    }
+
+    static bool hookRuntimeSupports(const HookSpec* spec) {
+        if (!spec) return false;
+        if (spec->adapter == HookAdapter::Middleware)
+            return BDS_HookRuntimeSupports(spec->point) != 0;
+        return BDS_HookRuntimeAbi() >= 4 &&
+            std::string_view(BDS_HookRuntimeVersion()) != "unavailable";
+    }
+
+    static std::optional<bool> hookTargetOwned(const HookSpec* spec, void* target) {
+        if (!spec || spec->adapter != HookAdapter::Middleware) return std::nullopt;
+        return BDS_HookOwnsTarget(spec->point, target) != 0;
     }
 
     static void setLatest(HookState& state, json values,
@@ -809,6 +888,86 @@ private:
             }
             state.latest = std::move(values);
             state.dirty = true;
+        } catch (...) {}
+    }
+
+    static bool samplingDue(HookState& state) noexcept {
+        const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto previous = state.lastSampleNs.load(std::memory_order_relaxed);
+        return nowNs - previous >= 250'000'000 &&
+            state.lastSampleNs.compare_exchange_strong(
+                previous, nowNs, std::memory_order_relaxed);
+    }
+
+    static void recordDirectObservation(HookState* state, json values,
+            const std::array<std::uintptr_t, 8>* actorSamples = nullptr,
+            std::size_t actorSampleCount = 0,
+            bool replaceActorSamples = false) noexcept {
+        if (!state) return;
+        state->calls.fetch_add(1, std::memory_order_relaxed);
+        if (!samplingDue(*state)) return;
+        try {
+            values["call_number"] = state->calls.load(std::memory_order_relaxed);
+            setLatest(*state, std::move(values), actorSamples,
+                      actorSampleCount, replaceActorSamples);
+        } catch (...) {}
+    }
+
+    static void* __fastcall localPlayerObserver(void* client) noexcept {
+        const auto original = originalLocalPlayer_;
+        if (!original) return nullptr;
+        void* actor = original(client);
+        auto* state = localPlayerState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire)) return actor;
+        try {
+            std::array<std::uintptr_t, 8> samples{};
+            std::size_t sampleCount = 0;
+            std::uintptr_t actorVtable{};
+            const bool actorReadable = actor && safeRead(
+                reinterpret_cast<std::uintptr_t>(actor), &actorVtable, sizeof(actorVtable));
+            if (actorReadable) {
+                samples[0] = reinterpret_cast<std::uintptr_t>(actor);
+                sampleCount = 1;
+            }
+            json values = {
+                {"client_instance", pointerString(client)},
+                {"return_actor", pointerString(actor)},
+                {"actor_object_readable", actorReadable},
+                {"actor_vtable_candidate", actorReadable ? json(hex(actorVtable)) : json(nullptr)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.local_player: ClientInstance slot 34 / old-new instruction structure"}
+            };
+            recordDirectObservation(state, std::move(values), &samples, sampleCount, true);
+        } catch (...) {}
+        return actor;
+    }
+
+    static void __fastcall cameraRenderObserver(void* renderer, void* renderContext,
+            const void* viewRenderObject, void* clientInstance) noexcept {
+        const auto original = originalCameraRender_;
+        if (!original) return;
+        original(renderer, renderContext, viewRenderObject, clientInstance);
+        auto* state = cameraRenderState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire)) return;
+        try {
+            std::array<std::byte, kMaxReadBytes> snapshot{};
+            const bool snapshotReadable = viewRenderObject && safeRead(
+                reinterpret_cast<std::uintptr_t>(viewRenderObject),
+                snapshot.data(), snapshot.size());
+            json values = {
+                {"renderer", pointerString(renderer)},
+                {"render_context", pointerString(renderContext)},
+                {"view_render_object", pointerString(viewRenderObject)},
+                {"client_instance", pointerString(clientInstance)},
+                {"view_prefix_readable", snapshotReadable},
+                {"view_prefix_size", snapshot.size()},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.visual.camera_render_observe: four-register-argument static REA evidence"}
+            };
+            if (snapshotReadable)
+                values["view_prefix_bytes"] = bytesHex(snapshot.data(), snapshot.size());
+            recordDirectObservation(state, std::move(values));
         } catch (...) {}
     }
 
@@ -1372,15 +1531,17 @@ private:
                 const auto* function = containingFunction(*image_, rva);
                 const auto* hook = hookSpec(it.key());
                 const auto target = reinterpret_cast<void*>(image_->base + rva);
+                const bool abiKnown = hook && observerAbiMatches(hook, symbolEntry);
                 const bool exactGuard = resolution && resolution->method == "exact-rva" &&
                     resolution->address == image_->base + rva;
                 const bool functionEntry = rva >= identity_.textRva &&
                     rva < identity_.textRva + identity_.textSize && function &&
                     function->begin == rva;
-                const bool runtimeSupports = hook && BDS_HookRuntimeSupports(hook->point) != 0;
-                const bool targetOwned = hook && BDS_HookOwnsTarget(hook->point, target) != 0;
+                const bool runtimeSupports = hookRuntimeSupports(hook);
+                const auto owned = hookTargetOwned(hook, target);
+                const bool targetOwned = owned.value_or(false);
                 const bool jumpStub = suspectedJumpStub(*image_, rva);
-                const bool hookReady = exactGuard && functionEntry && runtimeSupports &&
+                const bool hookReady = abiKnown && exactGuard && functionEntry && runtimeSupports &&
                     (!jumpStub || targetOwned);
                 entries.push_back({
                     {"symbol", it.key()}, {"rva", hex(rva)},
@@ -1391,10 +1552,18 @@ private:
                     {"candidate_evidence", symbolEntry.value("candidate_evidence", std::string{})},
                     {"entry_guard_hit", exactGuard},
                     {"pdata_function_entry", functionEntry},
-                    {"hook_point", hook ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
-                    {"hook_runtime_supports_point", runtimeSupports},
+                    {"hook_adapter", hookAdapterName(hook)},
+                    {"hook_point", hook && hook->adapter == HookAdapter::Middleware
+                        ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
+                    {"hook_abi_known", abiKnown},
+                    {"hook_abi_status", !hook ? "unknown" :
+                        hook->adapter == HookAdapter::Middleware ? "SDK HookPoint ABI" :
+                        abiKnown ? "static candidate; runtime unverified" :
+                            "profile ABI/RVA mismatch"},
+                    {"hook_runtime_supports_adapter", runtimeSupports},
                     {"entry_looks_like_jump_stub", jumpStub},
-                    {"target_already_owned_by_sdk", targetOwned},
+                    {"target_already_owned_by_sdk",
+                        owned.has_value() ? json(targetOwned) : json(nullptr)},
                     {"hook_ready_for_explicit_test", hookReady}
                 });
             }
@@ -1475,7 +1644,9 @@ private:
                         const auto* spec = hookSpec(name);
                         matchingSymbols.push_back({
                             {"name", name},
-                            {"hook_point", spec ? json(static_cast<unsigned>(spec->point)) : json(nullptr)}
+                            {"hook_adapter", hookAdapterName(spec)},
+                            {"hook_point", spec && spec->adapter == HookAdapter::Middleware
+                                ? json(static_cast<unsigned>(spec->point)) : json(nullptr)}
                         });
                     }
                 }
@@ -1504,7 +1675,7 @@ private:
                     })},
             {"non_pdata_sample_rvas", std::move(outsideFunction)},
             {"candidate_functions", std::move(candidates)},
-            {"hook_note", "Use probe/hook by a matching known symbol; arbitrary signatures have no inferred ABI."}
+            {"hook_note", "Use probe/hook by a matching symbol with an SDK middleware ABI or exact-build CheckSig observer adapter; arbitrary signatures remain probe-only."}
         });
     }
 
@@ -1587,11 +1758,12 @@ private:
                                 resolution->address == image_->base + rva;
         const bool functionEntry = rva >= identity_.textRva &&
             rva < identity_.textRva + identity_.textSize && function && function->begin == rva;
-        const bool runtimeSupports = hook && BDS_HookRuntimeSupports(hook->point) != 0;
+        const bool abiKnown = hook && observerAbiMatches(hook, symbolEntry);
+        const bool runtimeSupports = hookRuntimeSupports(hook);
         const bool jumpStub = suspectedJumpStub(*image_, rva);
-        const bool targetOwned = hook && BDS_HookOwnsTarget(
-            hook->point, reinterpret_cast<void*>(image_->base + rva)) != 0;
-        const bool hookReady = exactGuard && functionEntry && runtimeSupports &&
+        const auto owned = hookTargetOwned(hook, reinterpret_cast<void*>(image_->base + rva));
+        const bool targetOwned = owned.value_or(false);
+        const bool hookReady = abiKnown && exactGuard && functionEntry && runtimeSupports &&
             (!jumpStub || targetOwned);
         writeEvent("probe-result", {
             {"symbol", symbol}, {"rva", hex(rva)},
@@ -1603,11 +1775,18 @@ private:
             {"resolver_method", resolution ? resolution->method : std::string("no-hit")},
             {"exact_build", resolver_->exactBuild()}, {"entry_guard_hit", exactGuard},
             {"pdata_function_entry", functionEntry},
-            {"hook_abi_known", hook != nullptr},
-            {"hook_point", hook ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
-            {"hook_runtime_supports_point", runtimeSupports},
+            {"hook_adapter", hookAdapterName(hook)},
+            {"hook_abi_known", abiKnown},
+            {"hook_point", hook && hook->adapter == HookAdapter::Middleware
+                ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
+            {"hook_abi_status", !hook ? "unknown" :
+                hook->adapter == HookAdapter::Middleware ? "SDK HookPoint ABI" :
+                abiKnown ? "static candidate; runtime unverified" :
+                    "profile ABI/RVA mismatch"},
+            {"hook_runtime_supports_adapter", runtimeSupports},
             {"entry_looks_like_jump_stub", jumpStub},
-            {"target_already_owned_by_sdk", targetOwned},
+            {"target_already_owned_by_sdk",
+                owned.has_value() ? json(targetOwned) : json(nullptr)},
             {"hook_ready_for_explicit_test", hookReady},
             {"pattern_hits", std::move(patternHits)},
             {"anchor_port_support", targetProfile_.value("generation", json::object())
@@ -1628,20 +1807,26 @@ private:
         const auto entry = targetProfile_["symbols"].find(symbol);
         if (entry == targetProfile_["symbols"].end())
             throw std::runtime_error("symbol is not present in the target profile");
+        if (!observerAbiMatches(spec, entry.value()))
+            throw std::runtime_error(
+                "hook refused: no supported ABI adapter for this exact-build candidate; probe only");
         const auto rva = jsonU32(entry.value().at("rva"));
         const auto resolution = resolver_->resolve(symbol, true);
         const auto* function = containingFunction(*image_, rva);
         const auto target = reinterpret_cast<void*>(image_->base + rva);
         const bool jumpStub = suspectedJumpStub(*image_, rva);
-        const bool targetOwned = BDS_HookOwnsTarget(spec->point, target) != 0;
+        const auto owned = hookTargetOwned(spec, target);
+        const bool targetOwned = owned.value_or(false);
         if (jumpStub && !targetOwned)
-            throw std::runtime_error("hook refused: entry looks like a jump stub not owned by the SDK hook broker");
+            throw std::runtime_error(spec->adapter == HookAdapter::Middleware
+                ? "hook refused: entry looks like a jump stub not owned by the SDK hook broker"
+                : "hook refused: candidate entry is already patched or no longer matches its guard");
         if (!resolution || resolution->method != "exact-rva" ||
             resolution->address != image_->base + rva ||
             !function || function->begin != rva ||
             rva < identity_.textRva || rva >= identity_.textRva + identity_.textSize)
             throw std::runtime_error("hook refused: exact entry guard or .pdata entry check failed");
-        if (!BDS_HookRuntimeSupports(spec->point))
+        if (!hookRuntimeSupports(spec))
             throw std::runtime_error("hook runtime does not support this point: " +
                                      std::string(BDS_HookRuntimeDiagnostic()));
 
@@ -1651,6 +1836,9 @@ private:
             holder = std::make_unique<HookState>();
             holder->symbol = symbol;
             holder->point = spec->point;
+            holder->adapter = spec->adapter;
+            holder->providesActorSamples = spec->point == BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST ||
+                spec->adapter == HookAdapter::LocalPlayerReturn;
             if (spec->point == BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST &&
                 lower(identity_.fileSha256) == k126605ExeSha256 &&
                 targetProfile_.contains("diagnostic_candidates") &&
@@ -1678,19 +1866,66 @@ private:
                 }
             }
         }
-        if (holder->token) throw std::runtime_error("hook is already installed");
-        if (!BDS_HookSubscribe(spec->point, target,
-                &CheckSigMod::observeHook, holder.get(), &holder->token)) {
-            holder->token = nullptr;
-            throw std::runtime_error("BDS_HookSubscribe rejected the target");
+        if (holder->token) {
+            if (spec->adapter != HookAdapter::Middleware &&
+                !holder->observing.exchange(true, std::memory_order_acq_rel)) {
+                writeEvent("hook-observer-enabled", {
+                    {"symbol", symbol}, {"adapter", hookAdapterName(spec)},
+                    {"detour_retained_pass_through", true}
+                });
+                return;
+            }
+            throw std::runtime_error("hook is already installed");
+        }
+        if (spec->adapter == HookAdapter::Middleware) {
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookSubscribe(spec->point, target,
+                    &CheckSigMod::observeHook, holder.get(), &holder->token)) {
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("BDS_HookSubscribe rejected the target");
+            }
+        } else if (spec->adapter == HookAdapter::LocalPlayerReturn) {
+            HookState* expected = nullptr;
+            if (!localPlayerState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig local-player observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::localPlayerObserver),
+                    reinterpret_cast<void**>(&originalLocalPlayer_), &holder->token)) {
+                localPlayerState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the local-player candidate");
+            }
+        } else if (spec->adapter == HookAdapter::CameraRenderArguments) {
+            HookState* expected = nullptr;
+            if (!cameraRenderState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig camera-render observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::cameraRenderObserver),
+                    reinterpret_cast<void**>(&originalCameraRender_), &holder->token)) {
+                cameraRenderState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the camera-render candidate");
+            }
         }
         writeEvent("hook-installed", {
             {"symbol", symbol}, {"rva", hex(rva)},
+            {"adapter", hookAdapterName(spec)},
             {"hook_runtime", BDS_HookRuntimeVersion()},
             {"transparent_pass_through", true},
+            {"abi_status", spec->adapter == HookAdapter::Middleware
+                ? "SDK HookPoint ABI" : "static candidate ABI; runtime unverified"},
             {"actor_context_candidate_observation", holder->actorContextCandidate},
             {"actor_context_evidence", holder->actorContextEvidence},
-            {"note", "Callback always calls next and records values after the original."}
+            {"note", spec->adapter == HookAdapter::Middleware
+                ? "Observer calls next and records values after the original."
+                : "Typed observer calls the original unchanged, then records bounded read-only values."}
         });
     }
 
@@ -1699,20 +1934,48 @@ private:
         const auto it = hooks_.find(symbol);
         if (it == hooks_.end() || !it->second->token)
             throw std::runtime_error("no active CheckSig hook for this symbol");
-        BDS_HookUnsubscribe(it->second->token);
-        it->second->token = nullptr;
-        writeEvent("hook-removed", {{"symbol", symbol},
-            {"total_calls", it->second->calls.load(std::memory_order_relaxed)}});
+        if (it->second->adapter == HookAdapter::Middleware) {
+            BDS_HookUnsubscribe(it->second->token);
+            it->second->token = nullptr;
+            it->second->observing.store(false, std::memory_order_release);
+            writeEvent("hook-removed", {{"symbol", symbol},
+                {"total_calls", it->second->calls.load(std::memory_order_relaxed)}});
+        } else {
+            it->second->observing.store(false, std::memory_order_release);
+            if (it->second->providesActorSamples) {
+                const std::array<std::uintptr_t, 8> emptySamples{};
+                setLatest(*it->second, {{"observer_enabled", false}},
+                          &emptySamples, 0, true);
+            }
+            writeEvent("hook-observer-disabled", {{"symbol", symbol},
+                {"adapter", hookAdapterName(hookSpec(symbol))},
+                {"total_calls", it->second->calls.load(std::memory_order_relaxed)},
+                {"detour_retained_pass_through", true},
+                {"note", "The pinned transparent detour stays until process exit."}});
+        }
     }
 
     void unsubscribeAll() {
         std::lock_guard lock(hookMapMutex_);
         for (auto& [name, state] : hooks_) {
             if (!state->token) continue;
-            BDS_HookUnsubscribe(state->token);
-            state->token = nullptr;
-            try { writeEvent("hook-removed", {{"symbol", name},
-                {"reason", "CheckSig stopped"}}); } catch (...) {}
+            if (state->adapter == HookAdapter::Middleware) {
+                BDS_HookUnsubscribe(state->token);
+                state->token = nullptr;
+                state->observing.store(false, std::memory_order_release);
+            } else {
+                state->observing.store(false, std::memory_order_release);
+                if (state->providesActorSamples) {
+                    const std::array<std::uintptr_t, 8> emptySamples{};
+                    setLatest(*state, {{"observer_enabled", false}},
+                              &emptySamples, 0, true);
+                }
+            }
+            try { writeEvent(state->adapter == HookAdapter::Middleware
+                    ? "hook-removed" : "hook-observer-disabled", {{"symbol", name},
+                {"reason", "CheckSig stopped"},
+                {"detour_retained_pass_through",
+                    state->adapter != HookAdapter::Middleware}}); } catch (...) {}
         }
     }
 
@@ -1730,28 +1993,31 @@ private:
                 throw std::runtime_error("actor sample index must be 0..7 and offset at most 0x10000");
             std::uintptr_t actor{};
             std::uint64_t sampleCallNumber{};
+            std::string sampleSource;
             bool foundSample = false;
             {
                 std::lock_guard mapLock(hookMapMutex_);
                 for (const auto& [name, holder] : hooks_) {
-                    (void)name;
-                    if (holder->point != BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST) continue;
+                    if (!holder->providesActorSamples) continue;
                     std::lock_guard sampleLock(holder->mutex);
-                    if (index >= holder->actorSampleCount) break;
+                    if (index >= holder->actorSampleCount) continue;
                     actor = holder->actorSamples[static_cast<std::size_t>(index)];
                     sampleCallNumber = holder->actorSampleCallNumber;
+                    sampleSource = name;
                     foundSample = actor != 0;
                     break;
                 }
             }
             if (!foundSample)
-                throw std::runtime_error("no recent Actor sample; install hook Level::getRuntimeActorList first");
+                throw std::runtime_error(
+                    "no recent Actor sample; hook Level::getRuntimeActorList or native_camera.local_player first");
             if (actor > UINTPTR_MAX - static_cast<std::uintptr_t>(offset))
                 throw std::runtime_error("actor-relative address exceeds x64 range");
             address = actor + static_cast<std::uintptr_t>(offset);
             source = {
                 {"kind", "sampled_actor"}, {"actor_index", index},
                 {"actor_pointer", hex(actor)}, {"offset", hex(offset)},
+                {"sample_source", sampleSource},
                 {"sample_call_number", sampleCallNumber},
                 {"lifetime_verified", false}
             };

@@ -17,6 +17,12 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 - プロファイルの正確なビルド一致、入口ガード、関数境界、SDKフックランタイム対応を検査
 - SDKがABIを知っているHookPointに限り、元の処理をそのまま呼び出す透過フックを試行。
   呼び出し回数と既知の引数/戻り値フィールドを記録
+- 1.26.60.5の完全一致EXEでは、静的な引数ABI候補がある
+  `native_camera.local_player` と `native_camera.visual.camera_render_observe` に専用Observerを用意。
+  候補ABI・EXE SHA・入口ガード・`.pdata`関数開始位置を確認し、明示的な `hook` のみで試行
+- local player Observerは戻り値Actorを記録し、`read actor:0+...`で調査可能
+- camera render Observerは元の4引数を変更せずに呼び出した後、引数ポインタと
+  ViewRenderObject先頭64バイトの読み取り可否/値を記録
 - `Level::getRuntimeActorList` は旧・新EXEの機械語でABIを比較した候補HookPoint。
   元処理の後でMSVC x64 vectorヘッダーを安全に読み、件数と先頭8件までのActorポインタを記録
 - 1.26.60.5では追加の静的候補としてActor+0x10/+0x18をページ検査付きで読み、
@@ -27,21 +33,14 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 
 署名ヒットだけでは関数の意味やABIを証明しません。全てのポート結果は
 `candidate` / `abi_verified:false` / `runtime_verified:false` です。SDKが未知のABIを持つ
-関数を呼び出したり、任意の関数へ推測のdetourを設置する機能はありません。
+関数を呼び出したり、任意の関数へ推測のdetourを設置する機能はありません。上記2つの
+専用Observerも静的ABI候補を使うため、実行時の意味・寿命は未検証です。対象EXEの完全一致と
+入口ガードが通る場合にだけ利用し、値は候補確認用として扱ってください。
 
 ## ビルド
 
-GitHub Actions の `All mod DLLs` workflow がWindows x64/MSVCでビルドし、
-`CheckSig-windows-x64` artifactとしてDLLを保存します。ローカルでビルドする場合は
-Visual Studio 2022 の x64 Native Tools Command Promptから実行します:
-
-```powershell
-cmake -S exsample/CheckSig -B build-checksig -A x64 `
-  "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$PWD"
-cmake --build build-checksig --config Release --target CheckSig
-```
-
-出力は `build-checksig/Release/CheckSig.dll` です。
+GitHub Actions の `All mod DLLs` workflow がWindows x64/MSVCで全Mod DLLをビルドします。
+CheckSigは `CheckSig-windows-x64` artifact、他のModも各 `*-windows-x64` artifactとして保存します。
 
 ## コマンド入力
 
@@ -87,6 +86,13 @@ unhook Keyboard::feed
 hook Level::getRuntimeActorList
 read actor:0+0x20 bytes:16
 unhook Level::getRuntimeActorList
+probe native_camera.local_player
+hook native_camera.local_player
+read actor:0+0x20 bytes:16
+unhook native_camera.local_player
+probe native_camera.visual.camera_render_observe
+hook native_camera.visual.camera_render_observe
+unhook native_camera.visual.camera_render_observe
 read rva:0x331C20 bytes:16
 read 0x00007FF612345678 f32
 identity
@@ -105,12 +111,15 @@ quit
 相対参照と `.rdata` 文字列を記録します。512件を超える検索は部分結果を候補にしません。
 関数の引数や戻り値の値を追う場合は、`hook` が成功した後に `events.jsonl` の
 `hook-observation` を確認します。フックできる候補は、現在のEXEと一致し、入口ガードと
-`.pdata` の関数開始位置が一致し、SDK既知HookPointに対応するものに限ります。
+`.pdata` の関数開始位置が一致し、SDK既知HookPointまたは上記専用Observerに対応するものに限ります。専用Observerの `unhook` は
+観測を止めます。Detourは処理中のゲームスレッドを安全に解放するため、元処理だけを呼ぶ
+pass-throughとしてプロセス終了まで残ります。
 `list` と `probe-result` は `source`、候補根拠、ABI/runtime検証状態も記録します。
 1.26.60.5のexact profile、または `port 1.26.60.5` で生成した候補プロファイルを使うと、
 `Level::getRuntimeActorList` の `hook-observation` にActor+0x10のregistryポインタと
 Actor+0x18のEntity IDの読み取り可否・値も含まれます。ActorTypeComponentの内部は辿りません。
 
 フック解除後も安全のためDLLはプロセス終了までアンロードされません。ゲームを再起動すると
-解除されます。未知ABIの候補は `probe` で静的なヒット/周辺情報を調べられますが、
+SDK middlewareのフックは解除され、専用Observerは元処理だけを呼ぶpass-throughになります。
+未知ABIの候補は `probe` で静的なヒット/周辺情報を調べられますが、
 ライブフックはできません。
