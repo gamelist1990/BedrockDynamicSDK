@@ -48,7 +48,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "bool __fastcall(int inputKey, bool down)"
+      "abi": "bool __fastcall(int inputKey, bool down)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (1/2 source-unique anchors); REA/Ghidra ev_38db00997e90d1466923a9ea98b5e209bf90c11e105abb39b743b8d4a771abd1; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "MouseDevice::feed": {
       "rva": "0x427650",
@@ -107,7 +108,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)"
+      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (4/5 source-unique anchors); REA/Ghidra ev_2b8cdd05f97fee7af9df880e93b623c03c2447aaa083a730100b7034effad250; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "LevelRendererPlayer::getFov": {
       "rva": "0x5309B40",
@@ -166,7 +168,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)"
+      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (5/5 source-unique anchors); REA/Ghidra ev_941908cc26fd13ccd0964b850efc19bad848243ab591961723b9b20ce35da80f; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "ClientInstance::grabCursor": {
       "rva": "0x65BB0A0",
@@ -184,7 +187,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "void __fastcall(ClientInstance*)"
+      "abi": "void __fastcall(ClientInstance*)",
+      "candidate_evidence": "static candidate: matching wrapper structure, cursor vtable slot 0x87 and adjacent release wrapper; source object offsets changed; REA/Ghidra ev_e6f4348e1cda60b76e0bef1043a904357ab94ee362d87d7e530505b362e99fbc; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "ClientInstance::releaseCursor": {
       "rva": "0x65BB0F0",
@@ -202,7 +206,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "void __fastcall(ClientInstance*)"
+      "abi": "void __fastcall(ClientInstance*)",
+      "candidate_evidence": "static candidate: matching wrapper structure, cursor vtable slot 0x88 and adjacent grab wrapper; source object offsets changed; REA/Ghidra ev_d1a386c0ac4becc328139b75f355c3f020b7d2f3e450088214fd4349cf736738; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "Actor::getNameTag": {
       "rva": "0xBBE500",
@@ -229,7 +234,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "const std::string& __fastcall(Actor*)"
+      "abi": "const std::string& __fastcall(Actor*)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (1/1 source-unique anchors); REA/Ghidra ev_0216375d8ef20ca27c0091b0c768e0dbe66d11fd2b951eb5597f31f80eae31af; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "MultiPlayerLevel::_subTick": {
       "rva": "0x6B8D550",
@@ -280,7 +286,8 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "void __fastcall(MultiPlayerLevel*)"
+      "abi": "void __fastcall(MultiPlayerLevel*)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (2/3 source-unique anchors); independent Ghidra raw-function comparison, runtime semantics unverified; REA/Ghidra ev_513fc12246861f95ed31a19747b58e5b7d2ca6107ca790c3cfb2ebc487037005; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified"
     },
     "GameCore::keyboardEvent": {
       "rva": "0x98C80",
@@ -323,7 +330,840 @@
       "confidence": "candidate",
       "abi_verified": false,
       "runtime_verified": false,
-      "abi": "void* __fastcall(void* callback, void* result, void* context)"
+      "abi": "void* __fastcall(void* callback, void* result, void* context)",
+      "candidate_evidence": "anchor-port:1.26.52.3 (3/3 source-unique anchors); REA/Ghidra ev_51b43b5ba487cbc5d9936bb450c6bf63108397073f9d64b69e9da5556b5e1f84; old/new callback accesses same context offsets and virtual slots; runtime behavior unverified"
+    },
+    "Level::getRuntimeActorList": {
+      "rva": "0x232F290",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 8B B1 B8 04 00 00",
+      "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "anchor-port:1.26.52.3 (2/3 source-unique anchors); independent Ghidra raw-function comparison, runtime semantics unverified",
+      "function_boundary": true,
+      "signature_length": 30,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 8B B1 ?? ?? ?? ?? 0F 57 C0",
+          "bytes": 33,
+          "fixed_bytes": 26,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 33,
+          "pattern": "0F 11 02 48 89 55 ?? 48 C7 42 ?? 00 00 00 00 48 8B 5E ?? 4C 8B 33 49 39 DE 74 ?? 48 8D 7D ?? EB ??",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 96,
+          "pattern": "49 8B 56 ?? 48 89 F1 45 31 C0 E8 ?? ?? ?? ?? 90 48 89 45 ?? 48 85 C0 74 ?? 48 8B 4D ?? 48 8B 51 ??",
+          "bytes": 33,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols"
+    },
+    "GameCore::handleMouseInput": {
+      "rva": "0x8A450",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 AD 50 02 00 00 44 0F 29 A5 40 02 00 00 44 0F 29 9D 30 02 00 00 44 0F 29 95 20 02 00 00 44 0F 29 8D 10 02 00 00 44 0F 29 85 00 02 00 00 0F 29 BD F0 01 00 00 0F 29 B5 E0 01 00 00 48 C7 85 D8 01 00 00 FE FF FF FF 48 89 CE",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
+      "function_boundary": true,
+      "signature_length": 103,
+      "signature_anchors": [
+        {
+          "offset": 2152,
+          "pattern": "42 C7 44 01 ?? 01 00 00 00 F3 46 0F 11 44 01 ?? F3 46 0F 11 4C 01 ?? 42 89 44 01 ?? 48 81 C1 F8 79 00 00",
+          "bytes": 35,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 4304,
+          "pattern": "41 0F B6 47 ?? 0F B6 4E ?? 38 C8 73 ?? 49 8D 57 ?? 48 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 49 8B 47 ??",
+          "bytes": 34,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 6443,
+          "pattern": "0F B6 8D ?? ?? ?? ?? 88 48 ?? 84 DB 74 ?? EB ?? 48 8D 05 ?? ?? ?? ?? 48 89 45 ?? C6 45 ?? 01 4C 89 7D ??",
+          "bytes": 35,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 8592,
+          "pattern": "31 DB 48 89 85 ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? 49 89 CD FF 15 ?? ?? ?? ?? 90 66 83 BD ?? ?? 00 00 00",
+          "bytes": 37,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols"
+    },
+    "ItemStackBase::getHoverName": {
+      "rva": "0x1AD8070",
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 89 D6 48 8D 55 B0",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
+      "function_boundary": true,
+      "signature_length": 34,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 D6 48 8D 55 ??",
+          "bytes": 34,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 67,
+          "pattern": "72 ?? 48 8B 5C 05 ?? EB ?? 48 8D 1C 28 48 83 C3 B0 48 85 FF 0F 88 ?? ?? ?? ?? 48 83 FF 0F 77 ??",
+          "bytes": 32,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols"
+    },
+    "native_packets.motion.auth_input.is_valid": {
+      "rva": "0x401C670",
+      "signature": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F",
+      "entry_check": "56 57 48 83 EC 38 48 8B 05 43 BA 2E",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 26,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F 8B 51 ?? 21 C2 81 FA FF FF 7F 7F",
+          "bytes": 37,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 217,
+          "pattern": "0F 9C C0 0F 2E 0D ?? ?? ?? ?? 0F 96 C2 84 C2 74 ?? 66 0F 6E 41 ?? 66 0F 7E C0 25 FF FF FF 7F 3D FF FF 7F 7F",
+          "bytes": 36,
+          "fixed_bytes": 30,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 652,
+          "pattern": "84 C0 0F 84 ?? ?? ?? ?? 48 8B BE ?? ?? ?? ?? 48 89 F9 48 C1 E9 22 83 E1 01 48 83 BE ?? ?? ?? ?? 00",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 874,
+          "pattern": "48 8B 86 ?? ?? ?? ?? 8B 88 ?? ?? ?? ?? 89 4C 24 ?? 48 8B 80 ?? ?? ?? ?? 48 89 44 24 ?? 48 8D 15 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x3c8ba90 -> new 0x401c670"
+    },
+    "native_packets.motion.move_player.is_valid": {
+      "rva": "0x3401F20",
+      "signature": "48 83 EC ?? F3 0F 10 49 38 0F 28 05 ?? ?? ?? ??",
+      "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 16,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? F3 0F 10 49 ?? 0F 28 05 ?? ?? ?? ?? 0F 28 D1 0F 54 D0 0F 2E 15 ?? ?? ?? ?? 73 ?? 0F 2E C9",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 51,
+          "pattern": "0F 2E C9 7A ?? 0F 54 D0 0F 2E 15 ?? ?? ?? ?? 73 ?? 0F 54 C8 0F 2E 0D ?? ?? ?? ?? 73 ?? B8 FF FF FF 7F",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 101,
+          "pattern": "3D 00 00 80 7F 7C ?? 48 83 C1 44 48 8D 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? EB ?? 48 83 C1 38 48 8D 15 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 149,
+          "pattern": "66 0F 6E 41 ?? 66 0F 7E C0 66 0F 6F 0D ?? ?? AE 0B 66 0F DB C8 25 FF FF FF 7F 3D 00 00 80 7F 0F 9C C0",
+          "bytes": 34,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 201,
+          "pattern": "31 C0 83 FA 02 72 ?? 74 ?? 83 FA 03 75 ?? 0F B6 41 ?? 34 01 48 83 C4 ?? C3 48 8D 15 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x2ece550 -> new 0x3401f20"
+    },
+    "native_client_commands.register_command": {
+      "rva": "0x55AA1E0",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 80 01 00 00 FE FF FF FF 4C 89 45 D8",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 42,
+      "signature_anchors": [
+        {
+          "offset": 1031,
+          "pattern": "48 89 45 ?? 4C 8B 35 ?? ?? ?? ?? 0F 57 C0 0F 29 85 ?? ?? ?? ?? 0F 29 85 ?? ?? ?? ?? 4C 89 F1 E8 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 2065,
+          "pattern": "4C 8D 85 ?? ?? ?? ?? 48 8B 8D ?? ?? ?? ?? 45 89 F9 E8 ?? ?? ?? ?? 90 48 8B 45 ?? 48 83 F8 10 72 ??",
+          "bytes": 33,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 3099,
+          "pattern": "4C 89 85 ?? ?? ?? ?? 0F 29 9D ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? 00 00 00 00 48 C7 85 ?? ?? ?? ?? 0F 00 00 00",
+          "bytes": 36,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x4a78840 -> new 0x55aa1e0"
+    },
+    "native_client_commands.find_command": {
+      "rva": "0x558A650",
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CB 48 8B 42 10",
+      "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 28,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 CB 48 8B 42 ?? 48 83 7A ?? 10",
+          "bytes": 33,
+          "fixed_bytes": 28,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 50,
+          "pattern": "48 8D 55 ?? 48 89 F1 E8 ?? ?? ?? ?? 48 8D BB ?? ?? ?? ?? 48 89 F9 48 89 F2 E8 ?? ?? ?? ?? 90 48 89 C6",
+          "bytes": 34,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 100,
+          "pattern": "48 89 D9 E8 ?? ?? ?? ?? 90 48 3B 03 74 ?? 48 83 C0 40 48 89 F9 48 89 C2 E8 ?? ?? ?? ?? 90 48 89 C6",
+          "bytes": 33,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 195,
+          "pattern": "48 8D 4E ?? 31 C0 48 39 FE 48 0F 45 C1 48 83 C4 ?? 5B 5F 5E 5D C3 48 C7 44 24 ?? 00 00 00 00 31 C9",
+          "bytes": 33,
+          "fixed_bytes": 30,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x4a56630 -> new 0x558a650"
+    },
+    "native_gui.display_message": {
+      "rva": "0xE94410",
+      "signature": "55 41 57 41 56 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 00 02 00 00 FE FF FF FF 4D 89 CE",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 37,
+      "signature_anchors": [
+        {
+          "offset": 248,
+          "pattern": "48 8D 85 ?? ?? ?? ?? 48 89 44 24 ?? 4C 89 74 24 ?? 48 89 5C 24 ?? F3 0F 11 44 24 ?? C6 44 24 ?? 01",
+          "bytes": 33,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x1560ae0 -> new 0xe94410"
+    },
+    "native_camera.update_player": {
+      "rva": "0x6F313F0",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 65,
+      "signature_anchors": [
+        {
+          "offset": 430,
+          "pattern": "47 8B 14 AA 45 89 D3 45 31 E3 41 81 FB FE FF 03 00 0F 87 ?? ?? ?? ?? 4D 8B 49 ?? 45 89 D3 41 C1 EB 04",
+          "bytes": 34,
+          "fixed_bytes": 29,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1285,
+          "pattern": "F3 0F 58 35 ?? ?? ?? ?? 0F 28 C7 41 0F 28 C8 41 FF D4 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 44 24 ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1706,
+          "pattern": "F3 0F 11 44 D0 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x6733360 -> new 0x6f313f0"
+    },
+    "native_camera.visual.gamma": {
+      "rva": "0x5AFB520",
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00",
+      "entry_check": "48 83 EC 38 48 8B 05 95 CB 80 0C 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 37,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 ?? 48 8D 54 24 ?? 41 B8 32 00 00 00",
+          "bytes": 37,
+          "fixed_bytes": 29,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0xfb7880 -> new 0x5afb520"
+    },
+    "native_camera.visual.render_dragon_inside_effect.predicate": {
+      "rva": "0x56887B0",
+      "signature": "56 48 83 EC ?? 48 8B 71 08 4C 8B 02 4C 8B 4A 08",
+      "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 16,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 8B 71 ?? 4C 8B 02 4C 8B 4A ?? 48 8B 0E 48 8B 56 ?? 48 39 D1 0F 94 C0 4D 85 C0",
+          "bytes": 32,
+          "fixed_bytes": 28,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 39,
+          "pattern": "41 0F 94 C3 45 08 D3 41 08 C3 B0 01 75 ?? 41 F6 00 01 74 ?? 4D 8B 89 ?? ?? ?? ?? 4D 85 C9 74 ??",
+          "bytes": 32,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x5308990 -> new 0x56887b0"
+    },
+    "native_camera.visual.set_player_game_type": {
+      "rva": "0x2B9AB0",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 80 05 00 00 FE FF FF FF 41 89 D6",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 41,
+      "signature_anchors": [
+        {
+          "offset": 296,
+          "pattern": "89 C3 48 8B 4E ?? 8B 46 ?? 4C 8B 41 ?? 4C 8B 49 ?? 48 8B 51 ?? 4D 29 C1 49 C1 E9 03 41 FF C9 41 81 E1 48 5D B7 68",
+          "bytes": 38,
+          "fixed_bytes": 33,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 582,
+          "pattern": "49 8B 47 ?? 48 89 45 ?? 48 8D 4D ?? 49 8D 57 ?? E8 ?? ?? ?? ?? 90 41 39 DC 75 ?? 48 83 BE ?? ?? ?? ?? 00",
+          "bytes": 35,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1164,
+          "pattern": "48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 90 84 C0 75 ?? 48 C7 85 ?? ?? ?? ?? 00 00 00 00 48 8D 95 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x1e1570 -> new 0x2b9ab0"
+    },
+    "native_world_render.functions.begin": {
+      "rva": "0x5417230",
+      "signature": "56 57 55 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 80 B9 A0 02 00 00 00",
+      "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 81",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 30,
+      "signature_anchors": [
+        {
+          "offset": 239,
+          "pattern": "48 89 86 ?? ?? ?? ?? 85 C0 0F 9E C0 40 80 F5 01 40 08 C5 75 ?? 80 FB 01 74 ?? 0F B6 C3 83 F8 04",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 323,
+          "pattern": "48 29 CA 48 C1 FA 04 48 39 C2 77 ?? 48 81 C6 E8 01 00 00 48 8D 54 24 ?? 48 89 F1 E8 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x59ca2e0 -> new 0x5417230"
+    },
+    "native_world_render.functions.hashed_name_ctor": {
+      "rva": "0x76A710",
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 08",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 31,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 ?? 0F 57 C0",
+          "bytes": 34,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 148,
+          "pattern": "48 89 D9 48 89 FA 49 89 C0 48 89 C3 E8 ?? ?? ?? ?? C6 44 1E ?? 00 80 3F 00 75 ?? 31 D2 E9 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x6ac970 -> new 0x76a710"
+    },
+    "native_world_render.functions.material_ctor": {
+      "rva": "0x4DE7250",
+      "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 F0 48 C7 45 E8 FE FF FF FF 49 89 D1",
+      "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
+      "function_boundary": true,
+      "signature_length": 27,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 ?? 48 C7 45 ?? FE FF FF FF 49 89 D1 0F 57 F6 48 89 4D ??",
+          "bytes": 34,
+          "fixed_bytes": 29,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 40,
+          "pattern": "48 8B 40 ?? 48 8D 55 ?? 4C 89 C9 FF 15 ?? ?? ?? ?? 90 0F 28 45 ?? 0F 29 75 ?? 48 8B 7D ?? 48 8B 77 ??",
+          "bytes": 34,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "analysis.native_function_candidates: old 0x52f1e00 -> new 0x4de7250"
+    },
+    "ClientInstance::onPlayerLoaded": {
+      "rva": "0x65BD050",
+      "signature": "49 89 D0 48 89 CA 48 8B 89 C8 01 00 00 48 8B 01",
+      "entry_check": "49 89 D0 48 89 CA 48 8B 89 C8 01 00",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.vtable_candidates",
+      "function_boundary": false,
+      "signature_length": 16,
+      "signature_anchors": [],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "Inferred table base from unique cursor-wrapper references and 6 nearby old/new entries; old and new leaf thunk forward through vtable offset 0x470, and ClientInstance member changed 0x1A8 to 0x1C8. No .pdata entry for new leaf; semantics and invocation unverified."
+    },
+    "ClientInstance::onDimensionChangedEvent": {
+      "rva": "0x65AC680",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 68",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.vtable_candidates",
+      "function_boundary": true,
+      "signature_length": 20,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 89 CE 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 8B 44 24 ??",
+          "bytes": 34,
+          "fixed_bytes": 22,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 80,
+          "pattern": "4C 8B 02 49 C1 E0 05 4A 8D 14 01 42 81 7C 01 ?? 16 38 99 AF 75 ?? 49 8B 4C 08 ?? 89 C2 81 E2 00 F8 03 00",
+          "bytes": 35,
+          "fixed_bytes": 32,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 153,
+          "pattern": "83 E0 7F 83 3C 81 01 0F 85 ?? ?? ?? ?? 48 8B 06 48 8B 80 ?? ?? ?? ?? 48 89 F1 FF 15 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 302,
+          "pattern": "FF 15 ?? ?? ?? ?? 48 8B 08 48 8B 91 ?? ?? ?? ?? 48 89 C1 48 89 D0 FF 15 ?? ?? ?? ?? B9 50 03 00 00",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "Old verified source table slot 134; old slot 135 and 136 match new slots 137 and 138. Old/new candidate bodies share component hash 0xAF993816 and similar control flow. Ghidra ev_da62b1756dd47d91d392e84e88273850c15ee96de16ce6a443920e6f80792d5c; lifetime and event invocation unverified."
+    },
+    "candidate::ClientInstance_region_getter": {
+      "rva": "0x659E2F0",
+      "signature": "56 57 48 83 EC ?? 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "entry_check": "56 57 48 83 EC 48 48 8D 91 68 02 00",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.vtable_candidates",
+      "function_boundary": true,
+      "signature_length": 18,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 48 83 EC ?? 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? 80 7C 24 ?? 00 0F 84 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 19,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "The new table entry has the same instruction structure and ActorOwnerComponent hash 0x85B93800 as the old region candidate; corresponding ClientInstance field changed from +0x248 to +0x268. REA/Ghidra ev_b54626361c3e2ea7d57eba23c2fa588a3056826978ffb01a75b00aa49b58dc1b; output type, lifetime and runtime unverified."
+    },
+    "candidate::ClientInstance_local_player_getter": {
+      "rva": "0x659E470",
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
+      "entry_check": "48 83 EC 48 48 8B 05 45 9C D6 0B 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.vtable_candidates",
+      "function_boundary": true,
+      "signature_length": 26,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 21,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 41,
+          "pattern": "75 ?? 48 8D 4C 24 ?? B2 01 E8 ?? ?? ?? ?? EB ?? 31 C0 48 8B 4C 24 ?? 48 31 E1 48 8B 15 ?? ?? ?? ??",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "Adjacent to region getter as in old table, with matching old/new instruction structure and +0x248 to +0x268 field change. Returned Actor identity and lifetime unverified."
+    },
+    "candidate::ActorTypeComponent": {
+      "rva": "0xB94CA0",
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 00 FE FF FF FF 48 8B 81 90 02 00 00",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.component_observations",
+      "function_boundary": true,
+      "signature_length": 34,
+      "signature_anchors": [
+        {
+          "offset": 115,
+          "pattern": "74 ?? F0 FF 42 ?? 48 8B B0 ?? ?? ?? ?? EB ?? 31 F6 48 8B 98 ?? ?? ?? ?? 48 89 5D ?? 48 89 75 ??",
+          "bytes": 32,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 460,
+          "pattern": "48 3B 83 ?? ?? ?? ?? 75 ?? EB ?? 31 F6 48 89 5D ?? 48 89 75 ?? 4C 8D 45 ?? 4C 8D 4D ?? 48 89 C1",
+          "bytes": 32,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "REA/Ghidra ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f; old and new function access component hash and compare the 4-byte value with 0x13F. Function identity and owner/layout are not established. Observed member accesses +0x270/+0x2C0/+0x2D8 changed to +0x290/+0x2E0/+0x2F8; field types are unknown."
+    },
+    "candidate::Tessellator::vertex": {
+      "rva": "0x54175E0",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 0F 29 4C 24 ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 8B 81 98 02 00 00",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.world_render_observations",
+      "function_boundary": true,
+      "signature_length": 44,
+      "signature_anchors": [
+        {
+          "offset": 696,
+          "pattern": "31 D2 66 0F 1F 44 00 ?? F3 0F 10 44 15 ?? F3 0F 11 44 11 ?? F3 0F 10 44 15 ?? F3 0F 11 44 11 ??",
+          "bytes": 32,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 2778,
+          "pattern": "0F 57 C0 F3 0F 2A C0 F3 44 0F 10 05 ?? ?? ?? ?? F3 44 0F 5E C0 F3 41 0F 59 F0 45 0F C6 C0 00 44 0F 59 C7",
+          "bytes": 35,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "REA/Ghidra ev_2636fc1a9036e6ad4a69d1f5baa037037336175849c8e6768c15b78c770d2d7e; compares native register and field usage. Caller, runtime and overall ABI not verified."
+    },
+    "candidate::BlockSource::getBlock": {
+      "rva": "0x32CE440",
+      "signature": "56 57 48 83 EC ?? 48 89 CF 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 8B 42 04 0F BF 49 3A 39 C8 0F 8C ?? ?? ?? ?? 0F BF 4F 38 39 C8 0F 8D ?? ?? ?? ?? 48 89 D6 8B 02 C1 F8 04 89 44 24 ?? 8B 42 08 C1 F8 04 89 44 24 ?? 48 8B 07 48 8B 80 48 01 00 00 48 8D 54 24 ?? 48 89 F9 FF 15 ?? ?? ?? ?? 48 85 C0 74 ?? 44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 C8 01 00 00 48 8B 80 D0 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 ?? 48 6B C1 68 48 8B 4C 02 30",
+      "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "source": "static candidate: analysis.world_scan_observations",
+      "function_boundary": true,
+      "signature_length": 172,
+      "signature_anchors": [],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "candidate_evidence": "New version function and vtable pointers match loaded ScanClient rdata; old/new neighbor slots 3,5,6,8,41 anchored by multiple signatures. REA/Ghidra ev_09db4ac9048ab388b2a9593984880e908277b37d18d2c75a5058f6a36c6d6d04. Chunk vector offsets changed from 0x140/0x148 to 0x1C8/0x1D0. Static and loaded read-only data only: object layout, dispatch ABI, live getBlock behavior and thread/lifetime not verified."
     }
   },
   "analysis": {

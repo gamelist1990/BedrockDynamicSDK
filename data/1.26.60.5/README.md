@@ -1,16 +1,20 @@
 # 1.26.60.5 Windows x64 — 調査中
 
-`windows-x64.json` はEXE識別情報と解析途中の候補を収録した定義です。
-`symbols` には `Keyboard::feed`、`MouseDevice::feed`、`LevelRendererPlayer::getFov`、
-`ClientInstance::grabCursor/releaseCursor`、`Actor::getNameTag`、
-`MultiPlayerLevel::_subTick`、`GameCore::keyboardEvent` の8件を登録しています。
-すべて `candidate` で、ABI検証・ゲーム中のフック実行は未確認です。
-native keyboardのイベントレイアウトもcandidateとして登録しています。残りの候補は `analysis` に保持しており、全Modに必要なnativeレイアウトは未完成です。
-`windows-x64.candidate.json` は調査の原本で、自動フック対象として使わないでください。
+`windows-x64.json` はEXE識別情報と30件の診断候補を収録した定義です。
+旧版アンカーで移植した関数、パケット/コマンド/カメラ/描画関数、vtable候補、
+BlockSourceとActorTypeComponentの調査候補を `symbols` からCheckSigで個別に確認できます。
+すべて `candidate`、`abi_verified:false`、`runtime_verified:false` のままです。
+native keyboardのイベントレイアウトもcandidateとして登録しています。全Modに必要な
+nativeレイアウトは未完成なので、この定義だけで全SDK機能が使える状態ではありません。
+`windows-x64.candidate.json` は旧版アンカー移植の原本です。
 
 Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
-[CheckSig](../../exsample/CheckSig/README_ja.md) を使います。既知HookPointは透過フックで実コールを観測できますが、
-その結果を自動で `verified` へ昇格させることはありません。
+[CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
+`.pdata` 関数開始、HookPoint対応を一覧し、`probe <symbol>` で周辺情報を確認します。
+HookPointとABI定義がある候補は、正確なEXE一致・入口ガード・`.pdata`境界を確認したうえで
+`hook <symbol>` を明示すると、元処理を通す観測フックを試せます。`onPlayerLoaded` は
+`.pdata`関数開始が見つかっていないため、CheckSigはフックを拒否します。
+観測結果であっても自動で `verified` へ昇格させません。
 
 - 元のパッケージ表記: `1.26.6005.0`
 - EXE VERSIONINFOのFileVersion/ProductVersion: `1.26.60.5`

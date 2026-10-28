@@ -1123,7 +1123,7 @@ private:
         if (command == "help") {
             writeEvent("help", {{"commands", json::array({
                 "identity", "source <old-profile.json>", "profile <target-profile.json>",
-                "port [version]", "probe <symbol>", "hook <symbol>",
+                "port [version]", "list", "probe <symbol>", "hook <symbol>",
                 "unhook <symbol>", "scan <masked-pattern>",
                 "read <VA|rva:0xRVA> <type>", "quit"
             })}});
@@ -1148,6 +1148,47 @@ private:
             std::string version;
             input >> version;
             portSource(version);
+        } else if (command == "list") {
+            if (!resolver_) throw std::runtime_error("load a target profile first with profile or port");
+            json entries = json::array();
+            for (auto it = targetProfile_["symbols"].begin();
+                 it != targetProfile_["symbols"].end(); ++it) {
+                const auto& symbolEntry = it.value();
+                const auto rva = jsonU32(symbolEntry.at("rva"));
+                const auto resolution = resolver_->resolve(it.key(), true);
+                const auto* function = containingFunction(*image_, rva);
+                const auto* hook = hookSpec(it.key());
+                const auto target = reinterpret_cast<void*>(image_->base + rva);
+                const bool exactGuard = resolution && resolution->method == "exact-rva" &&
+                    resolution->address == image_->base + rva;
+                const bool functionEntry = rva >= identity_.textRva &&
+                    rva < identity_.textRva + identity_.textSize && function &&
+                    function->begin == rva;
+                const bool runtimeSupports = hook && BDS_HookRuntimeSupports(hook->point) != 0;
+                const bool targetOwned = hook && BDS_HookOwnsTarget(hook->point, target) != 0;
+                const bool jumpStub = suspectedJumpStub(*image_, rva);
+                const bool hookReady = exactGuard && functionEntry && runtimeSupports &&
+                    (!jumpStub || targetOwned);
+                entries.push_back({
+                    {"symbol", it.key()}, {"rva", hex(rva)},
+                    {"status", symbolEntry.value("status", std::string("candidate"))},
+                    {"abi_verified", symbolEntry.value("abi_verified", false)},
+                    {"runtime_verified", symbolEntry.value("runtime_verified", false)},
+                    {"source", symbolEntry.value("source", std::string{})},
+                    {"candidate_evidence", symbolEntry.value("candidate_evidence", std::string{})},
+                    {"entry_guard_hit", exactGuard},
+                    {"pdata_function_entry", functionEntry},
+                    {"hook_point", hook ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
+                    {"hook_runtime_supports_point", runtimeSupports},
+                    {"entry_looks_like_jump_stub", jumpStub},
+                    {"target_already_owned_by_sdk", targetOwned},
+                    {"hook_ready_for_explicit_test", hookReady}
+                });
+            }
+            writeEvent("candidate-list", {
+                {"exact_build", resolver_->exactBuild()},
+                {"symbol_count", entries.size()}, {"symbols", std::move(entries)}
+            });
         } else if (command == "probe") {
             std::string symbol; input >> symbol;
             if (symbol.empty()) throw std::runtime_error("usage: probe <symbol>");
@@ -1337,22 +1378,28 @@ private:
         const bool jumpStub = suspectedJumpStub(*image_, rva);
         const bool targetOwned = hook && BDS_HookOwnsTarget(
             hook->point, reinterpret_cast<void*>(image_->base + rva)) != 0;
+        const bool hookReady = exactGuard && functionEntry && runtimeSupports &&
+            (!jumpStub || targetOwned);
         writeEvent("probe-result", {
             {"symbol", symbol}, {"rva", hex(rva)},
             {"status", symbolEntry.value("status", std::string("candidate"))},
+            {"source", symbolEntry.value("source", std::string{})},
+            {"candidate_evidence", symbolEntry.value("candidate_evidence", std::string{})},
+            {"abi_verified", symbolEntry.value("abi_verified", false)},
+            {"runtime_verified", symbolEntry.value("runtime_verified", false)},
             {"resolver_method", resolution ? resolution->method : std::string("no-hit")},
             {"exact_build", resolver_->exactBuild()}, {"entry_guard_hit", exactGuard},
             {"pdata_function_entry", functionEntry},
+            {"hook_abi_known", hook != nullptr},
             {"hook_point", hook ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
             {"hook_runtime_supports_point", runtimeSupports},
             {"entry_looks_like_jump_stub", jumpStub},
             {"target_already_owned_by_sdk", targetOwned},
-            {"hook_ready_for_explicit_test", exactGuard && functionEntry && runtimeSupports &&
-                (!jumpStub || targetOwned)},
+            {"hook_ready_for_explicit_test", hookReady},
             {"pattern_hits", std::move(patternHits)},
             {"anchor_port_support", targetProfile_.value("generation", json::object())
                 .value("port_support", json::object()).value(symbol, json::object())},
-            {"hook_test", exactGuard && functionEntry && runtimeSupports
+            {"hook_test", hookReady
                 ? "run hook <symbol> to install a transparent observer"
                 : "not eligible for a live hook"},
             {"context", contextAround(rva, function)},

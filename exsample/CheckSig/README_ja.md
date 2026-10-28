@@ -17,6 +17,7 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
   呼び出し回数と既知の引数/戻り値フィールドを記録
 - `ReadProcessMemory` と `VirtualQuery` を使い、読み取り可能なページから最大64バイトを
   型指定で読み取り
+- `list` で候補ごとの入口一致、`.pdata`境界、既知HookPoint、現在のHook可否を一覧
 
 署名ヒットだけでは関数の意味やABIを証明しません。全てのポート結果は
 `candidate` / `abi_verified:false` / `runtime_verified:false` です。SDKが未知のABIを持つ
@@ -24,16 +25,17 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 
 ## ビルド
 
-Visual Studio 2022 の x64 Native Tools Command Prompt から:
+GitHub Actions の `All mod DLLs` workflow がWindows x64/MSVCでビルドし、
+`CheckSig-windows-x64` artifactとしてDLLを保存します。ローカルでビルドする場合は
+Visual Studio 2022 の x64 Native Tools Command Promptから実行します:
 
 ```powershell
-cmake -S exsample/CheckSig -B build-checksig `
-  -DBEDROCK_SDK_SOURCE_DIR="$PWD"
-cmake --build build-checksig --config Release
+cmake -S exsample/CheckSig -B build-checksig -A x64 `
+  "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$PWD"
+cmake --build build-checksig --config Release --target CheckSig
 ```
 
-出力は `build-checksig/Release/CheckSig.dll` です。SDKをFetchContentで取得して
-ビルドする場合は `-DBEDROCK_SDK_SOURCE_DIR=...` を省略できます。
+出力は `build-checksig/Release/CheckSig.dll` です。
 
 ## コマンド入力
 
@@ -59,6 +61,7 @@ port 1.26.60.5
 個別の確認例:
 
 ```text
+list
 probe Keyboard::feed
 scan "55 48 83 EC ??"
 hook Keyboard::feed
@@ -77,6 +80,7 @@ quit
 関数の引数や戻り値の値を追う場合は、`hook` が成功した後に `events.jsonl` の
 `hook-observation` を確認します。フックできる候補は、現在のEXEと一致し、入口ガードと
 `.pdata` の関数開始位置が一致し、SDK既知HookPointに対応するものに限ります。
+`list` と `probe-result` は `source`、候補根拠、ABI/runtime検証状態も記録します。
 
 フック解除後も安全のためDLLはプロセス終了までアンロードされません。ゲームを再起動すると
 解除されます。未知ABIの候補は `probe` で静的なヒット/周辺情報を調べられますが、

@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mod: [BlockOutline, Freecam, SpeedBuilder, Top, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient]
+        mod: [BlockOutline, Freecam, SpeedBuilder, Top, HitBox, TabList, Zoom, AutoSprint, GuiDemo, ScanClient, CheckSig]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,6 +21,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
+      - name: Verify CheckSig DLL
+        if: matrix.mod == 'CheckSig'
+        shell: pwsh
+        run: |
+          if (!(Test-Path "build-mod/Release/CheckSig.dll")) {
+            throw "CheckSig.dll was not produced"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-windows-x64
