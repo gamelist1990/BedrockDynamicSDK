@@ -1,10 +1,16 @@
 # 1.26.60.5 Windows x64 — 調査中
 
 `windows-x64.json` はEXE識別情報と解析途中の候補を収録した定義です。
-`symbols` には、旧版と新版の命令列・引数を比較した8件のフック候補を登録しています。
-各候補はexact-buildの入口チェック付きですが、ゲーム中のフック実行は未確認です。
+`symbols` には `Keyboard::feed`、`MouseDevice::feed`、`LevelRendererPlayer::getFov`、
+`ClientInstance::grabCursor/releaseCursor`、`Actor::getNameTag`、
+`MultiPlayerLevel::_subTick`、`GameCore::keyboardEvent` の8件を登録しています。
+すべて `candidate` で、ABI検証・ゲーム中のフック実行は未確認です。
 native keyboardのイベントレイアウトもcandidateとして登録しています。残りの候補は `analysis` に保持しており、全Modに必要なnativeレイアウトは未完成です。
 `windows-x64.candidate.json` は調査の原本で、自動フック対象として使わないでください。
+
+Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
+[CheckSig](../../exsample/CheckSig/README_ja.md) を使います。既知HookPointは透過フックで実コールを観測できますが、
+その結果を自動で `verified` へ昇格させることはありません。
 
 - 元のパッケージ表記: `1.26.6005.0`
 - EXE VERSIONINFOのFileVersion/ProductVersion: `1.26.60.5`

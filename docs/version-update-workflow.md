@@ -71,7 +71,7 @@ uv run python -c \
 ```bash
 export SDK_ROOT=/home/pexserver/WorkSpace/DevBox/BedrockDynamicSDK
 export OLD_VERSION=1.26.52.3
-export NEW_VERSION=1.26.60.1
+export NEW_VERSION=1.26.60.5
 export OLD_EXE="$SDK_ROOT/local-binaries/$OLD_VERSION/Minecraft.Windows.exe"
 export NEW_EXE="$SDK_ROOT/local-binaries/$NEW_VERSION/Minecraft.Windows.exe"
 export UPDATE_WORK="$SDK_ROOT/version-update-work/$NEW_VERSION"

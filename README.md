@@ -3,7 +3,9 @@
 Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLLへ静的リンクできるC++20 SDKを提供します。
 **サンプルクライアントはSDK本体から分離した独立プロジェクト**です。
 
-現在の実データ：**Bedrock 1.26.52.3**。Minecraft本体の実行ファイルはGitHubに含めません。
+バージョンプロファイルは **Bedrock 1.26.52.3** と **1.26.60.5** を収録しています。Minecraft本体の実行ファイルはGitHubに含めません。
+
+1.26.60.5はEXEの識別情報、8件のフック候補、native keyboard候補を収録した部分プロファイルです。いずれも実ゲーム上の動作は未検証で、`ProfileOptions` の既定値 `CandidatePolicy::VerifiedOnly` では有効になりません。明示的に `AllowCandidates` を選んだ場合も候補機能としての扱いです。Actors、Items、World、Camera、Motion、Packets、Commands、native GUI、World Events、World Renderの1.26.60.5用レイアウトは未収録です。1.26.52.3向けDLLやネイティブ配置が新しい版でも動くとは限りません。詳細は[1.26.60.5の調査記録](data/1.26.60.5/README.md)を参照してください。
 
 公開サンプル：
 
@@ -18,6 +20,7 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 - [BedrockTabList](https://github.com/gamelist1990/BedrockTabList) — Tabキー中のシンプルなプレイヤー一覧
 - [HitBox example](exsample/HitBox) — 全ActorのネイティブAABB表示と任意の最終位置保持
 - [ScanClient](exsample/ScanClient) — 実行中プロセスの読み取り専用メモリ調査と候補プロファイル出力
+- [CheckSig](exsample/CheckSig/README_ja.md) — 旧版署名の実行中EXEへの候補移植、周辺バイト調査、既知HookPointの透過フック検証
 
 ネイティブ実行ファイルの調査は[REA + Ghidra](tools/rea/README_ja.md)を標準ツールとして使用します。REA MCPは関数・文字列・参照先の解析と根拠付き出力を提供し、ScanClientの実行時観測とMinecraftの正確なビルド識別子で照合します。
 
