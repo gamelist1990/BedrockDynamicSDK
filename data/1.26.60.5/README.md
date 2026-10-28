@@ -14,6 +14,16 @@ Actor / Item / Motionのnative layoutは1.26.52.3から候補として移し、�
 `runtime_verified:false` のままです。CheckSigやAllowCandidates対応Modから試行できますが、
 実ゲームでの値・寿命・ABIは確認できていません。
 
+`native_world` は読み取り専用アクセス向けの候補ルートを追加しています。新版の
+ClientInstance region getter (slot 33 / RVA `0x659E2F0`)、BlockSource::getBlock
+(RVA `0x32CE440`)、getChunk (RVA `0x32CD550`) と、read-only `.rdata`で一致した
+3つのBlockSource vtable候補を登録しました。`NativeWorld` はRegion getterの戻り値が
+これらのvtableのいずれかを持つ場合だけBlockSourceとして処理し、各呼び出しでもslot 2と41の
+関数ポインタが候補RVAに一致するか確認します。明示的な `CandidatePolicy::AllowCandidates`
+または `NativeWorld::load(..., true, ...)` が必要です。BlockType / ItemStack / Actor等の
+オブジェクトレイアウトは旧版由来のcandidateを含み、読み取り結果は未検証です。
+新版でWorldのブロック配置関数とGameMode vtableは未解決のため、配置機能は無効です。
+
 Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
 [CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
 `.pdata` 関数開始、HookPoint対応を一覧し、`probe <symbol>` で周辺情報を確認します。
@@ -78,10 +88,13 @@ StateVector / FallDistance offsetsも旧版由来です。どの項目も動作�
 culler setter、inside-cube renderer、view factory、spectator predicateは呼び出し先として
 登録せず、CheckSigのsymbol候補と解析記録だけに残しています。描画・Camera機能全体は未完成です。
 
-BlockSourceのgetBlock候補は `0x32CE440`、関連vtableのslot 2とchunk取得slot 41を
-旧版と新EXE、およびScanClientの読み込み済み.rdataで照合しました。
+BlockSourceのgetBlock候補は `0x32CE440`、getChunk候補は `0x32CD550`です。関連vtableの
+slot 2 / slot 41と3つのtable RVAを、新EXEおよびScanClientの読み込み済み.rdataで照合しました。
 SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版の
-`+0x1C8/+0x1D0` へ変わっています。実オブジェクトと呼び出しは未確認です。
+`+0x1C8/+0x1D0` へ変わっています。ただしstorage getterの関数先とABIは特定できていないため、
+新版のSubChunk直接走査は無効です。`scanBlock`は候補vtableとslot 2/41を照合するgetBlock経由で
+読みます。実オブジェクト、Region getterの戻り値、呼び出し、thread/lifetimeは未確認です。
+候補vtableと異なる場合、SDKはBlockSourceアクセスを拒否します。
 
 カーソル操作、ワールド遷移、ActorとPlayerの各コンポーネント、アイテム、
 ブロック／SubChunk、ワールド描画、パケット、コマンド、カメラなどには、

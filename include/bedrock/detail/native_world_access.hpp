@@ -60,6 +60,8 @@ struct Bindings{
     void* regionFn{};void* getBlockFn{};void* selectFn{};void* getHitFn{};
     void* titleReadFn{};std::uintptr_t titleVtable{};
     std::array<std::uintptr_t,2> gameTables{};
+    std::vector<std::uintptr_t> sourceVtables;
+    void* getChunkFn{};
     struct LayoutHash {
         using is_transparent=void;
         std::size_t operator()(std::string_view name)const noexcept{return std::hash<std::string_view>{}(name);}
@@ -113,7 +115,20 @@ struct Bindings{
         (void)layout("tree_parent_offset");
         (void)layout("tree_right_offset");
         (void)layout("tree_tag_variant_offset");
+        sourceVtables.clear();
+        if(f.contains("block_source_vtable_candidates")) {
+            const auto& tables=f.at("block_source_vtable_candidates");
+            if(!tables.is_array()||tables.empty()||tables.size()>8)throw std::runtime_error("invalid BlockSource vtable candidates");
+            for(const auto& value:tables){
+                const auto rva=number(value);
+                if(!rva||rva>=number(j.at("target").at("size_of_image"))||
+                   std::find(sourceVtables.begin(),sourceVtables.end(),base+rva)!=sourceVtables.end())
+                    throw std::runtime_error("invalid or duplicate BlockSource vtable candidate");
+                sourceVtables.push_back(base+rva);
+            }
+        }
         regionFn=checked(f.at("get_region"));getBlockFn=checked(f.at("get_block"));
+        getChunkFn=f.contains("get_chunk")?checked(f.at("get_chunk")):nullptr;
         scanReady=false;
         if(f.contains("subchunk_scan")) {
             const auto& j=f.at("subchunk_scan");checked(j.at("guard"));
@@ -122,7 +137,7 @@ struct Bindings{
             if(scan.minY>65536||scan.maxY>65536||scan.begin>65536||scan.end!=scan.begin+8||
                scan.stride<8||scan.stride>4096||scan.storage+8>scan.stride||scan.getSlot>256)
                 throw std::runtime_error("invalid SubChunk scan layout");
-            scanReady=true;
+            scanReady=j.value("enabled",true);
         }
         placementReady=false;
         try{selectFn=checked(f.at("select_hotbar"));getHitFn=checked(f.at("get_hit_result"));
@@ -151,6 +166,12 @@ struct Bindings{
     void* region(void* client)const noexcept{
         if(!client)return nullptr;__try{return reinterpret_cast<void*(__fastcall*)(void*)>(regionFn)(client);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
     }
+    bool candidateBlockSource(void* source)const noexcept{
+        if(sourceVtables.empty())return source!=nullptr;
+        std::uintptr_t table{};
+        if(!read(source,0,table))return false;
+        return std::find(sourceVtables.begin(),sourceVtables.end(),table)!=sourceVtables.end();
+    }
     bool pose(void* player,Vec& position,std::uint64_t& runtime)const noexcept{
         return read(component(player,actors.stateVectorComponentHash),actors.statePositionOffset,position)&&
             read(component(player,actors.runtimeIdComponentHash),actors.runtimeIdValueOffset,runtime)&&runtime&&
@@ -163,7 +184,9 @@ struct Bindings{
     }
     void* loadedChunk(void* source,int x,int z)const noexcept {
         void** vt{};void* fn{};
-        if(!read(source,0,vt)||!read(vt,layout("block_source_get_chunk_slot")*8,fn)||!executable(fn))return nullptr;
+        if(!candidateBlockSource(source)||!read(source,0,vt)||
+           !read(vt,layout("block_source_get_chunk_slot")*8,fn)||
+           (getChunkFn?fn!=getChunkFn:!executable(fn)))return nullptr;
         const std::array<int,2> chunk{x,z};
         __try{return reinterpret_cast<void*(__fastcall*)(void*,const void*)>(fn)(source,&chunk);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
     }
@@ -188,7 +211,10 @@ struct Bindings{
     }
     void* block(void* source,const Pos& pos,bool loaded=false)const noexcept{
         void** vt{};void* fn{};void* chunkFn{};
-        if(!read(source,0,vt)||!read(vt,layout("block_source_get_block_slot")*8,fn)||fn!=getBlockFn||!read(vt,layout("block_source_get_chunk_slot")*8,chunkFn)||!executable(chunkFn))return nullptr;
+        if(!candidateBlockSource(source)||!read(source,0,vt)||
+           !read(vt,layout("block_source_get_block_slot")*8,fn)||fn!=getBlockFn||
+           !read(vt,layout("block_source_get_chunk_slot")*8,chunkFn)||
+           (getChunkFn?chunkFn!=getChunkFn:!executable(chunkFn)))return nullptr;
         const std::array<int,2> chunk{pos.x>>4,pos.z>>4};
         __try{if(!loaded&&!reinterpret_cast<void*(__fastcall*)(void*,const void*)>(chunkFn)(source,&chunk))return nullptr;
             return reinterpret_cast<void*(__fastcall*)(void*,const Pos*)>(fn)(source,&pos);}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}

@@ -223,7 +223,8 @@ private:
         if(!onOwnerThread()||!ready_||active_||!client||!level||!budget.operations||!budget.microseconds)return false;
         auto* player=bindings_.local(client);void* actualLevel{};
         auto* source=bindings_.region(client);Vec3 position{};std::uint64_t runtime{};
-        if(!source||!bindings_.pose(player,position,runtime)||!world_native::read(player,bindings_.layout("player_level_offset"),actualLevel)||actualLevel!=level)return false;
+        if(!source||!bindings_.candidateBlockSource(source)||!bindings_.pose(player,position,runtime)||
+           !world_native::read(player,bindings_.layout("player_level_offset"),actualLevel)||actualLevel!=level)return false;
         if(lastLevel_!=level||lastSource_!=source||lastEpoch_!=epoch||lastRuntime_!=runtime){reader_.clear();++generation_;}
         lastLevel_=level;lastSource_=source;lastEpoch_=epoch;lastRuntime_=runtime;
         level_=level;source_=source;player_=player;runtime_=runtime;epoch_=epoch;position_=position;
