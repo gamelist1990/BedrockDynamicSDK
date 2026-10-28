@@ -84,7 +84,9 @@ int wmain(int argc, wchar_t** argv) {
         profile["symbols"]["Keyboard::feed"] = {{"rva", keyboardAddress-base},
             {"signature", keyboardPattern.str()}, {"entry_check", keyboardPattern.str()},
             {"status", "candidate"}, {"abi_verified", false}, {"runtime_verified", false}};
-        // A profile's reviewed runtime evidence must be displayed without auto-promoting other entries.
+        // Entry verification and reviewed runtime completion must remain distinguishable.
+        profile["symbols"]["fixture"]["status"] = "verified";
+        profile["symbols"]["fixture"]["verification_scope"] = "entry-guard";
         profile["symbols"]["Keyboard::feed"]["status"] = "verified";
         profile["symbols"]["Keyboard::feed"]["abi_verified"] = true;
         profile["symbols"]["Keyboard::feed"]["runtime_verified"] = true;
@@ -96,12 +98,12 @@ int wmain(int argc, wchar_t** argv) {
             const auto report = readJson(reportPath);
             if (!report.is_object() || !report.contains("profiles") || report["profiles"].empty()) return false;
             const auto& result = report["profiles"][0];
-            bool complete = false, pending = false;
+            bool complete = false, entryVerified = false;
             for (const auto& symbol : result.value("symbols", json::array())) {
                 if (symbol["symbol"] == "Keyboard::feed") complete = symbol.value("verification_status", std::string{}) == "complete";
-                if (symbol["symbol"] == "fixture") pending = symbol.value("verification_status", std::string{}) == "pending";
+                if (symbol["symbol"] == "fixture") entryVerified = symbol.value("verification_status", std::string{}) == "entry-verified";
             }
-            return complete && pending && result.value("status", std::string{}) == "exact-build-match" &&
+            return complete && entryVerified && result.value("status", std::string{}) == "exact-build-match" &&
                 result.value("entry_guard_hit_count", 0) == 2 && result.value("readable_symbol_count", 0) == 2 &&
                 result.value("hook_ready_count", -1) == 1;
         }, "JSON drop did not produce exact-build / readable / entry-match diagnostics");

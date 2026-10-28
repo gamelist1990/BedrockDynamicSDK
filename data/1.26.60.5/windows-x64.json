@@ -112,14 +112,15 @@
           "No hook-removed event, long-duration stability or later session coverage was supplied.",
           "GameCore::keyboardEvent and native_keyboard object layout / synthetic input delivery remain unverified."
         ]
-      }
+      },
+      "verification_scope": "runtime-hook"
     },
     "MouseDevice::feed": {
       "rva": "0x427650",
       "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
       "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 48 44 89 CF 44 89 C3 89 D5",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (4/5 source-unique anchors); REA/Ghidra ev_2b8cdd05f97fee7af9df880e93b623c03c2447aaa083a730100b7034effad250; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 36,
@@ -168,7 +169,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
@@ -181,14 +182,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "LevelRendererPlayer::getFov": {
       "rva": "0x5309B40",
       "signature": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1",
       "entry_check": "56 57 53 48 83 EC 60 44 0F 29 44 24 50 0F 29 7C 24 40 0F 29 74 24 30 44",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (5/5 source-unique anchors); REA/Ghidra ev_941908cc26fd13ccd0964b850efc19bad848243ab591961723b9b20ce35da80f; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 29,
@@ -237,7 +239,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)",
@@ -250,14 +252,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ClientInstance::grabCursor": {
       "rva": "0x65BB0A0",
       "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 38 04 00 00",
       "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 B8 3E 3E 09",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: matching wrapper structure, cursor vtable slot 0x87 and adjacent release wrapper; source object offsets changed; REA/Ghidra ev_e6f4348e1cda60b76e0bef1043a904357ab94ee362d87d7e530505b362e99fbc; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 45,
@@ -265,7 +268,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void __fastcall(ClientInstance*)",
@@ -278,14 +281,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ClientInstance::releaseCursor": {
       "rva": "0x65BB0F0",
       "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 40 04 00 00",
       "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 68 3E 3E 09",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: matching wrapper structure, cursor vtable slot 0x88 and adjacent grab wrapper; source object offsets changed; REA/Ghidra ev_d1a386c0ac4becc328139b75f355c3f020b7d2f3e450088214fd4349cf736738; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 45,
@@ -293,7 +297,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void __fastcall(ClientInstance*)",
@@ -306,14 +310,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "Actor::getNameTag": {
       "rva": "0xBBE500",
       "signature": "56 48 83 EC ?? 48 8B 81 50 01 00 00 48 85 C0 74 ?? 8B 50 08 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
       "entry_check": "56 48 83 EC 20 48 8B 81 50 01 00 00 48 85 C0 74 4A 8B 50 08 48 8B 08 29",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/1 source-unique anchors); REA/Ghidra ev_0216375d8ef20ca27c0091b0c768e0dbe66d11fd2b951eb5597f31f80eae31af; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 38,
@@ -330,7 +335,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "const std::string& __fastcall(Actor*)",
@@ -343,14 +348,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "MultiPlayerLevel::_subTick": {
       "rva": "0x6B8D550",
       "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 6D 40",
       "entry_check": "55 56 57 53 48 81 EC D8 00 00 00 48 8D AC 24 80 00 00 00 44 0F 29 6D 40",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/3 source-unique anchors); independent Ghidra raw-function comparison, runtime semantics unverified; REA/Ghidra ev_513fc12246861f95ed31a19747b58e5b7d2ca6107ca790c3cfb2ebc487037005; old/new machine-code comparison supports the existing hook calling convention; real-game hook execution unverified",
       "function_boundary": true,
       "signature_length": 24,
@@ -391,7 +397,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void __fastcall(MultiPlayerLevel*)",
@@ -404,14 +410,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "GameCore::keyboardEvent": {
       "rva": "0x98C80",
       "signature": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 41 8B 58 10",
       "entry_check": "56 57 53 48 83 EC 30 4C 89 C7 48 89 D6 48 8B 05 2C F4 26 12 48 31 E0 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (3/3 source-unique anchors); REA/Ghidra ev_51b43b5ba487cbc5d9936bb450c6bf63108397073f9d64b69e9da5556b5e1f84; old/new callback accesses same context offsets and virtual slots; runtime behavior unverified",
       "function_boundary": true,
       "signature_length": 32,
@@ -444,7 +451,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void* __fastcall(void* callback, void* result, void* context)",
@@ -457,14 +464,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "Level::getRuntimeActorList": {
       "rva": "0x232F290",
       "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 8B B1 B8 04 00 00",
       "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/3 source-unique anchors); independent Ghidra raw-function comparison, runtime semantics unverified",
       "function_boundary": true,
       "signature_length": 30,
@@ -497,7 +505,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols",
@@ -509,14 +517,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "GameCore::handleMouseInput": {
       "rva": "0x8A450",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 AD 50 02 00 00 44 0F 29 A5 40 02 00 00 44 0F 29 9D 30 02 00 00 44 0F 29 95 20 02 00 00 44 0F 29 8D 10 02 00 00 44 0F 29 85 00 02 00 00 0F 29 BD F0 01 00 00 0F 29 B5 E0 01 00 00 48 C7 85 D8 01 00 00 FE FF FF FF 48 89 CE",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 103,
@@ -557,7 +566,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols",
@@ -569,14 +578,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ItemStackBase::getHoverName": {
       "rva": "0x1AD8070",
       "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 89 D6 48 8D 55 B0",
       "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 34,
@@ -601,7 +611,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "ported from 1.26.52.3 anchors; see analysis.candidate_symbols",
@@ -613,14 +623,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_packets.motion.auth_input.is_valid": {
       "rva": "0x401C670",
       "signature": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F",
       "entry_check": "56 57 48 83 EC 38 48 8B 05 43 BA 2E",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 26,
@@ -661,7 +672,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x3c8ba90 -> new 0x401c670",
@@ -673,14 +684,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_packets.motion.move_player.is_valid": {
       "rva": "0x3401F20",
       "signature": "48 83 EC ?? F3 0F 10 49 38 0F 28 05 ?? ?? ?? ??",
       "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 16,
@@ -729,7 +741,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x2ece550 -> new 0x3401f20",
@@ -741,14 +753,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_client_commands.register_command": {
       "rva": "0x55AA1E0",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 80 01 00 00 FE FF FF FF 4C 89 45 D8",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 42,
@@ -781,7 +794,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x4a78840 -> new 0x55aa1e0",
@@ -793,14 +806,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_client_commands.find_command": {
       "rva": "0x558A650",
       "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CB 48 8B 42 10",
       "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 28,
@@ -841,7 +855,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x4a56630 -> new 0x558a650",
@@ -853,14 +867,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_gui.display_message": {
       "rva": "0xE94410",
       "signature": "55 41 57 41 56 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 00 02 00 00 FE FF FF FF 4D 89 CE",
       "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 37,
@@ -877,7 +892,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x1560ae0 -> new 0xe94410",
@@ -889,14 +904,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.update_player": {
       "rva": "0x6F313F0",
       "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
       "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 65,
@@ -929,7 +945,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x6733360 -> new 0x6f313f0",
@@ -941,14 +957,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.visual.gamma": {
       "rva": "0x5AFB520",
       "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00",
       "entry_check": "48 83 EC 38 48 8B 05 95 CB 80 0C 48",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 37,
@@ -965,7 +982,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0xfb7880 -> new 0x5afb520",
@@ -977,14 +994,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.visual.render_dragon_inside_effect.predicate": {
       "rva": "0x56887B0",
       "signature": "56 48 83 EC ?? 48 8B 71 08 4C 8B 02 4C 8B 4A 08",
       "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 16,
@@ -1009,7 +1027,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x5308990 -> new 0x56887b0",
@@ -1021,14 +1039,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.visual.set_player_game_type": {
       "rva": "0x2B9AB0",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 80 05 00 00 FE FF FF FF 41 89 D6",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 41,
@@ -1061,7 +1080,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x1e1570 -> new 0x2b9ab0",
@@ -1073,14 +1092,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world_render.functions.begin": {
       "rva": "0x5417230",
       "signature": "56 57 55 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 80 B9 A0 02 00 00 00",
       "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 81",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 30,
@@ -1105,7 +1125,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x59ca2e0 -> new 0x5417230",
@@ -1117,14 +1137,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world_render.functions.hashed_name_ctor": {
       "rva": "0x76A710",
       "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 08",
       "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 31,
@@ -1149,7 +1170,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x6ac970 -> new 0x76a710",
@@ -1161,14 +1182,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world_render.functions.material_ctor": {
       "rva": "0x4DE7250",
       "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 F0 48 C7 45 E8 FE FF FF FF 49 89 D1",
       "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "source-unique old entry signature matches new .pdata entry; semantics not independently verified",
       "function_boundary": true,
       "signature_length": 27,
@@ -1193,7 +1215,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "analysis.native_function_candidates: old 0x52f1e00 -> new 0x4de7250",
@@ -1205,14 +1227,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ClientInstance::onPlayerLoaded": {
       "rva": "0x65BD050",
       "signature": "49 89 D0 48 89 CA 48 8B 89 C8 01 00 00 48 8B 01",
       "entry_check": "49 89 D0 48 89 CA 48 8B 89 C8 01 00",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.vtable_candidates",
       "function_boundary": false,
       "signature_length": 16,
@@ -1220,7 +1243,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "Inferred table base from unique cursor-wrapper references and 6 nearby old/new entries; old and new leaf thunk forward through vtable offset 0x470, and ClientInstance member changed 0x1A8 to 0x1C8. No .pdata entry for new leaf; semantics and invocation unverified.",
@@ -1232,14 +1255,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": false
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ClientInstance::onDimensionChangedEvent": {
       "rva": "0x65AC680",
       "signature": "56 48 83 EC ?? 48 89 CE 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
       "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 68",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.vtable_candidates",
       "function_boundary": true,
       "signature_length": 20,
@@ -1280,7 +1304,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "Old verified source table slot 134; old slot 135 and 136 match new slots 137 and 138. Old/new candidate bodies share component hash 0xAF993816 and similar control flow. Ghidra ev_da62b1756dd47d91d392e84e88273850c15ee96de16ce6a443920e6f80792d5c; lifetime and event invocation unverified.",
@@ -1292,14 +1316,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::ClientInstance_region_getter": {
       "rva": "0x659E2F0",
       "signature": "56 57 48 83 EC ?? 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
       "entry_check": "56 57 48 83 EC 48 48 8D 91 68 02 00",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.vtable_candidates",
       "function_boundary": true,
       "signature_length": 18,
@@ -1316,7 +1341,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "The new table entry has the same instruction structure and ActorOwnerComponent hash 0x85B93800 as the old region candidate; corresponding ClientInstance field changed from +0x248 to +0x268. REA/Ghidra ev_b54626361c3e2ea7d57eba23c2fa588a3056826978ffb01a75b00aa49b58dc1b; output type, lifetime and runtime unverified.",
@@ -1328,14 +1353,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::ClientInstance_local_player_getter": {
       "rva": "0x659E470",
       "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
       "entry_check": "48 83 EC 48 48 8B 05 45 9C D6 0B 48",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.vtable_candidates",
       "function_boundary": true,
       "signature_length": 26,
@@ -1360,7 +1386,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "Adjacent to region getter as in old table, with matching old/new instruction structure and +0x248 to +0x268 field change. Returned Actor identity and lifetime unverified.",
@@ -1372,14 +1398,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::ActorTypeComponent": {
       "rva": "0xB94CA0",
       "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 00 FE FF FF FF 48 8B 81 90 02 00 00",
       "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.component_observations",
       "function_boundary": true,
       "signature_length": 34,
@@ -1404,7 +1431,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "REA/Ghidra ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f; old and new function access component hash and compare the 4-byte value with 0x13F. Function identity and owner/layout are not established. Observed member accesses +0x270/+0x2C0/+0x2D8 changed to +0x290/+0x2E0/+0x2F8; field types are unknown.",
@@ -1416,14 +1443,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::Tessellator::vertex": {
       "rva": "0x54175E0",
       "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 0F 29 4C 24 ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 8B 81 98 02 00 00",
       "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.world_render_observations",
       "function_boundary": true,
       "signature_length": 44,
@@ -1448,7 +1476,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "REA/Ghidra ev_2636fc1a9036e6ad4a69d1f5baa037037336175849c8e6768c15b78c770d2d7e; compares native register and field usage. Caller, runtime and overall ABI not verified.",
@@ -1460,14 +1488,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::BlockSource::getBlock": {
       "rva": "0x32CE440",
       "signature": "56 57 48 83 EC ?? 48 89 CF 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 8B 42 04 0F BF 49 3A 39 C8 0F 8C ?? ?? ?? ?? 0F BF 4F 38 39 C8 0F 8D ?? ?? ?? ?? 48 89 D6 8B 02 C1 F8 04 89 44 24 ?? 8B 42 08 C1 F8 04 89 44 24 ?? 48 8B 07 48 8B 80 48 01 00 00 48 8D 54 24 ?? 48 89 F9 FF 15 ?? ?? ?? ?? 48 85 C0 74 ?? 44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 C8 01 00 00 48 8B 80 D0 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 ?? 48 6B C1 68 48 8B 4C 02 30",
       "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05",
       "cross_version_signature_available": false,
-      "status": "candidate",
+      "status": "verified",
       "source": "static candidate: analysis.world_scan_observations",
       "function_boundary": true,
       "signature_length": 172,
@@ -1475,7 +1504,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "runtime_verified": false,
       "candidate_evidence": "New version function and vtable pointers match loaded ScanClient rdata; old/new neighbor slots 3,5,6,8,41 anchored by multiple signatures. REA/Ghidra ev_09db4ac9048ab388b2a9593984880e908277b37d18d2c75a5058f6a36c6d6d04. Chunk vector offsets changed from 0x140/0x148 to 0x1C8/0x1D0. Static and loaded read-only data only: object layout, dispatch ABI, live getBlock behavior and thread/lifetime not verified.",
@@ -1487,14 +1516,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "candidate::cross_version_port::ClientInstance::onPlayerLoaded": {
       "rva": "0x65BD080",
       "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D6 48 8B 01",
       "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/4 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 25,
@@ -1527,7 +1557,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "ClientInstance::onPlayerLoaded",
       "source_rva": "0x5DD06F0",
@@ -1544,14 +1574,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "ClientInstance::onLevelExit": {
       "rva": "0x65A3350",
       "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CF 48 8D B1 78 FF FF FF",
       "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 31,
@@ -1576,7 +1607,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "ClientInstance::onLevelExit",
       "source_rva": "0x5DB42F0",
@@ -1593,14 +1624,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world.get_region": {
       "rva": "0x659E2F0",
       "signature": "56 57 48 83 EC ?? 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
       "entry_check": "56 57 48 83 EC 48 48 8D 91 68 02 00",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 18,
@@ -1617,7 +1649,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_world.get_region",
       "source_rva": "0x5DAEBB0",
@@ -1634,13 +1666,14 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world.get_block": {
       "rva": "0x32CE440",
       "signature": "56 57 48 83 EC ?? 48 89 CF 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ??",
       "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05 70 9C 03 0F 48 31 E0 48 89 44 24 30",
-      "status": "candidate",
+      "status": "verified",
       "source": "exact-build .pdata start, entry bytes and BlockSource vtable slot 2",
       "function_boundary": true,
       "abi": "Block const* __fastcall(BlockSource*, BlockPos const*)",
@@ -1657,13 +1690,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard",
+      "confidence": "exact-build-entry-verified"
     },
     "native_world.get_chunk": {
       "rva": "0x32CD550",
       "signature": "41 56 56 57 53 48 83 EC 38 49 89 D0 48 89 CE 48 8B 81 B8 00 00 00 48 3B",
       "entry_check": "41 56 56 57 53 48 83 EC 38 49 89 D0 48 89 CE 48 8B 81 B8 00 00 00 48 3B",
-      "status": "candidate",
+      "status": "verified",
       "source": "exact-build .pdata start and BlockSource vtable slot 41",
       "function_boundary": true,
       "abi": "LevelChunk* __fastcall(BlockSource*, ChunkPos const*)",
@@ -1680,14 +1715,16 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard",
+      "confidence": "exact-build-entry-verified"
     },
     "native_world.build_block": {
       "rva": "0x376B290",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 D0 00 00 00 FE FF FF FF 44 89 CB 45 89 C6",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 44,
@@ -1720,7 +1757,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_world.build_block",
       "source_rva": "0x259BC60",
@@ -1737,14 +1774,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_packets.sender.packet_sender_getter": {
       "rva": "0x8AB690",
       "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CE 48 8B B9 D0 09 00 00",
       "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 31,
@@ -1777,7 +1815,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_packets.sender.packet_sender_getter",
       "source_rva": "0x80B340",
@@ -1794,14 +1832,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_packets.motion.auth_input.get_id": {
       "rva": "0x16D57E0",
       "signature": "41 57 41 56 41 54 56 57 53 48 83 EC ?? 89 D7 48 89 CE 48 8D 05 ?? ?? ?? ?? 48 89 01 48 8B 59 08 48 85 DB 74 ??",
       "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/4 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 37,
@@ -1818,7 +1857,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_packets.motion.auth_input.get_id",
       "source_rva": "0xB26A00",
@@ -1835,14 +1874,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_client_commands.client_commands_anchor": {
       "rva": "0x65A8500",
       "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 10 FE FF FF FF 48 89 CE 48 8B 89 D0 01 00 00",
       "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (2/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 37,
@@ -1867,7 +1907,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_client_commands.client_commands_anchor",
       "source_rva": "0x5DB9F00",
@@ -1884,14 +1924,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.local_player": {
       "rva": "0x659E470",
       "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
       "entry_check": "48 83 EC 48 48 8B 05 45 9C D6 0B 48",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 26,
@@ -1916,7 +1957,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_camera.local_player",
       "source_rva": "0x5DAED30",
@@ -1933,14 +1974,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.visual.terrain_culling.factory_check": {
       "rva": "0x537E6E0",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 4D 89 C5 48 89 CE 80 FA 05",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 38,
@@ -1965,7 +2007,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_camera.visual.terrain_culling.factory_check",
       "source_rva": "0x4690B80",
@@ -1982,14 +2024,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_camera.visual.camera_render_observe": {
       "rva": "0x5376690",
       "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 85 E0 0B 00 00",
       "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/1 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 35,
@@ -2014,7 +2057,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_camera.visual.camera_render_observe",
       "source_rva": "0x4686F20",
@@ -2031,14 +2074,15 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     },
     "native_world_render.functions.render_mesh": {
       "rva": "0x5AD5F90",
       "signature": "55 41 57 41 56 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 C8 03 00 00 FE FF FF FF",
       "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81",
       "cross_version_signature_available": true,
-      "status": "candidate",
+      "status": "verified",
       "source": "anchor-port:1.26.52.3 (1/2 source-unique anchors)",
       "function_boundary": true,
       "signature_length": 36,
@@ -2063,7 +2107,7 @@
       "category": "unknown",
       "origin_key": "",
       "reference_commit": "",
-      "confidence": "candidate",
+      "confidence": "exact-build-entry-verified",
       "abi_verified": false,
       "source_definition_path": "native_world_render.functions.render_mesh",
       "source_rva": "0x467EE50",
@@ -2080,15 +2124,16 @@
         "readable": true,
         "entry_guard_hit": true,
         "pdata_function_entry": true
-      }
+      },
+      "verification_scope": "entry-guard"
     }
   },
   "analysis": {
-    "status": "partial_hooks_runtime_verified",
+    "status": "entry_verified_runtime_partial",
     "source_exe_file_version": "1.26.60.5",
     "target_version_label": "1.26.60.5 (EXE file version)",
     "runtime_verified": false,
-    "description": "Exact-build diagnostic entries; Keyboard::feed has correlated static ABI and user-supplied runtime hook evidence. Other native ABI/layout entries remain candidates.",
+    "description": "All 43 symbol locators have exact-build readable entry-byte evidence and are marked verified under the user-approved entry verification policy. Keyboard::feed additionally has correlated static ABI and runtime hook evidence. Native ABI/layout verification remains separately scoped.",
     "native_function_candidates": [
       {
         "path": "native_packets.motion.auth_input.is_valid",
@@ -2979,7 +3024,7 @@
         "abi_verified": false
       }
     },
-    "note": "43/43 entry guards were readable and matched in user-supplied CheckSig output. Keyboard::feed runtime hook validation is complete for the recorded scope; the other 42 symbols and native layouts are not runtime verified.",
+    "note": "43/43 symbol entries are verified for exact-build address/entry-byte matching. Keyboard::feed additionally has ABI/runtime verification for the recorded hook/key/down/zero-return scope. The other 42 symbols retain abi_verified:false and runtime_verified:false.",
     "cross_version_port": {
       "source_version": "1.26.52.3",
       "source_profile": "data/1.26.52.3/windows-x64.json",
@@ -3440,7 +3485,8 @@
         "runtime_unverified_symbol_count": 42
       },
       "whole_profile_runtime_verified": false
-    }
+    },
+    "entry_verification_policy": "User-approved: a readable exact-build entry guard match is sufficient for symbol status=verified; this status does not imply ABI or runtime verification."
   },
   "native_keyboard": {
     "schema": 1,

@@ -39,7 +39,7 @@ JSONを更新すると自動で再検出します。サイズと更新時刻を�
 
 複数のJSONを置いた場合はファイルごとに結果を残します。有効な一致プロファイルを読み込んだ後で、別ビルドや不正なJSONを見つけても、そのJSONでは現在の定義を置き換えません。複数の有効な一致JSONがある場合はパス順で最後のものを使い、結果の `active_profile` に実際の選択を明記します。
 
-入口一致は関数の意味やABIの証明ではありません。`hook=ready` は明示的にHookを試せる条件を満たしたという意味で、実ゲームでの動作確認済みを意味しません。候補は自動で `verified` へ昇格しません。
+入口一致は関数の意味やABIの証明ではありません。`hook=ready` は明示的にHookを試せる条件を満たしたという意味で、実ゲームでの動作確認済みを意味しません。候補は自動で `verified` へ昇格しません。配布定義の `status:verified` は `verification_scope` の範囲で確認した印で、`entry-guard` は入口確認、`runtime-hook` は記録済みHook観測を示します。
 
 ## コマンドを使う
 
@@ -115,4 +115,4 @@ DLLの取得をスクリプト化する場合は、リポジトリの `Get-Check
 
 GitHub Actionsの **All mod DLLs** がMSVC Windows x64でDLLをビルドします。CheckSigでは入力処理・署名検索・プロファイル検証のテストに加え、生成したDLLをテスト用Windows EXEにロードし、JSON投入から検出結果生成、壊れたJSONからの復帰、コマンド処理、既知ABIのテスト関数に対するHookと引数・戻り値の観測まで確認します。取得用PowerShellもWindows PowerShell 5.1で確認します。
 
-テスト用EXEでの確認と、Minecraft実機で候補ABI・値・寿命を確認することは別の検証です。Minecraft 1.26.60.5では提供された実機ログと既存の静的ABI証拠を照合し、`Keyboard::feed` のHook・key/down・戻り値0の観測を確認済みです。更新済みJSONを読み込むと当該関数に `verification=complete` と表示します。その他の関数やnative keyboardレイアウトは実行時未検証です。
+テスト用EXEでの確認と、Minecraft実機で候補ABI・値・寿命を確認することは別の検証です。Minecraft 1.26.60.5では提供された実機ログと既存の静的ABI証拠を照合し、`Keyboard::feed` のHook・key/down・戻り値0の観測を確認済みです。更新済みJSONを読み込むと当該関数に `verification=complete` と表示します。43件の入口照合成功を根拠に、ユーザー指定基準で全43件のsymbolを `status:verified` としています。ほか42件は `verification=entry-verified` と表示し、ABI・実行時確認フラグはfalseです。native keyboardのオブジェクトレイアウトは実行時未検証です。

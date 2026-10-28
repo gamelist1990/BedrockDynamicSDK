@@ -826,7 +826,9 @@ private:
         if (spec->adapter == HookAdapter::Middleware) return true;
         if (!symbolEntry.is_object() ||
             lower(identity_.fileSha256) != k126605ExeSha256 ||
-            symbolEntry.value("status", std::string{}) != "candidate" ||
+            (symbolEntry.value("status", std::string{}) != "candidate" &&
+             !(symbolEntry.value("status", std::string{}) == "verified" &&
+               symbolEntry.value("verification_scope", std::string{}) == "entry-guard")) ||
             symbolEntry.value("abi_verified", false) ||
             symbolEntry.value("runtime_verified", false)) return false;
         const std::uint32_t expectedRva =
@@ -1539,7 +1541,9 @@ private:
                     {"runtime_verified", symbol.value("runtime_verified", false)},
                     {"verification_status", symbol.value("status", std::string{}) == "verified" &&
                         symbol.value("abi_verified", false) && symbol.value("runtime_verified", false)
-                        ? "complete" : "pending"},
+                        ? "complete" : symbol.value("status", std::string{}) == "verified"
+                            ? "entry-verified" : "pending"},
+                    {"verification_scope", symbol.value("verification_scope", std::string{})},
                     {"runtime_validation", symbol.value("runtime_validation", json::object())},
                     {"entry_validation", symbol.value("entry_validation", json::object())},
                     {"readable", !sample.empty()}, {"entry_guard_hit", guardHit},

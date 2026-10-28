@@ -1,4 +1,4 @@
-"""Promote only the exact-build function covered by reviewed static/runtime evidence."""
+"""Keep approved entry verification separate from scoped ABI/runtime confirmation."""
 import hashlib
 import json
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 from bedrock_symbols.index import build_index
 
 
-def test_126605_runtime_verification_is_scoped_to_observed_keyboard_hook():
+def test_126605_entry_verified_symbols_keep_runtime_scope_to_keyboard():
     root = Path(__file__).resolve().parents[1] / "data"
     directory = root / "1.26.60.5"
     candidate = json.loads((directory / "windows-x64.candidate.json").read_text(encoding="utf-8"))
@@ -14,17 +14,16 @@ def test_126605_runtime_verification_is_scoped_to_observed_keyboard_hook():
     profile = json.loads(raw)
     assert all(profile["target"][key] == value for key, value in candidate["target"].items())
     assert profile["target"]["version"] == "1.26.60.5"
-    assert profile["analysis"]["status"] == "partial_hooks_runtime_verified"
+    assert profile["analysis"]["status"] == "entry_verified_runtime_partial"
     assert profile["analysis"]["runtime_verified"] is False
     assert profile["analysis"]["runtime_verified_symbols"] == ["Keyboard::feed"]
     assert len(profile["symbols"]) == 43
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
-    assert verified == {"Keyboard::feed"}
+    assert verified == set(profile["symbols"])
     for name, row in profile["symbols"].items():
         assert row["abi_verified"] is (name == "Keyboard::feed")
         assert row["runtime_verified"] is (name == "Keyboard::feed")
-        if name != "Keyboard::feed":
-            assert row["status"] == "candidate"
+        assert row["verification_scope"] == ("runtime-hook" if name == "Keyboard::feed" else "entry-guard")
         assert row["entry_validation"]["status"] == "complete"
         assert row["entry_validation"]["entry_guard_hit"] is True
         assert row["entry_validation"]["readable"] is True
