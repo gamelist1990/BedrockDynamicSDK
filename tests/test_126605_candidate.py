@@ -18,13 +18,18 @@ def test_126605_only_exposes_scoped_hook_candidates():
     assert profile["analysis"]["status"] == "partial_hooks_runtime_unverified"
     allowed = {"Keyboard::feed", "MouseDevice::feed", "LevelRendererPlayer::getFov",
                "ClientInstance::grabCursor", "ClientInstance::releaseCursor",
-               "Actor::getNameTag", "MultiPlayerLevel::_subTick"}
+               "Actor::getNameTag", "MultiPlayerLevel::_subTick", "GameCore::keyboardEvent"}
     assert set(profile["symbols"]) == allowed
     for row in profile["symbols"].values():
         assert row["status"] == "candidate"
         assert row["abi_verified"] is False and row["runtime_verified"] is False
         assert len(row["entry_check"].split()) >= 24
-    assert not any(key.startswith("native_") for key in profile)
+    assert {key for key in profile if key.startswith("native_")} == {"native_keyboard"}
+    keyboard = profile["native_keyboard"]
+    assert keyboard["status"] == "candidate" and keyboard["runtime_verified"] is False
+    assert (keyboard["owner_offset"], keyboard["processor_offset"],
+            keyboard["message_offset"], keyboard["key_offset"]) == (0, 64, 16, 24)
+    assert (keyboard["key_down_vtable_slot"], keyboard["key_up_vtable_slot"]) == (1, 2)
     assert profile["analysis"]["candidate_symbols"] == candidate["symbols"]
     assert all(row["status"] == "candidate" and row["abi_verified"] is False
                for row in candidate["symbols"].values())

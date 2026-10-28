@@ -281,6 +281,49 @@
       "abi_verified": false,
       "runtime_verified": false,
       "abi": "void __fastcall(MultiPlayerLevel*)"
+    },
+    "GameCore::keyboardEvent": {
+      "rva": "0x98C80",
+      "signature": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 41 8B 58 10",
+      "entry_check": "56 57 53 48 83 EC 30 4C 89 C7 48 89 D6 48 8B 05 2C F4 26 12 48 31 E0 48",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "anchor-port:1.26.52.3 (3/3 source-unique anchors); REA/Ghidra ev_51b43b5ba487cbc5d9936bb450c6bf63108397073f9d64b69e9da5556b5e1f84; old/new callback accesses same context offsets and virtual slots; runtime behavior unverified",
+      "function_boundary": true,
+      "signature_length": 32,
+      "signature_anchors": [
+        {
+          "offset": 45,
+          "pattern": "41 0F B6 48 ?? E8 ?? ?? ?? ?? 84 C0 75 ?? 83 CB 04 81 FB 04 01 00 00 75 ?? 48 8D 4C 24 ?? FF 15 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 86,
+          "pattern": "74 ?? 83 7C 24 ?? 01 75 ?? 8B 44 24 ?? 45 31 C0 83 F8 02 41 0F 94 C0 45 01 C0 83 F8 01 44 0F 44 C0",
+          "bytes": 33,
+          "fixed_bytes": 29,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 129,
+          "pattern": "48 8B 01 48 8B 40 ?? FF 15 ?? ?? ?? ?? EB ?? 48 8B 07 48 8B 48 ?? 8B 57 ?? 48 8B 01 48 8B 40 ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "category": "unknown",
+      "origin_key": "",
+      "reference_commit": "",
+      "confidence": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void* __fastcall(void* callback, void* result, void* context)"
     }
   },
   "analysis": {
@@ -1148,6 +1191,21 @@
         "abi_verified": false
       }
     },
-    "note": "Seven hook entry candidates have been compared with the prior build and use exact-build guards, but runtime hook behavior is unverified. Other candidate symbols and native layouts remain offline only."
+    "note": "Eight hook entry candidates and one keyboard layout have been compared with the prior build and use exact-build guards; runtime hook behavior is unverified. Other candidate symbols and native layouts remain offline only."
+  },
+  "native_keyboard": {
+    "schema": 1,
+    "pointer_size": 8,
+    "callback_symbol": "GameCore::keyboardEvent",
+    "owner_offset": 0,
+    "processor_offset": 64,
+    "message_offset": 16,
+    "key_offset": 24,
+    "key_down_vtable_slot": 1,
+    "key_up_vtable_slot": 2,
+    "hardware_origin": 1,
+    "status": "candidate",
+    "runtime_verified": false,
+    "evidence": "1.26.60.5 GameCore::keyboardEvent RVA 0x98C80 accesses context+0x10, context+0x18, owner+0x40 and processor vtable slots 1/2, matching old 1.26.52.3; direct call to new Keyboard::feed 0x331C20. REA/Ghidra ev_51b43b5ba487cbc5d9936bb450c6bf63108397073f9d64b69e9da5556b5e1f84. No game runtime observation yet."
   }
 }
