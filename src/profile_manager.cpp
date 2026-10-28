@@ -68,6 +68,9 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
             const auto p=path(f);
             if(!p.root||!root.contains(p.root)||!root.at(p.root).is_object()){error="missing Minecraft layout: "+std::string(featureName(f))+" (function entry verification does not establish object layout)";return false;}
             const auto& node=root.at(p.root);
+            if(f==Feature::ClientCommands&&!node.contains("layout")){
+                error="CommandRegistry local-command object layout unavailable (message forwarding metadata only)";return false;
+            }
 #ifdef _WIN32
             const auto hook=[&](const char* name,BDS_HookPoint point){
                 const auto target=resolveSharedHook(resolver_,name,point);

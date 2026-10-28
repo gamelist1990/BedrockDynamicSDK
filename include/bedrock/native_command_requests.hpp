@@ -109,6 +109,7 @@ public:
     NativeCommandRequests() : requests_(command_packet_native::identity) {}
     ~NativeCommandRequests() { stop(); }
     CommandRequests& commands() noexcept { return requests_; }
+    bool senderReady() const noexcept { return sender_.load()!=nullptr && !stopped_.load(); }
     void onDiagnostic(Diagnostic diagnostic) { diagnostic_=std::move(diagnostic); }
     bool addLocalCommand(std::string name, LocalHandler callback) {
         if (loaded_ || name.empty() || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos || !callback) return false;
@@ -193,17 +194,34 @@ private:
         DWORD64 image{}; const auto* entry=RtlLookupFunctionEntry(address,&image,nullptr);
         return entry && image+entry->BeginAddress==address;
     }
+    enum class SenderState { Unknown, WaitingClient, WaitingLevel, WaitingSender, WaitingVtable, InvalidTarget, HookConflict, Ready };
+    void senderState(SenderState state, const char* message) {
+        if (senderState_!=state) { senderState_=state; note(message); }
+    }
     void observeSender(void* client) {
         sender_=nullptr; void* sender{}; void* vtable{}; void* target{};
-        if (!client || !level_ || !native_profile::read(client,senderOffset_,sender) || !sender ||
-            !native_profile::read(sender,0,vtable) || !native_profile::read(vtable,senderSlot_*8,target)) return;
-        if (sendToken_ && target!=sendTarget_) return;
+        if (!client) { senderState(SenderState::WaitingClient,"sender waiting: ClientInstance has not been observed"); return; }
+        if (!level_) { senderState(SenderState::WaitingLevel,"sender waiting: no active level"); return; }
+        if (!native_profile::read(client,senderOffset_,sender) || !sender) {
+            senderState(SenderState::WaitingSender,"sender waiting: ClientInstance PacketSender pointer unavailable"); return;
+        }
+        if (!native_profile::read(sender,0,vtable) || !native_profile::read(vtable,senderSlot_*8,target)) {
+            senderState(SenderState::WaitingVtable,"sender waiting: PacketSender virtual function is unreadable"); return;
+        }
+        if (sendToken_ && target!=sendTarget_) {
+            senderState(SenderState::HookConflict,"sender blocked: PacketSender target changed; restart with current DLLs"); return;
+        }
         if (!sendToken_) {
-            if (!BDS_HookOwnsTarget(BDS_HOOK_PACKET_SEND_TO_SERVER,target) && !functionStart(target)) return;
-            if (!BDS_HookSubscribe(BDS_HOOK_PACKET_SEND_TO_SERVER,target,onSend,this,&sendToken_)) return;
-            sendTarget_=target; note("local text command interception and request sender ready");
+            if (!BDS_HookOwnsTarget(BDS_HOOK_PACKET_SEND_TO_SERVER,target) && !functionStart(target)) {
+                senderState(SenderState::InvalidTarget,"sender blocked: sendToServer target is not an exact .pdata function entry"); return;
+            }
+            if (!BDS_HookSubscribe(BDS_HOOK_PACKET_SEND_TO_SERVER,target,onSend,this,&sendToken_)) {
+                senderState(SenderState::HookConflict,"sender blocked: shared sendToServer subscription failed"); return;
+            }
+            sendTarget_=target;
         }
         sender_=sender;
+        senderState(SenderState::Ready,"local text command interception and request sender ready");
     }
     bool send(const CommandRequest& request) {
         if (stopped_ || owner_!=GetCurrentThreadId() || !sender_) return false;
@@ -266,5 +284,6 @@ private:
     DWORD owner_{};
     BDS_HookToken sendToken_{},readToken_{};
     bool loaded_{};
+    SenderState senderState_=SenderState::Unknown;
 };
 } // namespace bedrock

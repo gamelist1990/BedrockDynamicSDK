@@ -85,3 +85,27 @@ ClientInstanceのsenderと送信経路の対応、実サーバーでの応答は
 元decodeとゲームの結果処理は維持します。フックは共有broker4.5.0 / ABI4で多重購読できます。
 
 プロトコルの意味はMojangの [CommandOriginData (1.26.60)](https://mojang.github.io/bedrock-protocol-docs/1.26.60/types/command-origin-data/) を参照してください。
+
+## Minecraftへのメッセージコマンド登録
+
+`<bedrock/native_message_commands.hpp>` の `NativeMessageCommands` は、
+対象ビルドの本物のCommandRegistryへメッセージ引数付きの名前を登録します。
+
+```cpp
+bedrock::NativeMessageCommands metadata;
+metadata.add("fake", "Send /me with an explicit origin");
+// ProfileManagerのadapterでmetadata.load(profile, error)を呼ぶ。
+// 以後は所有するクライアントtick上でmetadata.update(client)を呼ぶ。
+```
+
+1.26.60.5では `ClientInstance+0x1D0 -> Minecraft+0xC8 -> MinecraftCommands+0x10`
+を辿り、既存/meのメッセージ型・ネイティブcallableを検査してから、
+CommandRegistry::registerCommandと1引数のオーバーロード登録関数を呼びます。
+使用するflagsは元の/meと同じ0x40/0x80です。SyncLocalは設定せず、
+要求送信はNativeCommandRequestsで処理します。ゲームの所有領域へSDKのvtableやアロケーターは保存しません。
+登録後は再検索してオーバーロードを確認し、同名の既存定義は保持します。
+サーバーからコマンド一覧を受け取り直すなどレジストリが変わった場合は再確認します。
+
+静的解析の記録は `PEXData/REA/1.26.6005.0/fake-registration/` に保存しています。
+このメタデータ登録はローカル整数コマンドのABIを確定するものではありません。
+候補一覧の更新タイミングや実際の送信・応答は実機での確認が必要です。

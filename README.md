@@ -14,7 +14,7 @@ Minecraft Bedrock **Windows x64** 向けのC++ SDKとMod DLLです。
 | 1.26.60.5 | 43定義の入口確認済み（重複を統合して40関数）。Keyboard::feedはHookと値の取得を確認済み。その他のABI・オブジェクトレイアウトには調査中の項目あり |
 
 **1.26.60.5の全Modが実機動作確認済みという意味ではありません。**
-Topなどが必要とするGUI・CommandRegistryのレイアウトは未完成です。
+Topなどが必要とするGUI・ローカル整数コマンド用CommandRegistryのレイアウトは未完成です。
 起動ログの「missing Minecraft layout」に表示されたクラスの調査が必要です。
 
 ## CheckSig：JSONを置いて調査

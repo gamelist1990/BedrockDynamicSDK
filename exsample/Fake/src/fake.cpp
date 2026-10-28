@@ -1,5 +1,6 @@
 #include <bedrock/game_hooks.hpp>
 #include <bedrock/native_command_requests.hpp>
+#include <bedrock/native_message_commands.hpp>
 #include <fake_command.hpp>
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -23,7 +24,7 @@ public:
             std::filesystem::create_directories(directory);
             std::ofstream log(directory/L"Fake.log",std::ios::trunc);
             if (!log) throw std::runtime_error("could not open Fake.log");
-            initialize(); status=2;
+            initialize();
             while (!stopped_) { flush(log); std::this_thread::sleep_for(std::chrono::milliseconds{100}); }
             hooks_.reset(); transport_.stop(); flush(log); status=3;
         } catch (const std::exception& error) {
@@ -72,31 +73,64 @@ private:
         transport_.onDiagnostic([this](const std::string& value) { note(value); });
         if (!transport_.addLocalCommand("fake",[this](std::string_view line) { execute(line); }))
             throw std::runtime_error("/fake local registration failed");
+        if (!registration_.add("fake","Send /me with an explicit CommandOriginData type"))
+            throw std::runtime_error("/fake native definition could not be added");
         bedrock::ProfileManager profiles;
         std::string error;
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if (!profiles.prepare({bedrock::Feature::Gameplay,bedrock::Feature::LevelTick},options,
-            [this](const bedrock::RuntimeProfile& profile,std::string& failure) { return transport_.load(profile,failure); },error))
+            [this](const bedrock::RuntimeProfile& profile,std::string& failure) { return registration_.load(profile,failure) && transport_.load(profile,failure); },error))
             throw std::runtime_error(error);
         game_.Event.Enum.Gameplay.then([this](const bedrock::GameplayEvent& event) {
-            if (event.clientInstance) client_=event.clientInstance;
+            if (event.clientInstance && client_.exchange(event.clientInstance)!=event.clientInstance)
+                note("ClientInstance observed; waiting for owning tick to register /fake");
         });
         game_.Event.Enum.LevelTick.then([this](const bedrock::LevelTickEvent& event) {
             if (stopped_) return;
-            try { transport_.update(client_.load(),event.level); }
+            try {
+                const auto client=client_.load();
+                transport_.update(client,event.level);
+                if (registrationClient_!=client || registrationLevel_!=event.level) {
+                    registrationClient_=client; registrationLevel_=event.level;
+                    registered_=false; registrationTicks_=0;
+                }
+                if (registrationTicks_++%20==0) {
+                    const auto state=registration_.update(client);
+                    registered_=state==bedrock::NativeMessageCommands::State::Registered;
+                    if (!registrationState_ || *registrationState_!=state) {
+                        registrationState_=state;
+                        if (registered_) note("/fake registered in Minecraft CommandRegistry [message argument + command suggestions]");
+                        else if (state==bedrock::NativeMessageCommands::State::WaitingClient) note("registration waiting: ClientInstance");
+                        else if (state==bedrock::NativeMessageCommands::State::WaitingRegistry) note("registration waiting: Minecraft CommandRegistry");
+                        else if (state==bedrock::NativeMessageCommands::State::WaitingTemplate) note("registration waiting: server /me message definition");
+                        else note("registration blocked: "+registration_.error());
+                    }
+                }
+                const bool nowReady=registered_ && transport_.senderReady();
+                if (ready_!=nowReady) {
+                    ready_=nowReady; status=nowReady ? 2u : 1u;
+                    note(nowReady ? "Fake ready; /fake message | /fake --origin 0..255 message" : "Fake waiting: registration or request sender unavailable");
+                }
+            }
             catch (const std::exception& error) { note(std::string("tick: ")+error.what()); }
         });
         const auto profile=profiles.snapshot();
         hooks_=std::make_unique<bedrock::GameHooks>(game_);
         if (!hooks_->installGameplay(profile->resolver(),error) || !hooks_->installLevelTick(profile->resolver(),error))
             throw std::runtime_error(error);
-        note("Fake ready; /fake message | /fake --origin 0..255 message");
+        note("Fake attached; waiting for Minecraft CommandRegistry registration and request sender");
         note("Open Esc then resume gameplay once to observe ClientInstance and activate the sender.");
         note("Responses appear in Fake.log; 10 second timeout, callbacks resume on the next game tick.");
         note(BDS_HookRuntimeDiagnostic());
     }
     bedrock::GameApi game_;
     bedrock::NativeCommandRequests transport_;
+    bedrock::NativeMessageCommands registration_;
+    std::optional<bedrock::NativeMessageCommands::State> registrationState_;
+    void* registrationClient_{};
+    void* registrationLevel_{};
+    unsigned registrationTicks_{};
+    bool registered_{},ready_{};
     std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void*> client_{};
     std::atomic<bool> stopped_{};

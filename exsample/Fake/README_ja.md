@@ -9,7 +9,10 @@
 1. バージョン別リリースから **Fake-1.26.60.5-windows-x64.zip** を取得します。個別ビルドはCIの **Build DLLs and releases** でversionとmods=Fakeを指定します。
 2. ZIPを展開し、既存Modと同じ方法で `Fake.dll` をゲームへ読み込みます。
 3. ワールド内でEscを開いて戻り、ClientInstanceを一度観測させてください。
-4. `Documents/PEXData/Fake/Fake.log` に `request sender ready` が出た後に実行します。
+4. `Documents/PEXData/Fake/Fake.log` で `/fake registered in Minecraft CommandRegistry` と `Fake ready` が出た後に実行します。
+5. コマンド画面を開いていた場合は一度閉じ、開き直して候補を確認してください。
+
+以前のFake.dllはプロセス終了まで保持されるため、更新時はMinecraftを完全終了してから新しいDLLを読み込んでください。
 
 対象は **Windows x64 / 1.26.60.5、EXE SHA-256
 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a** です。
@@ -31,7 +34,11 @@ Originオプションはメッセージの前に指定します。省略時は5�
 型は1バイトなので **0〜255の整数**を受け付け、範囲外・負数・小数は拒否します。
 メッセージ内の空白・日本語を保持します。空メッセージ・改行・NULは拒否します。
 上限はUTF-8で2044バイト（`/me ` を含む要求全体では2048バイト）です。
-コマンド候補一覧への登録は行わず、送信パケットから `/fake` を受け付けます。
+ゲームの `CommandRegistry` に `/fake <message>` を登録します。
+対象バージョンの `/me` と同じメッセージ引数の定義・ネイティブfactoryを、ゲーム自身の登録関数でコピーします。
+`/fake` の送信要求をModで受け取り、Origin付きの `/me` 要求を組み立てます。
+既存の同名コマンドは上書きしません。ネイティブ整数コマンドの登録APIとは別です。
+登録関数・レイアウトは静的解析に基づく候補で、ゲーム内の候補表示と送受信は実機確認が必要です。
 
 | 値 | 名前 | 値 | 名前 |
 | --- | --- | --- | --- |
@@ -62,4 +69,19 @@ Originオプションはメッセージの前に指定します。省略時は5�
 
 SDKの共通APIの使い方は [command-requests.md](../../docs/command-requests.md) を参照してください。
 `Fake_Stop()` で停止、`Fake_GetStatus()` で状態を取得できます
-（0未開始 / 1初期化中 / 2起動 / 3停止 / 4初期化失敗）。DLLはプロセス終了まで保持します。
+（0未開始 / 1初期化・登録または送信準備待ち / 2登録と送信準備完了 / 3停止 / 4初期化失敗）。DLLはプロセス終了まで保持します。
+
+## 登録・起動ログ
+
+| ログ | 意味 |
+| --- | --- |
+| `Fake attached; waiting ...` | DLLのフック初期化完了。まだコマンド登録・送信の準備完了ではない |
+| `registration waiting: ClientInstance` | Escを開閉し、クライアントを一度観測する必要がある |
+| `registration waiting: Minecraft CommandRegistry` | レジストリを取得できていない |
+| `registration waiting: server /me message definition` | 元にする/me定義がレジストリにない。ワールド・サーバー接続を確認 |
+| `registration blocked: ...` | 同名の衝突やレイアウト不一致。具体的な理由を記録 |
+| `/fake registered in Minecraft CommandRegistry ...` | ゲーム側で登録した定義を再検索し、メッセージのオーバーロードも確認 |
+| `sender waiting: ...` / `sender blocked: ...` | 送信経路が使えない理由 |
+| `Fake ready; ...` | コマンド登録と送信フックの両方を確認 |
+
+レジストリの置き換えはゲームtickで再確認します。停止後もゲーム所有の候補定義はレジストリが再作成されるまで残る場合があります。
