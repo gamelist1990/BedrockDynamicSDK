@@ -8,6 +8,9 @@
 #include <nlohmann/json.hpp>
 #include <hde64.h>
 #include "check_sig_core.hpp"
+#include "checksig_support.hpp"
+#include "checksig_catalog.hpp"
+#include <functional>
 
 #include <algorithm>
 #include <array>
@@ -113,6 +116,8 @@ constexpr HookSpec kHookSpecs[] = {
     {"ClientInstance::onDimensionChangedEvent", BDS_HOOK_CLIENT_DIMENSION_CHANGED},
     {"ClientInstance::onCancelJoinGame", BDS_HOOK_CLIENT_JOIN_CANCELLED},
     {"native_world_render.functions.render_level", BDS_HOOK_RENDER_LEVEL},
+    {"CommandOutputPacket::read", BDS_HOOK_COMMAND_OUTPUT_READ},
+    {"PacketSender::sendToServer", BDS_HOOK_PACKET_SEND_TO_SERVER},
     {"native_camera.local_player", static_cast<BDS_HookPoint>(0),
         HookAdapter::LocalPlayerReturn},
     {"native_camera.visual.camera_render_observe", static_cast<BDS_HookPoint>(0),
@@ -690,6 +695,7 @@ public:
                     const auto now = std::chrono::steady_clock::now();
                     if (now - lastStatus >= std::chrono::seconds(1)) {
                         flushHookState();
+                        refreshSupportReports();
                         writeStatus("running");
                         lastStatus = now;
                     }
@@ -738,6 +744,7 @@ private:
     std::map<std::string, json> jobResults_;
     std::map<std::string, std::string> hookJobs_;
     std::string currentJob_;
+#include "checksig_support_runtime.inc"
 
     fs::path resultPath(const std::string& source) const {
         const auto input = fromUtf8(source);
@@ -749,10 +756,18 @@ private:
         const auto path = resultPath(source);
         fs::create_directories(path.parent_path());
         atomicWrite(path, jobResults_.at(source).dump(2) + "\n");
+        if(jobResults_.at(source).contains("support_report")) {
+            auto readable=path;readable.replace_extension(L".txt");
+            atomicWrite(readable,checksig::supportText(jobResults_.at(source).at("support_report")));
+        }
     }
     void processJson(const checksig::InputFile& file) {
         const auto source = pathUtf8(file.path);
         currentJob_ = source;
+        supportCatalogs_.erase(source); watches_.erase(source);
+        for(auto it=watchCalls_.begin();it!=watchCalls_.end();) {
+            if(it->first.starts_with(source+":")) it=watchCalls_.erase(it); else ++it;
+        }
         jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
@@ -776,7 +791,10 @@ private:
                     return path.is_relative() ? file.path.parent_path() / path : path;
                 };
                 if (document.contains("profile")) {
-                    detectProfileFile(resolveInput(document.at("profile").get<std::string>()), "job-profile");
+                    if(document.at("profile").is_object()) {
+                        detectProfileText(document.at("profile").dump(),source+"#profile","job-inline-profile");
+                        inlineProfile_=true;
+                    } else detectProfileFile(resolveInput(document.at("profile").get<std::string>()), "job-profile");
                     if (!lastProfileDetection_.value("loaded", false))
                         throw std::runtime_error("job profile could not be loaded; see detect-result");
                 }
@@ -796,6 +814,21 @@ private:
                     std::string error;
                     if (!loadProfileText(expanded.dump(), source, error)) throw std::runtime_error(error);
                 }
+                if(document.contains("watches")) {
+                    const auto& watches=document.at("watches");
+                    if(!watches.is_array() || watches.size()>128) throw std::runtime_error("at most 128 watches are allowed");
+                    for(const auto& watch:watches) {
+                        (void)watch.at("symbol").get<std::string>(); (void)watch.at("field").get<std::string>();
+                        if(watch.at("label").get<std::string>().size()>256) throw std::runtime_error("watch label too long");
+                        const auto& offsets=watch.at("offsets");
+                        if(!offsets.is_array() || offsets.empty() || offsets.size()>4) throw std::runtime_error("watch offsets must contain 1..4 bounded offsets");
+                        for(const auto& offset:offsets) if(checksig::readU32(offset)>0x10000) throw std::runtime_error("watch offset exceeds 0x10000");
+                        const auto type=watch.at("type").get<std::string>();
+                        if(type.starts_with("bytes:")) {const auto n=checksig::readU32(type.substr(6));if(!n || n>64) throw std::runtime_error("watch reads must be 1..64 bytes");}
+                        else if(type!="u8" && type!="i8" && type!="u16" && type!="i16" && type!="u32" && type!="i32" && type!="u64" && type!="i64" && type!="ptr" && type!="f32" && type!="f64") throw std::runtime_error("invalid watch type");
+                    }
+                    watches_[source]=watches;
+                }
                 const auto& actions = document.at("actions");
                 if (!actions.is_array() || actions.empty() || actions.size() > 128)
                     throw std::runtime_error("actions must contain 1..128 objects");
@@ -804,7 +837,9 @@ private:
                 for (const auto& action : actions) {
                     const auto op = action.at("op").get<std::string>();
                     std::string line = op;
-                    if (op == "probe" || op == "hook" || op == "unhook") {
+                    if(op=="audit" || op=="observe") {
+                        if(op=="observe" && (!action.at("symbols").is_array() || action.at("symbols").size()>128)) throw std::runtime_error("observe accepts at most 128 symbols");
+                    } else if (op == "probe" || op == "hook" || op == "unhook") {
                         const auto symbol = action.at("symbol").get<std::string>();
                         if (symbol.empty() || symbol.find_first_of(" \t\r\n") != std::string::npos)
                             throw std::runtime_error("invalid symbol name");
@@ -818,8 +853,15 @@ private:
                     lines.push_back(std::move(line));
                 }
                 for (std::size_t i = 0; i < lines.size(); ++i) {
-                    execute(lines[i]);
                     const auto& action = actions.at(i);
+                    if(action.at("op")=="observe") observeSymbols(action,source);
+                    else if(action.at("op")=="audit") {
+                        if(!resolver_) throw std::runtime_error("audit requires a matching profile");
+                        const auto catalog=document.value("requirements",defaultSupportCatalog());
+                        auto report=buildSupport(catalog);
+                        if(report.value("status",std::string{})=="not-applicable") throw std::runtime_error("support catalog fingerprint does not match the loaded profile");
+                        supportCatalogs_[source]=catalog;jobResults_[source]["support_report"]=std::move(report);
+                    } else execute(lines[i]);
                     if (action.at("op") == "hook") hookJobs_[action.at("symbol").get<std::string>()] = source;
                     if (action.at("op") == "unhook") hookJobs_.erase(action.at("symbol").get<std::string>());
                 }
@@ -931,6 +973,7 @@ private:
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
         if (!error.empty()) status["error"] = error;
         status["input_directories"] = {pathUtf8(command_), pathUtf8(commands_)};
+        status["remaining_work_report"]=pathUtf8(output_/L"result"/L"remaining-work.json");
         status["detect_report"] = pathUtf8(output_ / L"detect" / L"result.txt");
         status["active_profile"] = resolver_ ? json(targetPath_) : json(nullptr);
         if (!lastProfileDetection_.empty()) {
@@ -1548,6 +1591,28 @@ private:
                 }
                 break;
             }
+            case BDS_HOOK_COMMAND_OUTPUT_READ: {
+                const auto* a=static_cast<const BDS_CommandOutputReadArgs*>(raw);
+                if(a) {
+                    values={{"packet",pointerString(a->packet)},{"output",pointerString(a->output)},
+                        {"stream",pointerString(a->stream)},{"context",pointerString(a->context)},{"result",pointerString(a->result)}};
+                    std::uint8_t success{};const auto resultAddress=reinterpret_cast<std::uintptr_t>(a->output);
+                    const bool decoded=a->result==a->output && safeReadAt(resultAddress,0x40,&success,1) && success==1;
+                    values["decode_succeeded"]=decoded;
+                    if(decoded) {
+                        std::int32_t count{},type{};const auto packet=reinterpret_cast<std::uintptr_t>(a->packet);
+                        if(safeReadAt(packet,0x98,&count,4)) values["success_count"]=count;
+                        if(safeReadAt(packet,0x70,&type,4)) values["output_type"]=type;
+                        values["layout_status"]="exact-build static candidate; values require review";
+                    }
+                }
+                break;
+            }
+            case BDS_HOOK_PACKET_SEND_TO_SERVER: {
+                const auto* a=static_cast<const BDS_PacketSendArgs*>(raw);
+                if(a) values={{"sender",pointerString(a->sender)},{"packet",pointerString(a->packet)}};
+                break;
+            }
             case BDS_HOOK_ACTOR_GET_NAME_TAG: {
                 const auto* a = static_cast<const BDS_ActorNameTagArgs*>(raw);
                 if (a) values = {{"actor", pointerString(a->actor)},
@@ -1619,6 +1684,7 @@ private:
                 if (error.empty()) error = "profile PE layout does not match the loaded executable";
                 return false;
             }
+            inlineProfile_=false;
             targetProfile_ = std::move(document);
             targetPath_ = std::move(path);
             resolver_ = std::move(resolver);
@@ -1648,7 +1714,9 @@ private:
         if (!resolver_ || !resolver_->exactBuild()) return std::nullopt;
         const auto& symbols = targetProfile_.at("symbols");
         const auto it = symbols.find(name);
-        if (it == symbols.end() || !entryMatches(it.value())) return std::nullopt;
+        if (it == symbols.end()) return std::nullopt;
+        const auto owned=hookTargetOwned(hookSpec(name),reinterpret_cast<void*>(image_->base+jsonU32(it->at("rva"))));
+        if(!entryMatches(it.value()) && !owned.value_or(false)) return std::nullopt;
         return bedrock::Resolution{image_->base + jsonU32(it->at("rva")),
             "exact-rva", true, it->value("status", std::string{}) == "verified"};
     }
@@ -1670,7 +1738,7 @@ private:
                 const bool runtimeSupports = hookRuntimeSupports(spec);
                 const auto owned = hookTargetOwned(spec, reinterpret_cast<void*>(image_->base + rva));
                 const bool jumpStub = suspectedJumpStub(*image_, rva);
-                const bool hookReady = resolver_->exactBuild() && guardHit && functionEntry &&
+                const bool hookReady = resolver_->exactBuild() && (guardHit || owned.value_or(false)) && functionEntry &&
                     abiKnown && runtimeSupports && (!jumpStub || owned.value_or(false));
                 entry.update({
                     {"rva", hex(rva)}, {"status", symbol.value("status", std::string("candidate"))},
@@ -1686,7 +1754,7 @@ private:
                     {"entry_validation", symbol.value("entry_validation", json::object())},
                     {"readable", !sample.empty()}, {"entry_guard_hit", guardHit},
                     {"entry_bytes", bytesHex(sample.data(), std::min<std::size_t>(sample.size(), 32))},
-                    {"state", sample.empty() ? "unreadable" : guardHit ? "entry-match" : "entry-mismatch"},
+                    {"state", sample.empty() ? "unreadable" : owned.value_or(false) ? "sdk-hook-installed" : guardHit ? "entry-match" : "entry-mismatch"},
                     {"pdata_function_entry", functionEntry},
                     {"hook_adapter", hookAdapterName(spec)}, {"hook_abi_known", abiKnown},
                     {"hook_point", spec && spec->adapter == HookAdapter::Middleware
@@ -1760,6 +1828,10 @@ private:
             {"active_symbols", activeSymbols_},
             {"profiles", std::move(profiles)}
         };
+        if(resolver_) {
+            report["support_report"]=buildSupport(defaultSupportCatalog());
+            readable<<"\n"<<checksig::supportText(report.at("support_report"));
+        }
         atomicWrite(output_ / L"detect" / L"result.json", report.dump(2) + "\n");
         atomicWrite(output_ / L"detect" / L"result.txt", readable.str());
         detectionReportsDirty_ = false;
@@ -2196,7 +2268,10 @@ private:
             } else {
                 rescanProfiles_ = true;
                 // Refresh the active profile now too (including generated profiles).
-                if (resolver_) detectProfileFile(inputPath(targetPath_), "detect-command-active");
+                if (resolver_) {
+                    if(inlineProfile_) {detectProfileText(targetProfile_.dump(),targetPath_,"detect-inline-profile");inlineProfile_=true;}
+                    else detectProfileFile(inputPath(targetPath_), "detect-command-active");
+                }
                 else {
                     writeEvent("detect-rescan", {{"input_directories", {pathUtf8(command_), pathUtf8(commands_)}}});
                     writeDetectionReports();

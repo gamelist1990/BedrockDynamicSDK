@@ -1,0 +1,2905 @@
+{
+  "schema": 1,
+  "target": {
+    "version": "1.26.60.5",
+    "sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "reference_version": "1.26.52.3",
+  "scope": "source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility",
+  "sources": [
+    "src/profile_manager.cpp",
+    "include/bedrock/detail/native_world_access.hpp",
+    "include/bedrock/native_client_commands.hpp",
+    "include/bedrock/native_world_render.hpp",
+    "exsample/*/src"
+  ],
+  "groups": [
+    {
+      "id": "input",
+      "label": "入力Hook"
+    },
+    {
+      "id": "gameplay",
+      "label": "ClientInstance・クライアントtick"
+    },
+    {
+      "id": "fov",
+      "label": "FOV"
+    },
+    {
+      "id": "keyboard",
+      "label": "GameCoreのキー配送"
+    },
+    {
+      "id": "actors",
+      "label": "Actor・EnTT・位置・AABB"
+    },
+    {
+      "id": "items",
+      "label": "ItemStack・装備・インベントリ"
+    },
+    {
+      "id": "identity",
+      "label": "LocalPlayer・プレイヤー一覧"
+    },
+    {
+      "id": "motion",
+      "label": "StateVectorComponent・移動状態"
+    },
+    {
+      "id": "camera",
+      "label": "Camera・描画起点・ゲームモード"
+    },
+    {
+      "id": "world",
+      "label": "BlockSource・Block・BlockType・NBT"
+    },
+    {
+      "id": "placement",
+      "label": "GameModeのブロック設置"
+    },
+    {
+      "id": "subchunks",
+      "label": "LevelChunk・SubChunk走査"
+    },
+    {
+      "id": "request_binding",
+      "label": "CommandRequestPacketの送信バインド"
+    },
+    {
+      "id": "sender",
+      "label": "PacketSender"
+    },
+    {
+      "id": "movement_packets",
+      "label": "PlayerAuthInputPacket・MovePlayerPacket"
+    },
+    {
+      "id": "title_packets",
+      "label": "SetTitlePacket"
+    },
+    {
+      "id": "local_commands",
+      "label": "CommandRegistryのローカル整数コマンド"
+    },
+    {
+      "id": "gui",
+      "label": "GuiDataのメッセージ表示"
+    },
+    {
+      "id": "render",
+      "label": "LevelRenderer・Tessellator・マテリアル"
+    },
+    {
+      "id": "world_events",
+      "label": "ClientInstanceのワールド切替"
+    },
+    {
+      "id": "command_packets",
+      "label": "CommandRequestPacket・CommandOutputPacket"
+    },
+    {
+      "id": "message_commands",
+      "label": "CommandRegistryのメッセージコマンド"
+    }
+  ],
+  "mods": [
+    {
+      "name": "AutoSprint",
+      "required_groups": [
+        "keyboard",
+        "gameplay"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "Wキーで走る・離すと解除・画面切替後にキーが残らない"
+      ]
+    },
+    {
+      "name": "Zoom",
+      "required_groups": [
+        "input",
+        "fov",
+        "gameplay"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "押下でFOV変更・離すと復帰・メニューでは無効"
+      ]
+    },
+    {
+      "name": "TabList",
+      "required_groups": [
+        "input",
+        "fov",
+        "gameplay"
+      ],
+      "optional_groups": [
+        "actors",
+        "items",
+        "identity"
+      ],
+      "manual_checks": [
+        "一覧の名前・UUID・Actor対応・装備表示・退出後の消去"
+      ]
+    },
+    {
+      "name": "HitBox",
+      "required_groups": [
+        "actors",
+        "items",
+        "identity",
+        "render",
+        "gameplay",
+        "world_events"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "対象プレイヤー判別・AABB位置・移動追従・ワールド切替で旧ポインタを使わない"
+      ]
+    },
+    {
+      "name": "Freecam",
+      "required_groups": [
+        "input",
+        "gameplay",
+        "actors",
+        "items",
+        "motion",
+        "camera",
+        "sender",
+        "movement_packets",
+        "render",
+        "world_events"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "カメラだけ移動・送信するプレイヤー位置を維持・無効化時に復帰・再接続後に復帰"
+      ]
+    },
+    {
+      "name": "BlockOutline",
+      "required_groups": [
+        "gameplay",
+        "actors",
+        "items",
+        "world",
+        "subchunks",
+        "render",
+        "world_events"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "対象ブロックの場所・SubChunk境界・描画位置と色・未ロードチャンクの扱い"
+      ]
+    },
+    {
+      "name": "SpeedBuilder",
+      "required_groups": [
+        "input",
+        "gameplay",
+        "actors",
+        "items",
+        "world",
+        "placement",
+        "title_packets",
+        "world_events"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "タイトル検知・記録・設置・インベントリ復帰・キャンセルとワールド切替"
+      ]
+    },
+    {
+      "name": "Top",
+      "required_groups": [
+        "gameplay",
+        "actors",
+        "items",
+        "world",
+        "motion",
+        "gui",
+        "sender",
+        "request_binding",
+        "local_commands",
+        "world_events"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "コマンド候補・整数引数・安全な移動先・位置/AABB/速度・落下状態と高さ・結果表示"
+      ]
+    },
+    {
+      "name": "Fake",
+      "required_groups": [
+        "gameplay",
+        "sender",
+        "command_packets",
+        "message_commands"
+      ],
+      "optional_groups": [],
+      "manual_checks": [
+        "/fake候補とメッセージ・Origin省略5/指定0..255・requestId/UUIDと応答・timeout・接続切替"
+      ]
+    },
+    {
+      "name": "GuiDemo",
+      "required_groups": [],
+      "optional_groups": [],
+      "manual_checks": [
+        "DX11/DX12の描画・入力・フォント・リサイズ・フルスクリーン切替"
+      ]
+    },
+    {
+      "name": "ScanClient",
+      "required_groups": [],
+      "optional_groups": [],
+      "manual_checks": [
+        "EXE識別・read-onlyスキャン・出力ファイルの完結"
+      ]
+    },
+    {
+      "name": "CheckSig",
+      "required_groups": [],
+      "optional_groups": [],
+      "manual_checks": [
+        "JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "symbol:Keyboard::feed",
+      "group": "input",
+      "kind": "function",
+      "symbol": "Keyboard::feed",
+      "path": "/symbols/Keyboard::feed",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:MouseDevice::feed",
+      "group": "input",
+      "kind": "function",
+      "symbol": "MouseDevice::feed",
+      "path": "/symbols/MouseDevice::feed",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::grabCursor",
+      "group": "gameplay",
+      "kind": "function",
+      "symbol": "ClientInstance::grabCursor",
+      "path": "/symbols/ClientInstance::grabCursor",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::releaseCursor",
+      "group": "gameplay",
+      "kind": "function",
+      "symbol": "ClientInstance::releaseCursor",
+      "path": "/symbols/ClientInstance::releaseCursor",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:MultiPlayerLevel::_subTick",
+      "group": "gameplay",
+      "kind": "function",
+      "symbol": "MultiPlayerLevel::_subTick",
+      "path": "/symbols/MultiPlayerLevel::_subTick",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:LevelRendererPlayer::getFov",
+      "group": "fov",
+      "kind": "function",
+      "symbol": "LevelRendererPlayer::getFov",
+      "path": "/symbols/LevelRendererPlayer::getFov",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:GameCore::keyboardEvent",
+      "group": "keyboard",
+      "kind": "function",
+      "symbol": "GameCore::keyboardEvent",
+      "path": "/symbols/GameCore::keyboardEvent",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "/layouts/GameCore/callback_symbol",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/callback_symbol",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "GameCore::keyboardEvent"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/owner_offset",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/owner_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/processor_offset",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/processor_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 64
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/message_offset",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/message_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 16
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/key_offset",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/key_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 24
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/key_down_vtable_slot",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/key_down_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/key_up_vtable_slot",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/key_up_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GameCore/hardware_origin",
+      "group": "keyboard",
+      "kind": "layout",
+      "path": "/layouts/GameCore/hardware_origin",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "symbol:Actor::getNameTag",
+      "group": "actors",
+      "kind": "function",
+      "symbol": "Actor::getNameTag",
+      "path": "/symbols/Actor::getNameTag",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:Level::getRuntimeActorList",
+      "group": "actors",
+      "kind": "function",
+      "symbol": "Level::getRuntimeActorList",
+      "path": "/symbols/Level::getRuntimeActorList",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_context/actor_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_context/actor_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_context/registry_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_context/registry_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_context/entity_id_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_context/entity_id_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x10"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_owner/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_owner/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x85B93800"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_owner/component_hash_alternate",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_owner/component_hash_alternate",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_owner/actor_pointer_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_owner/actor_pointer_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_type/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_type/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x4F6BA419"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_type/value_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_type/value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_type/value_size",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_type/value_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_type/player_type_id",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_type/player_type_id",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 319
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_unique_id/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_unique_id/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x18F957AF"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_unique_id/value_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_unique_id/value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_unique_id/value_size",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_unique_id/value_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/runtime_id/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/runtime_id/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xFC0DBBB5"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/runtime_id/value_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/runtime_id/value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/runtime_id/value_size",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/runtime_id/value_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/aabb_shape/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/aabb_shape/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xBAC1B3CF"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/aabb_shape/component_hash_alternate",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/aabb_shape/component_hash_alternate",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/aabb_shape/minimum_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/aabb_shape/minimum_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/aabb_shape/maximum_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/aabb_shape/maximum_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xC"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/state_vector/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/state_vector/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x1B5D5238"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/state_vector/component_hash_alternate",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/state_vector/component_hash_alternate",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/state_vector/position_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/state_vector/position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_rotation/component_hash",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_rotation/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x75DF36B7"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_rotation/component_hash_alternate",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_rotation/component_hash_alternate",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_rotation/pitch_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_rotation/pitch_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Actor/actor_rotation/yaw_offset",
+      "group": "actors",
+      "kind": "layout",
+      "path": "/layouts/Actor/actor_rotation/yaw_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x4"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/actor_context/actor_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/actor_context/actor_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/actor_context/entt_registry_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/actor_context/entt_registry_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/actor_context/entity_id_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/actor_context/entity_id_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x10"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/component_hash",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xB06141A9"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/hand_container_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/hand_container_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/armor_container_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/armor_container_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/main_hand",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/main_hand",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/offhand",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/offhand",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/head",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/head",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/chest",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/chest",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/legs",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/legs",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/equipment/slots/feet",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/equipment/slots/feet",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 3
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/inventory/get_item_vtable_slot",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/inventory/get_item_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 7
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/inventory/local_slot_count",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/inventory/local_slot_count",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 36
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/inventory/hotbar_slot_count",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/inventory/hotbar_slot_count",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 9
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/local_player/get_local_player_vtable_slot",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/local_player/get_local_player_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 31
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/local_player/supplies_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/local_player/supplies_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x5B8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/local_player/selected_slot_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/local_player/selected_slot_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x10"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/local_player/inventory_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/local_player/inventory_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xB8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/item_reference_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/item_reference_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/count_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/count_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x22"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/namespaced_id_string_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/namespaced_id_string_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x128"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/translation_key_string_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/translation_key_string_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xB0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/string_size_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/string_size_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x10"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/string_capacity_offset",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/string_capacity_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x18"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/max_string_bytes",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/max_string_bytes",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 256
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/ItemStack/item_stack/hover_name_abi_verified",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/item_stack/hover_name_abi_verified",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": false
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/level_player_list_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/level_player_list_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1248
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/entry_size",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/entry_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 168
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/actor_unique_id_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/actor_unique_id_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/uuid_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/uuid_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/name_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/name_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 24
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/StateVectorComponent/state_vector/state_position_offset",
+      "group": "motion",
+      "kind": "layout",
+      "path": "/layouts/StateVectorComponent/state_vector/state_position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/StateVectorComponent/state_vector/state_previous_position_offset",
+      "group": "motion",
+      "kind": "layout",
+      "path": "/layouts/StateVectorComponent/state_vector/state_previous_position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 12
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/StateVectorComponent/state_vector/state_velocity_offset",
+      "group": "motion",
+      "kind": "layout",
+      "path": "/layouts/StateVectorComponent/state_vector/state_velocity_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 24
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/StateVectorComponent/state_vector/fall_distance_component_hash",
+      "group": "motion",
+      "kind": "layout",
+      "path": "/layouts/StateVectorComponent/state_vector/fall_distance_component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xce6b34f6"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/StateVectorComponent/state_vector/fall_distance_value_offset",
+      "group": "motion",
+      "kind": "layout",
+      "path": "/layouts/StateVectorComponent/state_vector/fall_distance_value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/update_player",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/update_player",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_6F313F0"
+    },
+    {
+      "id": "/layouts/Camera/camera_position_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/camera_position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 64
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/camera_orientation_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/camera_orientation_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 48
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/hurt_time_component_hash",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/hurt_time_component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xD7A3585C"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/hurt_time_value_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/hurt_time_value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/hurt_time_value_size",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/hurt_time_value_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/actor_type_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/actor_type_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/player_type_id",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/player_type_id",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 319
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/renderer_player_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/renderer_player_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1128
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/render_origin_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/render_origin_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1632
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/local_player",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/local_player",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "ClientInstance::getLocalPlayer"
+    },
+    {
+      "id": "/layouts/Camera/visual/game_type_component_hash",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/game_type_component_hash",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x88D3EDDF"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/game_type_value_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/game_type_value_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/game_type_value_size",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/game_type_value_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/spectator_value",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/spectator_value",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 6
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/spectator_predicate",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/spectator_predicate",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/gamma",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/gamma",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_5AFB520"
+    },
+    {
+      "id": "/layouts/Camera/visual/spectator_mode_behavior",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/spectator_mode_behavior",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "native_spectator_culler_mode5"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/spectator_mode",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/spectator_mode",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 5
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/camera_culler_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/camera_culler_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x9A8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/camera_culler_type_offset",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/camera_culler_type_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x9B8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/spectator_vtable_rva",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/spectator_vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE8DFE00"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/set_culler",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/terrain_culling/set_culler",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/factory_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/terrain_culling/factory_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_537E6E0"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/spectator_update_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/terrain_culling/spectator_update_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/source_request_filter",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/source_request_filter",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": true
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/terrain_culling/successful_switch_limit_per_activation",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/terrain_culling/successful_switch_limit_per_activation",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/camera_render_observe",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/camera_render_observe",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_5376690"
+    },
+    {
+      "id": "/layouts/Camera/visual/inside_cube_render",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/inside_cube_render",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/create_view",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/create_view",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/predicate",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/predicate",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_56887B0"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/callable_vtable_rva",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/callable_vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE9387C0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/type_getter_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/type_getter_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/caller_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/caller_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/return_rva",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/0/return_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x5298271"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/callable_vtable_rva",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/callable_vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xEA3E540"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/type_getter_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/type_getter_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/caller_check",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/caller_check",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/return_rva",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/variants/1/return_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x8D17B01"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/notes",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/notes",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator detached camera returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes."
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/set_player_game_type",
+      "group": "camera",
+      "kind": "function",
+      "path": "/layouts/Camera/visual/set_player_game_type",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "Player::setPlayerGameType"
+    },
+    {
+      "id": "/layouts/BlockSource/get_region",
+      "group": "world",
+      "kind": "function",
+      "path": "/layouts/BlockSource/get_region",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "ClientInstance::getRegion"
+    },
+    {
+      "id": "/layouts/BlockSource/get_block",
+      "group": "world",
+      "kind": "function",
+      "path": "/layouts/BlockSource/get_block",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "BlockSource::getBlock"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/player_game_mode_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/player_game_mode_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xAA0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/player_level_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/player_level_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x1D8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x68"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_full_name_string_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_full_name_string_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_flags_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_flags_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x164"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_solid_mask",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_solid_mask",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/item_stack_block_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/item_stack_block_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x18"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/item_stack_aux_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/item_stack_aux_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x20"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_source_get_block_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_source_get_block_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_source_get_chunk_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_source_get_chunk_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 41
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_placement_state_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_placement_state_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 79
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/level_hit_result_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/level_hit_result_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 335
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/hit_result_scalar_prefix_size",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/hit_result_scalar_prefix_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 56
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/hit_type_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/hit_type_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 24
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/hit_face_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/hit_face_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 28
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/hit_block_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/hit_block_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 32
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/hit_position_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/hit_position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 44
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_state_data_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_state_data_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x120"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_type_collision_shape_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_type_collision_shape_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/block_serialization_tag_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/block_serialization_tag_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xF0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/compound_tag_head_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/compound_tag_head_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/compound_tag_size_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/compound_tag_size_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 16
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_left_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_left_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 0
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_parent_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_parent_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_right_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_right_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 16
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_nil_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_nil_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 25
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_key_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_key_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 32
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tree_tag_variant_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tree_tag_variant_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 64
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tag_variant_index_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tag_variant_index_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 40
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tag_scalar_or_string_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tag_scalar_or_string_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/tag_get_id_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/tag_get_id_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 5
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/game_mode_build_block_slot",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/game_mode_build_block_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 6
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/game_mode_drag_active_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/game_mode_drag_active_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 64
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/candidate_layouts/game_mode_drag_previous_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/candidate_layouts/game_mode_drag_previous_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 65
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/height_limits/min_height_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/height_limits/min_height_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x3A"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/height_limits/max_height_offset",
+      "group": "world",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/height_limits/max_height_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x38"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/select_hotbar",
+      "group": "placement",
+      "kind": "function",
+      "path": "/layouts/BlockSource/select_hotbar",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/BlockSource/get_hit_result",
+      "group": "placement",
+      "kind": "function",
+      "path": "/layouts/BlockSource/get_hit_result",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/BlockSource/build_block",
+      "group": "placement",
+      "kind": "function",
+      "path": "/layouts/BlockSource/build_block",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "GameMode::buildBlock"
+    },
+    {
+      "id": "/layouts/BlockSource/base_placement_state",
+      "group": "placement",
+      "kind": "function",
+      "path": "/layouts/BlockSource/base_placement_state",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/BlockSource/game_mode_vtables",
+      "group": "placement",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/game_mode_vtables",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": [
+          "0xE827560",
+          "0xE827600"
+        ]
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/guard",
+      "group": "subchunks",
+      "kind": "function",
+      "path": "/layouts/BlockSource/subchunk_scan/guard",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/source_min_y",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/source_min_y",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x3A"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/source_max_y",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/source_max_y",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x38"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/chunk_sections_begin",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/chunk_sections_begin",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x140"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/chunk_sections_end",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/chunk_sections_end",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x148"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/section_stride",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/section_stride",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x68"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/section_storage",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/section_storage",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x30"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/storage_get_slot",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/storage_get_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 3
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/local_index",
+      "group": "subchunks",
+      "kind": "layout",
+      "path": "/layouts/BlockSource/subchunk_scan/local_index",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "(x & 15) << 8 | (z & 15) << 4 | (y & 15)"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/command_request/vtable_rva",
+      "group": "request_binding",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/command_request/vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE897420"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/command_request/command_offset",
+      "group": "request_binding",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/command_request/command_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x30"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/command_request/get_id",
+      "group": "request_binding",
+      "kind": "function",
+      "path": "/layouts/PacketSender/command_request/get_id",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/PacketSender/sender/client_packet_sender_offset",
+      "group": "sender",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/sender/client_packet_sender_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 464
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/sender/sender_send_to_server_slot",
+      "group": "sender",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/sender/sender_send_to_server_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/sender/packet_id_slot",
+      "group": "sender",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/sender/packet_id_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/sender/packet_sender_getter",
+      "group": "sender",
+      "kind": "function",
+      "path": "/layouts/PacketSender/sender/packet_sender_getter",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_8AB690"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/vtable_rva",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE83A360"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/position_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 56
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/delta_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/delta_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 72
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/analog_move_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/analog_move_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 92
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/move_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/move_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 100
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/raw_move_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/raw_move_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 128
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/input_flags_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/input_flags_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 136
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/input_flags_size",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/input_flags_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 16
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/vehicle_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/auth_input/vehicle_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 216
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/get_id",
+      "group": "movement_packets",
+      "kind": "function",
+      "path": "/layouts/PacketSender/motion/auth_input/get_id",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "PlayerAuthInputPacket::getId"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/auth_input/is_valid",
+      "group": "movement_packets",
+      "kind": "function",
+      "path": "/layouts/PacketSender/motion/auth_input/is_valid",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "PlayerAuthInputPacket::isValid"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/vtable_rva",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE85BFC0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/position_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/position_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 56
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/vehicle_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/vehicle_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 88
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/get_id",
+      "group": "movement_packets",
+      "kind": "function",
+      "path": "/layouts/PacketSender/motion/move_player/get_id",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/is_valid",
+      "group": "movement_packets",
+      "kind": "function",
+      "path": "/layouts/PacketSender/motion/move_player/is_valid",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "MovePlayerPacket::isValid"
+    },
+    {
+      "id": "/layouts/PacketSender/title/vtable_rva",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/title/vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE89D5E0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/title/read",
+      "group": "title_packets",
+      "kind": "function",
+      "path": "/layouts/PacketSender/title/read",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/register_command",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/register_command",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "CommandRegistry::registerCommand"
+    },
+    {
+      "id": "/layouts/CommandRegistry/find_command",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/find_command",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "CommandRegistry::findCommand"
+    },
+    {
+      "id": "/layouts/CommandRegistry/make_parameter",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/make_parameter",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/register_optional_parameter",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/register_optional_parameter",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/factory_vtable_rva",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/factory_vtable_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xE8EEE40"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/factory_copy",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/factory_copy",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/factory_destroy",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/factory_destroy",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/factory_invoke",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/factory_invoke",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/client_commands_anchor",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/client_commands_anchor",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_65A8500"
+    },
+    {
+      "id": "/layouts/CommandRegistry/has_commands_anchor",
+      "group": "local_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/has_commands_anchor",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/integer_type_rva",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/integer_type_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x11E141D0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/integer_rule_rva",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/integer_rule_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x11E145F8"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/client_minecraft_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/client_minecraft_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x1B0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/minecraft_commands_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/minecraft_commands_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0xC0"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/commands_registry_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/commands_registry_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x10"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/argument_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/argument_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x20"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/argument_set_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/argument_set_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x24"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/parameter_size",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/parameter_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x78"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/overload_size",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/overload_size",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x80"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/signature_overloads_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/signature_overloads_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x40"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/layout/output_success_offset",
+      "group": "local_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/layout/output_success_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x28"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GuiData/client_gui_offset",
+      "group": "gui",
+      "kind": "layout",
+      "path": "/layouts/GuiData/client_gui_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x650"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/GuiData/get_gui",
+      "group": "gui",
+      "kind": "function",
+      "path": "/layouts/GuiData/get_gui",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/GuiData/display_message",
+      "group": "gui",
+      "kind": "function",
+      "path": "/layouts/GuiData/display_message",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "GuiData::displayClientMessage"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/render_level",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/render_level",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/begin",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/begin",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_5417230"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/vertex",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/vertex",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/color",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/color",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/render_mesh",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/render_mesh",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_5AD5F90"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/hashed_name_ctor",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/hashed_name_ctor",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_76A710"
+    },
+    {
+      "id": "/layouts/LevelRenderer/functions/material_ctor",
+      "group": "render",
+      "kind": "function",
+      "path": "/layouts/LevelRenderer/functions/material_ctor",
+      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
+      "symbol": "sub_4DE7250"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/level_renderer_player",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/level_renderer_player",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1128
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/render_origin",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/render_origin",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 1632
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/selection_material",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/selection_material",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4336
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/screen_tessellator",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/screen_tessellator",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 184
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/screen_shader_color",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/screen_shader_color",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 48
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/tess_translation",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/tess_translation",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 460
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/tess_building",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/tess_building",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 672
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/tess_special_mode",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/tess_special_mode",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 597
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/offsets/shader_color_dirty",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/offsets/shader_color_dirty",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 16
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LevelRenderer/common_material_group_rva",
+      "group": "render",
+      "kind": "layout",
+      "path": "/layouts/LevelRenderer/common_material_group_rva",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "0x11E3B308"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::onPlayerLoaded",
+      "group": "world_events",
+      "kind": "function",
+      "symbol": "ClientInstance::onPlayerLoaded",
+      "path": "/symbols/ClientInstance::onPlayerLoaded",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::onLevelExit",
+      "group": "world_events",
+      "kind": "function",
+      "symbol": "ClientInstance::onLevelExit",
+      "path": "/symbols/ClientInstance::onLevelExit",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::onDimensionChangedEvent",
+      "group": "world_events",
+      "kind": "function",
+      "symbol": "ClientInstance::onDimensionChangedEvent",
+      "path": "/symbols/ClientInstance::onDimensionChangedEvent",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "symbol:ClientInstance::onCancelJoinGame",
+      "group": "world_events",
+      "kind": "function",
+      "symbol": "ClientInstance::onCancelJoinGame",
+      "path": "/symbols/ClientInstance::onCancelJoinGame",
+      "next_action": "Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。"
+    },
+    {
+      "id": "/layouts/ClientInstance/exit_client_offset",
+      "group": "world_events",
+      "kind": "layout",
+      "path": "/layouts/ClientInstance/exit_client_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 136
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/request_vtable_rva",
+      "group": "command_packets",
+      "kind": "layout",
+      "path": "/layouts/CommandRequestPacket/request_vtable_rva",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/output_vtable_rva",
+      "group": "command_packets",
+      "kind": "layout",
+      "path": "/layouts/CommandRequestPacket/output_vtable_rva",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/request_constructor",
+      "group": "command_packets",
+      "kind": "function",
+      "path": "/layouts/CommandRequestPacket/request_constructor",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/request_get_id",
+      "group": "command_packets",
+      "kind": "function",
+      "path": "/layouts/CommandRequestPacket/request_get_id",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/output_get_id",
+      "group": "command_packets",
+      "kind": "function",
+      "path": "/layouts/CommandRequestPacket/output_get_id",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRequestPacket/output_read",
+      "group": "command_packets",
+      "kind": "function",
+      "path": "/layouts/CommandRequestPacket/output_read",
+      "symbol": "CommandOutputPacket::read",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/client_minecraft_offset",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/client_minecraft_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/minecraft_commands_offset",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/minecraft_commands_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/commands_registry_offset",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/commands_registry_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/register_command",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/register_command",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/find_command",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/find_command",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/register_overload",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/register_overload",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/client_commands_anchor",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/client_commands_anchor",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/message_factory",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/message_factory",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/factory_vtable_rva",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/factory_vtable_rva",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/factory_functions/0",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/factory_functions/0",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/factory_functions/1",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/factory_functions/1",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/factory_functions/2",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/factory_functions/2",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/factory_functions/3",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/factory_functions/3",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/BlockSource/subchunk_scan/enabled",
+      "group": "subchunks",
+      "kind": "gate",
+      "path": "/layouts/BlockSource/subchunk_scan/enabled",
+      "expected": true,
+      "next_action": "BlockStorage getterの実体・ABI・値を確認してから走査を有効化。現時点ではenabled=false。"
+    }
+  ]
+}

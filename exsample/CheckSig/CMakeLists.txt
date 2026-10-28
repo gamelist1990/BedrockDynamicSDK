@@ -26,8 +26,12 @@ if(WIN32)
         message(FATAL_ERROR "CheckSig requires MSVC on Windows x64.")
     endif()
 
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/investigation/requirements-1.26.60.5.json" CHECKSIG_REQUIREMENTS)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    configure_file(src/checksig_catalog.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/checksig_catalog.hpp" @ONLY)
     add_library(CheckSig SHARED src/check_sig.cpp)
     target_include_directories(CheckSig PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CHECKSIG_SDK_ROOT}/third_party/minhook-vendor/src/hde")
     target_link_libraries(CheckSig PRIVATE
         bedrock::symbols bedrock::hook_runtime bedrock_hook_minhook shell32 ole32)

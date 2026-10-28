@@ -27,6 +27,7 @@ Topなどが必要とするGUI・ローカル整数コマンド用CommandRegistr
 入力ごとに別の結果ファイルを出力し、Hookの観測値も更新します。
 
 - [CheckSigの使い方](exsample/CheckSig/README_ja.md)
+- [1.26.60.5・全Modの残作業と調査セット](docs/checksig-126605.md)
 - [調査JSONの書き方](docs/checksig-jobs.md)
 - [プロファイルの構造](docs/native-profile-layout.md)
 

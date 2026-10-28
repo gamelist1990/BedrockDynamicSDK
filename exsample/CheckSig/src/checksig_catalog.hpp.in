@@ -1,0 +1,4 @@
+#pragma once
+namespace checksig {
+inline constexpr const char* bundledRequirements = R"CS_CATALOG(@CHECKSIG_REQUIREMENTS@)CS_CATALOG";
+}

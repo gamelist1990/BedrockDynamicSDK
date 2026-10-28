@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #ifdef _WIN32
 #if !defined(_MSC_VER)
 #error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
@@ -1738,7 +1739,7 @@ DWORD WINAPI startClient(void*) {
         // before accepting it or installing any native hooks.
         bedrock::Resolver candidateResolver;
         try {
-            const auto data=nlohmann::json::parse(candidate).at("native_player_identity");
+            const auto data=bedrock::parseNativeProfile(candidate).at("native_player_identity");
             if(data.at("schema")!=1 || data.at("pointer_size")!=8 || data.at("entry_size")!=0xA8 ||
                data.at("actor_unique_id_offset")!=0 || data.at("uuid_offset")!=8 || data.at("name_offset")!=24)
                 throw std::runtime_error("unsupported native player identity layout");

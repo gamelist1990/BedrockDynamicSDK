@@ -154,6 +154,15 @@ jobs:
           Copy-Item exsample/CheckSig/README_ja.md build-mod/Release/
           Copy-Item exsample/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
           Copy-Item docs/checksig-jobs.md build-mod/Release/
+          Copy-Item docs/checksig-126605.md build-mod/Release/
+          if ("${{ needs.plan.outputs.version }}" -eq "1.26.60.5") {
+            python tools/checksig_investigation.py --bundle build-investigation
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            New-Item -ItemType Directory -Force release | Out-Null
+            Copy-Item build-investigation/commands/1.26.60.5-all-mods.json build-mod/Release/
+            Copy-Item build-investigation/commands/1.26.60.5-all-mods.json release/
+            Compress-Archive -Path build-investigation/* -DestinationPath release/CheckSig-Investigation-1.26.60.5.zip
+          }
       - name: Package Fake usage
         if: matrix.mod == 'Fake'
         shell: pwsh
@@ -184,7 +193,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.mod }}-${{ needs.plan.outputs.version }}
-          path: release/*.zip
+          path: |
+            release/*.zip
+            release/*.json
           if-no-files-found: error
 
   release:
@@ -212,4 +223,4 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$SOURCE_SHA" --title "Minecraft $GAME_VERSION" --notes "Windows x64 DLLs. See README for feature verification scope. Native ABI and layouts may remain candidates. Build commit: $SOURCE_SHA" "${flags[@]}"
           fi
-          gh release upload "$tag" release/*.zip --clobber
+          gh release upload "$tag" release/* --clobber

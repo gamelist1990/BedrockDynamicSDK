@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -647,7 +648,7 @@ void* checkedFunction(const nlohmann::json& j){
     return const_cast<std::byte*>(ptr);
 }
 void prepareProfile(const std::string& profile){
-    const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
+    const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
     if(f.at("schema")!=1||f.at("pointer_size")!=8)throw std::runtime_error("unsupported Freecam layout");
     hurtHash=number(f.at("hurt_time_component_hash"));hurtOffset=number(f.at("hurt_time_value_offset"));
     if(hurtOffset>4096||f.at("hurt_time_value_size")!=4)throw std::runtime_error("invalid camera/hurt layout");
@@ -659,7 +660,7 @@ void prepareProfile(const std::string& profile){
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
     senderOffset=number(b.at("client_packet_sender_offset"));sendSlot=number(b.at("sender_send_to_server_slot"));packetIdSlot=number(b.at("packet_id_slot"));
-    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||senderOffset!=0x1d0||sendSlot!=4||packetIdSlot!=1)
+    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||!((senderOffset==0x1d0&&sendSlot==4)||(senderOffset==0x1e0&&sendSlot==2&&j.at("target").at("sha256")=="988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a"))||packetIdSlot!=1)
         throw std::runtime_error("unsupported Borion native layout");
     checkedFunction(b.at("packet_sender_getter"));
     const auto packetBase=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
@@ -792,7 +793,7 @@ DWORD WINAPI start(void*){
             try{prepareProfile(selected.json());return nativeCamera.load(selected,failure)&&gameTypes.load(selected,failure);}catch(const std::exception& e){failure=e.what();return false;}
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
-        const auto j=nlohmann::json::parse(profile);const auto& f=j.at("native_camera");
+        const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
         // Include selection/load errors even when an old owner's capabilities
         // stop startup before the normal ready message.
         log(BDS_HookRuntimeDiagnostic());
