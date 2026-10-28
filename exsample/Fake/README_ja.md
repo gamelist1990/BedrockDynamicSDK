@@ -6,7 +6,7 @@
 
 ## 入手・起動
 
-1. GitHub Actions の **All mod DLLs** を開き、成功した実行の **Fake-windows-x64** を取得します。
+1. バージョン別リリースから **Fake-1.26.60.5-windows-x64.zip** を取得します。個別ビルドはCIの **Build DLLs and releases** でversionとmods=Fakeを指定します。
 2. ZIPを展開し、既存Modと同じ方法で `Fake.dll` をゲームへ読み込みます。
 3. ワールド内でEscを開いて戻り、ClientInstanceを一度観測させてください。
 4. `Documents/PEXData/Fake/Fake.log` に `request sender ready` が出た後に実行します。

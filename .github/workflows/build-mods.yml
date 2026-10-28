@@ -153,19 +153,21 @@ jobs:
         run: |
           Copy-Item exsample/CheckSig/README_ja.md build-mod/Release/
           Copy-Item exsample/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
+          Copy-Item docs/checksig-jobs.md build-mod/Release/
       - name: Package Fake usage
         if: matrix.mod == 'Fake'
         shell: pwsh
         run: |
           if (!(Test-Path "build-mod/Release/Fake.dll")) { throw "Fake.dll was not produced" }
           Copy-Item exsample/Fake/README_ja.md build-mod/Release/
+          Copy-Item docs/command-requests.md build-mod/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-${{ needs.plan.outputs.version }}-windows-x64
           path: |
             build-mod/Release/*.dll
             build-mod/Release/BedrockHitBoxLoader.exe
-            build-mod/Release/README_ja.md
+            build-mod/Release/*.md
             build-mod/Release/Get-CheckSigProfile.ps1
           if-no-files-found: error
       - name: Package release ZIP
