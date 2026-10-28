@@ -78,7 +78,14 @@ struct PeImage {
 enum class HookAdapter {
     Middleware,
     LocalPlayerReturn,
-    CameraRenderArguments
+    CameraRenderArguments,
+    CameraUpdateArguments,
+    GammaReturn,
+    DragonEffectPredicate,
+    PlayerGameType,
+    ClientCommandRegisterArgs,
+    ClientCommandFindResult,
+    GuiDisplayMessageArgs
 };
 
 struct HookSpec {
@@ -106,6 +113,20 @@ constexpr HookSpec kHookSpecs[] = {
         HookAdapter::LocalPlayerReturn},
     {"native_camera.visual.camera_render_observe", static_cast<BDS_HookPoint>(0),
         HookAdapter::CameraRenderArguments},
+    {"native_camera.update_player", static_cast<BDS_HookPoint>(0),
+        HookAdapter::CameraUpdateArguments},
+    {"native_camera.visual.gamma", static_cast<BDS_HookPoint>(0),
+        HookAdapter::GammaReturn},
+    {"native_camera.visual.render_dragon_inside_effect.predicate",
+        static_cast<BDS_HookPoint>(0), HookAdapter::DragonEffectPredicate},
+    {"native_camera.visual.set_player_game_type", static_cast<BDS_HookPoint>(0),
+        HookAdapter::PlayerGameType},
+    {"native_client_commands.register_command", static_cast<BDS_HookPoint>(0),
+        HookAdapter::ClientCommandRegisterArgs},
+    {"native_client_commands.find_command", static_cast<BDS_HookPoint>(0),
+        HookAdapter::ClientCommandFindResult},
+    {"native_gui.display_message", static_cast<BDS_HookPoint>(0),
+        HookAdapter::GuiDisplayMessageArgs},
 };
 
 DWORD WINAPI worker(void*);
@@ -754,10 +775,33 @@ private:
 
     using LocalPlayerFn = void* (__fastcall*)(void*);
     using CameraRenderFn = void (__fastcall*)(void*, void*, const void*, void*);
+    using CameraUpdateFn = void (__fastcall*)(void*, void*, void*);
+    using GammaFn = float (__fastcall*)(void*);
+    using DragonEffectPredicateFn = bool (__fastcall*)(void*, void*);
+    using PlayerGameTypeFn = void (__fastcall*)(void*, int);
+    using ClientCommandRegisterFn = void (__fastcall*)(void*, const void*, const char*,
+        std::uint8_t, std::uint16_t, std::uint16_t);
+    using ClientCommandFindFn = void* (__fastcall*)(void*, const void*);
+    using GuiDisplayMessageFn = void (__fastcall*)(void*, const void*, const void*,
+        const void*, int);
     inline static std::atomic<HookState*> localPlayerState_{};
     inline static std::atomic<HookState*> cameraRenderState_{};
+    inline static std::atomic<HookState*> cameraUpdateState_{};
+    inline static std::atomic<HookState*> gammaState_{};
+    inline static std::atomic<HookState*> dragonEffectPredicateState_{};
+    inline static std::atomic<HookState*> playerGameTypeState_{};
+    inline static std::atomic<HookState*> clientCommandRegisterState_{};
+    inline static std::atomic<HookState*> clientCommandFindState_{};
+    inline static std::atomic<HookState*> guiDisplayMessageState_{};
     inline static LocalPlayerFn originalLocalPlayer_{};
     inline static CameraRenderFn originalCameraRender_{};
+    inline static CameraUpdateFn originalCameraUpdate_{};
+    inline static GammaFn originalGamma_{};
+    inline static DragonEffectPredicateFn originalDragonEffectPredicate_{};
+    inline static PlayerGameTypeFn originalPlayerGameType_{};
+    inline static ClientCommandRegisterFn originalClientCommandRegister_{};
+    inline static ClientCommandFindFn originalClientCommandFind_{};
+    inline static GuiDisplayMessageFn originalGuiDisplayMessage_{};
 
     static fs::path documentsDirectory() {
         PWSTR path{};
@@ -824,15 +868,59 @@ private:
             symbolEntry.value("runtime_verified", false)) return false;
         const std::uint32_t expectedRva =
             spec->adapter == HookAdapter::LocalPlayerReturn ? 0x659E470u :
-            spec->adapter == HookAdapter::CameraRenderArguments ? 0x5376690u : 0u;
+            spec->adapter == HookAdapter::CameraRenderArguments ? 0x5376690u :
+            spec->adapter == HookAdapter::CameraUpdateArguments ? 0x6F313F0u :
+            spec->adapter == HookAdapter::GammaReturn ? 0x5AFB520u :
+            spec->adapter == HookAdapter::DragonEffectPredicate ? 0x56887B0u :
+            spec->adapter == HookAdapter::PlayerGameType ? 0x2B9AB0u :
+            spec->adapter == HookAdapter::ClientCommandRegisterArgs ? 0x55AA1E0u :
+            spec->adapter == HookAdapter::ClientCommandFindResult ? 0x558A650u :
+            spec->adapter == HookAdapter::GuiDisplayMessageArgs ? 0xE94410u : 0u;
         try {
             if (!expectedRva || !symbolEntry.contains("rva") ||
                 jsonU32(symbolEntry.at("rva")) != expectedRva) return false;
         } catch (...) {
             return false;
         }
+        std::string profileAbi;
+        try {
+            const auto& camera = targetProfile_.at("native_camera");
+            switch (spec->adapter) {
+            case HookAdapter::CameraUpdateArguments:
+                profileAbi = camera.at("update_player").value("abi", std::string{}); break;
+            case HookAdapter::GammaReturn:
+                profileAbi = camera.at("visual").value("gamma_abi", std::string{}); break;
+            case HookAdapter::DragonEffectPredicate:
+                profileAbi = camera.at("visual").at("render_dragon_inside_effect")
+                    .at("predicate").value("abi", std::string{}); break;
+            case HookAdapter::PlayerGameType:
+                profileAbi = camera.at("visual").at("set_player_game_type")
+                    .value("abi", std::string{}); break;
+            case HookAdapter::ClientCommandRegisterArgs:
+                profileAbi = targetProfile_.contains("native_client_commands")
+                    ? targetProfile_.at("native_client_commands").at("register_command")
+                        .value("abi", std::string{})
+                    : "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)";
+                break;
+            case HookAdapter::ClientCommandFindResult:
+                profileAbi = targetProfile_.contains("native_client_commands")
+                    ? targetProfile_.at("native_client_commands").at("find_command")
+                        .value("abi", std::string{})
+                    : "Signature* __fastcall(CommandRegistry*, std::string const*)";
+                break;
+            case HookAdapter::GuiDisplayMessageArgs:
+                profileAbi = targetProfile_.contains("native_gui")
+                    ? targetProfile_.at("native_gui").at("display_message")
+                        .value("abi", std::string{})
+                    : "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
+                break;
+            default: break;
+            }
+        } catch (...) {
+            return false;
+        }
         const auto abi = symbolEntry.value("source_abi",
-            symbolEntry.value("abi", std::string{}));
+            symbolEntry.value("abi", profileAbi));
         switch (spec->adapter) {
         case HookAdapter::LocalPlayerReturn:
             return std::string_view(spec->symbol) == "native_camera.local_player" &&
@@ -841,6 +929,31 @@ private:
             return std::string_view(spec->symbol) ==
                 "native_camera.visual.camera_render_observe" &&
                 abi == "void __fastcall(LevelRendererCamera* RCX, BaseActorRenderContext* RDX, ViewRenderObject const* R8, IClientInstance* R9)";
+        case HookAdapter::CameraUpdateArguments:
+            return std::string_view(spec->symbol) == "native_camera.update_player" &&
+                abi == "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)";
+        case HookAdapter::GammaReturn:
+            return std::string_view(spec->symbol) == "native_camera.visual.gamma" &&
+                abi == "float __fastcall(Options*)";
+        case HookAdapter::DragonEffectPredicate:
+            return std::string_view(spec->symbol) ==
+                "native_camera.visual.render_dragon_inside_effect.predicate" &&
+                abi == "bool __fastcall(void* callable RCX, void* render_argument_pair RDX)";
+        case HookAdapter::PlayerGameType:
+            return std::string_view(spec->symbol) ==
+                "native_camera.visual.set_player_game_type" &&
+                abi == "void __fastcall(Player*, int)";
+        case HookAdapter::ClientCommandRegisterArgs:
+            return std::string_view(spec->symbol) ==
+                "native_client_commands.register_command" &&
+                abi == "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)";
+        case HookAdapter::ClientCommandFindResult:
+            return std::string_view(spec->symbol) ==
+                "native_client_commands.find_command" &&
+                abi == "Signature* __fastcall(CommandRegistry*, std::string const*)";
+        case HookAdapter::GuiDisplayMessageArgs:
+            return std::string_view(spec->symbol) == "native_gui.display_message" &&
+                abi == "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
         case HookAdapter::Middleware:
             return true;
         }
@@ -853,6 +966,13 @@ private:
         case HookAdapter::Middleware: return "sdk-middleware";
         case HookAdapter::LocalPlayerReturn: return "direct-local-player-return";
         case HookAdapter::CameraRenderArguments: return "direct-camera-render-arguments";
+        case HookAdapter::CameraUpdateArguments: return "direct-camera-update-arguments";
+        case HookAdapter::GammaReturn: return "direct-gamma-return";
+        case HookAdapter::DragonEffectPredicate: return "direct-dragon-effect-predicate";
+        case HookAdapter::PlayerGameType: return "direct-player-game-type";
+        case HookAdapter::ClientCommandRegisterArgs: return "direct-command-register-arguments";
+        case HookAdapter::ClientCommandFindResult: return "direct-command-find-result";
+        case HookAdapter::GuiDisplayMessageArgs: return "direct-gui-message-arguments";
         }
         return "unknown";
     }
@@ -900,13 +1020,17 @@ private:
                 previous, nowNs, std::memory_order_relaxed);
     }
 
-    static void recordDirectObservation(HookState* state, json values,
+    static bool beginDirectObservation(HookState* state) noexcept {
+        if (!state) return false;
+        state->calls.fetch_add(1, std::memory_order_relaxed);
+        return samplingDue(*state);
+    }
+
+    static void storeDirectObservation(HookState* state, json values,
             const std::array<std::uintptr_t, 8>* actorSamples = nullptr,
             std::size_t actorSampleCount = 0,
             bool replaceActorSamples = false) noexcept {
         if (!state) return;
-        state->calls.fetch_add(1, std::memory_order_relaxed);
-        if (!samplingDue(*state)) return;
         try {
             values["call_number"] = state->calls.load(std::memory_order_relaxed);
             setLatest(*state, std::move(values), actorSamples,
@@ -919,7 +1043,8 @@ private:
         if (!original) return nullptr;
         void* actor = original(client);
         auto* state = localPlayerState_.load(std::memory_order_acquire);
-        if (!state || !state->observing.load(std::memory_order_acquire)) return actor;
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return actor;
         try {
             std::array<std::uintptr_t, 8> samples{};
             std::size_t sampleCount = 0;
@@ -938,7 +1063,7 @@ private:
                 {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
                 {"candidate_evidence", "native_camera.local_player: ClientInstance slot 34 / old-new instruction structure"}
             };
-            recordDirectObservation(state, std::move(values), &samples, sampleCount, true);
+            storeDirectObservation(state, std::move(values), &samples, sampleCount, true);
         } catch (...) {}
         return actor;
     }
@@ -949,7 +1074,8 @@ private:
         if (!original) return;
         original(renderer, renderContext, viewRenderObject, clientInstance);
         auto* state = cameraRenderState_.load(std::memory_order_acquire);
-        if (!state || !state->observing.load(std::memory_order_acquire)) return;
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return;
         try {
             std::array<std::byte, kMaxReadBytes> snapshot{};
             const bool snapshotReadable = viewRenderObject && safeRead(
@@ -967,7 +1093,148 @@ private:
             };
             if (snapshotReadable)
                 values["view_prefix_bytes"] = bytesHex(snapshot.data(), snapshot.size());
-            recordDirectObservation(state, std::move(values));
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+    }
+
+    static void __fastcall cameraUpdateObserver(void* camera, void* updateFromCamera,
+            void* actor) noexcept {
+        const auto original = originalCameraUpdate_;
+        if (!original) return;
+        original(camera, updateFromCamera, actor);
+        auto* state = cameraUpdateState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return;
+        try {
+            std::array<std::uintptr_t, 8> samples{};
+            const auto actorAddress = reinterpret_cast<std::uintptr_t>(actor);
+            const std::size_t sampleCount = actorAddress ? 1 : 0;
+            if (sampleCount) samples[0] = actorAddress;
+            json values = {
+                {"camera_component", pointerString(camera)},
+                {"update_from_camera", pointerString(updateFromCamera)},
+                {"actor_candidate", pointerString(actor)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.update_player: unique old entry signature matches the exact-build .pdata function; parameter types are statically carried candidates"}
+            };
+            storeDirectObservation(state, std::move(values), &samples, sampleCount, true);
+        } catch (...) {}
+    }
+
+    static float __fastcall gammaObserver(void* options) noexcept {
+        const auto original = originalGamma_;
+        if (!original) return 0.0f;
+        const float value = original(options);
+        auto* state = gammaState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return value;
+        try {
+            json values = {
+                {"options", pointerString(options)}, {"return_value", value},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.visual.gamma: unique old entry signature matches the exact-build .pdata function; return ABI remains a candidate"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return value;
+    }
+
+    static bool __fastcall dragonEffectPredicateObserver(void* callable,
+            void* renderArgumentPair) noexcept {
+        const auto original = originalDragonEffectPredicate_;
+        if (!original) return false;
+        const bool value = original(callable, renderArgumentPair);
+        auto* state = dragonEffectPredicateState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return value;
+        try {
+            json values = {
+                {"callable", pointerString(callable)},
+                {"render_argument_pair", pointerString(renderArgumentPair)},
+                {"return_value", value},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.visual.render_dragon_inside_effect.predicate: exact-build candidate ABI and caller analysis; runtime reachability unverified"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return value;
+    }
+
+    static void __fastcall playerGameTypeObserver(void* player, int gameType) noexcept {
+        const auto original = originalPlayerGameType_;
+        if (!original) return;
+        original(player, gameType);
+        auto* state = playerGameTypeState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return;
+        try {
+            json values = {
+                {"player", pointerString(player)}, {"game_type_argument", gameType},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_camera.visual.set_player_game_type: unique old entry signature matches the exact-build .pdata function; call semantics remain unverified"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+    }
+
+    static void __fastcall clientCommandRegisterObserver(void* registry,
+            const void* name, const char* description, std::uint8_t permission,
+            std::uint16_t flags1, std::uint16_t flags2) noexcept {
+        const auto original = originalClientCommandRegister_;
+        if (!original) return;
+        original(registry, name, description, permission, flags1, flags2);
+        auto* state = clientCommandRegisterState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return;
+        try {
+            json values = {
+                {"registry", pointerString(registry)}, {"name", pointerString(name)},
+                {"description", pointerString(description)},
+                {"permission", permission}, {"flags1", flags1}, {"flags2", flags2},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_client_commands.register_command: exact-build entry signature and .pdata candidate; string contents are not dereferenced"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+    }
+
+    static void* __fastcall clientCommandFindObserver(void* registry,
+            const void* name) noexcept {
+        const auto original = originalClientCommandFind_;
+        if (!original) return nullptr;
+        void* result = original(registry, name);
+        auto* state = clientCommandFindState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return result;
+        try {
+            json values = {
+                {"registry", pointerString(registry)}, {"name", pointerString(name)},
+                {"return_signature", pointerString(result)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_client_commands.find_command: exact-build entry signature and .pdata candidate; string contents are not dereferenced"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return result;
+    }
+
+    static void __fastcall guiDisplayMessageObserver(void* gui, const void* message,
+            const void* optionalPrefix, const void* tts, int filterContext) noexcept {
+        const auto original = originalGuiDisplayMessage_;
+        if (!original) return;
+        original(gui, message, optionalPrefix, tts, filterContext);
+        auto* state = guiDisplayMessageState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return;
+        try {
+            json values = {
+                {"gui_data", pointerString(gui)}, {"message_string", pointerString(message)},
+                {"optional_prefix", pointerString(optionalPrefix)},
+                {"tts_string", pointerString(tts)}, {"filter_context", filterContext},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_gui.display_message: exact-build entry signature and .pdata candidate; string objects are not dereferenced"}
+            };
+            storeDirectObservation(state, std::move(values));
         } catch (...) {}
     }
 
@@ -1803,7 +2070,7 @@ private:
         if (!resolver_) throw std::runtime_error("load a target profile first with profile or port");
         const auto* spec = hookSpec(symbol);
         if (!spec)
-            throw std::runtime_error("no SDK-known ABI/HookPoint for this symbol; use probe only");
+            throw std::runtime_error("no supported ABI observer for this symbol; use probe only");
         const auto entry = targetProfile_["symbols"].find(symbol);
         if (entry == targetProfile_["symbols"].end())
             throw std::runtime_error("symbol is not present in the target profile");
@@ -1838,7 +2105,8 @@ private:
             holder->point = spec->point;
             holder->adapter = spec->adapter;
             holder->providesActorSamples = spec->point == BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST ||
-                spec->adapter == HookAdapter::LocalPlayerReturn;
+                spec->adapter == HookAdapter::LocalPlayerReturn ||
+                spec->adapter == HookAdapter::CameraUpdateArguments;
             if (spec->point == BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST &&
                 lower(identity_.fileSha256) == k126605ExeSha256 &&
                 targetProfile_.contains("diagnostic_candidates") &&
@@ -1912,6 +2180,104 @@ private:
                 holder->token = nullptr;
                 holder->observing.store(false, std::memory_order_release);
                 throw std::runtime_error("direct hook runtime rejected the camera-render candidate");
+            }
+        } else if (spec->adapter == HookAdapter::CameraUpdateArguments) {
+            HookState* expected = nullptr;
+            if (!cameraUpdateState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig camera-update observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::cameraUpdateObserver),
+                    reinterpret_cast<void**>(&originalCameraUpdate_), &holder->token)) {
+                cameraUpdateState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the camera-update candidate");
+            }
+        } else if (spec->adapter == HookAdapter::GammaReturn) {
+            HookState* expected = nullptr;
+            if (!gammaState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig gamma observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::gammaObserver),
+                    reinterpret_cast<void**>(&originalGamma_), &holder->token)) {
+                gammaState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the gamma candidate");
+            }
+        } else if (spec->adapter == HookAdapter::DragonEffectPredicate) {
+            HookState* expected = nullptr;
+            if (!dragonEffectPredicateState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig dragon-effect observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::dragonEffectPredicateObserver),
+                    reinterpret_cast<void**>(&originalDragonEffectPredicate_), &holder->token)) {
+                dragonEffectPredicateState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the dragon-effect candidate");
+            }
+        } else if (spec->adapter == HookAdapter::PlayerGameType) {
+            HookState* expected = nullptr;
+            if (!playerGameTypeState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another CheckSig game-type observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::playerGameTypeObserver),
+                    reinterpret_cast<void**>(&originalPlayerGameType_), &holder->token)) {
+                playerGameTypeState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the game-type candidate");
+            }
+        } else if (spec->adapter == HookAdapter::ClientCommandRegisterArgs) {
+            HookState* expected = nullptr;
+            if (!clientCommandRegisterState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another command-register observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::clientCommandRegisterObserver),
+                    reinterpret_cast<void**>(&originalClientCommandRegister_), &holder->token)) {
+                clientCommandRegisterState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the command-register candidate");
+            }
+        } else if (spec->adapter == HookAdapter::ClientCommandFindResult) {
+            HookState* expected = nullptr;
+            if (!clientCommandFindState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another command-find observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::clientCommandFindObserver),
+                    reinterpret_cast<void**>(&originalClientCommandFind_), &holder->token)) {
+                clientCommandFindState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the command-find candidate");
+            }
+        } else if (spec->adapter == HookAdapter::GuiDisplayMessageArgs) {
+            HookState* expected = nullptr;
+            if (!guiDisplayMessageState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another GUI-message observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::guiDisplayMessageObserver),
+                    reinterpret_cast<void**>(&originalGuiDisplayMessage_), &holder->token)) {
+                guiDisplayMessageState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the GUI-message candidate");
             }
         }
         writeEvent("hook-installed", {

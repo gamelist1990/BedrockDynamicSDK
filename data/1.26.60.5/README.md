@@ -22,6 +22,17 @@ Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参�
 `.pdata`関数開始が見つかっていないため、CheckSigはフックを拒否します。
 観測結果であっても自動で `verified` へ昇格させません。
 
+1.26.60.5では、上記HookPointに加え、静的なABI候補がある
+`native_camera.update_player`、`native_camera.visual.gamma`、
+`native_camera.visual.render_dragon_inside_effect.predicate`、
+`native_camera.visual.set_player_game_type`、
+`native_client_commands.register_command`、`native_client_commands.find_command`、
+`native_gui.display_message` にも専用の透過Observerを用意しています。
+各Observerは元関数を呼び出してから引数ポインタや戻り値を記録します。`update_player`の
+第3引数はActor候補として読み取りコマンドに使えます。EXE SHA・RVA・ABI候補・入口ガード・
+`.pdata`境界・Hook Runtime対応が一致したときに限り、明示的な`hook`で試行します。
+実機での呼び出しや引数の意味、寿命は未確認で、解析結果は候補のままです。
+
 - 元のパッケージ表記: `1.26.6005.0`
 - EXE VERSIONINFOのFileVersion/ProductVersion: `1.26.60.5`
 - EXE SHA-256: `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`
