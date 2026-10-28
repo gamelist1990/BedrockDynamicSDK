@@ -17,13 +17,14 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 - プロファイルの正確なビルド一致、入口ガード、関数境界、SDKフックランタイム対応を検査
 - SDKがABIを知っているHookPointに限り、元の処理をそのまま呼び出す透過フックを試行。
   呼び出し回数と既知の引数/戻り値フィールドを記録
-- 1.26.60.5の完全一致EXEでは、静的なABI候補がある9関数に専用Observerを用意。
+- 1.26.60.5の完全一致EXEでは、静的なABI候補がある12関数に専用Observerを用意。
   `native_camera.local_player`、`native_camera.visual.camera_render_observe`、
   `native_camera.update_player`、`native_camera.visual.gamma`、
   `native_camera.visual.render_dragon_inside_effect.predicate`、
   `native_camera.visual.set_player_game_type`、
   `native_client_commands.register_command`、`native_client_commands.find_command`、
-  `native_gui.display_message` が対象
+  `native_gui.display_message`、`native_world.get_region`、`native_world.get_block`、
+  `native_world.get_chunk` が対象
 - 各候補のABI・EXE SHA・入口ガード・`.pdata`関数開始位置を確認し、明示的な `hook` のみで試行。
   元関数をそのまま呼び、引数や戻り値を記録
 - local player Observerは戻り値Actorを記録し、`read actor:0+...`で調査可能
@@ -36,6 +37,9 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 - command Observerはregistry・文字列オブジェクトのポインタ、permission/flags、find結果を記録。
   GUI message ObserverはGuiData・文字列/optionalの各ポインタとfilter contextを記録し、
   文字列オブジェクトの中身は自動で読みません
+- World ObserverはRegion戻り値と読み取り可能なvtable、getBlock/getChunkの座標と戻りポインタを記録。
+  座標構造体は`VirtualQuery`/`ReadProcessMemory`で必要な8/12 bytesだけを読み、返却先は自動で辿りません。
+  高頻度関数も記録サンプルは最大4回/秒です
 - `Level::getRuntimeActorList` は旧・新EXEの機械語でABIを比較した候補HookPoint。
   元処理の後でMSVC x64 vectorヘッダーを安全に読み、件数と先頭8件までのActorポインタを記録
 - 1.26.60.5では追加の静的候補としてActor+0x10/+0x18をページ検査付きで読み、
@@ -46,7 +50,7 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 
 署名ヒットだけでは関数の意味やABIを証明しません。全てのポート結果は
 `candidate` / `abi_verified:false` / `runtime_verified:false` です。SDKが未知のABIを持つ
-関数を呼び出したり、任意の関数へ推測のdetourを設置する機能はありません。上記9つの
+関数を呼び出したり、任意の関数へ推測のdetourを設置する機能はありません。上記12個の
 専用Observerも静的ABI候補を使うため、実行時の意味・寿命は未検証です。特にgamma戻り値、
 predicateの呼び出し経路、game typeの引数意味はゲーム内で未確認です。対象EXEの完全一致と
 入口ガードが通る場合にだけ利用し、値は候補確認用として扱ってください。
@@ -129,6 +133,15 @@ unhook native_client_commands.find_command
 probe native_gui.display_message
 hook native_gui.display_message
 unhook native_gui.display_message
+probe native_world.get_region
+hook native_world.get_region
+unhook native_world.get_region
+probe native_world.get_block
+hook native_world.get_block
+unhook native_world.get_block
+probe native_world.get_chunk
+hook native_world.get_chunk
+unhook native_world.get_chunk
 read rva:0x331C20 bytes:16
 read 0x00007FF612345678 f32
 identity

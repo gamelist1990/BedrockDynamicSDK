@@ -1,6 +1,6 @@
 # 1.26.60.5 Windows x64 — 調査中
 
-`windows-x64.json` はEXE識別情報と41件の診断エントリーを収録した定義です。
+`windows-x64.json` はEXE識別情報と43件の診断エントリーを収録した定義です。
 旧版アンカーで移植したトップレベル/native内関数と、既存の手調査候補を
 `symbols` からCheckSigで個別に確認できます。31件の移植候補のうち20件は既存RVAと一致し、
 10件を追加しました。`ClientInstance::onPlayerLoaded` はRVA候補が異なるため、

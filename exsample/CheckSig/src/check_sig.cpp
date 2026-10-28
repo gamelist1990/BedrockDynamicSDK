@@ -85,7 +85,10 @@ enum class HookAdapter {
     PlayerGameType,
     ClientCommandRegisterArgs,
     ClientCommandFindResult,
-    GuiDisplayMessageArgs
+    GuiDisplayMessageArgs,
+    WorldRegionReturn,
+    WorldBlockReturn,
+    WorldChunkReturn
 };
 
 struct HookSpec {
@@ -127,6 +130,12 @@ constexpr HookSpec kHookSpecs[] = {
         HookAdapter::ClientCommandFindResult},
     {"native_gui.display_message", static_cast<BDS_HookPoint>(0),
         HookAdapter::GuiDisplayMessageArgs},
+    {"native_world.get_region", static_cast<BDS_HookPoint>(0),
+        HookAdapter::WorldRegionReturn},
+    {"native_world.get_block", static_cast<BDS_HookPoint>(0),
+        HookAdapter::WorldBlockReturn},
+    {"native_world.get_chunk", static_cast<BDS_HookPoint>(0),
+        HookAdapter::WorldChunkReturn},
 };
 
 DWORD WINAPI worker(void*);
@@ -650,15 +659,23 @@ void collectNativeDefinitions(const json& node, const std::string& path,
 
 std::vector<PortDefinition> sourceDefinitions(const json& profile) {
     std::vector<PortDefinition> definitions;
+    std::set<std::string> seen;
     if (profile.contains("symbols") && profile["symbols"].is_object()) {
         for (auto it = profile["symbols"].begin(); it != profile["symbols"].end(); ++it) {
-            if (it.value().is_object()) definitions.emplace_back(it.key(), it.value());
+            if (it.value().is_object() && seen.insert(it.key()).second)
+                definitions.emplace_back(it.key(), it.value());
             if (definitions.size() >= kMaxSymbols) return definitions;
         }
     }
     for (auto it = profile.begin(); it != profile.end(); ++it) {
         if (!it.key().starts_with("native_")) continue;
-        collectNativeDefinitions(it.value(), it.key(), definitions);
+        std::vector<PortDefinition> nested;
+        collectNativeDefinitions(it.value(), it.key(), nested);
+        for (auto& definition : nested) {
+            if (seen.insert(definition.first).second)
+                definitions.push_back(std::move(definition));
+            if (definitions.size() >= kMaxSymbols) break;
+        }
         if (definitions.size() >= kMaxSymbols) break;
     }
     return definitions;
@@ -784,6 +801,8 @@ private:
     using ClientCommandFindFn = void* (__fastcall*)(void*, const void*);
     using GuiDisplayMessageFn = void (__fastcall*)(void*, const void*, const void*,
         const void*, int);
+    using WorldRegionFn = void* (__fastcall*)(void*);
+    using WorldQueryFn = void* (__fastcall*)(void*, const void*);
     inline static std::atomic<HookState*> localPlayerState_{};
     inline static std::atomic<HookState*> cameraRenderState_{};
     inline static std::atomic<HookState*> cameraUpdateState_{};
@@ -793,6 +812,9 @@ private:
     inline static std::atomic<HookState*> clientCommandRegisterState_{};
     inline static std::atomic<HookState*> clientCommandFindState_{};
     inline static std::atomic<HookState*> guiDisplayMessageState_{};
+    inline static std::atomic<HookState*> worldRegionState_{};
+    inline static std::atomic<HookState*> worldBlockState_{};
+    inline static std::atomic<HookState*> worldChunkState_{};
     inline static LocalPlayerFn originalLocalPlayer_{};
     inline static CameraRenderFn originalCameraRender_{};
     inline static CameraUpdateFn originalCameraUpdate_{};
@@ -802,6 +824,9 @@ private:
     inline static ClientCommandRegisterFn originalClientCommandRegister_{};
     inline static ClientCommandFindFn originalClientCommandFind_{};
     inline static GuiDisplayMessageFn originalGuiDisplayMessage_{};
+    inline static WorldRegionFn originalWorldRegion_{};
+    inline static WorldQueryFn originalWorldBlock_{};
+    inline static WorldQueryFn originalWorldChunk_{};
 
     static fs::path documentsDirectory() {
         PWSTR path{};
@@ -875,7 +900,10 @@ private:
             spec->adapter == HookAdapter::PlayerGameType ? 0x2B9AB0u :
             spec->adapter == HookAdapter::ClientCommandRegisterArgs ? 0x55AA1E0u :
             spec->adapter == HookAdapter::ClientCommandFindResult ? 0x558A650u :
-            spec->adapter == HookAdapter::GuiDisplayMessageArgs ? 0xE94410u : 0u;
+            spec->adapter == HookAdapter::GuiDisplayMessageArgs ? 0xE94410u :
+            spec->adapter == HookAdapter::WorldRegionReturn ? 0x659E2F0u :
+            spec->adapter == HookAdapter::WorldBlockReturn ? 0x32CE440u :
+            spec->adapter == HookAdapter::WorldChunkReturn ? 0x32CD550u : 0u;
         try {
             if (!expectedRva || !symbolEntry.contains("rva") ||
                 jsonU32(symbolEntry.at("rva")) != expectedRva) return false;
@@ -914,6 +942,15 @@ private:
                         .value("abi", std::string{})
                     : "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
                 break;
+            case HookAdapter::WorldRegionReturn:
+                profileAbi = targetProfile_.at("native_world").at("get_region")
+                    .value("abi", std::string{}); break;
+            case HookAdapter::WorldBlockReturn:
+                profileAbi = targetProfile_.at("native_world").at("get_block")
+                    .value("abi", std::string{}); break;
+            case HookAdapter::WorldChunkReturn:
+                profileAbi = targetProfile_.at("native_world").at("get_chunk")
+                    .value("abi", std::string{}); break;
             default: break;
             }
         } catch (...) {
@@ -954,6 +991,15 @@ private:
         case HookAdapter::GuiDisplayMessageArgs:
             return std::string_view(spec->symbol) == "native_gui.display_message" &&
                 abi == "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
+        case HookAdapter::WorldRegionReturn:
+            return std::string_view(spec->symbol) == "native_world.get_region" &&
+                abi == "BlockSource* __fastcall(ClientInstance*)";
+        case HookAdapter::WorldBlockReturn:
+            return std::string_view(spec->symbol) == "native_world.get_block" &&
+                abi == "Block const* __fastcall(BlockSource*, BlockPos const*)";
+        case HookAdapter::WorldChunkReturn:
+            return std::string_view(spec->symbol) == "native_world.get_chunk" &&
+                abi == "LevelChunk* __fastcall(BlockSource*, ChunkPos const*)";
         case HookAdapter::Middleware:
             return true;
         }
@@ -973,6 +1019,9 @@ private:
         case HookAdapter::ClientCommandRegisterArgs: return "direct-command-register-arguments";
         case HookAdapter::ClientCommandFindResult: return "direct-command-find-result";
         case HookAdapter::GuiDisplayMessageArgs: return "direct-gui-message-arguments";
+        case HookAdapter::WorldRegionReturn: return "direct-world-region-return";
+        case HookAdapter::WorldBlockReturn: return "direct-world-block-return";
+        case HookAdapter::WorldChunkReturn: return "direct-world-chunk-return";
         }
         return "unknown";
     }
@@ -1236,6 +1285,84 @@ private:
             };
             storeDirectObservation(state, std::move(values));
         } catch (...) {}
+    }
+
+    static void* __fastcall worldRegionObserver(void* client) noexcept {
+        const auto original = originalWorldRegion_;
+        if (!original) return nullptr;
+        void* source = original(client);
+        auto* state = worldRegionState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return source;
+        try {
+            std::uintptr_t vtable{};
+            const bool sourceReadable = source && safeRead(
+                reinterpret_cast<std::uintptr_t>(source), &vtable, sizeof(vtable));
+            json values = {
+                {"client_instance", pointerString(client)},
+                {"return_block_source", pointerString(source)},
+                {"source_vtable_readable", sourceReadable},
+                {"source_vtable_candidate", sourceReadable ? json(hex(vtable)) : json(nullptr)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_world.get_region: exact-build ClientInstance slot 33, .pdata entry and entry guard"}
+            };
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return source;
+    }
+
+    static void* __fastcall worldBlockObserver(void* source,
+            const void* blockPosition) noexcept {
+        const auto original = originalWorldBlock_;
+        if (!original) return nullptr;
+        void* result = original(source, blockPosition);
+        auto* state = worldBlockState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return result;
+        try {
+            std::array<std::int32_t, 3> position{};
+            const bool positionReadable = blockPosition && safeRead(
+                reinterpret_cast<std::uintptr_t>(blockPosition), position.data(), sizeof(position));
+            json values = {
+                {"block_source", pointerString(source)},
+                {"block_position_pointer", pointerString(blockPosition)},
+                {"block_position_readable", positionReadable},
+                {"return_block", pointerString(result)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_world.get_block: exact-build .pdata start and BlockSource slot 2"}
+            };
+            if (positionReadable)
+                values["block_position"] = json::array({position[0], position[1], position[2]});
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return result;
+    }
+
+    static void* __fastcall worldChunkObserver(void* source,
+            const void* chunkPosition) noexcept {
+        const auto original = originalWorldChunk_;
+        if (!original) return nullptr;
+        void* result = original(source, chunkPosition);
+        auto* state = worldChunkState_.load(std::memory_order_acquire);
+        if (!state || !state->observing.load(std::memory_order_acquire) ||
+            !beginDirectObservation(state)) return result;
+        try {
+            std::array<std::int32_t, 2> position{};
+            const bool positionReadable = chunkPosition && safeRead(
+                reinterpret_cast<std::uintptr_t>(chunkPosition), position.data(), sizeof(position));
+            json values = {
+                {"block_source", pointerString(source)},
+                {"chunk_position_pointer", pointerString(chunkPosition)},
+                {"chunk_position_readable", positionReadable},
+                {"return_level_chunk", pointerString(result)},
+                {"abi_status", "static candidate; runtime behavior and lifetime unverified"},
+                {"candidate_evidence", "native_world.get_chunk: exact-build .pdata start and BlockSource slot 41"}
+            };
+            if (positionReadable)
+                values["chunk_position"] = json::array({position[0], position[1]});
+            storeDirectObservation(state, std::move(values));
+        } catch (...) {}
+        return result;
     }
 
     static void BDS_HOOK_CALL observeHook(void* user, void* raw,
@@ -2278,6 +2405,48 @@ private:
                 holder->token = nullptr;
                 holder->observing.store(false, std::memory_order_release);
                 throw std::runtime_error("direct hook runtime rejected the GUI-message candidate");
+            }
+        } else if (spec->adapter == HookAdapter::WorldRegionReturn) {
+            HookState* expected = nullptr;
+            if (!worldRegionState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another world-region observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::worldRegionObserver),
+                    reinterpret_cast<void**>(&originalWorldRegion_), &holder->token)) {
+                worldRegionState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the world-region candidate");
+            }
+        } else if (spec->adapter == HookAdapter::WorldBlockReturn) {
+            HookState* expected = nullptr;
+            if (!worldBlockState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another world-block observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::worldBlockObserver),
+                    reinterpret_cast<void**>(&originalWorldBlock_), &holder->token)) {
+                worldBlockState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the world-block candidate");
+            }
+        } else if (spec->adapter == HookAdapter::WorldChunkReturn) {
+            HookState* expected = nullptr;
+            if (!worldChunkState_.compare_exchange_strong(expected, holder.get(),
+                    std::memory_order_acq_rel))
+                throw std::runtime_error("another world-chunk observer is active");
+            holder->observing.store(true, std::memory_order_release);
+            if (!BDS_HookDirectInstall(target,
+                    reinterpret_cast<void*>(&CheckSigMod::worldChunkObserver),
+                    reinterpret_cast<void**>(&originalWorldChunk_), &holder->token)) {
+                worldChunkState_.store(nullptr, std::memory_order_release);
+                holder->token = nullptr;
+                holder->observing.store(false, std::memory_order_release);
+                throw std::runtime_error("direct hook runtime rejected the world-chunk candidate");
             }
         }
         writeEvent("hook-installed", {
