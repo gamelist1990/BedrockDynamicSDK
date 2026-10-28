@@ -36,6 +36,7 @@ using CursorFn = void(__fastcall*)(void*);
 using FovFn = float(__fastcall*)(void*, float, void*, void*);
 using RenderLevelFn = void(__fastcall*)(void*, void*, void*);
 using LevelFn = void(__fastcall*)(void*);
+using RuntimeActorListFn = void(__fastcall*)(void*, void*);
 using ClientPlayerLoadedFn = void(__fastcall*)(void*, void*);
 using ActorNameTagFn = const std::string&(__fastcall*)(void*);
 using GameCoreKeyboardEventFn = void*(__fastcall*)(void*, void*, void*);
@@ -61,7 +62,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 15> states{};
+std::array<State, 16> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -103,7 +104,7 @@ struct SharedApi {
 // stable for additive releases; runtime version and supported points are separate.
 constexpr DWORD kSharedAbiVersion = 4;
 constexpr DWORD kMinimumCompatibleAbi = 3;
-constexpr unsigned kBuildVersion = 0x00040300u; // major/minor/patch: 4.3.0
+constexpr unsigned kBuildVersion = 0x00040400u; // major/minor/patch: 4.4.0
 SharedApi* getSharedApi(bool discover = true);
 SharedApi* bootstrapPreferredRuntime();
 std::mutex diagnosticMutex;
@@ -152,7 +153,7 @@ void publishCapabilities(const SharedApi* owner) {
     capabilities->pid=GetCurrentProcessId();capabilities->abi=owner->abiVersion;
     capabilities->buildVersion=kBuildVersion;
     capabilities->ownerSubscribe=reinterpret_cast<std::uintptr_t>(owner->subscribe);
-    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_PACKET_SEND_TO_SERVER+1))-2;
+    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST+1))-2;
     MemoryBarrier();InterlockedExchange(&capabilities->state,2);
 }
 const Capabilities* ownerCapabilities(const SharedApi* owner) {
@@ -362,7 +363,7 @@ SharedApi* bootstrapPreferredRuntime() {
         const auto& selected = providers.front();
         selectedVersion = selected.version;
         selectedPath = selected.path;
-        // 4.3 providers use getSharedApi(false), so A -> B -> A cannot occur.
+        // 4.4 providers use getSharedApi(false), so A -> B -> A cannot occur.
         discovery += L"; selected Start=" + std::to_wstring(selected.start());
     } else discovery += L"; using local provider";
     // Attach to the one published table, even if Start failed or an older mod
@@ -452,6 +453,11 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
         if (original) reinterpret_cast<LevelFn>(original)(a.level);
         return 0;
     }
+    case BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST: {
+        auto& a = *static_cast<BDS_RuntimeActorListArgs*>(args);
+        if (original) reinterpret_cast<RuntimeActorListFn>(original)(a.level, a.output);
+        return 0;
+    }
     case BDS_HOOK_CLIENT_PLAYER_LOADED: {
         auto& a = *static_cast<BDS_ClientPlayerLoadedArgs*>(args);
         if (original) reinterpret_cast<ClientPlayerLoadedFn>(original)(a.self, a.player);
@@ -523,6 +529,10 @@ float __fastcall fovDetour(void* self, float fov, void* a3, void* a4) {
 void __fastcall levelDetour(void* level) {
     BDS_LevelArgs args{level}; invoke(BDS_HOOK_LEVEL_SUB_TICK, &args);
 }
+void __fastcall runtimeActorListDetour(void* level, void* output) {
+    BDS_RuntimeActorListArgs args{level, output};
+    invoke(BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST, &args);
+}
 void __fastcall clientPlayerLoadedDetour(void* self, void* player) {
     BDS_ClientPlayerLoadedArgs args{self, player}; invoke(BDS_HOOK_CLIENT_PLAYER_LOADED, &args);
 }
@@ -563,6 +573,8 @@ void* detourFor(BDS_HookPoint point) {
     case BDS_HOOK_RELEASE_CURSOR: return reinterpret_cast<void*>(&releaseDetour);
     case BDS_HOOK_GET_FOV: return reinterpret_cast<void*>(&fovDetour);
     case BDS_HOOK_LEVEL_SUB_TICK: return reinterpret_cast<void*>(&levelDetour);
+    case BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST:
+        return reinterpret_cast<void*>(&runtimeActorListDetour);
     case BDS_HOOK_CLIENT_PLAYER_LOADED: return reinterpret_cast<void*>(&clientPlayerLoadedDetour);
     case BDS_HOOK_CLIENT_LEVEL_EXIT: return reinterpret_cast<void*>(&clientLevelExitDetour);
     case BDS_HOOK_CLIENT_DIMENSION_CHANGED: return reinterpret_cast<void*>(&clientDimensionChangedDetour);
@@ -574,7 +586,7 @@ void* detourFor(BDS_HookPoint point) {
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_PACKET_SEND_TO_SERVER;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST;
 }
 } // namespace
 
@@ -638,7 +650,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_PACKET_SEND_TO_SERVER; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -656,7 +668,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "4.3.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "4.4.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {

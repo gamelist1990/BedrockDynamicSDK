@@ -14,7 +14,7 @@ nativeレイアウトは未完成なので、この定義だけで全SDK機能�
 Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
 [CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
 `.pdata` 関数開始、HookPoint対応を一覧し、`probe <symbol>` で周辺情報を確認します。
-HookPointとABI定義がある候補は、正確なEXE一致・入口ガード・`.pdata`境界を確認したうえで
+`Level::getRuntimeActorList`を含むABI既知候補は、正確なEXE一致・入口ガード・`.pdata`境界を確認したうえで
 `hook <symbol>` を明示すると、元処理を通す観測フックを試せます。`onPlayerLoaded` は
 `.pdata`関数開始が見つかっていないため、CheckSigはフックを拒否します。
 観測結果であっても自動で `verified` へ昇格させません。

@@ -36,7 +36,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_CLIENT_DIMENSION_CHANGED = 11,
     BDS_HOOK_CLIENT_JOIN_CANCELLED = 12,
     BDS_HOOK_RENDER_LEVEL = 13,
-    BDS_HOOK_PACKET_SEND_TO_SERVER = 14
+    BDS_HOOK_PACKET_SEND_TO_SERVER = 14,
+    BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST = 15
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -51,6 +52,8 @@ typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; fl
 typedef struct BDS_PacketSendArgs { void* sender; void* packet; } BDS_PacketSendArgs;
 typedef struct BDS_RenderLevelArgs { void* renderer; void* screen; void* context; } BDS_RenderLevelArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
+// output points to the MSVC x64 std::vector<Actor*> hidden return buffer.
+typedef struct BDS_RuntimeActorListArgs { void* level; void* output; } BDS_RuntimeActorListArgs;
 typedef struct BDS_ClientPlayerLoadedArgs { void* self; void* player; } BDS_ClientPlayerLoadedArgs;
 // For LEVEL_EXIT, self is the GameCallbacks subobject, not ClientInstance.
 // Normalize it using the exact-build native_world_events profile layout.
@@ -64,8 +67,9 @@ typedef uintptr_t (BDS_HOOK_CALL *BDS_HookNext)(void* frame, void* args);
 typedef void (BDS_HOOK_CALL *BDS_HookCallback)(void* user, void* args,
                                                 BDS_HookNext next, void* frame);
 
-// target must be the verified address for point in the current Minecraft
-// process. Re-registering the same point/address adds a middleware subscriber;
+// target must be the exact-profile address for point in the current Minecraft
+// process, with its entry guard and function boundary checked. Re-registering
+// the same point/address adds a middleware subscriber;
 // a conflicting address is rejected. Unregister waits for in-flight callbacks.
 BDS_HOOK_API int BDS_HOOK_CALL BDS_HookSubscribe(
     BDS_HookPoint point, void* target, BDS_HookCallback callback,

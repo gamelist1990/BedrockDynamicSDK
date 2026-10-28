@@ -17,6 +17,8 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
 - プロファイルの正確なビルド一致、入口ガード、関数境界、SDKフックランタイム対応を検査
 - SDKがABIを知っているHookPointに限り、元の処理をそのまま呼び出す透過フックを試行。
   呼び出し回数と既知の引数/戻り値フィールドを記録
+- `Level::getRuntimeActorList` は旧・新EXEの機械語でABIを比較した候補HookPoint。
+  元処理の後でMSVC x64 vectorヘッダーを安全に読み、件数と先頭8件までのActorポインタを記録
 - `ReadProcessMemory` と `VirtualQuery` を使い、読み取り可能なページから最大64バイトを
   型指定で読み取り
 - `list` で候補ごとの入口一致、`.pdata`境界、既知HookPoint、現在のHook可否を一覧

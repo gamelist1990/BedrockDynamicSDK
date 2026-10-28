@@ -83,6 +83,7 @@ constexpr HookSpec kHookSpecs[] = {
     {"ClientInstance::releaseCursor", BDS_HOOK_RELEASE_CURSOR},
     {"LevelRendererPlayer::getFov", BDS_HOOK_GET_FOV},
     {"MultiPlayerLevel::_subTick", BDS_HOOK_LEVEL_SUB_TICK},
+    {"Level::getRuntimeActorList", BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST},
     {"Actor::getNameTag", BDS_HOOK_ACTOR_GET_NAME_TAG},
     {"GameCore::keyboardEvent", BDS_HOOK_GAMECORE_KEYBOARD_EVENT},
     {"ClientInstance::onPlayerLoaded", BDS_HOOK_CLIENT_PLAYER_LOADED},
@@ -806,6 +807,35 @@ private:
             case BDS_HOOK_LEVEL_SUB_TICK: {
                 const auto* a = static_cast<const BDS_LevelArgs*>(raw);
                 if (a) values = {{"level", pointerString(a->level)}};
+                break;
+            }
+            case BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST: {
+                const auto* a = static_cast<const BDS_RuntimeActorListArgs*>(raw);
+                if (!a) break;
+                values = {{"level", pointerString(a->level)},
+                          {"output_buffer", pointerString(a->output)}};
+                std::array<std::uintptr_t, 3> vector{};
+                const bool readable = safeRead(reinterpret_cast<std::uintptr_t>(a->output),
+                                               vector.data(), sizeof(vector));
+                values["vector_header_readable"] = readable;
+                if (!readable) break;
+                const auto begin = vector[0];
+                const auto end = vector[1];
+                const auto capacity = vector[2];
+                const bool shapeValid = begin <= end && end <= capacity &&
+                    (end - begin) % sizeof(void*) == 0 && capacity - begin <= (1u << 20);
+                values["vector_bounds_valid"] = shapeValid;
+                if (!shapeValid) break;
+                const auto count = (end - begin) / sizeof(void*);
+                values["actor_count"] = count;
+                json actors = json::array();
+                for (std::size_t i = 0; i < std::min<std::size_t>(count, 8); ++i) {
+                    std::uintptr_t actor{};
+                    if (!safeRead(begin + i * sizeof(void*), &actor, sizeof(actor))) break;
+                    actors.push_back(hex(actor));
+                }
+                values["sample_actor_pointers"] = std::move(actors);
+                values["sample_limit"] = 8;
                 break;
             }
             case BDS_HOOK_ACTOR_GET_NAME_TAG: {
