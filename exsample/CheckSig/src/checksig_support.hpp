@@ -98,6 +98,7 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
         row["next_action"]=gaps ? "Resolve the listed required definition blockers before exercising the Mod" : "Exercise the listed Mod scenarios; function hits alone do not establish full behavior";
         result["mods"].push_back(std::move(row));
     }
+    result["implementation_work"]=catalog.value("implementation_work",SupportJson::array());
     result["status"]="incomplete";
     result["groups"]=catalog.at("groups");
     result["summary"]={{"requirement_count",requirements.size()},{"missing_or_disabled",missing},
@@ -114,6 +115,10 @@ inline std::string supportText(const SupportJson& report) {
         out<<mod.at("name").get<std::string>()<<": "<<mod.at("status").get<std::string>()
            <<"  definition blockers="<<mod.at("definition_blockers")<<" remaining="<<mod.at("remaining_requirements")<<"\n";
         for(const auto& check:mod.at("manual_checks")) out<<"  [ ] "<<check.get<std::string>()<<"\n";
+    }
+    if(report.contains("implementation_work")) {
+        out<<"\nAdapter implementation / review work:\n";
+        for(const auto& work:report.at("implementation_work")) out<<"["<<work.at("status").get<std::string>()<<"] "<<work.at("id").get<std::string>()<<"\n  "<<work.at("action").get<std::string>()<<"\n";
     }
     out<<"\nRemaining definitions / runtime observations:\n";
     for(const auto& item:report.at("items")) {

@@ -7,6 +7,62 @@
     "arch": "x64"
   },
   "reference_version": "1.26.52.3",
+  "implementation_work": [
+    {
+      "id": "integer-command-abi",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "Top"
+      ],
+      "action": "新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。"
+    },
+    {
+      "id": "placement-abi",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "SpeedBuilder"
+      ],
+      "action": "GameMode/HitResult/設置状態の新レイアウトと呼出規約を対応させ、設置・取消・インベントリ復帰を確認する。"
+    },
+    {
+      "id": "world-render-abi",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "Freecam",
+        "BlockOutline",
+        "HitBox"
+      ],
+      "action": "LevelRenderer/Tessellator/Materialの新関数・状態保存復元・描画オフセットを対応させる。"
+    },
+    {
+      "id": "freecam-layout-assertions",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "Freecam"
+      ],
+      "action": "移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。"
+    },
+    {
+      "id": "world-event-abi",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "Top",
+        "Freecam",
+        "BlockOutline",
+        "SpeedBuilder",
+        "HitBox"
+      ],
+      "action": "ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。"
+    },
+    {
+      "id": "additional-observers",
+      "status": "needs-review-after-observation",
+      "mods": [
+        "CheckSig"
+      ],
+      "action": "未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。"
+    }
+  ],
   "scope": "source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility",
   "sources": [
     "src/profile_manager.cpp",

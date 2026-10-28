@@ -6,6 +6,7 @@
 ## まずこのJSONだけ置く
 
 修正版CheckSig.dllへ更新し、Minecraftを完全終了してから読み込み直します。
+`status.json` の `checksig_features_revision: 2` が、この調査機能に対応するDLLの印です。
 `1.26.60.5-all-mods.json` を次へ置いてください。
 
 ```text
@@ -23,7 +24,7 @@ result/remaining-work.json
 result/remaining-work.txt
 ```
 
-JSONの`support_report.mods`がModごとの状態、`support_report.items`が関数・レイアウトごとの残作業です。
+JSONの`support_report.mods`がModごとの状態、`implementation_work`がアダプターの残作業、`support_report.items`が関数・レイアウトごとの残作業です。
 `definition_blockers`は定義不足・不一致など、`remaining_requirements`は観測やレビューも含む件数です。
 Hookの観測が増えると結果を更新します。Mod全体の動作を確認したことにはしません。
 通常のwindows-x64.jsonを置いた場合も、detectの結果に残作業を付けます。
@@ -55,6 +56,8 @@ ScanClientとCheckSigも出力完結・スキャン・観測を確認します�
 調査セットZIPはCheckSigフォルダへ展開できます。
 `optional/` は自動実行されません。**まず1つだけcommandsへコピー**してください。
 各JSONにプロファイルを内包しています。
+最初はCheckSigだけで調べてください。Freecam等の直接Hookと競合する場合はスキップします。
+直接Observerはunhook後もdetourを保持する場合があるため、実際のModの動作確認へ移る前にゲームを完全再起動してください。
 
 | ファイル | ゲーム内で行う操作 |
 | --- | --- |

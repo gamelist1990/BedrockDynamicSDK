@@ -681,6 +681,7 @@ public:
                 throw std::runtime_error("loaded PE .text metadata disagrees with the SDK fingerprint");
             writeEvent("started", {
                 {"identity", moduleIdentityJson(*image_, identity_)},
+                {"checksig_features_revision",2},
                 {"hook_runtime", BDS_HookRuntimeVersion()},
                 {"hook_runtime_abi", BDS_HookRuntimeAbi()}
             });
@@ -768,7 +769,7 @@ private:
         for(auto it=watchCalls_.begin();it!=watchCalls_.end();) {
             if(it->first.starts_with(source+":")) it=watchCalls_.erase(it); else ++it;
         }
-        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"arch", "x64"},
+        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",2}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
         bool investigation = false, recorded = false;
@@ -786,6 +787,7 @@ private:
             } else {
                 if (document.value("schema", 0) != 1 || document.value("arch", std::string{}) != "x64")
                     throw std::runtime_error("checksig-job requires schema=1 and arch=x64");
+                if(document.value("minimum_checksig_features",1)>2) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
                 const auto resolveInput = [&](const std::string& name) {
                     auto path = fromUtf8(name);
                     return path.is_relative() ? file.path.parent_path() / path : path;
@@ -967,7 +969,7 @@ private:
 
     void writeStatus(std::string_view state, std::string_view error = {}) {
         json status = {
-            {"schema", 1}, {"tool", "CheckSig"}, {"state", state},
+            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",2}, {"state", state},
             {"pid", GetCurrentProcessId()}, {"time_utc", timestampUtc()}
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
@@ -2958,6 +2960,8 @@ DWORD WINAPI worker(void*) {
     return 0;
 }
 } // namespace
+
+extern "C" __declspec(dllexport) unsigned CheckSig_FeaturesRevision() noexcept { return 2; }
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

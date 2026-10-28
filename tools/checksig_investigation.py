@@ -6,9 +6,9 @@ VERSION='1.26.60.5'
 OLD='1.26.52.3'
 
 def generate_catalog():
- old=json.loads((ROOT/f'data/{OLD}/windows-x64.json').read_text())
- new=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text())
- aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/CheckSig/src/check_sig.cpp').read_text()))
+ old=json.loads((ROOT/f'data/{OLD}/windows-x64.json').read_text(encoding='utf-8'))
+ new=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text(encoding='utf-8'))
+ aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/CheckSig/src/check_sig.cpp').read_text(encoding='utf-8')))
  inverse={v:k for k,v in aliases.items()}
  legacy={'GameCore':'native_keyboard','Actor':'native_actors','ItemStack':'native_items','LocalPlayer':'native_player_identity','BlockSource':'native_world','StateVectorComponent':'native_motion','Camera':'native_camera','PacketSender':'native_packets','CommandRegistry':'native_client_commands','GuiData':'native_gui','LevelRenderer':'native_world_render','ClientInstance':'native_world_events'}
  groups=[]; requirements=[]
@@ -100,19 +100,25 @@ def generate_catalog():
   'CheckSig':['JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新']}
  optional={'TabList':['actors','items','identity'],'ScanClient':[]}
  mods=[{'name':name,'required_groups':deps,'optional_groups':optional.get(name,[]),'manual_checks':checks[name]} for name,deps in required.items()]
- return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
+ return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'implementation_work':[
+ {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
+ {'id':'placement-abi','status':'needs-review-after-observation','mods':['SpeedBuilder'],'action':'GameMode/HitResult/設置状態の新レイアウトと呼出規約を対応させ、設置・取消・インベントリ復帰を確認する。'},
+ {'id':'world-render-abi','status':'needs-review-after-observation','mods':['Freecam','BlockOutline','HitBox'],'action':'LevelRenderer/Tessellator/Materialの新関数・状態保存復元・描画オフセットを対応させる。'},
+ {'id':'freecam-layout-assertions','status':'needs-review-after-observation','mods':['Freecam'],'action':'移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。'},
+ {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','BlockOutline','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
+ {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
 
 def make_bundle(out):
  out.mkdir(parents=True,exist_ok=True)
- profile=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text())
- catalog=json.loads((ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json').read_text())
+ profile=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text(encoding='utf-8'))
+ catalog=json.loads((ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json').read_text(encoding='utf-8'))
  output=profile['layouts']['CommandRequestPacket']['output_read'].copy()
  output.update(signature='',cross_version_signature_available=False)
  profile['symbols']['CommandOutputPacket::read']=output
  def job(name,actions,watches=None):
-  doc={'schema':1,'kind':'checksig-job','arch':'x64','profile':profile,'requirements':catalog,'actions':actions}
+  doc={'schema':1,'kind':'checksig-job','arch':'x64','minimum_checksig_features':2,'profile':profile,'requirements':catalog,'actions':actions}
   if watches:doc['watches']=watches
-  path=out/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n');return path
+  path=out/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');return path
  audit=job(f'commands/{VERSION}-all-mods.json',[{'op':'audit'}])
  for name,symbols in {
   '10-input':['Keyboard::feed','MouseDevice::feed','GameCore::keyboardEvent','ClientInstance::grabCursor','ClientInstance::releaseCursor','MultiPlayerLevel::_subTick','LevelRendererPlayer::getFov'],
@@ -138,12 +144,12 @@ def make_bundle(out):
    watch('Actor header candidate','ClientInstance::getLocalPlayer','return_actor',[0],'bytes:64')
   job('optional/'+name+'.json',[{'op':'observe','symbols':symbols},{'op':'audit'}],watches)
  source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/f'data/{OLD}/windows-x64.json',source)
- port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text());doc['source']=f'../reference/windows-x64-{OLD}.json';port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n')
+ port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text(encoding='utf-8'));doc['source']=f'../reference/windows-x64-{OLD}.json';port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  shutil.copy2(ROOT/'docs/checksig-126605.md',out/'README_ja.md')
  return audit
 
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--catalog',action='store_true');p.add_argument('--bundle',type=Path);args=p.parse_args()
  if args.catalog:
-  path=ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json';path.write_text(json.dumps(generate_catalog(),ensure_ascii=False,indent=2)+'\n')
+  path=ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json';path.write_text(json.dumps(generate_catalog(),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  if args.bundle:make_bundle(args.bundle)
