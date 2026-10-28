@@ -61,6 +61,17 @@ source "C:\path\to\old\windows-x64.json"
 port 1.26.60.5
 ```
 
+既存の1.26.60.5候補も保持して移植結果と統合する場合は、先にexact profileを読み込みます。
+同一RVAは既存定義を保ったまま移植根拠を追記し、RVA競合は別の
+`candidate::cross_version_port::...` 名で保存します。exact profileを事前に読み込まない場合も、
+既知の1.26.60.5 ActorTypeComponent静的候補は生成プロファイルへ追加されます。
+
+```text
+profile "C:\path\to\1.26.60.5\windows-x64.json"
+source "C:\path\to\old\windows-x64.json"
+port 1.26.60.5
+```
+
 生成した `candidate-profile.json` は自動で現在のターゲット定義になります。
 旧定義からの移植をせず、既存の1.26.60.5候補を調べる場合は、リポジトリ内の
 `data/1.26.60.5/windows-x64.json` を `profile "C:\path\to\windows-x64.json"` で読み込みます。

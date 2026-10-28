@@ -403,6 +403,23 @@ std::uint32_t jsonU32(const json& value) {
     return value.get<std::uint32_t>();
 }
 
+json actorTypeComponentCandidate() {
+    return {
+        {"rva", "0xB94CA0"},
+        {"signature", "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 00 FE FF FF FF 48 8B 81 90 02 00 00"},
+        {"entry_check", "55 56 57 53 48 81 EC 88 00 00 00 48"},
+        {"cross_version_signature_available", false},
+        {"status", "candidate"},
+        {"source", "static candidate from exact 1.26.60.5 REA/Ghidra analysis"},
+        {"function_boundary", true},
+        {"signature_length", 34},
+        {"abi_verified", false},
+        {"runtime_verified", false},
+        {"abi", "unknown; probe-only"},
+        {"candidate_evidence", "REA/Ghidra " + std::string(k126605ActorContextEvidence) + "; RVA 0xB94CA0 references ActorTypeComponent hash 0x4F6BA419 and compares a 32-bit component value at offset 0 with 319. Function identity and owner relationship remain inferred; do not call or hook this function."}
+    };
+}
+
 std::string hexBytesAt(const PeImage& image, std::uint32_t rva, std::size_t size) {
     std::vector<std::byte> bytes(size);
     if (!size || !copyRva(image, rva, bytes.data(), bytes.size())) return {};
@@ -1155,6 +1172,42 @@ private:
                 {"evidence_id", k126605ActorContextEvidence},
                 {"evidence", "Exact 1.26.60.5 EXE static Ghidra candidate at RVA 0xB94CA0 reads the registry pointer and 32-bit entity id at Actor+0x10/+0x18, then resolves ActorTypeComponent 0x4F6BA419 and compares its 32-bit value at +0 with 319. Treating the function argument as Actor* and its relation to Level::getRuntimeActorList entries are static inferences; runtime behavior is unverified."}
             };
+            const std::string actorTypeName = "candidate::ActorTypeComponent";
+            if (!symbols.contains(actorTypeName)) {
+                symbols[actorTypeName] = actorTypeComponentCandidate();
+                support[actorTypeName] = {
+                    {"state", "static-candidate"}, {"rva", "0xB94CA0"},
+                    {"abi_known", false}, {"probe_only", true},
+                    {"evidence_id", k126605ActorContextEvidence}
+                };
+            }
+        }
+        if (targetProfile_.is_object() && targetProfile_.contains("target") &&
+            targetProfile_.contains("symbols") && targetProfile_["symbols"].is_object() &&
+            lower(targetProfile_["target"].value("sha256", std::string{})) ==
+                lower(identity_.fileSha256)) {
+            json mergedSymbols = targetProfile_["symbols"];
+            for (auto it = symbols.begin(); it != symbols.end(); ++it) {
+                const auto& name = it.key();
+                if (!mergedSymbols.contains(name)) {
+                    mergedSymbols[name] = it.value();
+                    continue;
+                }
+                const auto& existing = mergedSymbols[name];
+                const bool sameRva = existing.is_object() && existing.contains("rva") &&
+                    jsonU32(existing.at("rva")) == jsonU32(it.value().at("rva"));
+                if (sameRva) {
+                    mergedSymbols[name]["checksig_cross_version_port"] =
+                        support.value(name, json::object());
+                    continue;
+                }
+                std::string alias = "candidate::cross_version_port::" + name;
+                if (mergedSymbols.contains(alias))
+                    alias += "::" + it.value().value("rva", std::string("unknown"));
+                mergedSymbols[alias] = it.value();
+                warnings.push_back(name + ": target definition kept; cross-version port saved as " + alias);
+            }
+            symbols = std::move(mergedSymbols);
         }
         json output = {
             {"schema", 1},
