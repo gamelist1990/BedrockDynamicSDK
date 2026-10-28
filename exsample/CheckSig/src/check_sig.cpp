@@ -580,7 +580,7 @@ std::vector<PortDefinition> sourceDefinitions(const json& profile) {
         }
     }
     for (auto it = profile.begin(); it != profile.end(); ++it) {
-        if (!it.key().starts_with("native_")) continue;
+        if (!it.key().starts_with("native_") && it.key() != "layouts") continue;
         std::vector<PortDefinition> nested;
         collectNativeDefinitions(it.value(), it.key(), nested);
         for (auto& definition : nested) {
@@ -594,6 +594,29 @@ std::vector<PortDefinition> sourceDefinitions(const json& profile) {
 }
 
 const HookSpec* hookSpec(std::string_view symbol) {
+    if (symbol == "PlayerAuthInputPacket::isValid") symbol = "native_packets.motion.auth_input.is_valid";
+    if (symbol == "MovePlayerPacket::isValid") symbol = "native_packets.motion.move_player.is_valid";
+    if (symbol == "CommandRegistry::registerCommand") symbol = "native_client_commands.register_command";
+    if (symbol == "CommandRegistry::findCommand") symbol = "native_client_commands.find_command";
+    if (symbol == "GuiData::displayClientMessage") symbol = "native_gui.display_message";
+    if (symbol == "sub_6F313F0") symbol = "native_camera.update_player";
+    if (symbol == "sub_5AFB520") symbol = "native_camera.visual.gamma";
+    if (symbol == "sub_56887B0") symbol = "native_camera.visual.render_dragon_inside_effect.predicate";
+    if (symbol == "Player::setPlayerGameType") symbol = "native_camera.visual.set_player_game_type";
+    if (symbol == "sub_5417230") symbol = "native_world_render.functions.begin";
+    if (symbol == "sub_76A710") symbol = "native_world_render.functions.hashed_name_ctor";
+    if (symbol == "sub_4DE7250") symbol = "native_world_render.functions.material_ctor";
+    if (symbol == "ClientInstance::getRegion") symbol = "native_world.get_region";
+    if (symbol == "BlockSource::getBlock") symbol = "native_world.get_block";
+    if (symbol == "BlockSource::getChunk") symbol = "native_world.get_chunk";
+    if (symbol == "GameMode::buildBlock") symbol = "native_world.build_block";
+    if (symbol == "sub_8AB690") symbol = "native_packets.sender.packet_sender_getter";
+    if (symbol == "PlayerAuthInputPacket::getId") symbol = "native_packets.motion.auth_input.get_id";
+    if (symbol == "sub_65A8500") symbol = "native_client_commands.client_commands_anchor";
+    if (symbol == "ClientInstance::getLocalPlayer") symbol = "native_camera.local_player";
+    if (symbol == "sub_537E6E0") symbol = "native_camera.visual.terrain_culling.factory_check";
+    if (symbol == "sub_5376690") symbol = "native_camera.visual.camera_render_observe";
+    if (symbol == "sub_5AD5F90") symbol = "native_world_render.functions.render_mesh";
     const auto it = std::find_if(std::begin(kHookSpecs), std::end(kHookSpecs),
         [&](const HookSpec& spec) { return symbol == spec.symbol; });
     return it == std::end(kHookSpecs) ? nullptr : it;

@@ -129,11 +129,12 @@ public:
             base_=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
             textBegin_=base_+native_profile::number(root.at("target").at("text_rva"));
             textEnd_=textBegin_+native_profile::number(root.at("target").at("text_size"));
-            senderOffset_=native_profile::number(layout.at("sender_offset"));
-            senderSlot_=native_profile::number(layout.at("send_to_server_slot"));
+            const auto& sender = root.at("native_packets").at("sender");
+            senderOffset_=native_profile::number(sender.at("client_packet_sender_offset"));
+            senderSlot_=native_profile::number(sender.at("sender_send_to_server_slot"));
             if (senderOffset_!=0x1e0 || senderSlot_!=2) throw std::runtime_error("unsupported sender layout revision");
             // Check the leaf getter AND its displacement before reading the member.
-            const auto* getter=static_cast<const unsigned char*>(native_profile::checked(root,layout.at("sender_getter")));
+            const auto* getter=static_cast<const unsigned char*>(native_profile::checked(root,sender.at("packet_sender_getter")));
             std::array<unsigned char,8> leaf{};
             if (!native_profile::read(getter,0,leaf) || leaf!=std::array<unsigned char,8>{0x48,0x8b,0x81,0xe0,1,0,0,0xc3})
                 throw std::runtime_error("sender getter ABI mismatch");

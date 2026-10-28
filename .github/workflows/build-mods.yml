@@ -205,7 +205,9 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           tag="minecraft-$GAME_VERSION"
+          flags=()
+          if [ "$GAME_VERSION" = "1.26.60.5" ]; then flags+=(--prerelease); fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$SOURCE_SHA" --title "Minecraft $GAME_VERSION" --notes "Windows x64 DLLs. See README for feature verification scope. Native ABI and layouts may remain candidates."
+            gh release create "$tag" --target "$SOURCE_SHA" --title "Minecraft $GAME_VERSION" --notes "Windows x64 DLLs. See README for feature verification scope. Native ABI and layouts may remain candidates. Build commit: $SOURCE_SHA" "${flags[@]}"
           fi
           gh release upload "$tag" release/*.zip --clobber

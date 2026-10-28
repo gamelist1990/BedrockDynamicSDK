@@ -11,10 +11,10 @@ Minecraft Bedrock **Windows x64** 向けのC++ SDKとMod DLLです。
 | ゲーム | 定義・対応範囲 |
 | --- | --- |
 | 1.26.52.3 | 既存のネイティブアダプター定義。各ModのREADMEも参照 |
-| 1.26.60.5 | 43関数の入口確認済み。Keyboard::feedはHookと値の取得を確認済み。その他のABI・オブジェクトレイアウトには調査中の項目あり |
+| 1.26.60.5 | 43定義の入口確認済み（重複を統合して40関数）。Keyboard::feedはHookと値の取得を確認済み。その他のABI・オブジェクトレイアウトには調査中の項目あり |
 
 **1.26.60.5の全Modが実機動作確認済みという意味ではありません。**
-Topなどが必要とするGUI・パケット・CommandRegistryのレイアウトは未完成です。
+Topなどが必要とするGUI・CommandRegistryのレイアウトは未完成です。
 起動ログの「missing Minecraft layout」に表示されたクラスの調査が必要です。
 
 ## CheckSig：JSONを置いて調査

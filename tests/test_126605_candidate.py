@@ -16,7 +16,7 @@ def test_126605_entry_verified_symbols_keep_runtime_scope_to_keyboard():
     assert profile["analysis"]["status"] == "entry_verified_runtime_partial"
     assert profile["analysis"]["runtime_verified"] is False
     assert profile["analysis"]["runtime_verified_symbols"] == ["Keyboard::feed"]
-    assert len(profile["symbols"]) == 43
+    assert len(profile["symbols"]) == 40
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
     assert verified == set(profile["symbols"])
     for name, row in profile["symbols"].items():
@@ -50,7 +50,7 @@ def test_126605_entry_verified_symbols_keep_runtime_scope_to_keyboard():
             native_keyboard["message_offset"], native_keyboard["key_offset"]) == (0, 64, 16, 24)
     assert (native_keyboard["key_down_vtable_slot"], native_keyboard["key_up_vtable_slot"]) == (1, 2)
     entry = build_index(root)["versions"]["1.26.60.5"]["windows-x64"]
-    assert entry["symbols"] == 43
+    assert entry["symbols"] == 40
     assert entry["sha256"] == hashlib.sha256(raw).hexdigest()
     assert entry["module_sha256"] == profile["target"]["sha256"]
     assert json.loads((root / "manifest.json").read_text())["versions"]["1.26.60.5"]["windows-x64"] == entry
