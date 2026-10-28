@@ -843,6 +843,24 @@
         "status": "static candidate",
         "runtime_verified": false,
         "evidence": "REA/Ghidra ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f; old and new function access component hash and compare the 4-byte value with 0x13F. Function identity and owner/layout are not established. Observed member accesses +0x270/+0x2C0/+0x2D8 changed to +0x290/+0x2E0/+0x2F8; field types are unknown."
+      },
+      {
+        "component": "Actor name tag backing data",
+        "old_function_rva": "0x1A14AC0",
+        "new_function_rva": "0xBBE500",
+        "old_member_offset": "0x128",
+        "new_member_offset": "0x150",
+        "status": "static candidate",
+        "runtime_verified": false,
+        "evidence": "Old and new instruction flows are nearly identical including vtable slot 2 and the return path. RCX backing pointer field moved +0x28. New Ghidra ev_0216375d8ef20ca27c0091b0c768e0dbe66d11fd2b951eb5597f31f80eae31af; actor identity, string lifetime and runtime access remain unverified."
+      },
+      {
+        "component": "ItemStackBase hover name candidate",
+        "old_function_rva": "0x24901E0",
+        "new_function_rva": "0x1AD8070",
+        "status": "static candidate",
+        "runtime_verified": false,
+        "evidence": "New code copies RDX to RSI, forwards incoming RCX to a helper and initializes a 32-byte return object at RSI before returning it in RAX. This is compatible with the old hidden-buffer call shape, but type, lifetime, object identity and runtime ABI remain unverified. REA/Ghidra ev_5e9257e5c77cb4abdd8e0af73ae3fb350264311638c79b62f4a4be467513b08b"
       }
     ],
     "world_render_observations": [
