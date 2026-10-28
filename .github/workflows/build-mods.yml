@@ -176,6 +176,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item "data/$env:GAME_VERSION/windows-x64.json" build-mod/Release/
+          @{ mod = $env:MOD; game_version = $env:GAME_VERSION; source_sha = "${{ github.sha }}"; architecture = "windows-x64" } | ConvertTo-Json | Set-Content -Encoding utf8 build-mod/Release/build-info.json
           $files = Get-ChildItem build-mod/Release -File | Where-Object { $_.Extension -in '.dll', '.exe', '.md', '.ps1', '.json' }
           Compress-Archive -Path $files.FullName -DestinationPath "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
       - uses: actions/upload-artifact@v4

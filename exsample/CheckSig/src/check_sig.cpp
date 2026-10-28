@@ -733,10 +733,13 @@ private:
         jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
+        bool investigation = false, recorded = false;
         try {
             if (!file.error.empty()) throw std::runtime_error(file.error);
             const auto document = json::parse(file.text);
-            if (document.value("kind", std::string{}) != "checksig-job") {
+            investigation = document.value("kind", std::string{}) == "checksig-job";
+            if (!investigation) {
+                recorded = true;
                 detectProfileText(file.text, source, "folder-json");
                 jobResults_[source]["detection"] = lastProfileDetection_;
                 if (!lastProfileDetection_.value("loaded", false))
@@ -756,6 +759,20 @@ private:
                 }
                 if (document.contains("source"))
                     loadSource(pathUtf8(resolveInput(document.at("source").get<std::string>())));
+                if (document.contains("symbols")) {
+                    if (!resolver_) throw std::runtime_error("custom symbols require a matching profile");
+                    const auto& additions = document.at("symbols");
+                    if (!additions.is_object() || additions.empty() || additions.size() > checksig::maxSymbols)
+                        throw std::runtime_error("symbols must contain 1..20000 definitions");
+                    auto expanded = targetProfile_;
+                    for (const auto& [name, definition] : additions.items()) {
+                        if (hooks_.contains(name) && expanded["symbols"].contains(name) && expanded["symbols"][name] != definition)
+                            throw std::runtime_error("unhook before replacing a live definition: " + name);
+                        expanded["symbols"][name] = definition;
+                    }
+                    std::string error;
+                    if (!loadProfileText(expanded.dump(), source, error)) throw std::runtime_error(error);
+                }
                 const auto& actions = document.at("actions");
                 if (!actions.is_array() || actions.empty() || actions.size() > 128)
                     throw std::runtime_error("actions must contain 1..128 objects");
@@ -788,6 +805,10 @@ private:
         } catch (const std::exception& e) {
             jobResults_[source]["status"] = "error";
             jobResults_[source]["error"] = e.what();
+            if (!investigation && !recorded)
+                recordDetection({{"trigger", "folder-json"}, {"profile_path", source},
+                    {"status", file.error.empty() ? "invalid-profile" : "profile-read-error"},
+                    {"error", e.what()}, {"loaded", false}});
         }
         currentJob_.clear();
         jobResults_[source]["updated_utc"] = timestampUtc();

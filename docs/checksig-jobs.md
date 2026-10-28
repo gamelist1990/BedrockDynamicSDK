@@ -69,3 +69,34 @@ JSONに任意のABIを書いて未対応関数を自動実行する機能はあ�
 
 エラーも入力名に対応した結果JSONの `status: error` と `error` に出力します。
 処理途中で失敗した場合、先行する操作で設置済みのHookは維持されます。
+
+## 調査する関数を追加する
+
+jobの `symbols` に、使用するプロファイルと同じ形式で関数を追加できます。
+`profile` で対象EXEの一致を確認してから追加します。例：
+
+```json
+{
+  "schema": 1,
+  "kind": "checksig-job",
+  "arch": "x64",
+  "profile": "windows-x64.json",
+  "symbols": {
+    "調査対象クラス::関数": {
+      "rva": "0x123456",
+      "entry_check": "48 89 5C 24 08",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false
+    }
+  },
+  "actions": [{"op": "probe", "symbol": "調査対象クラス::関数"}]
+}
+```
+
+RVAとバイト列は実際の調査対象に置き換えてください。
+周辺メモリは `{"op":"read","address":"rva:0x123436","type":"bytes:64"}` のように取得できます。
+設置中のHookの定義を置き換える場合は、先にunhookして別のjobで再定義します。
+追加した関数も、対応ABIの観測アダプターがなければHookは拒否されます。
