@@ -116,3 +116,10 @@ Observerのない関数について、probeだけで「実際に呼べる」と�
 `50-command-output` はHook設置までで受信観測はありません。
 `90-port-old` の参照ファイル不足は、旧定義の内包へ変更しています。
 ClientInstance+0x1E0のslot2はRVA0x768F0のRETであり、送信先として使用しません。
+
+## Fake確認とFreecam移植
+
+2026-10-28、ユーザーからFakeの一連の動作が完全に機能するとの確認を受領しました。
+残作業一覧ではFakeを `user_confirmed_complete` とし、共有関数の個別レビューは別項目に残します。
+Freecamの基本飛行は、共有PacketSender・新しい移動パケット定義・退出/ディメンション境界へ対応しました。
+Actor枠・地下表示の追加処理はoptionalグループへ分けています。基本飛行の実機動作は未確認です。

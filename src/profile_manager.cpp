@@ -89,9 +89,18 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
             case Feature::NameTags:if(!hook("Actor::getNameTag",BDS_HOOK_ACTOR_GET_NAME_TAG))return false;break;
             case Feature::Fov:if(!hook("LevelRendererPlayer::getFov",BDS_HOOK_GET_FOV))return false;break;
             case Feature::Keyboard:if(!hook("GameCore::keyboardEvent",BDS_HOOK_GAMECORE_KEYBOARD_EVENT))return false;break;
-            case Feature::WorldEvents:
-                if(!hook("ClientInstance::onPlayerLoaded",BDS_HOOK_CLIENT_PLAYER_LOADED)||!hook("ClientInstance::onLevelExit",BDS_HOOK_CLIENT_LEVEL_EXIT)||
-                   !hook("ClientInstance::onDimensionChangedEvent",BDS_HOOK_CLIENT_DIMENSION_CHANGED)||!hook("ClientInstance::onCancelJoinGame",BDS_HOOK_CLIENT_JOIN_CANCELLED))return false;break;
+            case Feature::WorldEvents: {
+                const auto names=node.value("available_events",nlohmann::json::array({"onPlayerLoaded","onLevelExit","onDimensionChangedEvent","onCancelJoinGame"}));
+                for(const auto& name:names) {
+                    const auto value=name.get<std::string>();
+                    if(value=="onPlayerLoaded") {if(!hook("ClientInstance::onPlayerLoaded",BDS_HOOK_CLIENT_PLAYER_LOADED))return false;}
+                    else if(value=="onLevelExit") {if(!hook("ClientInstance::onLevelExit",BDS_HOOK_CLIENT_LEVEL_EXIT))return false;}
+                    else if(value=="onDimensionChangedEvent") {if(!hook("ClientInstance::onDimensionChangedEvent",BDS_HOOK_CLIENT_DIMENSION_CHANGED))return false;}
+                    else if(value=="onCancelJoinGame") {if(!hook("ClientInstance::onCancelJoinGame",BDS_HOOK_CLIENT_JOIN_CANCELLED))return false;}
+                    else {error="unsupported native world event: "+value;return false;}
+                }
+                break;
+            }
             default:break;
             }
 #endif

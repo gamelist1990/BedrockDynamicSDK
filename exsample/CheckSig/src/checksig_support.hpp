@@ -99,6 +99,7 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
         if(!complete) ++pending[group];
         result["items"].push_back(std::move(item));
     }
+    std::size_t manualMods=0;
     for(const auto& mod:catalog.at("mods")) {
         auto row=mod;std::size_t gaps=0,remaining=0,optional=0;
         for(const auto& group:mod.at("required_groups")) { gaps+=blockers[group.get<std::string>()];remaining+=pending[group.get<std::string>()]; }
@@ -108,6 +109,17 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
         row["optional_remaining_requirements"]=optional;
         row["manual_check_status"]="not-recorded";
         row["next_action"]=gaps ? "Resolve the listed required definition blockers before exercising the Mod" : "Exercise the listed Mod scenarios; function hits alone do not establish full behavior";
+        const auto* confirmations=supportLookup(profile,"/analysis/mod_runtime_validation");
+        const auto name=mod.at("name").get<std::string>();
+        if(confirmations && confirmations->contains(name)) {
+            const auto& evidence=confirmations->at(name);
+            if(evidence.value("status",std::string{})=="complete" && evidence.value("exe_sha256",std::string{})==target.value("sha256",std::string{}) && gaps==0) {
+                row["status"]="user_confirmed_complete";row["runtime_confirmation"]=evidence;
+                row["remaining_requirements"]=0;row["adapter_reviews_remaining"]=remaining;
+                row["next_action"]="User confirmed this Mod's flow; independent shared adapter reviews remain separately listed";
+            }
+        }
+        if(row.value("status",std::string{})!="user_confirmed_complete")++manualMods;
         result["mods"].push_back(std::move(row));
     }
     result["implementation_work"]=catalog.value("implementation_work",SupportJson::array());
@@ -116,7 +128,7 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
     result["summary"]={{"requirement_count",requirements.size()},{"missing_or_disabled",missing},
         {"entry_mismatch_or_unreadable",mismatch},{"layout_reviews",layoutReview},
         {"runtime_observations_needed",awaiting},{"observers_not_implemented",noObserver},
-        {"observed_needs_review",observed},{"manual_mod_checks_required",catalog.at("mods").size()}};
+        {"observed_needs_review",observed},{"manual_mod_checks_required",manualMods}};
     return result;
 }
 inline std::string supportText(const SupportJson& report) {
@@ -126,7 +138,7 @@ inline std::string supportText(const SupportJson& report) {
     for(const auto& mod:report.at("mods")) {
         out<<mod.at("name").get<std::string>()<<": "<<mod.at("status").get<std::string>()
            <<"  definition blockers="<<mod.at("definition_blockers")<<" remaining="<<mod.at("remaining_requirements")<<"\n";
-        for(const auto& check:mod.at("manual_checks")) out<<"  [ ] "<<check.get<std::string>()<<"\n";
+        for(const auto& check:mod.at("manual_checks")) out<<(mod.value("status",std::string{})=="user_confirmed_complete" ? "  [x] " : "  [ ] ")<<check.get<std::string>()<<"\n";
     }
     if(report.contains("implementation_work")) {
         out<<"\nAdapter implementation / review work:\n";

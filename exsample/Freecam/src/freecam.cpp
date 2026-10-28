@@ -8,6 +8,7 @@
 #include <shlobj.h>
 #include <bedrock/game_api.hpp>
 #include <bedrock/native_motion.hpp>
+#include <bedrock/native_packet_sender.hpp>
 #include <bedrock/native_brightness.hpp>
 #include <bedrock/native_camera.hpp>
 #include <bedrock/native_game_type.hpp>
@@ -52,10 +53,9 @@ std::atomic<std::uint64_t> epoch{1};
 std::array<std::atomic<bool>,256> keys{};
 std::atomic<std::shared_ptr<const freecam::Config>> config{std::make_shared<const freecam::Config>()};
 bedrock::GameApi api;std::unique_ptr<bedrock::GameHooks> hooks;
-bedrock::NativeActorLayout actors;bedrock::NativeItemLayout items;bedrock::WorldRenderProfile render;
+bedrock::NativeActorLayout actors;bedrock::WorldRenderProfile render;
 std::size_t hurtOffset{};std::uint32_t hurtHash{};
-BDS_HookToken localToken{},renderToken{};
-using LocalFn=void*(__fastcall*)(void*);LocalFn originalLocal{};
+BDS_HookToken renderToken{};
 bedrock::NativeBrightness brightness;bedrock::NativeCamera nativeCamera;bedrock::NativeGameType gameTypes;
 using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn originalCameraRender{};
 BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
@@ -269,7 +269,6 @@ void* component(void* actor,std::uint32_t hash) noexcept {
 }
 bool hurtTime(void* actor,int& value) noexcept {return read(component(actor,hurtHash),hurtOffset,value)&&value>=0&&value<10000;}
 void observePacketSender(void*) noexcept;
-void* __fastcall localDetour(void* instance){void* player=originalLocal(instance);client.store(instance);local.store(player);observePacketSender(instance);return player;}
 bool isMovement(unsigned key,const freecam::Config& c){return key==c.forward||key==c.back||key==c.left||key==c.right||key==c.up||key==c.down||key==c.fast;}
 thread_local bool releasing=false;
 void releaseMovement(const freecam::Config& c){
@@ -361,7 +360,9 @@ BDS_HookToken packetToken{};
 void* subscribedPacketTarget{};
 std::atomic<void*> capturedSender{},capturedSendTarget{};
 std::atomic<std::uint64_t> capturedSendEpoch{};
-std::size_t statePositionOffset{},statePreviousOffset{},stateVelocityOffset{},fallOffset{},senderOffset{},sendSlot{},packetIdSlot{};
+std::size_t statePositionOffset{},statePreviousOffset{},stateVelocityOffset{},fallOffset{},packetIdSlot{};
+bedrock::NativePacketSender senderLayout;
+bool renderReady{};
 std::uint32_t fallHash{};
 std::uintptr_t moduleTextBegin{},moduleTextEnd{};
 
@@ -371,6 +372,7 @@ bool inText(void* pointer) noexcept {
 
 struct MotionPacketLayout {
     std::uintptr_t vtable{};
+    void* isValid{};
     std::size_t position{},delta{},analog{},move{},rawMove{},flags{},vehicle{};
 };
 MotionPacketLayout authPacket,movePacket;
@@ -415,6 +417,10 @@ bool prepareMovementAnchor(std::uint64_t runtime,Vec position) {
     if(!ready)return false;
     anchor.runtime=runtime;movementAnchor.store(std::make_shared<const MovementAnchor>(anchor));return true;
 }
+bool validMotionPacket(void* packet,const MotionPacketLayout& layout) noexcept {
+    __try{return reinterpret_cast<bool(__fastcall*)(const void*)>(layout.isValid)(packet);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
 bool anchorMotionPacket(void* packet,bool auth,const MovementAnchor& anchor) noexcept {
     const auto& layout=auth?authPacket:movePacket;const auto& pose=anchor.poses[auth?0:1];
     if(anchor.epoch!=epoch.load()||pose.seen==Clock::time_point{})return false;
@@ -422,7 +428,7 @@ bool anchorMotionPacket(void* packet,bool auth,const MovementAnchor& anchor) noe
     if(!auth){std::uint64_t runtime{},vehicle{};std::uint8_t mode{};
         if(!read(packet,0x30,runtime)||runtime!=anchor.runtime||!read(packet,layout.vehicle,vehicle)||vehicle||
            !read(packet,0x50,mode)||mode!=0)return false;
-        return write(packet,layout.position,pose.position)&&write(packet,0x51,pose.onGround);
+        return write(packet,layout.position,pose.position)&&write(packet,0x51,pose.onGround)&&validMotionPacket(packet,layout);
     }
     std::array<std::uint64_t,2> flags{};std::uint64_t vehicle{};
     if(!read(packet,layout.flags,flags)||!read(packet,layout.vehicle,vehicle)||vehicle!=UINT64_MAX)return false;
@@ -438,7 +444,7 @@ bool anchorMotionPacket(void* packet,bool auth,const MovementAnchor& anchor) noe
        !write(packet,layout.analog,zero)||!write(packet,layout.move,zero)||
        !write(packet,layout.rawMove,zero)||!write(packet,layout.flags,flags))return false;
     if(interaction)interactionPackets.fetch_add(1);
-    return true;
+    return validMotionPacket(packet,layout);
 }
 
 int packetId(void* packet) noexcept {
@@ -472,9 +478,8 @@ void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* fram
 }
 void observePacketSender(void* instance) noexcept {
     if(stop.load())return;
-    void* sender{};void* table{};void* target{};
-    if(!read(instance,senderOffset,sender)||!sender||!read(sender,0,table)||
-       !read(table,sendSlot*sizeof(void*),target)||!inText(target))return;
+    void* sender{};void* target{};
+    if(!senderLayout.resolve(instance,sender,target)||!inText(target))return;
     if(packetReady.load() && sender!=observedSender.load()) {
         disable();packetReady.store(false);movementPacketsSeen.store(0);
     }
@@ -530,8 +535,9 @@ void restoreBorionBeforeBoundary() noexcept {
 void borionTick(const bedrock::LevelTickEvent&) {
     std::unique_lock guard(borionMutex,std::try_to_lock);if(!guard.owns_lock())return;
     observePacketSender(client.load());
-    const auto c=config.load();void* player=local.load();
+    const auto c=config.load();
     auto cameraScope=nativeCamera.tick(client.load(),bedrock::WorldEpoch{epoch.load()});
+    void* player=cameraScope ? nativeCamera.localActor() : nullptr;local.store(player);
     auto typeScope=gameTypes.tick(client.load(),bedrock::WorldEpoch{epoch.load()});
     if((c->spectatorMode||terrainLeaseActive.load())&&gameplay.load()&&player){
         if(const auto type=gameTypes.gameType())
@@ -548,6 +554,19 @@ void borionTick(const bedrock::LevelTickEvent&) {
         if(!restoreBorionLocked())note(ReadFailed);else restoreRequested.store(false);return;
     }
     if(!borion.saved)restoreRequested.store(false);
+    if(!stop.load()&&gameplay.load()) {
+        static Clock::time_point next{};
+        if(Clock::now()>=next) {
+            next=Clock::now()+std::chrono::seconds(5);
+            const auto sample=nativeCamera.readPlayerProxy();
+            if(sample)log(nlohmann::json({{"event","freecam-player-pose"},{"runtime_id",sample->runtimeId},
+                {"position",{sample->position.x,sample->position.y,sample->position.z}},
+                {"velocity",{sample->velocity.x,sample->velocity.y,sample->velocity.z}},
+                {"fall_distance",sample->fallDistance},{"sender_ready",packetReady.load()},
+                {"movement_packet_kinds",movementPacketsSeen.load()}}).dump());
+            else log("Freecam waiting: local Actor / StateVector / AABB / rotation / FallDistance snapshot unavailable");
+        }
+    }
     if(stop.load()||!desired.load()||!gameplay.load()||!c->enabled||!player)return;
     if(!packetReady.load()||!movementPacketsSeen.load()){note(Waiting);return;}
     const auto pose=nativeCamera.readPlayerProxy();int hurt{};
@@ -579,7 +598,7 @@ void borionTick(const bedrock::LevelTickEvent&) {
     if(nativeCamera.applyPlayerProxy(*cameraFrame,borion.runtime,bedrock::WorldEpoch{epoch.load()})!=bedrock::CameraChange::Applied) {
         disable(ReadFailed);restoreBorionLocked();return;
     }
-    if(c->playerHitboxes){Capture batch;batch.epoch=epoch.load();batch.origin=borion.position;
+    if(renderReady&&c->playerHitboxes){Capture batch;batch.epoch=epoch.load();batch.origin=borion.position;
         if(capturePlayers(player,&batch,c->captureRows)) {std::unique_lock lock(mailboxMutex,std::try_to_lock);
             if(lock.owns_lock()){mailbox=batch;mailboxReady=true;}}
     }
@@ -659,10 +678,9 @@ void prepareProfile(const std::string& profile){
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
-    senderOffset=number(b.at("client_packet_sender_offset"));sendSlot=number(b.at("sender_send_to_server_slot"));packetIdSlot=number(b.at("packet_id_slot"));
-    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||!((senderOffset==0x1d0&&sendSlot==4)||(senderOffset==0x1e0&&sendSlot==2&&j.at("target").at("sha256")=="988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a"))||packetIdSlot!=1)
+    senderLayout.load(j);packetIdSlot=number(b.at("packet_id_slot"));
+    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||packetIdSlot!=1)
         throw std::runtime_error("unsupported Borion native layout");
-    checkedFunction(b.at("packet_sender_getter"));
     const auto packetBase=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const auto& motion=j.at("native_packets").at("motion");
     if(motion.at("schema")!=1)throw std::runtime_error("unsupported packet motion schema");
@@ -673,7 +691,7 @@ void prepareProfile(const std::string& profile){
         void* getter{};
         if(!read(reinterpret_cast<void*>(layout.vtable),sizeof(void*),getter)||getter!=checkedFunction(data.at("get_id")))
             throw std::runtime_error("movement packet vtable mismatch");
-        checkedFunction(data.at("is_valid"));
+        layout.isValid=checkedFunction(data.at("is_valid"));
         if(auth){layout.delta=number(data.at("delta_offset"));layout.analog=number(data.at("analog_move_offset"));
             layout.move=number(data.at("move_offset"));layout.rawMove=number(data.at("raw_move_offset"));layout.flags=number(data.at("input_flags_offset"));
             if(layout.delta!=0x48||layout.analog!=0x5c||layout.move!=0x64||layout.rawMove!=0x80||layout.flags!=0x88||data.at("input_flags_size")!=16)
@@ -684,8 +702,9 @@ void prepareProfile(const std::string& profile){
 
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     moduleTextBegin=base+number(j.at("target").at("text_rva"));moduleTextEnd=moduleTextBegin+number(j.at("target").at("text_size"));
-    std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error)||!bedrock::parseNativeItemLayout(profile,items,error)||
-        !bedrock::parseWorldRenderProfile(profile,render,error))throw std::runtime_error(error);
+    std::string error;if(!bedrock::parseNativeActorLayout(profile,actors,error))
+        throw std::runtime_error(error);
+    renderReady=bedrock::parseWorldRenderProfile(profile,render,error);
 }
 std::filesystem::path directory(){
     PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents folder unavailable");
@@ -786,11 +805,13 @@ DWORD WINAPI start(void*){
         const auto path=dir/L"config.json";if(!std::filesystem::exists(path)){std::ofstream out(path);out<<freecam::configJson(freecam::Config{}).dump(2)<<'\n';}
         if(!loadConfig(path))throw std::runtime_error("initial config invalid");
         std::string error;bedrock::ProfileManager profiles;
-        const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::Camera,bedrock::Feature::Motion,bedrock::Feature::Items,
-            bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldRender,bedrock::Feature::WorldEvents};
+        const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::Camera,bedrock::Feature::Motion,
+            bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
-            try{prepareProfile(selected.json());return nativeCamera.load(selected,failure)&&gameTypes.load(selected,failure);}catch(const std::exception& e){failure=e.what();return false;}
+            try{prepareProfile(selected.json());if(!nativeCamera.load(selected,failure))return false;
+                std::string optional;if(!gameTypes.load(selected,optional))log("Freecam native game type observation unavailable: "+optional);
+                return true;}catch(const std::exception& e){failure=e.what();return false;}
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
@@ -799,12 +820,12 @@ DWORD WINAPI start(void*){
         log(BDS_HookRuntimeDiagnostic());
         if(!BDS_HookRuntimeSupports(BDS_HOOK_PACKET_SEND_TO_SERVER))
             throw std::runtime_error("active runtime lacks packet send capability; restart with Runtime 4.2 DLL");
-        void* localTarget=checkedFunction(f.at("local_player"));
         const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));std::array<void*,7> functions{};
-        for(unsigned i=0;i<7;++i){const auto& fn=render.functions[i];auto* target=reinterpret_cast<void*>(base+fn.rva);
+        try { if(renderReady) for(unsigned i=0;i<7;++i){const auto& fn=render.functions[i];auto* target=reinterpret_cast<void*>(base+fn.rva);
             if(i==0&&BDS_HookOwnsTarget(BDS_HOOK_RENDER_LEVEL,target)){functions[i]=target;continue;}
             functions[i]=checkedFunction({{"rva",fn.rva},{"entry_check",[&]{std::string s;const char* hex="0123456789abcdef";for(auto b:fn.guard){if(!s.empty())s+=' ';s+=hex[b>>4];s+=hex[b&15];}return s;}()}});
         }
+        } catch(const std::exception& e) { renderReady=false;log(std::string("Freecam native drawing unavailable: ")+e.what()); }
         begin=reinterpret_cast<BeginFn>(functions[1]);vertex=reinterpret_cast<VertexFn>(functions[2]);submit=reinterpret_cast<MeshFn>(functions[4]);
         nameCtor=reinterpret_cast<NameCtor>(functions[5]);materialCtor=reinterpret_cast<MaterialCtor>(functions[6]);materialGroup=reinterpret_cast<void*>(base+render.commonMaterialGroup);
         try {
@@ -813,6 +834,7 @@ DWORD WINAPI start(void*){
             log("SDK brightness API ready [owner-scoped gamma override]");
         } catch(const std::exception& e){log(std::string("Freecam full brightness unavailable: ")+e.what());}
         try {
+            if(!renderReady)throw std::runtime_error("exact-build renderer layout unavailable");
             const auto& culling=f.at("visual").at("terrain_culling");
             if(culling.at("schema")!=1||number(culling.at("spectator_mode"))!=spectatorCullerMode)throw std::runtime_error("unsupported terrain culler schema");
             setCuller=reinterpret_cast<SetCullerFn>(checkedFunction(culling.at("set_culler")));
@@ -828,6 +850,7 @@ DWORD WINAPI start(void*){
             log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game mode unchanged; visual revision9]");
         }catch(const std::exception& e){terrainReady.store(false);log(std::string("Freecam terrain culling unavailable: ")+e.what());}
         try{
+            if(!renderReady)throw std::runtime_error("exact-build renderer layout unavailable");
             void* target=checkedFunction(f.at("visual").at("camera_render_observe"));
             cameraRenderReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&cameraRenderDetour),reinterpret_cast<void**>(&originalCameraRender),&cameraRenderToken)!=0);
             log(cameraRenderReady.load()?"Freecam native ViewRenderData observer ready [read only; no overlay suppression]":"Freecam ViewRenderData observer unavailable: hook conflict");
@@ -854,7 +877,7 @@ DWORD WINAPI start(void*){
         }catch(const std::exception& e){log(std::string("Freecam RenderDragon InsideBlockEffect filter unavailable: ")+e.what());}
         log("Freecam legacy inside-cube bypass retired [revision7 did not resolve underground display]");
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
-        api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
+        api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){api.setWorldEventClient(e.clientInstance);client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){
             if(event.reason==bedrock::WorldChangeReason::Left || event.reason==bedrock::WorldChangeReason::JoinCancelled)
                 restoreBorionBeforeBoundary();
@@ -866,13 +889,13 @@ DWORD WINAPI start(void*){
         api.Event.Enum.LevelTick.then(borionTick);
         hooks=std::make_unique<bedrock::GameHooks>(api);
         if(!hooks->installInput(resolver,error)||!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
-        if(!BDS_HookDirectInstall(localTarget,reinterpret_cast<void*>(&localDetour),reinterpret_cast<void**>(&originalLocal),&localToken)||
-           !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,functions[0],renderSubscriber,nullptr,&renderToken))throw std::runtime_error("native hook conflict/install failure; restart Minecraft with matching runtime DLLs");
-        log("ready 1.26.52.3; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());status.store(2);worker(path);
+        if(renderReady && !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,functions[0],renderSubscriber,nullptr,&renderToken))
+            throw std::runtime_error("render hook conflict/install failure; restart Minecraft with matching runtime DLLs");
+        if(!renderReady)log("Freecam player hitboxes unavailable: exact-build native drawing definitions are pending; flight core remains enabled");
+        log("ready "+j.at("target").at("version").get<std::string>()+"; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle key (default M); compatible runtime");log(std::string("active runtime owner: ")+BDS_HookRuntimeVersion());status.store(2);worker(path);
     }catch(const std::exception& e){log(std::string("startup failed: ")+e.what());status.store(4);}
     disable();
     // Keep the render subscriber pinned: a later frame restores an owned culler.
-    // The local-Player direct detour is a lifetime-pinned pass-through after stop.
     // Do not tear down trampolines while a native thread may still enter them.
     // Keep pinned callbacks as no-ops/pass-through after stop, so the next
     // owned game tick can restore an outstanding proxy before movement resumes.

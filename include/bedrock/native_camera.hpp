@@ -28,6 +28,8 @@ public:
     }
     void reset() noexcept { context_.reset(); }
     Scope tick(void* client, WorldEpoch epoch) { return context_.tick(ready_ ? client : nullptr, epoch); }
+    // Borrowed only while the caller retains this adapter's owning tick Scope.
+    void* localActor() const { return context_.valid() ? context_.actor() : nullptr; }
     std::optional<CameraPlayerSnapshot> readPlayerProxy() const {
         if (!context_.valid()) return std::nullopt;
         native_motion::Snapshot state;

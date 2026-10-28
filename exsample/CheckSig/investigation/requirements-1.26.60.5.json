@@ -36,7 +36,7 @@
     },
     {
       "id": "freecam-layout-assertions",
-      "status": "needs-review-after-observation",
+      "status": "core-updated-runtime-check-required",
       "mods": [
         "Freecam"
       ],
@@ -161,6 +161,14 @@
       "label": "MinecraftCommandsからのCommandRequest送信経路"
     },
     {
+      "id": "freecam_boundaries",
+      "label": "Freecamの退出・ディメンション境界"
+    },
+    {
+      "id": "freecam_camera",
+      "label": "FreecamのLocalPlayer・ダメージ検知"
+    },
+    {
       "id": "message_commands",
       "label": "CommandRegistryのメッセージコマンド"
     }
@@ -226,15 +234,17 @@
         "input",
         "gameplay",
         "actors",
-        "items",
         "motion",
-        "camera",
-        "sender",
+        "freecam_camera",
+        "request_sender",
         "movement_packets",
+        "freecam_boundaries"
+      ],
+      "optional_groups": [
         "render",
+        "camera",
         "world_events"
       ],
-      "optional_groups": [],
       "manual_checks": [
         "カメラだけ移動・送信するプレイヤー位置を維持・無効化時に復帰・再接続後に復帰"
       ]
@@ -1226,36 +1236,24 @@
     },
     {
       "id": "/layouts/Camera/hurt_time_component_hash",
-      "group": "camera",
+      "group": "freecam_camera",
       "kind": "layout",
       "path": "/layouts/Camera/hurt_time_component_hash",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": "0xD7A3585C"
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+      "next_action": "Freecamの読取専用snapshotとダメージ値を確認。"
     },
     {
       "id": "/layouts/Camera/hurt_time_value_offset",
-      "group": "camera",
+      "group": "freecam_camera",
       "kind": "layout",
       "path": "/layouts/Camera/hurt_time_value_offset",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": 0
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/Camera/hurt_time_value_size",
-      "group": "camera",
+      "group": "freecam_camera",
       "kind": "layout",
       "path": "/layouts/Camera/hurt_time_value_size",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": 4
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+      "next_action": "Freecamの読取専用snapshotとダメージ値を確認。"
     },
     {
       "id": "/layouts/Camera/actor_type_offset",
@@ -1303,11 +1301,10 @@
     },
     {
       "id": "/layouts/Camera/local_player",
-      "group": "camera",
+      "group": "freecam_camera",
       "kind": "function",
       "path": "/layouts/Camera/local_player",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
-      "symbol": "ClientInstance::getLocalPlayer"
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
     },
     {
       "id": "/layouts/Camera/visual/game_type_component_hash",
@@ -2778,7 +2775,7 @@
     },
     {
       "id": "symbol:ClientInstance::onLevelExit",
-      "group": "world_events",
+      "group": "freecam_boundaries",
       "kind": "function",
       "symbol": "ClientInstance::onLevelExit",
       "path": "/symbols/ClientInstance::onLevelExit",
@@ -2786,7 +2783,7 @@
     },
     {
       "id": "symbol:ClientInstance::onDimensionChangedEvent",
-      "group": "world_events",
+      "group": "freecam_boundaries",
       "kind": "function",
       "symbol": "ClientInstance::onDimensionChangedEvent",
       "path": "/symbols/ClientInstance::onDimensionChangedEvent",

@@ -3,7 +3,7 @@
 現行版は **visual revision9** です。更新内容と確認ログは末尾のrevision9節を参照してください。
 
 SDKの通常のexample Modです。MSVC **Release**で`BedrockFreecam.dll`を作成します。
-対象はMinecraft **1.26.52.3**。新規の座標書き込み・送信経路は解析中の候補であり、実機動作は未確認です。
+対象はMinecraft **1.26.52.3 / 1.26.60.5**（バージョン別の配布DLL）。新規の座標書き込み・送信経路は解析中の候補であり、実機動作は未確認です。
 解析根拠は[freecam-native.md](../../docs/freecam-native.md)を参照してください。
 
 ```powershell
@@ -172,3 +172,23 @@ Minecraftを完全終了して差し替えてください。設定は引き続�
 Freecamの`spectator_mode`は従来どおり描画用で、GameTypeを変更しません。
 ガンマ要求はFreecam解除時・ワールド変更時に解除し、元のgetterの値へ戻します。
 [Camera / GameType / Brightness API](../../docs/camera-game-type-brightness.md)を参照してください。
+
+## 1.26.60.5の移植
+
+GitHub Windows CIで対象プロファイルを埋め込んだDLLを配布します。
+Fakeで実機確認したMinecraftCommands経由のPacketSender取得をSDKで共有しています。
+PlayerAuthInputPacket / MovePlayerPacketのvtableと検証関数は対象EXEの静的解析で更新しました。
+移動座標を書き換えたパケットは、MinecraftのisValidに通った場合だけ送信します。
+LocalPlayerは所有Tick内で取得し、追加のLocalPlayer直接Hookは設置しません。
+
+基本の飛行と、Actor枠・地下表示の追加処理は別々に初期化します。
+1.26.60.5のActor枠・地下表示用の描画定義は未完了で、利用不可の理由をログへ出します。
+ライフサイクルはonLevelExit / onDimensionChangedEventを使用します。
+onPlayerLoaded / onCancelJoinGameは未解決で、今回のプロファイルでは購読しません。
+
+実機での飛行・本体座標固定・解除復帰は確認待ちです。
+`Freecam.log` の `ready 1.26.60.5`、`Borion packet source ready`、
+`freecam-player-pose` と有効化・解除のログを確認してください。
+
+CheckSigの調査Hookが動いている場合は、調査用JSONをcommandsから退避してMinecraftを完全再起動してからFreecamを確認します。
+保存済みresultは残せます。CheckSig.dll自体は共通runtimeの提供元として利用できます。

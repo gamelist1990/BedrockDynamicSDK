@@ -73,6 +73,12 @@ def generate_catalog():
  group('request_sender','MinecraftCommandsからのCommandRequest送信経路')
  append_new(new['layouts']['PacketSender']['sender'],'/layouts/PacketSender/sender','request_sender')
  append_new(new['layouts']['CommandRequestPacket'],'/layouts/CommandRequestPacket','command_packets')
+ group('freecam_boundaries','Freecamの退出・ディメンション境界',symbols=['ClientInstance::onLevelExit','ClientInstance::onDimensionChangedEvent'])
+ group('freecam_camera','FreecamのLocalPlayer・ダメージ検知')
+ for key in ['local_player','hurt_time_component_hash','hurt_time_value_offset','hurt_time_value_size']:
+  append_new(new['layouts']['Camera'][key],'/layouts/Camera/'+key,'freecam_camera')
+  if key in ['hurt_time_component_hash','hurt_time_value_size']:
+   path='/layouts/Camera/'+key;requirements.append({'id':path,'group':'freecam_camera','kind':'layout','path':path,'next_action':'Freecamの読取専用snapshotとダメージ値を確認。'})
  group('message_commands','CommandRegistryのメッセージコマンド')
  append_new(new['layouts']['CommandRegistry']['message_forwarding'],'/layouts/CommandRegistry/message_forwarding','message_commands')
  requirements.append({'id':'/layouts/BlockSource/subchunk_scan/enabled','group':'subchunks','kind':'gate','path':'/layouts/BlockSource/subchunk_scan/enabled','expected':True,'next_action':'BlockStorage getterの実体・ABI・値を確認してから走査を有効化。現時点ではenabled=false。'})
@@ -81,7 +87,7 @@ def generate_catalog():
   'Zoom':['input','fov','gameplay'],
   'TabList':['input','fov','gameplay'],
   'HitBox':['actors','items','identity','render','gameplay','world_events'],
-  'Freecam':['input','gameplay','actors','items','motion','camera','sender','movement_packets','render','world_events'],
+  'Freecam':['input','gameplay','actors','motion','freecam_camera','request_sender','movement_packets','freecam_boundaries'],
   'BlockOutline':['gameplay','actors','items','world','subchunks','render','world_events'],
   'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
@@ -100,13 +106,13 @@ def generate_catalog():
   'GuiDemo':['DX11/DX12の描画・入力・フォント・リサイズ・フルスクリーン切替'],
   'ScanClient':['EXE識別・read-onlyスキャン・出力ファイルの完結'],
   'CheckSig':['JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新']}
- optional={'TabList':['actors','items','identity'],'ScanClient':[]}
+ optional={'Freecam':['render','camera','world_events'],'TabList':['actors','items','identity'],'ScanClient':[]}
  mods=[{'name':name,'required_groups':deps,'optional_groups':optional.get(name,[]),'manual_checks':checks[name]} for name,deps in required.items()]
  return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'implementation_work':[
  {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
  {'id':'placement-abi','status':'needs-review-after-observation','mods':['SpeedBuilder'],'action':'GameMode/HitResult/設置状態の新レイアウトと呼出規約を対応させ、設置・取消・インベントリ復帰を確認する。'},
  {'id':'world-render-abi','status':'needs-review-after-observation','mods':['Freecam','BlockOutline','HitBox'],'action':'LevelRenderer/Tessellator/Materialの新関数・状態保存復元・描画オフセットを対応させる。'},
- {'id':'freecam-layout-assertions','status':'needs-review-after-observation','mods':['Freecam'],'action':'移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。'},
+ {'id':'freecam-layout-assertions','status':'core-updated-runtime-check-required','mods':['Freecam'],'action':'移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。'},
  {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','BlockOutline','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
  {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
 

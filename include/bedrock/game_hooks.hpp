@@ -140,6 +140,7 @@ public:
             &onPlayerLoaded, &onLevelExit, &onDimensionChanged, &onJoinCancelled};
         std::array<std::uintptr_t, 4> addresses{};
         for (std::size_t i = 0; i != symbols.size(); ++i) {
+            if (!layout->events[i]) continue;
             const auto target = resolveSharedHook(resolver, symbols[i], points[i]);
             if (!target || !isUsableSharedHookResolution(*target)) {
                 error = std::string("world event target unavailable for this exact build: ") + symbols[i];
@@ -149,6 +150,7 @@ public:
         }
         worldLayout_ = *layout;
         for (std::size_t i = 0; i != points.size(); ++i) {
+            if (!layout->events[i]) continue;
             if (!BDS_HookSubscribe(points[i], reinterpret_cast<void*>(addresses[i]),
                                    callbacks[i], this, &tokens_[8 + i])) {
                 for (std::size_t j = 8; j != tokens_.size(); ++j)
@@ -161,7 +163,8 @@ public:
         return true;
     }
     [[nodiscard]] bool worldEventsActive() const noexcept {
-        return tokens_[8] && tokens_[9] && tokens_[10] && tokens_[11];
+        for (std::size_t i=0;i<4;++i) if(worldLayout_.events[i] && !tokens_[8+i]) return false;
+        return tokens_[9] && tokens_[10];
     }
 
     bool installNativeKeyboard(const Resolver& resolver, std::string_view profile,
