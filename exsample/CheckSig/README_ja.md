@@ -60,6 +60,56 @@ predicateの呼び出し経路、game typeの引数意味はゲーム内で未�
 GitHub Actions の `All mod DLLs` workflow がWindows x64/MSVCで全Mod DLLをビルドします。
 CheckSigは `CheckSig-windows-x64` artifact、他のModも各 `*-windows-x64` artifactとして保存します。
 
+### DLLを取得する
+
+`Get-CheckSig.ps1` はGitHub Actionsの最新成功artifactからCheckSig x64 DLLを取得する方法と、
+手元にあるDLL/ZIP/フォルダーを指定する方法に対応しています。デフォルトの保存先は
+`Documents/PEXData/CheckSig/bin/CheckSig.dll` です。実際にMod loaderへ登録する場合は、
+`-Destination` にloaderが使うパスを渡してください。既存ファイルは `-Force` を付けた場合だけ置き換えます。
+
+リポジトリをclone済みなら、リポジトリのルートからGitHubの最新成功artifactを取得:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 -Source GitHub
+```
+
+cloneせずに使う場合は、GitHubから取得スクリプトを保存して実行できます:
+
+```powershell
+$scriptPath = Join-Path $env:TEMP "Get-CheckSig.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/gamelist1990/BedrockDynamicSDK/main/exsample/CheckSig/Get-CheckSig.ps1" -OutFile $scriptPath
+powershell -ExecutionPolicy Bypass -File $scriptPath -Source GitHub
+```
+
+ローカルのDLL、CI artifact ZIP、またはそれらを含むフォルダーを使う:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
+  -Source Local `
+  -LocalPath "C:\Downloads\CheckSig.dll" `
+  -Destination "C:\MyModLoader\mods\CheckSig.dll"
+```
+
+CI artifact ZIPを直接指定する場合も同じです:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
+  -Source Local `
+  -LocalPath "C:\Downloads\CheckSig-windows-x64.zip"
+```
+
+GitHub取得をloaderの配置先に直接出す場合:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
+  -Source GitHub `
+  -Destination "C:\MyModLoader\mods\CheckSig.dll" `
+  -Force
+```
+
+取得前にPEヘッダーがx64であることを確認し、SHA-256を表示します。GitHub取得は
+公開リポジトリの `All mod DLLs` workflowを使い、artifactが期限切れの場合は前の成功実行も探します。
+
 ## コマンド入力
 
 `Documents/PEXData/CheckSig/commands/` にコマンドを1行書いた `.txt` ファイルを置きます。
