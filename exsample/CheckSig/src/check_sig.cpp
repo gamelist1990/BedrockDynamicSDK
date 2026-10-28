@@ -848,54 +848,55 @@ private:
         } catch (...) {
             return false;
         }
-        std::string profileAbi;
-        try {
-            const auto& camera = targetProfile_.at("native_camera");
-            switch (spec->adapter) {
-            case HookAdapter::CameraUpdateArguments:
-                profileAbi = camera.at("update_player").value("abi", std::string{}); break;
-            case HookAdapter::GammaReturn:
-                profileAbi = camera.at("visual").value("gamma_abi", std::string{}); break;
-            case HookAdapter::DragonEffectPredicate:
-                profileAbi = camera.at("visual").at("render_dragon_inside_effect")
-                    .at("predicate").value("abi", std::string{}); break;
-            case HookAdapter::PlayerGameType:
-                profileAbi = camera.at("visual").at("set_player_game_type")
-                    .value("abi", std::string{}); break;
-            case HookAdapter::ClientCommandRegisterArgs:
-                profileAbi = targetProfile_.contains("native_client_commands")
-                    ? targetProfile_.at("native_client_commands").at("register_command")
-                        .value("abi", std::string{})
-                    : "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)";
-                break;
-            case HookAdapter::ClientCommandFindResult:
-                profileAbi = targetProfile_.contains("native_client_commands")
-                    ? targetProfile_.at("native_client_commands").at("find_command")
-                        .value("abi", std::string{})
-                    : "Signature* __fastcall(CommandRegistry*, std::string const*)";
-                break;
-            case HookAdapter::GuiDisplayMessageArgs:
-                profileAbi = targetProfile_.contains("native_gui")
-                    ? targetProfile_.at("native_gui").at("display_message")
-                        .value("abi", std::string{})
-                    : "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
-                break;
-            case HookAdapter::WorldRegionReturn:
-                profileAbi = targetProfile_.at("native_world").at("get_region")
-                    .value("abi", std::string{}); break;
-            case HookAdapter::WorldBlockReturn:
-                profileAbi = targetProfile_.at("native_world").at("get_block")
-                    .value("abi", std::string{}); break;
-            case HookAdapter::WorldChunkReturn:
-                profileAbi = targetProfile_.at("native_world").at("get_chunk")
-                    .value("abi", std::string{}); break;
-            default: break;
+        auto abi = symbolEntry.value("abi", std::string{});
+        if (abi.empty()) abi = symbolEntry.value("source_abi", std::string{});
+        if (abi.empty()) {
+            try {
+                const auto camera = targetProfile_.value("native_camera", json::object());
+                switch (spec->adapter) {
+                case HookAdapter::CameraUpdateArguments:
+                    abi = camera.at("update_player").value("abi", std::string{}); break;
+                case HookAdapter::GammaReturn:
+                    abi = camera.at("visual").value("gamma_abi", std::string{}); break;
+                case HookAdapter::DragonEffectPredicate:
+                    abi = camera.at("visual").at("render_dragon_inside_effect")
+                        .at("predicate").value("abi", std::string{}); break;
+                case HookAdapter::PlayerGameType:
+                    abi = camera.at("visual").at("set_player_game_type")
+                        .value("abi", std::string{}); break;
+                case HookAdapter::ClientCommandRegisterArgs:
+                    abi = targetProfile_.contains("native_client_commands")
+                        ? targetProfile_.at("native_client_commands").at("register_command")
+                            .value("abi", std::string{})
+                        : "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)";
+                    break;
+                case HookAdapter::ClientCommandFindResult:
+                    abi = targetProfile_.contains("native_client_commands")
+                        ? targetProfile_.at("native_client_commands").at("find_command")
+                            .value("abi", std::string{})
+                        : "Signature* __fastcall(CommandRegistry*, std::string const*)";
+                    break;
+                case HookAdapter::GuiDisplayMessageArgs:
+                    abi = targetProfile_.contains("native_gui")
+                        ? targetProfile_.at("native_gui").at("display_message")
+                            .value("abi", std::string{})
+                        : "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)";
+                    break;
+                case HookAdapter::WorldRegionReturn:
+                    abi = targetProfile_.at("native_world").at("get_region")
+                        .value("abi", std::string{}); break;
+                case HookAdapter::WorldBlockReturn:
+                    abi = targetProfile_.at("native_world").at("get_block")
+                        .value("abi", std::string{}); break;
+                case HookAdapter::WorldChunkReturn:
+                    abi = targetProfile_.at("native_world").at("get_chunk")
+                        .value("abi", std::string{}); break;
+                default: break;
+                }
+            } catch (...) {
+                return false;
             }
-        } catch (...) {
-            return false;
         }
-        const auto abi = symbolEntry.value("source_abi",
-            symbolEntry.value("abi", profileAbi));
         switch (spec->adapter) {
         case HookAdapter::LocalPlayerReturn:
             return std::string_view(spec->symbol) == "native_camera.local_player" &&
@@ -1948,6 +1949,12 @@ private:
                 {"note", "A signature hit does not verify semantics or ABI."}
             }}
         };
+        // Keep metadata from the already matched current-build definition only.
+        // Never copy old-build native layouts as if the port had verified them.
+        if (resolver_ && resolver_->exactBuild()) {
+            for (const auto& [name, value] : targetProfile_.items())
+                if (name.starts_with("native_")) output[name] = value;
+        }
         const auto path = output_ / L"candidate-profile.json";
         const auto serialized = output.dump(2) + "\n";
         atomicWrite(path, serialized);

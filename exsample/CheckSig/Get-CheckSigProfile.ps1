@@ -191,7 +191,11 @@ try {
     try {
         Copy-Item -LiteralPath $metadata.Path -Destination $stagingPath
         if (Test-Path -LiteralPath $destinationPath) {
-            [System.IO.File]::Replace($stagingPath, $destinationPath, $null)
+            # Windows PowerShell 5.1 binds $null to an empty backup path.
+            # Use a real temporary backup so replacement stays atomic there too.
+            $backupPath = $stagingPath + ".backup"
+            [System.IO.File]::Replace($stagingPath, $destinationPath, $backupPath)
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         } else {
             [System.IO.File]::Move($stagingPath, $destinationPath)
         }

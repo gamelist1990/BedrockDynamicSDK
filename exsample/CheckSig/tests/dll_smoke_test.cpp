@@ -73,6 +73,7 @@ int wmain(int argc, wchar_t** argv) {
             {"size_of_image", identity.imageSize}, {"text_rva", identity.textRva}, {"text_size", identity.textSize}}},
             {"symbols", {{"fixture", {{"rva", address-base}, {"signature", pattern.str()},
                 {"entry_check", pattern.str()}, {"status", "candidate"}, {"abi_verified", false}, {"runtime_verified", false}}}}}};
+        profile["native_smoke"] = {{"marker", "exact-current-build-metadata"}};
         const auto keyboardAddress = reinterpret_cast<std::uintptr_t>(&keyboardFixture);
         std::ostringstream keyboardPattern;
         const auto keyboardBytes = reinterpret_cast<const unsigned char*>(keyboardAddress);
@@ -129,7 +130,8 @@ int wmain(int argc, wchar_t** argv) {
             if (!generated.is_object() || !generated.contains("generation")) return false;
             const auto& support = generated["generation"]["port_support"];
             return support.contains("Keyboard::feed") &&
-                support["Keyboard::feed"].value("state", std::string{}) == "candidate";
+                support["Keyboard::feed"].value("state", std::string{}) == "candidate" &&
+                generated.value("native_smoke", json::object()).value("marker", std::string{}) == "exact-current-build-metadata";
         }, "source/port failed to find the fixture signature and generate a new definition");
         put(output / L"command" / L"hook.txt", "hook Keyboard::feed");
         waitFor([&] {
