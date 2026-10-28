@@ -30,7 +30,10 @@ try {
     Assert-Rejected { & $installer -Source Local -LocalPath $local -Version "0.0.0.0" -CommandsDirectory $destination } "Wrong requested version was accepted"
     $remote = Join-Path $temporary "from-github"
     & $installer -Source GitHub -Version "1.26.60.5" -CommandsDirectory $remote | Out-Null
-    Assert-True ((Get-FileHash (Join-Path $remote "1.26.60.5-windows-x64.json")).Hash -eq (Get-FileHash $local).Hash) "GitHub profile download differs from manifest/source"
+    # Git checkouts on Windows may use CRLF; the manifest hashes GitHub's raw bytes.
+    $manifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "data/manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $expectedRemoteHash = $manifest.versions.'1.26.60.5'.'windows-x64'.sha256
+    Assert-True ((Get-FileHash (Join-Path $remote "1.26.60.5-windows-x64.json")).Hash -eq $expectedRemoteHash) "GitHub profile download differs from manifest SHA-256"
     Write-Output "CheckSig profile installer tests passed (Local file/folder, GitHub, Force, invalid inputs)"
 }
 finally {

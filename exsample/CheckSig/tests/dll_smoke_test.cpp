@@ -163,11 +163,40 @@ int wmain(int argc, wchar_t** argv) {
                 if (hook.value("symbol", std::string{}) == "Keyboard::feed") return !hook.value("installed", true);
             return false;
         }, "unhook did not unsubscribe the observer");
+        const auto lockedPath = output / L"command" / L"locked.txt";
+        struct FileLock {
+            HANDLE handle = INVALID_HANDLE_VALUE;
+            ~FileLock() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+        } held;
+        held.handle = CreateFileW(lockedPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+            nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        require(held.handle != INVALID_HANDLE_VALUE, "could not create locked command fixture");
+        DWORD written = 0;
+        require(WriteFile(held.handle, "identity", 8, &written, nullptr) && written == 8, "locked command write failed");
+        FlushFileBuffers(held.handle);
+        waitFor([&] {
+            std::string events, error;
+            return readBounded(output / L"events.jsonl", events, 32*1024*1024, error) &&
+                events.find("could not consume command file") != std::string::npos;
+        }, "locked command was not deferred");
+        CloseHandle(held.handle); held.handle = INVALID_HANDLE_VALUE;
+        waitFor([&] {
+            std::string events, error;
+            return !fs::exists(lockedPath) &&
+                readBounded(output / L"events.jsonl", events, 32*1024*1024, error) &&
+                events.find("\"type\":\"identity\"") != std::string::npos;
+        }, "command was not retried after unlock");
         put(output / L"commands" / L"quit.txt", "quit");
         waitFor([&] {
             const auto status = readJson(output / L"status.json");
             return status.is_object() && status.value("state", std::string{}) == "stopped";
         }, "quit did not stop the DLL worker");
+        std::string finalEvents, readError;
+        require(readBounded(output / L"events.jsonl", finalEvents, 32*1024*1024, readError), "event history missing");
+        const std::string marker = "\"type\":\"identity\"";
+        const auto firstIdentity = finalEvents.find(marker);
+        require(firstIdentity != std::string::npos && finalEvents.find(marker, firstIdentity+1) == std::string::npos,
+            "locked command executed more than once");
         fs::remove_all(output);
         std::cout << "CheckSig DLL smoke test passed (JSON drop, diagnostics, invalid/mismatch recovery, commands, hook observation)\n";
         return 0;

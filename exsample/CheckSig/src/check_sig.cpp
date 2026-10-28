@@ -1996,15 +1996,17 @@ private:
                         {"status", "profile-read-error"}, {"error", file.error}, {"loaded", false}});
                     continue;
                 }
+                // Keep unreadable inputs so a later unlock/correction can recover.
+                if (!file.error.empty()) {
+                    writeEvent("command-error", {{"file", pathUtf8(file.path)}, {"message", file.error}});
+                    continue;
+                }
                 // Consume once. A failed delete must never execute a hook repeatedly.
                 std::error_code ec;
                 if (!fs::remove(file.path, ec) || ec) {
+                    inbox_.retry(file.path);
                     writeEvent("command-error", {{"file", pathUtf8(file.path)},
                         {"message", "could not consume command file; no commands executed"}});
-                    continue;
-                }
-                if (!file.error.empty()) {
-                    writeEvent("command-error", {{"file", pathUtf8(file.path)}, {"message", file.error}});
                     continue;
                 }
                 for (const auto& line : checksig::commandLines(file.text)) {
