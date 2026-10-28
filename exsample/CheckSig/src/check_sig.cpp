@@ -89,6 +89,7 @@ constexpr HookSpec kHookSpecs[] = {
     {"ClientInstance::onLevelExit", BDS_HOOK_CLIENT_LEVEL_EXIT},
     {"ClientInstance::onDimensionChangedEvent", BDS_HOOK_CLIENT_DIMENSION_CHANGED},
     {"ClientInstance::onCancelJoinGame", BDS_HOOK_CLIENT_JOIN_CANCELLED},
+    {"native_world_render.functions.render_level", BDS_HOOK_RENDER_LEVEL},
 };
 
 DWORD WINAPI worker(void*);
@@ -565,6 +566,44 @@ json contextFor(const PeImage& image, const Function& function,
     return result;
 }
 
+using PortDefinition = std::pair<std::string, json>;
+
+void collectNativeDefinitions(const json& node, const std::string& path,
+                              std::vector<PortDefinition>& output,
+                              std::size_t depth = 0) {
+    if (!node.is_object() || depth > 64 || output.size() >= kMaxSymbols) return;
+    const bool hasAnchors = node.contains("signature_anchors") &&
+        node["signature_anchors"].is_array() && !node["signature_anchors"].empty();
+    const bool hasSignature = !node.value("signature", std::string{}).empty();
+    const bool hasEntryCheck = !node.value("entry_check", std::string{}).empty();
+    if (!path.empty() && node.contains("rva") &&
+        (hasAnchors || hasSignature || hasEntryCheck)) {
+        output.emplace_back(path, node);
+        return;
+    }
+    for (auto it = node.begin(); it != node.end(); ++it) {
+        if (output.size() >= kMaxSymbols) return;
+        const auto childPath = path.empty() ? it.key() : path + "." + it.key();
+        collectNativeDefinitions(it.value(), childPath, output, depth + 1);
+    }
+}
+
+std::vector<PortDefinition> sourceDefinitions(const json& profile) {
+    std::vector<PortDefinition> definitions;
+    if (profile.contains("symbols") && profile["symbols"].is_object()) {
+        for (auto it = profile["symbols"].begin(); it != profile["symbols"].end(); ++it) {
+            if (it.value().is_object()) definitions.emplace_back(it.key(), it.value());
+            if (definitions.size() >= kMaxSymbols) return definitions;
+        }
+    }
+    for (auto it = profile.begin(); it != profile.end(); ++it) {
+        if (!it.key().starts_with("native_")) continue;
+        collectNativeDefinitions(it.value(), it.key(), definitions);
+        if (definitions.size() >= kMaxSymbols) break;
+    }
+    return definitions;
+}
+
 const HookSpec* hookSpec(std::string_view symbol) {
     const auto it = std::find_if(std::begin(kHookSpecs), std::end(kHookSpecs),
         [&](const HookSpec& spec) { return symbol == spec.symbol; });
@@ -856,8 +895,9 @@ private:
         if (!parsed.contains("symbols") || !parsed["symbols"].is_object() ||
             parsed["symbols"].size() > kMaxSymbols)
             throw std::runtime_error("source profile has no usable symbols object");
+        const auto definitions = sourceDefinitions(parsed);
         std::size_t anchorCount = 0;
-        for (const auto& [name, symbol] : parsed["symbols"].items()) {
+        for (const auto& [name, symbol] : definitions) {
             (void)name;
             if (!symbol.is_object()) continue;
             if (symbol.contains("signature_anchors") &&
@@ -869,6 +909,12 @@ private:
                  symbol["signature_anchors"].empty()) &&
                 !symbol.value("signature", std::string{}).empty()) {
                 ++anchorCount;
+            } else if ((!symbol.contains("signature_anchors") ||
+                        !symbol["signature_anchors"].is_array() ||
+                        symbol["signature_anchors"].empty()) &&
+                       symbol.value("signature", std::string{}).empty() &&
+                       !symbol.value("entry_check", std::string{}).empty()) {
+                ++anchorCount;
             }
             if (anchorCount > 1024)
                 throw std::runtime_error("source profile has over 1024 anchors; split it into smaller profiles");
@@ -878,7 +924,8 @@ private:
         writeEvent("source-loaded", {{"path", sourcePath_},
             {"version", sourceProfile_.value("target", json::object())
                 .value("version", std::string{})},
-            {"symbols", sourceProfile_["symbols"].size()}});
+            {"symbols", sourceProfile_["symbols"].size()},
+            {"portable_definitions", definitions.size()}});
     }
 
     std::vector<std::byte> copyText() const {
@@ -899,19 +946,19 @@ private:
         json symbols = json::object();
         json support = json::object();
         json warnings = json::array();
-        const auto totalSymbols = sourceProfile_["symbols"].size();
+        const auto definitions = sourceDefinitions(sourceProfile_);
+        if (definitions.empty())
+            throw std::runtime_error("source profile has no portable function definitions");
+        const auto totalSymbols = definitions.size();
         std::size_t processedSymbols = 0;
 
-        for (auto it = sourceProfile_["symbols"].begin();
-             it != sourceProfile_["symbols"].end(); ++it) {
+        for (const auto& [name, oldSymbol] : definitions) {
             ++processedSymbols;
             if (processedSymbols % 5 == 0 || processedSymbols == totalSymbols)
                 writeEvent("port-progress", {
                     {"symbols_done", processedSymbols}, {"symbols_total", totalSymbols},
                     {"candidates_found", symbols.size()}
                 });
-            const std::string name = it.key();
-            const json& oldSymbol = it.value();
             if (!oldSymbol.is_object()) {
                 warnings.push_back(name + ": source symbol entry is not an object");
                 continue;
@@ -925,6 +972,9 @@ private:
             }
             if (anchors.empty() && !oldSymbol.value("signature", std::string{}).empty())
                 anchors.push_back({{"pattern", oldSymbol["signature"]}, {"offset", 0}});
+            if (anchors.empty() && !oldSymbol.value("entry_check", std::string{}).empty())
+                anchors.push_back({{"pattern", oldSymbol["entry_check"]},
+                                   {"offset", 0}, {"kind", "source-entry-check"}});
             if (anchors.empty()) {
                 warnings.push_back(name + ": no source signature anchors");
                 continue;
@@ -1005,6 +1055,8 @@ private:
                 {"source_abi", oldSymbol.value("abi", std::string{})},
                 {"source_status", oldSymbol.value("status", std::string("candidate"))},
                 {"source_description", oldSymbol.value("source", std::string{})},
+                {"source_definition_path", name},
+                {"source_evidence", oldSymbol.value("evidence", json(nullptr))},
                 {"source_rva", oldSymbol.value("rva", json(nullptr))},
                 {"checksig_evidence", contextFor(*image_, *function, matched[functionRva])}
             };
