@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <bedrock/native_world_render.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/game_api.hpp>
@@ -26,7 +27,7 @@ public:
         if (!profile.supports({Feature::WorldRender}, error)) return false;
         if (!parseWorldRenderProfile(profile.json(), layout_, error)) return false;
         try {
-            const auto root = nlohmann::json::parse(profile.json());
+            const auto root = bedrock::parseNativeProfile(profile.json());
             const auto& functions = root.at("native_world_render").at("functions");
             const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
             target_ = reinterpret_cast<void*>(base + layout_.functions[0].rva);

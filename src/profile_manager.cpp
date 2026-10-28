@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #include <bedrock/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #ifdef _WIN32
@@ -35,11 +36,29 @@ FeaturePath path(Feature f){
 std::string_view featureName(Feature f)noexcept{
     switch(f){case Feature::Input:return "input hooks";case Feature::Gameplay:return "gameplay hooks";
     case Feature::LevelTick:return "level tick hook";case Feature::NameTags:return "name tag hook";case Feature::Fov:return "FOV hook";default:break;}
-    const auto p=path(f);return p.root?std::string_view{p.root}:std::string_view{"unknown feature"};
+    switch(f){
+    case Feature::Keyboard:return "GameCore::keyboardEvent";
+    case Feature::Actors:return "Actor";
+    case Feature::Items:return "ItemStack";
+    case Feature::PlayerIdentity:return "LocalPlayer";
+    case Feature::World:case Feature::WorldHeight:return "BlockSource";
+    case Feature::Motion:return "StateVectorComponent";
+    case Feature::Camera:case Feature::Brightness:return "Camera";
+    case Feature::GameType:return "Player::setPlayerGameType";
+    case Feature::PacketSender:return "PacketSender::sendToServer";
+    case Feature::MovementPackets:return "MovePlayerPacket";
+    case Feature::TitlePackets:return "SetTitlePacket";
+    case Feature::CommandPackets:return "CommandRequestPacket";
+    case Feature::ClientCommands:return "CommandRegistry";
+    case Feature::Gui:return "GuiData::displayClientMessage";
+    case Feature::WorldRender:return "LevelRenderer";
+    case Feature::WorldEvents:return "ClientInstance world events";
+    default:return "unknown feature";
+    }
 }
 bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::string& error)const{
     try{
-        const auto root=nlohmann::json::parse(json_);
+        const auto root=bedrock::parseNativeProfile(json_);
         auto expanded=requirements;
         for(const auto f:requirements.features()){
             if(f==Feature::World){expanded.require(Feature::Actors).require(Feature::Items);}
@@ -47,7 +66,7 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
         }
         for(const auto f:expanded.features()){
             const auto p=path(f);
-            if(!p.root||!root.contains(p.root)||!root.at(p.root).is_object()){error="missing profile capability: "+std::string(featureName(f));return false;}
+            if(!p.root||!root.contains(p.root)||!root.at(p.root).is_object()){error="missing Minecraft layout: "+std::string(featureName(f))+" (function entry verification does not establish object layout)";return false;}
             const auto& node=root.at(p.root);
 #ifdef _WIN32
             const auto hook=[&](const char* name,BDS_HookPoint point){
@@ -131,7 +150,7 @@ bool ProfileManager::prepare(const ProfileRequirements& requirements,const Profi
     }
     if(options.embeddedFallback){
         try{
-            const std::string embedded=generated::kSymbolDatabase;const auto root=nlohmann::json::parse(embedded);
+            const std::string embedded=generated::kSymbolDatabase;const auto root=bedrock::parseNativeProfile(embedded);
             ProfileChoice selected;selected.version=root.at("target").at("version").get<std::string>();selected.source=ProfileSource::Embedded;selected.path="embedded";
             if(validateDownloadedProfile(embedded,selected,identity,error)&&attempt(embedded,std::move(selected)))return true;
         }catch(const std::exception& e){error=e.what();}

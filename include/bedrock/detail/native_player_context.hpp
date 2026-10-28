@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <atomic>
@@ -23,7 +24,7 @@ public:
         if (!profile.supports({Feature::Actors}, error)) return false;
         try {
             if (!parseNativeActorLayout(profile.json(), bindings_.actors, error)) return false;
-            const auto root = nlohmann::json::parse(profile.json());
+            const auto root = bedrock::parseNativeProfile(profile.json());
             local_ = reinterpret_cast<LocalGetter>(native_profile::checked(root, root.at("native_camera").at("local_player")));
             ready_ = true; error.clear(); return true;
         } catch (const std::exception& e) { error = e.what(); return false; }

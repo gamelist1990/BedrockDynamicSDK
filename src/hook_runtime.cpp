@@ -62,7 +62,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 16> states{};
+std::array<State, 17> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -104,7 +104,7 @@ struct SharedApi {
 // stable for additive releases; runtime version and supported points are separate.
 constexpr DWORD kSharedAbiVersion = 4;
 constexpr DWORD kMinimumCompatibleAbi = 3;
-constexpr unsigned kBuildVersion = 0x00040400u; // major/minor/patch: 4.4.0
+constexpr unsigned kBuildVersion = 0x00040500u; // major/minor/patch: 4.5.0
 SharedApi* getSharedApi(bool discover = true);
 SharedApi* bootstrapPreferredRuntime();
 std::mutex diagnosticMutex;
@@ -153,7 +153,7 @@ void publishCapabilities(const SharedApi* owner) {
     capabilities->pid=GetCurrentProcessId();capabilities->abi=owner->abiVersion;
     capabilities->buildVersion=kBuildVersion;
     capabilities->ownerSubscribe=reinterpret_cast<std::uintptr_t>(owner->subscribe);
-    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST+1))-2;
+    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_COMMAND_OUTPUT_READ+1))-2;
     MemoryBarrier();InterlockedExchange(&capabilities->state,2);
 }
 const Capabilities* ownerCapabilities(const SharedApi* owner) {
@@ -414,6 +414,12 @@ uintptr_t BDS_HOOK_CALL nextMiddleware(void* opaque, void* args) {
 uintptr_t callOriginal(BDS_HookPoint point, void* args) {
     const auto original = stateFor(point).original;
     switch (point) {
+    case BDS_HOOK_COMMAND_OUTPUT_READ: {
+        auto& a = *static_cast<BDS_CommandOutputReadArgs*>(args);
+        using ReadFn = void*(__fastcall*)(void*, void*, void*, void*);
+        a.result = original ? reinterpret_cast<ReadFn>(original)(a.packet, a.output, a.stream, a.context) : a.output;
+        return reinterpret_cast<uintptr_t>(a.result);
+    }
     case BDS_HOOK_KEYBOARD_FEED: {
         auto& a = *static_cast<BDS_KeyboardArgs*>(args);
         a.result = original ? reinterpret_cast<KeyboardFn>(original)(a.key, a.down != 0) : 0;
@@ -563,8 +569,14 @@ void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
 void __fastcall packetSendDetour(void* sender,void* packet) {
     BDS_PacketSendArgs args{sender,packet};invoke(BDS_HOOK_PACKET_SEND_TO_SERVER,&args);
 }
+void* __fastcall commandOutputReadDetour(void* packet, void* output, void* stream, void* context) {
+    BDS_CommandOutputReadArgs args{packet, output, stream, context, output};
+    invoke(BDS_HOOK_COMMAND_OUTPUT_READ, &args);
+    return args.result;
+}
 void* detourFor(BDS_HookPoint point) {
     switch (point) {
+    case BDS_HOOK_COMMAND_OUTPUT_READ: return reinterpret_cast<void*>(&commandOutputReadDetour);
     case BDS_HOOK_PACKET_SEND_TO_SERVER: return reinterpret_cast<void*>(&packetSendDetour);
     case BDS_HOOK_RENDER_LEVEL: return reinterpret_cast<void*>(&renderLevelDetour);
     case BDS_HOOK_KEYBOARD_FEED: return reinterpret_cast<void*>(&keyboardDetour);
@@ -586,7 +598,7 @@ void* detourFor(BDS_HookPoint point) {
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_COMMAND_OUTPUT_READ;
 }
 } // namespace
 
@@ -650,7 +662,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_COMMAND_OUTPUT_READ; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -668,7 +680,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "4.4.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "4.5.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {

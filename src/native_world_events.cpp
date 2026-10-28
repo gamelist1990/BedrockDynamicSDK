@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #include <bedrock/native_world_events.hpp>
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -7,7 +8,7 @@ namespace bedrock {
 std::optional<NativeWorldEventsLayout> parseNativeWorldEventsLayout(
     std::string_view profile, std::string& error) {
     try {
-        const auto root = nlohmann::json::parse(profile);
+        const auto root = bedrock::parseNativeProfile(profile);
         const auto& value = root.at("native_world_events");
         if (value.at("schema") != 1 || value.at("pointer_size") != sizeof(void*))
             throw std::runtime_error("unsupported native world event layout");

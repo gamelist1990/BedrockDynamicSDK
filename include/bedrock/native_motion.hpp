@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #if !defined(_WIN32) || !defined(_MSC_VER)
 #error "Native actor motion requires Windows MSVC"
 #endif
@@ -20,7 +21,7 @@ struct Layout {
     std::size_t previous{},velocity{},fall{};
     std::uint32_t fallHash{};
     static Layout fromProfile(const std::string& profile){
-        const auto root=nlohmann::json::parse(profile);
+        const auto root=bedrock::parseNativeProfile(profile);
         const auto& parent=root.at("native_motion");
         if(parent.at("schema")!=1)throw std::runtime_error("unsupported actor motion schema");
         const auto& b=parent.at("state_vector");

@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #if !defined(_WIN32) || !defined(_MSC_VER) || !defined(_WIN64)
 #error "Native command registration requires Windows x64 MSVC"
 #endif
@@ -135,7 +136,7 @@ private:
         error="native commands require MSVC Release STL ABI";return false;
 #endif
         try{
-            const auto j=nlohmann::json::parse(profile);const auto& c=j.at("native_client_commands");
+            const auto j=bedrock::parseNativeProfile(profile);const auto& c=j.at("native_client_commands");
             if(c.at("schema")!=1)throw std::runtime_error("unsupported native command schema");
             base_=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin_=base_+number(j.at("target").at("text_rva"));textEnd_=textBegin_+number(j.at("target").at("text_size"));
             const auto& layout=c.at("layout");

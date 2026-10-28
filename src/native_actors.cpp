@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #include <bedrock/native_actors.hpp>
 
 #include <nlohmann/json.hpp>
@@ -37,7 +38,7 @@ bool NativeActorLayout::valid() const noexcept {
 bool parseNativeActorLayout(std::string_view source, NativeActorLayout& output,
                             std::string& error) {
     try {
-        const auto root = nlohmann::json::parse(source.begin(), source.end());
+        const auto root = bedrock::parseNativeProfile(source);
         const auto& data = root.at("native_actors");
         if (data.at("schema").get<unsigned>() != 1 ||
             data.at("pointer_size").get<unsigned>() != sizeof(void*))

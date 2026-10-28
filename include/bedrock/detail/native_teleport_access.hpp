@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 // Guarded owner-tick adapter used by NativeSafeTeleport. No placement or inventory writes.
 #include <bedrock/native_world.hpp>
 #include <bedrock/native_motion.hpp>
@@ -12,7 +13,7 @@ struct Bindings : n::Bindings {
     void* messageFn{};std::size_t guiOffset{};
     void loadTeleport(const std::string& profile){
         loadWorld(profile);
-        const auto j=nlohmann::json::parse(profile);const auto& t=j.at("native_gui");const auto& heights=j.at("native_world").at("height_limits");
+        const auto j=bedrock::parseNativeProfile(profile);const auto& t=j.at("native_gui");const auto& heights=j.at("native_world").at("height_limits");
         const auto motion=bedrock::native_motion::Layout::fromProfile(profile);
         previousOffset=motion.previous;velocityOffset=motion.velocity;fallHash=motion.fallHash;fallOffset=motion.fall;
         minHeightOffset=n::number(heights.at("min_height_offset"));maxHeightOffset=n::number(heights.at("max_height_offset"));

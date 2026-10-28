@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <bedrock/game_type.hpp>
 #include <bedrock/detail/native_player_context.hpp>
 
@@ -12,7 +13,7 @@ public:
         ready_ = false;
         if (!profile.supports({Feature::GameType}, error)) return false;
         try {
-            const auto root = nlohmann::json::parse(profile.json());
+            const auto root = bedrock::parseNativeProfile(profile.json());
             const auto& visual = root.at("native_camera").at("visual");
             typeHash_ = native_profile::number(visual.at("game_type_component_hash"));
             typeOffset_ = native_profile::number(visual.at("game_type_value_offset"));

@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <bedrock/native_client_commands.hpp>
 #include <bedrock/command_queue.hpp>
 #include <bedrock/hook_runtime.h>
@@ -32,7 +33,7 @@ public:
         loaded_ = false;
         if (!profile.supports({Feature::ClientCommands, Feature::CommandPackets, Feature::PacketSender}, error)) return false;
         try {
-            const auto root = nlohmann::json::parse(profile.json());
+            const auto root = bedrock::parseNativeProfile(profile.json());
             base_ = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
             textBegin_ = base_ + number(root.at("target").at("text_rva"));
             textEnd_ = textBegin_ + number(root.at("target").at("text_size"));

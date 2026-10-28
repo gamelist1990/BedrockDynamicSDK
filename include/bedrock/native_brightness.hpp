@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <bedrock/brightness.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/hook_runtime.h>
@@ -23,7 +24,7 @@ public:
         try {
             auto& state = shared();
             std::lock_guard lock(state.mutex);
-            const auto root = nlohmann::json::parse(profile.json());
+            const auto root = bedrock::parseNativeProfile(profile.json());
             const auto& gamma = root.at("native_camera").at("visual").at("gamma");
             auto* target = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) + native_profile::number(gamma.at("rva")));
             if (state.token && state.target != target)

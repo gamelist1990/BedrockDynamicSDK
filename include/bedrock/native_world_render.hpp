@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/profile_json.hpp>
 #include <nlohmann/json.hpp>
 #include <array>
 #include <cstdint>
@@ -14,7 +15,7 @@ struct WorldRenderProfile {
 };
 inline bool parseWorldRenderProfile(std::string_view source, WorldRenderProfile& out, std::string& error) {
     try {
-        const auto root = nlohmann::json::parse(source);
+        const auto root = bedrock::parseNativeProfile(source);
         const auto& data = root.at("native_world_render");
         if (data.at("schema") != 1 || data.at("pointer_size") != 8)
             throw std::runtime_error("unsupported schema/pointer size");

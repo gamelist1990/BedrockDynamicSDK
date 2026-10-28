@@ -712,6 +712,87 @@ private:
     std::map<std::string, std::unique_ptr<HookState>> hooks_;
     checksig::Inbox inbox_;
     bool rescanProfiles_ = false;
+    std::map<std::string, json> jobResults_;
+    std::map<std::string, std::string> hookJobs_;
+    std::string currentJob_;
+
+    fs::path resultPath(const std::string& source) const {
+        const auto input = fromUtf8(source);
+        // Keep command/ and commands/ jobs distinct, even with equal filenames.
+        const auto folder = input.parent_path() == command_ ? L"command" : L"commands";
+        return output_ / L"result" / folder / (input.stem().wstring() + L".result.json");
+    }
+    void saveJob(const std::string& source) {
+        const auto path = resultPath(source);
+        fs::create_directories(path.parent_path());
+        atomicWrite(path, jobResults_.at(source).dump(2) + "\n");
+    }
+    void processJson(const checksig::InputFile& file) {
+        const auto source = pathUtf8(file.path);
+        currentJob_ = source;
+        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"arch", "x64"},
+            {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
+            {"status", "running"}, {"events", json::array()}};
+        try {
+            if (!file.error.empty()) throw std::runtime_error(file.error);
+            const auto document = json::parse(file.text);
+            if (document.value("kind", std::string{}) != "checksig-job") {
+                detectProfileText(file.text, source, "folder-json");
+                jobResults_[source]["detection"] = lastProfileDetection_;
+                if (!lastProfileDetection_.value("loaded", false))
+                    throw std::runtime_error(lastProfileDetection_.value("error",
+                        std::string("profile does not match the loaded executable")));
+            } else {
+                if (document.value("schema", 0) != 1 || document.value("arch", std::string{}) != "x64")
+                    throw std::runtime_error("checksig-job requires schema=1 and arch=x64");
+                const auto resolveInput = [&](const std::string& name) {
+                    auto path = fromUtf8(name);
+                    return path.is_relative() ? file.path.parent_path() / path : path;
+                };
+                if (document.contains("profile")) {
+                    detectProfileFile(resolveInput(document.at("profile").get<std::string>()), "job-profile");
+                    if (!lastProfileDetection_.value("loaded", false))
+                        throw std::runtime_error("job profile could not be loaded; see detect-result");
+                }
+                if (document.contains("source"))
+                    loadSource(pathUtf8(resolveInput(document.at("source").get<std::string>())));
+                const auto& actions = document.at("actions");
+                if (!actions.is_array() || actions.empty() || actions.size() > 128)
+                    throw std::runtime_error("actions must contain 1..128 objects");
+                // Validate the whole job before applying any hook actions.
+                std::vector<std::string> lines;
+                for (const auto& action : actions) {
+                    const auto op = action.at("op").get<std::string>();
+                    std::string line = op;
+                    if (op == "probe" || op == "hook" || op == "unhook") {
+                        const auto symbol = action.at("symbol").get<std::string>();
+                        if (symbol.empty() || symbol.find_first_of(" \t\r\n") != std::string::npos)
+                            throw std::runtime_error("invalid symbol name");
+                        line += " " + symbol;
+                    } else if (op == "scan") line += " " + action.at("pattern").get<std::string>();
+                    else if (op == "read") line += " " + action.at("address").get<std::string>() + " " + action.at("type").get<std::string>();
+                    else if (op != "identity" && op != "detect" && op != "list" && op != "port")
+                        throw std::runtime_error("unsupported job operation: " + op);
+                    if (line.size() > 2048 || line.find_first_of("\r\n") != std::string::npos)
+                        throw std::runtime_error("invalid action arguments");
+                    lines.push_back(std::move(line));
+                }
+                for (std::size_t i = 0; i < lines.size(); ++i) {
+                    execute(lines[i]);
+                    const auto& action = actions.at(i);
+                    if (action.at("op") == "hook") hookJobs_[action.at("symbol").get<std::string>()] = source;
+                    if (action.at("op") == "unhook") hookJobs_.erase(action.at("symbol").get<std::string>());
+                }
+            }
+            jobResults_[source]["status"] = "complete";
+        } catch (const std::exception& e) {
+            jobResults_[source]["status"] = "error";
+            jobResults_[source]["error"] = e.what();
+        }
+        currentJob_.clear();
+        jobResults_[source]["updated_utc"] = timestampUtc();
+        saveJob(source);
+    }
     std::map<std::string, json> profileDetections_;
     json lastProfileDetection_ = json::object();
     bool detectionReportsDirty_ = true;
@@ -783,6 +864,19 @@ private:
         std::ofstream out(output_ / L"events.jsonl", std::ios::binary | std::ios::app);
         out << data.dump() << '\n';
         if (!out) throw std::runtime_error("could not append events.jsonl");
+        std::string job = currentJob_;
+        if (job.empty() && data.contains("symbol")) {
+            const auto owner = hookJobs_.find(data.at("symbol").get<std::string>());
+            if (owner != hookJobs_.end()) job = owner->second;
+        }
+        if (!job.empty() && jobResults_.contains(job)) {
+            auto& report = jobResults_.at(job);
+            auto& events = report["events"];
+            if (events.size() >= 128) { events.erase(events.begin()); report["older_events_in_events_jsonl"] = true; }
+            events.push_back(data);
+            report["updated_utc"] = data["time_utc"];
+            if (currentJob_.empty()) saveJob(job);
+        }
     }
 
     void writeStatus(std::string_view state, std::string_view error = {}) {
@@ -2004,9 +2098,7 @@ private:
             if (stopping_.load()) break;
             try {
                 if (file.profile) {
-                    if (file.error.empty()) detectProfileText(file.text, pathUtf8(file.path), "folder-json");
-                    else recordDetection({{"trigger", "folder-json"}, {"profile_path", pathUtf8(file.path)},
-                        {"status", "profile-read-error"}, {"error", file.error}, {"loaded", false}});
+                    processJson(file);
                     continue;
                 }
                 // Keep unreadable inputs so a later unlock/correction can recover.

@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #include <bedrock/native_keyboard.hpp>
 #include <nlohmann/json.hpp>
 #include <cstring>
@@ -14,7 +15,7 @@ template<class T> T readAt(const void* base, std::size_t offset) {
 std::optional<NativeKeyboardLayout> parseNativeKeyboardLayout(
     std::string_view profile, std::string& error) {
     try {
-        const auto root = nlohmann::json::parse(profile);
+        const auto root = bedrock::parseNativeProfile(profile);
         const auto& value = root.at("native_keyboard");
         if (value.at("schema") != 1 || value.at("pointer_size") != sizeof(void*) ||
             value.at("callback_symbol") != "GameCore::keyboardEvent")

@@ -37,7 +37,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_CLIENT_JOIN_CANCELLED = 12,
     BDS_HOOK_RENDER_LEVEL = 13,
     BDS_HOOK_PACKET_SEND_TO_SERVER = 14,
-    BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST = 15
+    BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST = 15,
+    BDS_HOOK_COMMAND_OUTPUT_READ = 16
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -50,6 +51,10 @@ typedef struct BDS_MouseArgs {
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
 typedef struct BDS_PacketSendArgs { void* sender; void* packet; } BDS_PacketSendArgs;
+// CommandOutputPacket slot 16: hidden Result<void>* return, stream, context.
+typedef struct BDS_CommandOutputReadArgs {
+    void* packet; void* output; void* stream; void* context; void* result;
+} BDS_CommandOutputReadArgs;
 typedef struct BDS_RenderLevelArgs { void* renderer; void* screen; void* context; } BDS_RenderLevelArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
 // output points to the MSVC x64 std::vector<Actor*> hidden return buffer.

@@ -1,4 +1,10 @@
-# CheckSig
+# CheckSig.dll
+
+**使い方の入口：** `Documents/PEXData/CheckSig/commands/` にWindows x64のJSONを置きます。
+プロファイルJSONは自動detectされ、入力別の `result/commands/<入力名>.result.json` に出力します。
+調査操作を指定するJSONと旧定義からの探索は [調査JSONの書き方](../../docs/checksig-jobs.md) を参照してください。
+`command/` も互換対応し、その結果は `result/command/` に分かれます。
+
 
 Minecraft Bedrock Windows x64向けの診断DLLです。**x64プロファイルJSONを `command` フォルダーに置くと、自動で読み取り、`detect` フォルダーへ結果を出します。** JSON投入だけでHookが設置されることはありません。
 
