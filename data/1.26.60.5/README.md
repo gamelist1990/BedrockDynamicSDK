@@ -1,8 +1,9 @@
 # 1.26.60.5 Windows x64 — 調査中
 
-`windows-x64.candidate.json` は静的解析の途中結果です。SDKの実行時プロファイル
-`windows-x64.json` ではありません。自動フック対象として使わないでください。
-このため `data/manifest.json` にはまだ掲載していません。
+`windows-x64.json` はEXE識別情報と解析途中の候補を収録した定義です。
+`symbols` は空で、候補は `analysis` に保持しています。マニフェストには
+EXE識別用に登録していますが、Modが動作するためのシンボルやnativeレイアウトは未完成です。
+`windows-x64.candidate.json` は調査の原本で、自動フック対象として使わないでください。
 
 - 元のパッケージ表記: `1.26.6005.0`
 - EXE VERSIONINFOのFileVersion/ProductVersion: `1.26.60.5`
