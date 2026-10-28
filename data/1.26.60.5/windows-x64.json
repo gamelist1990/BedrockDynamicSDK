@@ -2939,5 +2939,163 @@
       "evidence_id": "ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f",
       "evidence": "Exact 1.26.60.5 EXE static Ghidra candidate at RVA 0xB94CA0 reads the registry pointer and 32-bit entity id at Actor+0x10/+0x18, then resolves ActorTypeComponent 0x4F6BA419 and compares its 32-bit value at +0 with 319. Treating the function argument as Actor* and its relation to Level::getRuntimeActorList entries are static inferences; runtime behavior is unverified."
     }
+  },
+  "native_actors": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "actor_context": {
+      "actor_offset": "0x0",
+      "registry_offset": "0x10",
+      "entity_id_offset": "0x18",
+      "status": "candidate",
+      "evidence": "1.26.60.5 exact-build static candidate: function RVA 0xB94CA0 reads [RCX+0x10] and [RCX+0x18] while resolving ActorTypeComponent. Interpreting RCX as Actor* and the values as registry/entity id is inferred; relation to Level::getRuntimeActorList elements is unverified."
+    },
+    "actor_owner": {
+      "component_hash": "0x85B93800",
+      "component_hash_alternate": "0x0",
+      "actor_pointer_offset": "0x0"
+    },
+    "actor_type": {
+      "component_hash": "0x4F6BA419",
+      "value_offset": "0x0",
+      "value_size": 4,
+      "player_type_id": 319,
+      "evidence": "1.26.60.5 exact-build Ghidra/objdump evidence: RVA 0xB94CA0 resolves hash 0x4F6BA419, reads a 32-bit value at component offset 0, and compares it with 319. Component owner identity remains a candidate; no runtime validation."
+    },
+    "actor_unique_id": {
+      "component_hash": "0x18F957AF",
+      "value_offset": "0x0",
+      "value_size": 8
+    },
+    "runtime_id": {
+      "component_hash": "0xFC0DBBB5",
+      "value_offset": "0x0",
+      "value_size": 8
+    },
+    "aabb_shape": {
+      "component_hash": "0xBAC1B3CF",
+      "component_hash_alternate": "0x0",
+      "minimum_offset": "0x0",
+      "maximum_offset": "0xC"
+    },
+    "state_vector": {
+      "component_hash": "0x1B5D5238",
+      "component_hash_alternate": "0x0",
+      "position_offset": "0x0"
+    },
+    "actor_rotation": {
+      "component_hash": "0x75DF36B7",
+      "component_hash_alternate": "0x0",
+      "pitch_offset": "0x0",
+      "yaw_offset": "0x4"
+    },
+    "evidence": "Candidate layout for exact 1.26.60.5 executable. Static code at RVA 0x3A11540 references RuntimeID 0xFC0DBBB5, UniqueID 0x18F957AF, ActorType 0x4F6BA419, StateVector 0x1B5D5238, AABB 0xBAC1B3CF, and Rotation 0x75DF36B7. Actor context candidate function at RVA 0xB94CA0 reads argument offsets +0x10/+0x18; Actor* interpretation and actor-list element identity are inferred. All remaining component storage/value offsets are carried forward from 1.26.52.3 and remain unverified. runtime_verified=false.",
+    "runtime_verified": false,
+    "component_hash_observations": [
+      {
+        "component": "ActorOwner",
+        "hash": "0x85B93800",
+        "target_text_occurrences": 1674,
+        "evidence": "Exact-build .text byte scan; occurrence alone does not establish component layout."
+      },
+      {
+        "component": "ActorType",
+        "hash": "0x4F6BA419",
+        "target_text_occurrences": 73,
+        "evidence": "Also referenced by candidate function RVA 0xB94CA0."
+      },
+      {
+        "component": "UniqueID",
+        "hash": "0x18F957AF",
+        "target_text_occurrences": 84
+      },
+      {
+        "component": "RuntimeID",
+        "hash": "0xFC0DBBB5",
+        "target_text_occurrences": 35
+      },
+      {
+        "component": "AABB",
+        "hash": "0xBAC1B3CF",
+        "target_text_occurrences": 207
+      },
+      {
+        "component": "StateVector",
+        "hash": "0x1B5D5238",
+        "target_text_occurrences": 527
+      },
+      {
+        "component": "Rotation",
+        "hash": "0x75DF36B7",
+        "target_text_occurrences": 181
+      }
+    ]
+  },
+  "native_items": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "actor_context": {
+      "actor_offset": "0x0",
+      "entt_registry_offset": "0x10",
+      "entity_id_offset": "0x18",
+      "status": "candidate",
+      "evidence": "Absolute offsets follow the exact-build Actor context candidate reads at +0x10/+0x18; interpreting them as registry/entity id on Actor* remains inferred."
+    },
+    "equipment": {
+      "component_hash": "0xB06141A9",
+      "hand_container_offset": "0x0",
+      "armor_container_offset": "0x8",
+      "slots": {
+        "main_hand": 0,
+        "offhand": 1,
+        "head": 0,
+        "chest": 1,
+        "legs": 2,
+        "feet": 3
+      },
+      "evidence": "Equipment component hash 0xB06141A9 occurs 16 times in the exact-build .text. Container offsets and slot mapping are carried from 1.26.52.3; runtime layout is unverified."
+    },
+    "inventory": {
+      "get_item_vtable_slot": 7,
+      "local_slot_count": 36,
+      "hotbar_slot_count": 9
+    },
+    "local_player": {
+      "get_local_player_vtable_slot": 34,
+      "supplies_offset": "0x5B8",
+      "selected_slot_offset": "0x10",
+      "inventory_offset": "0xB8",
+      "evidence": "Candidate slot 34 from exact-build ClientInstance table analysis (table RVA 0xF2B9310, getter RVA 0x659E470); returned pointer identity and lifetime are unverified. Other supplies/inventory offsets are carried from 1.26.52.3."
+    },
+    "item_stack": {
+      "item_reference_offset": "0x8",
+      "count_offset": "0x22",
+      "namespaced_id_string_offset": "0x128",
+      "translation_key_string_offset": "0xB0",
+      "string_size_offset": "0x10",
+      "string_capacity_offset": "0x18",
+      "max_string_bytes": 256,
+      "hover_name_abi_verified": false,
+      "evidence": "ItemStack fields and string layout are carried forward from 1.26.52.3 and remain candidate-only; hover-name ABI is unverified."
+    },
+    "evidence": "Candidate layout for exact 1.26.60.5 executable. New-build evidence: Equipment hash byte pattern appears 16 times in .text; ClientInstance local-player getter candidate is table slot 34 / RVA 0x659E470. Actor context absolute offsets are supported only by candidate static reads. Remaining inventory, supplies, equipment, slot, and ItemStack offsets are carried forward from 1.26.52.3. runtime_verified=false.",
+    "runtime_verified": false
+  },
+  "native_motion": {
+    "schema": 1,
+    "pointer_size": 8,
+    "status": "candidate",
+    "runtime_verified": false,
+    "state_vector": {
+      "state_position_offset": 0,
+      "state_previous_position_offset": 12,
+      "state_velocity_offset": 24,
+      "fall_distance_component_hash": "0xce6b34f6",
+      "fall_distance_value_offset": 0,
+      "evidence": "StateVector hash 0x1B5D5238 is referenced by exact-build candidate function RVA 0x3A11540. Position/previous/velocity offsets and FallDistance layout are carried forward from 1.26.52.3; runtime values and writes are unverified."
+    },
+    "evidence": "Candidate layout for exact 1.26.60.5 executable. StateVector component hash has exact-build static references; state field offsets and FallDistance hash/value offset are carried forward from 1.26.52.3. No runtime validation."
   }
 }

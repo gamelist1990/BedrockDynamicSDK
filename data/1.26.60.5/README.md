@@ -9,7 +9,10 @@
 すべて `candidate`、`abi_verified:false`、`runtime_verified:false` のままです。
 native keyboardのイベントレイアウトもcandidateとして登録しています。全Modに必要な
 nativeレイアウトは未完成なので、この定義だけで全SDK機能が使える状態ではありません。
-構造体オフセット、vtable slot、旧版レイアウトはこの移植で引き継いでいません。
+Actor / Item / Motionのnative layoutは1.26.52.3から候補として移し、このEXEに対する
+静的証拠と旧版由来の値をプロフィール内で区別しています。値は `candidate` /
+`runtime_verified:false` のままです。CheckSigやAllowCandidates対応Modから試行できますが、
+実ゲームでの値・寿命・ABIは確認できていません。
 
 Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
 [CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
@@ -45,6 +48,20 @@ Actor+`0x18`からentity idを読みます。関数引数をActor*とみなす�
 読み取り専用で記録しますが、registryやコンポーネントの内部には触れません。
 プロファイル上もcandidateのままで、runtime verificationはありません。
 
+`native_actors`では新版EXEのActorType候補関数 (RVA `0xB94CA0`) が
+`0x4F6BA419`を解決してoffset `0`の32-bit値を319と比較し、別の新版関数
+(RVA `0x3A11540`) はRuntimeID / UniqueID / ActorType / StateVector / AABB /
+Rotationのcomponent hashを参照します。新版`.text`内でそれらのhashを確認しています。
+Actor contextについても候補関数が引数+`0x10`と+`0x18`を読むコードを示しますが、
+引数がActor*であること、およびActor一覧の要素との同一性は推定です。
+残りのcomponent storage/value offsetsは1.26.52.3から移した未検証候補です。
+
+`native_items`はEquipment hashの新版`.text`内出現と、ClientInstanceのlocal-player
+getter候補 (table slot 34) を静的証拠として記録し、その他のItemStack / Inventory /
+Supplies offsetsは旧プロフィール由来の候補として保持しています。`native_motion`の
+StateVector / FallDistance offsetsも旧版由来です。どの項目も動作時のread/writeを
+検証していません。候補を有効にするとModが処理を試しますが、実行できる保証にはなりません。
+
 BlockSourceのgetBlock候補は `0x32CE440`、関連vtableのslot 2とchunk取得slot 41を
 旧版と新EXE、およびScanClientの読み込み済み.rdataで照合しました。
 SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版の
@@ -57,5 +74,5 @@ SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版�
 
 解析記録のEXEハッシュと関数範囲・REA/GhidraのEvidenceはローカルの
 `Documents/PEXData/REA/1.26.6005.0/` に保存しています。ゲーム中のScanClient
-出力のEXEハッシュと読み込み済み.rdataは照合済みです。候補の意味・寿命・呼び出し経路を確認してから
-実行用プロファイルへ移します。
+出力のEXEハッシュと読み込み済み.rdataは照合済みです。候補の意味・寿命・呼び出し経路を
+確認してから、候補を更新またはverifiedへ昇格します。
