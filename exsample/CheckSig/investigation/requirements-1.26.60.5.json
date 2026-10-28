@@ -2988,6 +2988,20 @@
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
+      "id": "/layouts/CommandRegistry/message_forwarding/native_request_data_constructor",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/native_request_data_constructor",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/command_factory_context",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/command_factory_context",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
       "id": "/layouts/BlockSource/subchunk_scan/enabled",
       "group": "subchunks",
       "kind": "gate",

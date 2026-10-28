@@ -108,7 +108,25 @@
           "GameCore::keyboardEvent and native_keyboard object layout / synthetic input delivery remain unverified."
         ]
       },
-      "verification_scope": "runtime-hook"
+      "verification_scope": "runtime-hook",
+      "runtime_observation": {
+        "samples": 17,
+        "observed_calls": 318,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 318,
+          "down": 1,
+          "key": 18,
+          "result": 0,
+          "symbol": "Keyboard::feed",
+          "time_utc": "2026-10-28T12:37:08Z",
+          "total_calls": 318,
+          "type": "hook-observation"
+        }
+      }
     },
     "MouseDevice::feed": {
       "rva": "0x427650",
@@ -173,7 +191,30 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard"
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 12,
+        "observed_calls": 6647,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "action": 0,
+          "call_number": 6622,
+          "dx": 0,
+          "dy": 0,
+          "force_motionless_pointer": 0,
+          "self": "0x7FF6BCEBE010",
+          "state": 0,
+          "symbol": "MouseDevice::feed",
+          "time_utc": "2026-10-28T12:37:13Z",
+          "total_calls": 6647,
+          "type": "hook-observation",
+          "x": 362,
+          "y": 961
+        }
+      }
     },
     "LevelRendererPlayer::getFov": {
       "rva": "0x5309B40",
@@ -240,20 +281,20 @@
       },
       "verification_scope": "entry-guard",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 4911,
+        "samples": 30,
+        "observed_calls": 36289,
         "source_sha256": {
-          "10-input.result.json": "a92ca1de2bdef8a44cc9b4da7e217ade27aaefaf736594f0167657b3ec44b643"
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 4778,
-          "input_fov": 0.10708343982696533,
+          "call_number": 36283,
+          "input_fov": 0.44025370478630066,
           "result": 70.0,
-          "self": "0x3F8C823C810",
+          "self": "0x2F21BDA7810",
           "symbol": "LevelRendererPlayer::getFov",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 4911,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 36289,
           "type": "hook-observation"
         }
       }
@@ -282,18 +323,18 @@
       },
       "verification_scope": "entry-guard",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 197,
+        "samples": 16,
+        "observed_calls": 536,
         "source_sha256": {
-          "10-input.result.json": "a92ca1de2bdef8a44cc9b4da7e217ade27aaefaf736594f0167657b3ec44b643"
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 196,
-          "self": "0x3F7C4225010",
+          "call_number": 533,
+          "self": "0x2F124225010",
           "symbol": "ClientInstance::grabCursor",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 197,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 536,
           "type": "hook-observation"
         }
       }
@@ -320,7 +361,23 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard"
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 5,
+        "observed_calls": 36,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 35,
+          "self": "0x2F124225010",
+          "symbol": "ClientInstance::releaseCursor",
+          "time_utc": "2026-10-28T12:37:15Z",
+          "total_calls": 36,
+          "type": "hook-observation"
+        }
+      }
     },
     "Actor::getNameTag": {
       "rva": "0xBBE500",
@@ -355,19 +412,19 @@
       },
       "verification_scope": "entry-guard",
       "runtime_observation": {
-        "samples": 4,
-        "observed_calls": 7,
+        "samples": 12,
+        "observed_calls": 143,
         "source_sha256": {
-          "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1"
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "actor": "0x3F8BA81A800",
-          "call_number": 7,
-          "name_tag_pointer": "0x3F8D2D6F1C0",
+          "actor": "0x2F2439F8700",
+          "call_number": 143,
+          "name_tag_pointer": "0x2F242855B30",
           "symbol": "Actor::getNameTag",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 7,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 143,
           "type": "hook-observation"
         }
       }
@@ -429,18 +486,18 @@
       },
       "verification_scope": "entry-guard",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 197,
+        "samples": 31,
+        "observed_calls": 1472,
         "source_sha256": {
-          "10-input.result.json": "a92ca1de2bdef8a44cc9b4da7e217ade27aaefaf736594f0167657b3ec44b643"
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 196,
-          "level": "0x3F8BBBF7800",
+          "call_number": 1469,
+          "level": "0x2F25565F000",
           "symbol": "MultiPlayerLevel::_subTick",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 197,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 1472,
           "type": "hook-observation"
         }
       }
@@ -492,7 +549,26 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard"
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 17,
+        "observed_calls": 317,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 317,
+          "context": "0xB3C88FF2C8",
+          "output": "0xB3C88FF3A0",
+          "result": "0xB3C88FF3A0",
+          "self": "0x2F124394010",
+          "symbol": "GameCore::keyboardEvent",
+          "time_utc": "2026-10-28T12:37:08Z",
+          "total_calls": 317,
+          "type": "hook-observation"
+        }
+      }
     },
     "Level::getRuntimeActorList": {
       "rva": "0x232F290",
@@ -807,7 +883,28 @@
         "pdata_function_entry": true
       },
       "verification_scope": "entry-guard",
-      "name_status": "inferred"
+      "name_status": "inferred",
+      "runtime_observation": {
+        "samples": 14,
+        "observed_calls": 457,
+        "source_sha256": {
+          "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 457,
+          "description": "0x251D63C7F70",
+          "flags1": 16,
+          "flags2": 128,
+          "name": "0x251D63EE170",
+          "permission": 0,
+          "registry": "0x2F1FD22B400",
+          "symbol": "CommandRegistry::registerCommand",
+          "time_utc": "2026-10-28T12:37:15Z",
+          "total_calls": 457,
+          "type": "hook-observation"
+        }
+      }
     },
     "CommandRegistry::findCommand": {
       "rva": "0x558A650",
@@ -866,20 +963,20 @@
       "verification_scope": "entry-guard",
       "name_status": "inferred",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 9,
+        "samples": 58,
+        "observed_calls": 1616,
         "source_sha256": {
-          "30-camera-gui.result.json": "51c86d30e2ea29d81b81576ebf3f3f446be0ddac5d3931d65984de8170718aa8"
+          "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 9,
-          "name": "0xBF46AFDCB0",
-          "registry": "0x3F89D22B000",
-          "return_signature": "0x0",
+          "call_number": 1616,
+          "name": "0x251D63EE170",
+          "registry": "0x2F1FD22B400",
+          "return_signature": "0x2F23C6B2500",
           "symbol": "CommandRegistry::findCommand",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 9,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 1616,
           "type": "hook-observation"
         }
       }
@@ -1330,21 +1427,21 @@
       "verification_scope": "entry-guard",
       "name_status": "inferred",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 14328,
+        "samples": 26,
+        "observed_calls": 120596,
         "source_sha256": {
-          "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1"
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 14299,
-          "client_instance": "0x3F7C4225010",
-          "return_block_source": "0x3F8BADDD3D0",
+          "call_number": 120411,
+          "client_instance": "0x2F124225010",
+          "return_block_source": "0x2F1246D7E10",
           "source_vtable_candidate": "0x7FF6B9778A20",
           "source_vtable_readable": true,
           "symbol": "ClientInstance::getRegion",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 14328,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 120596,
           "type": "hook-observation"
         }
       }
@@ -1396,21 +1493,21 @@
       "verification_scope": "entry-guard",
       "name_status": "inferred",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 1523033,
+        "samples": 40,
+        "observed_calls": 4834453,
         "source_sha256": {
-          "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1"
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
           "actor_object_readable": true,
           "actor_vtable_candidate": "0x7FF6B98CEF10",
-          "call_number": 1480566,
-          "client_instance": "0x3F7C4225010",
-          "return_actor": "0x3F8D0F6A000",
+          "call_number": 4828283,
+          "client_instance": "0x2F124225010",
+          "return_actor": "0x2F25188A000",
           "symbol": "ClientInstance::getLocalPlayer",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 1523033,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 4834453,
           "type": "hook-observation"
         }
       }
@@ -1522,26 +1619,26 @@
       "confidence": "exact-build-entry-verified",
       "name_status": "inferred",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 1425788,
+        "samples": 25,
+        "observed_calls": 530623850,
         "source_sha256": {
-          "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1"
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
           "block_position": [
-            0,
-            40,
-            -1
+            286,
+            62,
+            119
           ],
-          "block_position_pointer": "0x3F8BBFF4620",
+          "block_position_pointer": "0xB3C9CFE6B8",
           "block_position_readable": true,
-          "block_source": "0x3F8BADDD3D0",
-          "call_number": 1419806,
-          "return_block": "0x3F8CF2C2E40",
+          "block_source": "0x2F141606750",
+          "call_number": 527954025,
+          "return_block": "0x2F1FDF2D0C0",
           "symbol": "BlockSource::getBlock",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 1425788,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 530623850,
           "type": "hook-observation"
         }
       }
@@ -1645,7 +1742,23 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard"
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 5,
+        "observed_calls": 5,
+        "source_sha256": {
+          "40-world-events.result.json": "32c0583e632d725c533a53984841ba5deefc10f5d019a4df79a17d277c71a155"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 5,
+          "self": "0x2F124225098",
+          "symbol": "ClientInstance::onLevelExit",
+          "time_utc": "2026-10-28T12:36:57Z",
+          "total_calls": 5,
+          "type": "hook-observation"
+        }
+      }
     },
     "BlockSource::getChunk": {
       "rva": "0x32CD550",
@@ -1672,25 +1785,25 @@
       "confidence": "exact-build-entry-verified",
       "name_status": "inferred",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 3165241,
+        "samples": 25,
+        "observed_calls": 1071586937,
         "source_sha256": {
-          "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1"
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "block_source": "0x3F8BADDD3D0",
-          "call_number": 3154153,
+          "block_source": "0x2F13C760E10",
+          "call_number": 1064118721,
           "chunk_position": [
-            -1,
-            0
+            16,
+            10
           ],
-          "chunk_position_pointer": "0xBF46AF9418",
+          "chunk_position_pointer": "0xB3C9AFDE48",
           "chunk_position_readable": true,
-          "return_level_chunk": "0x3F8D1375400",
+          "return_level_chunk": "0x2F247A25400",
           "symbol": "BlockSource::getChunk",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 3165241,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 1071586937,
           "type": "hook-observation"
         }
       }
@@ -1985,25 +2098,25 @@
       "verification_scope": "entry-guard",
       "name_status": "unresolved",
       "runtime_observation": {
-        "samples": 8,
-        "observed_calls": 2331,
+        "samples": 51,
+        "observed_calls": 18006,
         "source_sha256": {
-          "30-camera-gui.result.json": "51c86d30e2ea29d81b81576ebf3f3f446be0ddac5d3931d65984de8170718aa8"
+          "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245"
         },
         "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
         "last_sample": {
-          "call_number": 2331,
-          "client_instance": "0x3F7C4225010",
-          "render_context": "0xBF46AFAD98",
-          "renderer": "0x3F8C823C810",
+          "call_number": 17950,
+          "client_instance": "0x2F124225010",
+          "render_context": "0xB3C88FB2E8",
+          "renderer": "0x2F21BDA7810",
           "symbol": "sub_5376690",
-          "time_utc": "2026-10-28T12:13:10Z",
-          "total_calls": 2331,
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 18006,
           "type": "hook-observation",
-          "view_prefix_bytes": "6E D7 D6 BF E4 7A 26 42 0E 4C 86 40 6E D7 D6 BF E4 7A 26 42 0E 4C 86 40 D7 DE 8E 3E 6C 74 AF 3E ED 97 DE 3E 00 00 80 3F 3F 20 28 3E EB 5C 87 3E D2 FD C1 3E D2 FD C1 3E D2 FD C1 3E D2 FD C1 3E",
+          "view_prefix_bytes": "00 00 00 3F 72 3D AB 42 00 00 00 3F 00 00 00 3F 72 3D AB 42 00 00 00 3F BE 6B 3C 3E D1 64 67 3E 96 58 98 3E 00 00 80 3F 6A F6 D6 3D B5 44 1C 3E AC A7 69 3E AC A7 69 3E AC A7 69 3E AC A7 69 3E",
           "view_prefix_readable": true,
           "view_prefix_size": 64,
-          "view_render_object": "0x3F8DEC00000"
+          "view_render_object": "0x2F23DEF7000"
         }
       }
     },
@@ -2094,13 +2207,13 @@
     "runtime_follow_up": {
       "date": "2026-10-28",
       "sources": {
-        "1.26.60.5-all-mods.result.json": "2b9f404a3979862894a95ad673fefbaadd48379a7ec369953ed01b2c68a13ec9",
-        "10-input.result.json": "a92ca1de2bdef8a44cc9b4da7e217ade27aaefaf736594f0167657b3ec44b643",
-        "20-actors-world.result.json": "bb836cdadc09542ed5fc7e327fdfd81d3c86dd0aeec00db694bfee8bb3addfd1",
-        "30-camera-gui.result.json": "51c86d30e2ea29d81b81576ebf3f3f446be0ddac5d3931d65984de8170718aa8",
-        "40-world-events.result.json": "338ab152e6304be1339170c1f21da432ce3e39600bd44f9d47cfbff5747c4e82",
-        "50-command-output.result.json": "36e2a25e2ecd7b117082030d2b6920606babb3afcb8a362b2d2b537a3d76db91",
-        "90-port-old.result.json": "9560707554a21884a0db0c73bccdca17c28964d386d3efe36082a22fcc5d99b8"
+        "1.26.60.5-all-mods.result.json": "ce7b5de1a1163dd95e678a894206e375f2ec5a0e6b51c0aa0dc8b6a9567d4ecf",
+        "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29",
+        "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace",
+        "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245",
+        "40-world-events.result.json": "32c0583e632d725c533a53984841ba5deefc10f5d019a4df79a17d277c71a155",
+        "50-command-output.result.json": "929e3b72414638d650eef978b4564ea5c788ebb7a4f036885a771339e76535ef",
+        "90-port-old.result.json": "3194ffd86117b08558b77586b81eaf607790cc17e59761254a50411f1657b519"
       },
       "observed_symbols": [
         "Actor::getNameTag",
@@ -2109,8 +2222,14 @@
         "ClientInstance::getLocalPlayer",
         "ClientInstance::getRegion",
         "ClientInstance::grabCursor",
+        "ClientInstance::onLevelExit",
+        "ClientInstance::releaseCursor",
         "CommandRegistry::findCommand",
+        "CommandRegistry::registerCommand",
+        "GameCore::keyboardEvent",
+        "Keyboard::feed",
         "LevelRendererPlayer::getFov",
+        "MouseDevice::feed",
         "MultiPlayerLevel::_subTick",
         "sub_5376690"
       ],
@@ -2121,7 +2240,7 @@
       ],
       "pending": [
         "CommandOutputPacket::read installed with no decode observation",
-        "90-port-old failed: missing external reference; next job embeds source"
+        "90-port-old still uses a stale external-source job; replace commands/90-port-old.json with the embedded-source job"
       ]
     }
   },
@@ -2639,7 +2758,7 @@
       "status": "candidate",
       "runtime_verified": false,
       "message_forwarding": {
-        "revision": 2,
+        "revision": 3,
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
         "client_minecraft_offset": "0x1D0",
         "minecraft_commands_offset": "0xC8",
@@ -2746,7 +2865,37 @@
         "registration_flags": "0x10",
         "registration_flags2": "0x80",
         "command_message_offset": "0x28",
-        "scope": "SyncLocal SDK command factory following Top; runtime execution pending"
+        "scope": "SyncLocal SDK command; native context version and origin capture; transport correction pending runtime confirmation",
+        "native_request_data_constructor": {
+          "rva": "0x419cbc0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45",
+          "status": "candidate",
+          "source": "Native request data copies CommandContext version+0x28 and calls origin virtual+0xD0",
+          "evidence_id": "ev_b98ba9f32c01bd69836c2690c92adf014a70f77947731d9e0aaea77935d617f0",
+          "runtime_verified": false
+        },
+        "command_factory_context": {
+          "rva": "0x55853d0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45",
+          "status": "candidate",
+          "source": "Native command parser assigns command version+8 from parse context",
+          "evidence_id": "ev_4c3511289da9712fb3b1ffdfaedb6d280c09429bb80320392a3387611e978f79",
+          "runtime_verified": false
+        },
+        "runtime_observation": {
+          "source": "user-provided Fake.log, 2026-10-28",
+          "registration_completed": true,
+          "command_callback_invoked": true,
+          "scopes": [
+            "native registry registration",
+            "nonempty message parsed",
+            "request enqueued"
+          ],
+          "limitations": [
+            "CommandOutput response not received",
+            "host disconnect reported; transport completion not verified"
+          ]
+        }
       }
     }
   }

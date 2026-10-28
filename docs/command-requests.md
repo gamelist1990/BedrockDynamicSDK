@@ -93,8 +93,8 @@ ClientInstanceのsenderと送信経路の対応、実サーバーでの応答は
 
 ```cpp
 bedrock::NativeMessageCommands metadata;
-metadata.add("fake", "Send /me with an explicit origin", [](std::string line) {
-    // 所有した文字列をキューへ渡し、次のtickでrequest("/me ...")する。
+metadata.add("fake", "Send /me with an explicit origin", [](bedrock::NativeMessageInvocation invocation) {
+    // line・version・originをキューへ渡し、次のtickでrequest("/me ...")する。
 });
 // ProfileManagerのadapterでmetadata.load(profile, error)を呼ぶ。
 // 以後は所有するクライアントtick上でmetadata.update(client)を呼ぶ。
@@ -114,3 +114,13 @@ CommandMessageの解放と解決文字列の解放にはMinecraft側の関数を
 
 静的解析の記録は `PEXData/REA/1.26.6005.0/fake-registration/` に保存しています。
 登録・実行・送信・応答の一連の成功は、更新DLLでの実機確認待ちです。
+
+### 要求コンテキストと切断診断
+
+ローカル実行では通常コマンド送信を観測できないため、送信versionを観測値0で代用しません。
+Minecraftがコマンドオブジェクト+8に設定するversionと、CommandOriginのネイティブデータを実行時に取得します。
+Fakeはversion・UUID・playerIdを引き継ぎ、Origin typeを指定値へ変更します。
+ネイティブコンテキストが取得できなければ送信前にブロックします。
+`fake-command` は入力と組み立てたコマンド、`command-request-send` は実際の送信内容を記録します。
+Tick対象のLevelポインタ変化だけでは要求を切断扱いにせず、ネイティブonLevelExitまたはClientInstance切替で中断します。
+`disconnected` の `detail` にSDK側の中断理由を記録します。

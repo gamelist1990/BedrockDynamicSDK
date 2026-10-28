@@ -1,5 +1,6 @@
 #pragma once
 #include <bedrock/profile_json.hpp>
+#include <bedrock/command_requests.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <array>
 #include <atomic>
@@ -14,12 +15,19 @@ namespace bedrock {
 // Exact-build local Command ABI. The native parser owns CommandMessage's
 // allocations; its native destructor releases them. Route callbacks copy text
 // into an SDK queue and never send packets from the parser/execute callback.
+struct NativeMessageInvocation {
+    std::string line;
+    std::int32_t version{};
+    CommandOriginData origin;
+    bool contextAvailable{};
+};
 namespace message_command_native {
 struct Route {
     std::string name;
-    std::function<void(std::string)> handler;
+    std::function<void(NativeMessageInvocation)> handler;
     std::atomic<const void*> registry{};
     void *resolve{},*destroy{},*free{};
+    std::uintptr_t textBegin{},textEnd{};
 };
 inline std::array<std::shared_ptr<Route>,32> routes;
 inline std::size_t nextSlot{}; // definitions are added before hooks start
@@ -45,6 +53,15 @@ inline void releaseString(void* fn,void* buffer) noexcept {
         reinterpret_cast<void(__fastcall*)(void*,std::size_t)>(fn)(allocation,size);
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
+inline bool captureOrigin(const Route& route,const void* origin,void* result) noexcept {
+    void* table{}; void* fn{};
+    if (!native_profile::read(origin,0,table) || !native_profile::read(table,0xd0,fn)) return false;
+    const auto address=reinterpret_cast<std::uintptr_t>(fn);
+    if (address<route.textBegin || address>=route.textEnd) return false;
+    // CommandRequestData constructor at RVA0x419CBC0 uses this exact virtual call.
+    __try { return reinterpret_cast<void*(__fastcall*)(const void*,void*)>(fn)(origin,result)==result; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 class Command {
 public:
     explicit Command(std::size_t index):routeIndex(index) {}
@@ -61,7 +78,20 @@ public:
                 std::memcpy(&length,result.data()+0x10,8); std::memcpy(&capacity,result.data()+0x18,8);
                 if (capacity<16) text=reinterpret_cast<const char*>(result.data());
                 else std::memcpy(&text,result.data(),8);
-                if (length<=4096 && text) route->handler("/"+route->name+" "+std::string(text,length));
+                if (length<=4096 && text) {
+                    NativeMessageInvocation invocation;
+                    invocation.line="/"+route->name+" "+std::string(text,length);
+                    invocation.version=version;
+                    alignas(8) std::array<std::byte,0x40> data{};
+                    if (captureOrigin(*route,origin,data.data())) {
+                        std::memcpy(&invocation.origin.type,data.data(),1);
+                        std::memcpy(invocation.origin.uuid.data(),data.data()+8,16);
+                        std::memcpy(&invocation.origin.playerId,data.data()+0x38,8);
+                        invocation.contextAvailable=true;
+                        releaseString(route->free,data.data()+0x18);
+                    }
+                    route->handler(std::move(invocation));
+                }
             }
         } catch (...) {} // no C++ exceptions across native virtual calls
         releaseString(route->free,result.data());
@@ -88,7 +118,7 @@ inline constexpr auto factoryFunctions=factories(std::make_index_sequence<32>{})
 class NativeMessageCommands {
 public:
     enum class State { WaitingClient, WaitingRegistry, WaitingTemplate, Registered, Collision, Failed };
-    bool add(std::string name, std::string description, std::function<void(std::string)> handler) {
+    bool add(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler) {
         if (loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
             name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
@@ -107,7 +137,7 @@ public:
                 throw std::runtime_error("message command registration requires an exact build and AllowCandidates");
             const auto root=parseNativeProfile(profile.json());
             const auto& layout=root.at("native_client_commands").at("message_forwarding");
-            if (layout.value("revision",0)!=2 || layout.at("module_sha256")!=root.at("target").at("sha256"))
+            if (layout.value("revision",0)!=3 || layout.at("module_sha256")!=root.at("target").at("sha256"))
                 throw std::runtime_error("unsupported CommandRegistry message layout or executable identity");
             base_=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
             clientMinecraft_=native_profile::number(layout.at("client_minecraft_offset"));
@@ -119,6 +149,8 @@ public:
             find_=native_profile::checked(root,layout.at("find_command"));
             overload_=native_profile::checked(root,layout.at("register_overload"));
             native_profile::checked(root,layout.at("client_commands_anchor"));
+            native_profile::checked(root,layout.at("native_request_data_constructor"));
+            native_profile::checked(root,layout.at("command_factory_context"));
             resolve_=native_profile::checked(root,layout.at("resolve_message"));
             destroy_=native_profile::checked(root,layout.at("destroy_message"));
             free_=native_profile::checked(root,layout.at("free_memory"));
@@ -133,6 +165,8 @@ public:
                 throw std::runtime_error("command provider pin failed");
             for (auto& entry:entries_) {
                 entry.route->resolve=resolve_; entry.route->destroy=destroy_; entry.route->free=free_;
+                entry.route->textBegin=base_+native_profile::number(root.at("target").at("text_rva"));
+                entry.route->textEnd=entry.route->textBegin+native_profile::number(root.at("target").at("text_size"));
             }
             factoryTable_=reinterpret_cast<void*>(base_+native_profile::number(layout.at("factory_vtable_rva")));
             const auto& functions=layout.at("factory_functions");

@@ -32,6 +32,7 @@ struct CommandRequestOptions {
     std::int32_t version{};
     bool internal{};
     std::chrono::milliseconds timeout{10000};
+    std::optional<std::array<std::uint64_t,2>> uuid; // native invocation identity, when available
 };
 struct CommandRequest {
     std::string command;
@@ -144,6 +145,7 @@ public:
             invalid.detail = "request identity generation failed"; state->finish(std::move(invalid)); return future;
         }
         origin.type = options.origin; origin.playerId = options.playerId;
+        if (options.uuid) origin.uuid=*options.uuid;
         std::lock_guard lock(mutex_);
         if (pending_.size() >= 128) { invalid.status = CommandResponseStatus::QueueFull; state->finish(std::move(invalid)); return future; }
         if (origin.requestId.empty() || pending_.contains(origin.requestId)) {
@@ -194,12 +196,12 @@ public:
         for (auto& [state, response] : done) state->finish(std::move(response));
         dispatcher_->drain();
     }
-    void reset() {
+    void reset(std::string detail = "request session reset") {
         std::vector<std::pair<std::shared_ptr<command_request_detail::State>, CommandResponse>> done;
         {
             std::lock_guard lock(mutex_); done.swap(completed_);
             for (auto& [id,p] : pending_) {
-                CommandResponse response; response.status=CommandResponseStatus::Disconnected; response.origin=p.request.origin;
+                CommandResponse response; response.status=CommandResponseStatus::Disconnected; response.origin=p.request.origin; response.detail=detail;
                 done.emplace_back(p.state, std::move(response));
             }
             pending_.clear();

@@ -92,3 +92,10 @@ SDKの共通APIの使い方は [command-requests.md](../../docs/command-requests
 送信元はMinecraftCommandsが保持するclientのgetPacketSender経路へ変更しています。
 `ClientInstance+0x1E0` のslot2は今回の実測でRETだったため使用しません。
 登録・実送信・応答が揃った実機ログで完了を判断します。
+
+### 入力と応答ログ
+
+`messages` はサーバー応答の配列です。入力文字列は `fake-command` の `input`、
+`/me` の組立結果は `command`、送信は `command-request-send` に記録します。
+ローカルコマンドのネイティブversion・Origin UUIDを引き継ぎ、version未取得時は送信しません。
+`disconnected` は `detail` に中断理由を出します。ホスト切断の原因判定とは区別します。

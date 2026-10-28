@@ -156,6 +156,10 @@ public:
             if (!native_profile::read(reinterpret_cast<void*>(outputVtable_),16*8,slot) || slot!=readTarget ||
                 !BDS_HookSubscribe(BDS_HOOK_COMMAND_OUTPUT_READ,readTarget,onOutput,this,&readToken_))
                 throw std::runtime_error("shared command output subscription failed");
+            if (auto exit=resolveSharedHook(profile.resolver(),"ClientInstance::onLevelExit",BDS_HOOK_CLIENT_LEVEL_EXIT)) {
+                if (!BDS_HookSubscribe(BDS_HOOK_CLIENT_LEVEL_EXIT,reinterpret_cast<void*>(exit->address),onExit,this,&exitToken_))
+                    throw std::runtime_error("world exit subscription failed");
+            } else throw std::runtime_error("native world exit boundary unresolved");
             loaded_=true; note("CommandRequest(77)/CommandOutput(79) adapter loaded [static candidate, runtime unverified]");
             error.clear(); return true;
         } catch (const std::exception& e) { error=e.what(); return false; }
@@ -166,11 +170,13 @@ public:
         const auto current=GetCurrentThreadId();
         if (!owner_) owner_=current;
         if (owner_!=current) return;
-        if (client!=client_ || level!=level_) {
-            sender_=nullptr; requests_.reset();
+        const bool exited=exitPending_.exchange(false);
+        if (client!=client_ || exited) {
+            sender_=nullptr; requests_.reset(exited ? "native ClientInstance::onLevelExit observed" : "ClientInstance changed");
             { std::lock_guard queueLock(queueMutex_); local_.clear(); }
-            client_=client; level_=level;
+            client_=client;
         }
+        level_=level;
         observeSender(client);
         std::deque<std::pair<std::string,std::string>> local;
         { std::lock_guard queueLock(queueMutex_); local.swap(local_); }
@@ -182,6 +188,7 @@ public:
         stopped_=true;
         if (sendToken_) BDS_HookUnsubscribe(std::exchange(sendToken_,nullptr));
         if (readToken_) BDS_HookUnsubscribe(std::exchange(readToken_,nullptr));
+        if (exitToken_) BDS_HookUnsubscribe(std::exchange(exitToken_,nullptr));
         std::lock_guard lock(updateMutex_); sender_=nullptr; requests_.reset();
     }
 private:
@@ -230,15 +237,21 @@ private:
             sendTarget_=target;
         }
         sender_=sender;
+        if (senderState_!=SenderState::Ready) note(nlohmann::json({{"event","sender-resolved"},
+            {"target_rva",reinterpret_cast<std::uintptr_t>(target)-base_}}).dump());
         senderState(SenderState::Ready,"local text command interception and request sender ready");
     }
     bool send(const CommandRequest& request) {
         if (stopped_ || owner_!=GetCurrentThreadId() || !sender_) return false;
+        const auto version=request.version ? request.version : observedVersion_.load();
+        if (version<=0) { note("request blocked: native command version unavailable; no packet sent"); return false; }
         command_packet_native::Packet packet;
         packet.vtable=reinterpret_cast<void*>(requestVtable_); packet.command=request.command;
         packet.origin.type=request.origin.type; packet.origin.uuid=request.origin.uuid;
         packet.origin.requestId=request.origin.requestId; packet.origin.playerId=request.origin.playerId;
-        packet.version=request.version ? request.version : observedVersion_.load(); packet.internal=request.internal;
+        packet.version=version; packet.internal=request.internal;
+        note(nlohmann::json({{"event","command-request-send"},{"command",request.command},{"origin",request.origin.type},
+            {"version",version},{"request_id",request.origin.requestId},{"uuid",request.origin.uuid}}).dump());
         // Use middleware so observers in other Mods also see SDK requests.
         BDS_PacketSendArgs args{sender_.load(),&packet};
         BDS_HookDispatch(BDS_HOOK_PACKET_SEND_TO_SERVER,&args);
@@ -258,11 +271,21 @@ private:
             const auto nameEnd=line.find_first_of(" \t");
             auto name=line.substr(0,nameEnd);
             if (!name.empty() && name.front()=='/') name.erase(0,1);
+            if (name=="me") {
+                std::uint8_t origin{}; std::array<std::uint64_t,2> uuid{};
+                if (native_profile::read(args.packet,0x50,origin) && native_profile::read(args.packet,0x58,uuid))
+                    self.note(nlohmann::json({{"event","command-request-observed"},{"command",line},
+                        {"origin",origin},{"version",version},{"uuid",uuid}}).dump());
+            }
             if (!self.handlers_.contains(name)) { next(frame,raw); return; }
             std::lock_guard lock(self.queueMutex_);
             if (self.local_.size()>=64) { self.dropped_=true; return; }
             self.local_.emplace_back(std::move(name),std::move(line));
         } catch (...) { self.dropped_=true; }
+    }
+    static void BDS_HOOK_CALL onExit(void* user,void* raw,BDS_HookNext next,void* frame) noexcept {
+        static_cast<NativeCommandRequests*>(user)->exitPending_=true;
+        next(frame,raw);
     }
     static void BDS_HOOK_CALL onOutput(void* user, void* raw, BDS_HookNext next, void* frame) noexcept {
         next(frame,raw); // preserve all native decode behavior and unrelated results
@@ -291,7 +314,8 @@ private:
     std::uintptr_t base_{},textBegin_{},textEnd_{},requestVtable_{},outputVtable_{};
     std::uint32_t senderSlot_{};
     DWORD owner_{};
-    BDS_HookToken sendToken_{},readToken_{};
+    BDS_HookToken sendToken_{},readToken_{},exitToken_{};
+    std::atomic<bool> exitPending_{};
     bool loaded_{};
     SenderState senderState_=SenderState::Unknown;
 };

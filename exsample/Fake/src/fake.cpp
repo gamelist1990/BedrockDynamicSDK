@@ -52,18 +52,27 @@ private:
         for (const auto& value:batch) log<<value<<'\n';
         if (!batch.empty()) log.flush();
     }
-    void execute(std::string_view line) {
+    void execute(std::string_view line, const bedrock::NativeMessageInvocation* context=nullptr) {
         const auto invocation=fake_mod::parse(line);
         if (!invocation) { note(invocation.error); return; }
         bedrock::CommandRequestOptions options;
         options.origin=invocation.origin;
-        note("request /me; Origin="+std::to_string(options.origin));
+        if (context) {
+            if (!context->contextAvailable || context->version<=0) {
+                note(nlohmann::json({{"event","request-blocked"},{"command",std::string(line)},
+                    {"version",context->version},{"origin_context_available",context->contextAvailable}}).dump());
+                return;
+            }
+            options.version=context->version; options.uuid=context->origin.uuid; options.playerId=context->origin.playerId;
+        }
+        note(nlohmann::json({{"event","fake-command"},{"input",std::string(line)},{"command","/me "+invocation.message},
+            {"origin",options.origin},{"version",options.version}}).dump());
         transport_.commands().request("/me "+invocation.message,options).then([this](const bedrock::CommandResponse& response) {
             nlohmann::json result={{"status",bedrock::commandResponseStatusName(response.status)},
                 {"request_id",response.origin.requestId},{"origin",response.origin.type},
                 {"success_count",response.successCount},{"output_type",response.outputType},
                 {"succeeded",response.succeeded()},{"has_data_set",response.hasDataSet},
-                {"messages",nlohmann::json::array()}};
+                {"messages",nlohmann::json::array()},{"detail",response.detail}};
             for (const auto& message:response.messages)
                 result["messages"].push_back({{"successful",message.successful},{"id",message.id},{"parameters",message.parameters}});
             note(result.dump(-1,' ',false,nlohmann::json::error_handler_t::replace));
@@ -73,9 +82,9 @@ private:
         transport_.onDiagnostic([this](const std::string& value) { note(value); });
         if (!transport_.addLocalCommand("fake",[this](std::string_view line) { execute(line); }))
             throw std::runtime_error("/fake local registration failed");
-        if (!registration_.add("fake","Send /me with an explicit CommandOriginData type",[this](std::string line) {
+        if (!registration_.add("fake","Send /me with an explicit CommandOriginData type",[this](bedrock::NativeMessageInvocation invocation) {
             std::lock_guard lock(commandMutex_);
-            if (pendingCommands_.size()<64) pendingCommands_.push_back(std::move(line));
+            if (pendingCommands_.size()<64) pendingCommands_.push_back(std::move(invocation));
             else note("/fake queue full; command not sent");
         }))
             throw std::runtime_error("/fake native definition could not be added");
@@ -93,9 +102,9 @@ private:
             if (stopped_) return;
             try {
                 const auto client=client_.load();
-                std::deque<std::string> commands;
+                std::deque<bedrock::NativeMessageInvocation> commands;
                 { std::lock_guard lock(commandMutex_); commands.swap(pendingCommands_); }
-                for (const auto& line:commands) execute(line);
+                for (const auto& invocation:commands) execute(invocation.line,&invocation);
                 transport_.update(client,event.level);
                 if (registrationClient_!=client || registrationLevel_!=event.level) {
                     registrationClient_=client; registrationLevel_=event.level;
@@ -142,7 +151,7 @@ private:
     std::atomic<void*> client_{};
     std::atomic<bool> stopped_{};
     std::mutex commandMutex_;
-    std::deque<std::string> pendingCommands_;
+    std::deque<bedrock::NativeMessageInvocation> pendingCommands_;
     std::mutex logMutex_;
     std::deque<std::string> logs_;
 };
