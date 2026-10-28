@@ -73,7 +73,11 @@ private:
         transport_.onDiagnostic([this](const std::string& value) { note(value); });
         if (!transport_.addLocalCommand("fake",[this](std::string_view line) { execute(line); }))
             throw std::runtime_error("/fake local registration failed");
-        if (!registration_.add("fake","Send /me with an explicit CommandOriginData type"))
+        if (!registration_.add("fake","Send /me with an explicit CommandOriginData type",[this](std::string line) {
+            std::lock_guard lock(commandMutex_);
+            if (pendingCommands_.size()<64) pendingCommands_.push_back(std::move(line));
+            else note("/fake queue full; command not sent");
+        }))
             throw std::runtime_error("/fake native definition could not be added");
         bedrock::ProfileManager profiles;
         std::string error;
@@ -89,6 +93,9 @@ private:
             if (stopped_) return;
             try {
                 const auto client=client_.load();
+                std::deque<std::string> commands;
+                { std::lock_guard lock(commandMutex_); commands.swap(pendingCommands_); }
+                for (const auto& line:commands) execute(line);
                 transport_.update(client,event.level);
                 if (registrationClient_!=client || registrationLevel_!=event.level) {
                     registrationClient_=client; registrationLevel_=event.level;
@@ -102,7 +109,7 @@ private:
                         if (registered_) note("/fake registered in Minecraft CommandRegistry [message argument + command suggestions]");
                         else if (state==bedrock::NativeMessageCommands::State::WaitingClient) note("registration waiting: ClientInstance");
                         else if (state==bedrock::NativeMessageCommands::State::WaitingRegistry) note("registration waiting: Minecraft CommandRegistry");
-                        else if (state==bedrock::NativeMessageCommands::State::WaitingTemplate) note("registration waiting: server /me message definition");
+                        else if (state==bedrock::NativeMessageCommands::State::WaitingTemplate) note("registration waiting: CommandMessage parser type");
                         else note("registration blocked: "+registration_.error());
                     }
                 }
@@ -134,6 +141,8 @@ private:
     std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void*> client_{};
     std::atomic<bool> stopped_{};
+    std::mutex commandMutex_;
+    std::deque<std::string> pendingCommands_;
     std::mutex logMutex_;
     std::deque<std::string> logs_;
 };

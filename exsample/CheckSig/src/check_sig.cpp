@@ -681,7 +681,7 @@ public:
                 throw std::runtime_error("loaded PE .text metadata disagrees with the SDK fingerprint");
             writeEvent("started", {
                 {"identity", moduleIdentityJson(*image_, identity_)},
-                {"checksig_features_revision",2},
+                {"checksig_features_revision",3},
                 {"hook_runtime", BDS_HookRuntimeVersion()},
                 {"hook_runtime_abi", BDS_HookRuntimeAbi()}
             });
@@ -769,7 +769,7 @@ private:
         for(auto it=watchCalls_.begin();it!=watchCalls_.end();) {
             if(it->first.starts_with(source+":")) it=watchCalls_.erase(it); else ++it;
         }
-        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",2}, {"arch", "x64"},
+        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",3}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
         bool investigation = false, recorded = false;
@@ -787,7 +787,7 @@ private:
             } else {
                 if (document.value("schema", 0) != 1 || document.value("arch", std::string{}) != "x64")
                     throw std::runtime_error("checksig-job requires schema=1 and arch=x64");
-                if(document.value("minimum_checksig_features",1)>2) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
+                if(document.value("minimum_checksig_features",1)>3) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
                 const auto resolveInput = [&](const std::string& name) {
                     auto path = fromUtf8(name);
                     return path.is_relative() ? file.path.parent_path() / path : path;
@@ -800,8 +800,11 @@ private:
                     if (!lastProfileDetection_.value("loaded", false))
                         throw std::runtime_error("job profile could not be loaded; see detect-result");
                 }
-                if (document.contains("source"))
-                    loadSource(pathUtf8(resolveInput(document.at("source").get<std::string>())));
+                if (document.contains("source")) {
+                    if (document.at("source").is_object())
+                        loadSourceText(document.at("source").dump(),source+"#source");
+                    else loadSource(pathUtf8(resolveInput(document.at("source").get<std::string>())));
+                }
                 if (document.contains("symbols")) {
                     if (!resolver_) throw std::runtime_error("custom symbols require a matching profile");
                     const auto& additions = document.at("symbols");
@@ -969,7 +972,7 @@ private:
 
     void writeStatus(std::string_view state, std::string_view error = {}) {
         json status = {
-            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",2}, {"state", state},
+            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",3}, {"state", state},
             {"pid", GetCurrentProcessId()}, {"time_utc", timestampUtc()}
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
@@ -1914,6 +1917,9 @@ private:
         std::string text, error;
         if (!readFile(path, text, kMaxProfileBytes, error))
             throw std::runtime_error("source profile: " + error);
+        loadSourceText(text,pathUtf8(path));
+    }
+    void loadSourceText(const std::string& text,const std::string& label) {
         auto parsed = json::parse(text);
         if (!parsed.contains("symbols") || !parsed["symbols"].is_object() ||
             parsed["symbols"].size() > kMaxSymbols)
@@ -1942,7 +1948,7 @@ private:
             if (anchorCount > 1024)
                 throw std::runtime_error("source profile has over 1024 anchors; split it into smaller profiles");
         }
-        sourcePath_ = pathUtf8(path);
+        sourcePath_ = label;
         sourceProfile_ = std::move(parsed);
         writeEvent("source-loaded", {{"path", sourcePath_},
             {"version", sourceProfile_.value("target", json::object())
@@ -2961,7 +2967,7 @@ DWORD WINAPI worker(void*) {
 }
 } // namespace
 
-extern "C" __declspec(dllexport) unsigned CheckSig_FeaturesRevision() noexcept { return 2; }
+extern "C" __declspec(dllexport) unsigned CheckSig_FeaturesRevision() noexcept { return 3; }
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

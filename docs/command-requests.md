@@ -93,19 +93,24 @@ ClientInstanceのsenderと送信経路の対応、実サーバーでの応答は
 
 ```cpp
 bedrock::NativeMessageCommands metadata;
-metadata.add("fake", "Send /me with an explicit origin");
+metadata.add("fake", "Send /me with an explicit origin", [](std::string line) {
+    // 所有した文字列をキューへ渡し、次のtickでrequest("/me ...")する。
+});
 // ProfileManagerのadapterでmetadata.load(profile, error)を呼ぶ。
 // 以後は所有するクライアントtick上でmetadata.update(client)を呼ぶ。
 ```
 
 1.26.60.5では `ClientInstance+0x1D0 -> Minecraft+0xC8 -> MinecraftCommands+0x10`
-を辿り、既存/meのメッセージ型・ネイティブcallableを検査してから、
-CommandRegistry::registerCommandと1引数のオーバーロード登録関数を呼びます。
-使用するflagsは元の/meと同じ0x40/0x80です。SyncLocalは設定せず、
-要求送信はNativeCommandRequestsで処理します。ゲームの所有領域へSDKのvtableやアロケーターは保存しません。
-登録後は再検索してオーバーロードを確認し、同名の既存定義は保持します。
-サーバーからコマンド一覧を受け取り直すなどレジストリが変わった場合は再確認します。
+を辿り、Topと同じSyncLocal (`0x10` / NotCheat `0x80`) でSDKのコマンドfactoryを登録します。
+ネイティブのCommandMessageパーサーを使い、実行時に所有した文字列をSDKキューへ渡します。
+サーバーから受信した `/me` のfactoryやオーバーロードの形には依存しません。
+CommandMessageの解放と解決文字列の解放にはMinecraft側の関数を使います。
+登録後は再検索して自分のfactoryを確認し、同名の既存定義は保持します。
+
+送信は `MinecraftCommands+8 -> virtual+8 -> client virtual+0xA40 -> PacketSender virtual+0x10`
+という、対象EXEのネイティブ要求経路を使います。
+実機で `ClientInstance+0x1E0` のslot2がRETを指したため、旧推定経路は削除しました。
+送信先の正確な関数入口チェックは維持しています。
 
 静的解析の記録は `PEXData/REA/1.26.6005.0/fake-registration/` に保存しています。
-このメタデータ登録はローカル整数コマンドのABIを確定するものではありません。
-候補一覧の更新タイミングや実際の送信・応答は実機での確認が必要です。
+登録・実行・送信・応答の一連の成功は、更新DLLでの実機確認待ちです。

@@ -157,6 +157,10 @@
       "label": "CommandRequestPacket・CommandOutputPacket"
     },
     {
+      "id": "request_sender",
+      "label": "MinecraftCommandsからのCommandRequest送信経路"
+    },
+    {
       "id": "message_commands",
       "label": "CommandRegistryのメッセージコマンド"
     }
@@ -291,7 +295,7 @@
       "name": "Fake",
       "required_groups": [
         "gameplay",
-        "sender",
+        "request_sender",
         "command_packets",
         "message_commands"
       ],
@@ -2176,25 +2180,17 @@
     },
     {
       "id": "/layouts/PacketSender/sender/sender_send_to_server_slot",
-      "group": "sender",
+      "group": "request_sender",
       "kind": "layout",
       "path": "/layouts/PacketSender/sender/sender_send_to_server_slot",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": 4
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketSender/sender/packet_id_slot",
-      "group": "sender",
+      "group": "request_sender",
       "kind": "layout",
       "path": "/layouts/PacketSender/sender/packet_id_slot",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": 1
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketSender/sender/packet_sender_getter",
@@ -2816,6 +2812,13 @@
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
+      "id": "/layouts/PacketSender/sender/command_request_path",
+      "group": "request_sender",
+      "kind": "function",
+      "path": "/layouts/PacketSender/sender/command_request_path",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
       "id": "/layouts/CommandRequestPacket/request_vtable_rva",
       "group": "command_packets",
       "kind": "layout",
@@ -2908,13 +2911,6 @@
       "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
     },
     {
-      "id": "/layouts/CommandRegistry/message_forwarding/message_factory",
-      "group": "message_commands",
-      "kind": "function",
-      "path": "/layouts/CommandRegistry/message_forwarding/message_factory",
-      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
-    },
-    {
       "id": "/layouts/CommandRegistry/message_forwarding/factory_vtable_rva",
       "group": "message_commands",
       "kind": "layout",
@@ -2948,6 +2944,48 @@
       "kind": "function",
       "path": "/layouts/CommandRegistry/message_forwarding/factory_functions/3",
       "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/message_type_rva",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/message_type_rva",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/message_rule_rva",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/message_rule_rva",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/resolve_message",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/resolve_message",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/destroy_message",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/destroy_message",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/free_memory",
+      "group": "message_commands",
+      "kind": "function",
+      "path": "/layouts/CommandRegistry/message_forwarding/free_memory",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/CommandRegistry/message_forwarding/command_message_offset",
+      "group": "message_commands",
+      "kind": "layout",
+      "path": "/layouts/CommandRegistry/message_forwarding/command_message_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/BlockSource/subchunk_scan/enabled",

@@ -6,7 +6,7 @@
 ## まずこのJSONだけ置く
 
 修正版CheckSig.dllへ更新し、Minecraftを完全終了してから読み込み直します。
-`status.json` の `checksig_features_revision: 2` が、この調査機能に対応するDLLの印です。
+`status.json` の `checksig_features_revision: 3` が、この調査機能に対応するDLLの印です。
 `1.26.60.5-all-mods.json` を次へ置いてください。
 
 ```text
@@ -66,7 +66,7 @@ ScanClientとCheckSigも出力完結・スキャン・観測を確認します�
 | 30-camera-gui.json | カメラ移動・設定画面・通常のコマンド。カメラ、gamma、ゲームモード、GUI、CommandRegistryを観測 |
 | 40-world-events.json | ワールド参加・退出・ディメンション移動。未解決の入口や定義はスキップ理由として残す |
 | 50-command-output.json | 通常のコマンドや/fakeを実行。CommandOutputPacket::readのdecode結果・成功件数等を観測 |
-| 90-port-old.json | 旧定義から候補検索。最後に単独で実行。reference/内の旧JSONも必要 |
+| 90-port-old.json | 旧定義から候補検索。最後に単独で実行。旧定義を内包するためJSON単体で実行可能 |
 
 `observe`は対応Observerとガード・関数境界の条件を満たすものだけ設置します。
 不足定義や未対応ABIは`observe-skipped`に理由を残して他の対象へ進みます。
@@ -108,3 +108,11 @@ Observerのない関数について、probeだけで「実際に呼べる」と�
 
 `reference_only`は1.26.52.3の参考値です。新しいEXEへ自動適用しません。
 `observed_needs_abi_and_lifetime_review`は値を観測できた段階で、全Mod対応完了ではありません。
+
+## 2026-10-28の受領結果
+
+実呼出しを記録した10関数は配布定義の `runtime_observation` に反映しています。
+残作業一覧でも記録済み観測と、ABI・寿命・Mod全体の確認を区別します。
+`50-command-output` はHook設置までで受信観測はありません。
+`90-port-old` の参照ファイル不足は、旧定義の内包へ変更しています。
+ClientInstance+0x1E0のslot2はRVA0x768F0のRETであり、送信先として使用しません。

@@ -63,6 +63,8 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
                 item["rva"]=value->at("rva");
                 item["abi_verified"]=value->value("abi_verified",false);
                 item["runtime_verified"]=value->value("runtime_verified",false);
+                const auto recorded=value->value("runtime_observation",SupportJson::object());
+                if(!recorded.empty()) item["recorded_observation"]=recorded;
                 if(!observation.empty()) item["observation"]=observation;
                 const bool owned=observation.value("target_already_owned_by_sdk",SupportJson(false))==true;
                 if(observation.contains("entry_guard_hit") && !observation.value("entry_guard_hit",false) && !owned) {
@@ -71,7 +73,7 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
                     state="function_boundary_unresolved";blocked=true;++mismatch;
                 } else if(value->value("abi_verified",false) && value->value("runtime_verified",false)) {
                     state="runtime_evidence_recorded"; complete=true;
-                } else if(observation.value("observed_calls",std::uint64_t{})>0) {
+                } else if((observation.value("observed_calls",std::uint64_t{})>0 || recorded.value("observed_calls",std::uint64_t{})>0)) {
                     state="observed_needs_abi_and_lifetime_review"; ++observed;
                 } else if(!observation.empty() && observation.value("hook_adapter",std::string("none"))=="none") {
                     state="observer_not_implemented"; ++noObserver;

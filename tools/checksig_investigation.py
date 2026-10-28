@@ -70,6 +70,8 @@ def generate_catalog():
   if 'rva' in value and 'entry_check' in value:
    requirements.append({'id':path,'group':group_id,'kind':'function','path':path,**({'symbol':'CommandOutputPacket::read'} if path.endswith('/output_read') else {}),'next_action':'入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。'});return
   for k,v in value.items():append_new(v,path+'/'+k,group_id)
+ group('request_sender','MinecraftCommandsからのCommandRequest送信経路')
+ append_new(new['layouts']['PacketSender']['sender'],'/layouts/PacketSender/sender','request_sender')
  append_new(new['layouts']['CommandRequestPacket'],'/layouts/CommandRequestPacket','command_packets')
  group('message_commands','CommandRegistryのメッセージコマンド')
  append_new(new['layouts']['CommandRegistry']['message_forwarding'],'/layouts/CommandRegistry/message_forwarding','message_commands')
@@ -83,7 +85,7 @@ def generate_catalog():
   'BlockOutline':['gameplay','actors','items','world','subchunks','render','world_events'],
   'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
-  'Fake':['gameplay','sender','command_packets','message_commands'],
+  'Fake':['gameplay','request_sender','command_packets','message_commands'],
   'GuiDemo':[], 'ScanClient':[], 'CheckSig':[]}
  checks={
   'AutoSprint':['Wキーで走る・離すと解除・画面切替後にキーが残らない'],
@@ -116,7 +118,7 @@ def make_bundle(out):
  output.update(signature='',cross_version_signature_available=False)
  profile['symbols']['CommandOutputPacket::read']=output
  def job(name,actions,watches=None):
-  doc={'schema':1,'kind':'checksig-job','arch':'x64','minimum_checksig_features':2,'profile':profile,'requirements':catalog,'actions':actions}
+  doc={'schema':1,'kind':'checksig-job','arch':'x64','minimum_checksig_features':3,'profile':profile,'requirements':catalog,'actions':actions}
   if watches:doc['watches']=watches
   path=out/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');return path
  audit=job(f'commands/{VERSION}-all-mods.json',[{'op':'audit'}])
@@ -131,9 +133,10 @@ def make_bundle(out):
   def watch(label,symbol,field,path,type):watches.append({'label':label,'symbol':symbol,'field':field,'offsets':path,'type':type})
   if name=='10-input':
    for slot in [32,33,34]:watch('ClientInstance vtable slot '+str(slot),'ClientInstance::grabCursor','self',[0,slot*8],'ptr')
-   watch('PacketSender sendToServer slot2 candidate','ClientInstance::grabCursor','self',[0x1e0,0,16],'ptr')
-   watch('ClientInstance PacketSender candidate','ClientInstance::grabCursor','self',[0x1e0],'ptr')
+   watch('Rejected ClientInstance+0x1E0 slot2 (RET, not sender)','ClientInstance::grabCursor','self',[0x1e0,0,16],'ptr')
+   watch('ClientInstance+0x1E0 rejected sender object','ClientInstance::grabCursor','self',[0x1e0],'ptr')
    watch('CommandRegistry candidate','ClientInstance::grabCursor','self',[0x1d0,0xc8,0x10],'ptr')
+   watch('MinecraftCommands client provider','ClientInstance::grabCursor','self',[0x1d0,0xc8,8],'ptr')
   if name=='20-actors-world':
    watch('BlockSource minimum Y candidate','ClientInstance::getRegion','return_block_source',[0x3a],'i16')
    watch('BlockSource maximum Y candidate','ClientInstance::getRegion','return_block_source',[0x38],'i16')
@@ -144,7 +147,7 @@ def make_bundle(out):
    watch('Actor header candidate','ClientInstance::getLocalPlayer','return_actor',[0],'bytes:64')
   job('optional/'+name+'.json',[{'op':'observe','symbols':symbols},{'op':'audit'}],watches)
  source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/f'data/{OLD}/windows-x64.json',source)
- port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text(encoding='utf-8'));doc['source']=f'../reference/windows-x64-{OLD}.json';port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+ port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text(encoding='utf-8'));doc['source']=json.loads(source.read_text(encoding='utf-8'));port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  shutil.copy2(ROOT/'docs/checksig-126605.md',out/'README_ja.md')
  return audit
 

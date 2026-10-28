@@ -131,14 +131,11 @@ public:
             textBegin_=base_+native_profile::number(root.at("target").at("text_rva"));
             textEnd_=textBegin_+native_profile::number(root.at("target").at("text_size"));
             const auto& sender = root.at("native_packets").at("sender");
-            senderOffset_=native_profile::number(sender.at("client_packet_sender_offset"));
             senderSlot_=native_profile::number(sender.at("sender_send_to_server_slot"));
-            if (senderOffset_!=0x1e0 || senderSlot_!=2) throw std::runtime_error("unsupported sender layout revision");
-            // Check the leaf getter AND its displacement before reading the member.
-            const auto* getter=static_cast<const unsigned char*>(native_profile::checked(root,sender.at("packet_sender_getter")));
-            std::array<unsigned char,8> leaf{};
-            if (!native_profile::read(getter,0,leaf) || leaf!=std::array<unsigned char,8>{0x48,0x8b,0x81,0xe0,1,0,0,0xc3})
-                throw std::runtime_error("sender getter ABI mismatch");
+            if (sender.value("path",std::string{})!="MinecraftCommands::client->getPacketSender" || senderSlot_!=2)
+                throw std::runtime_error("unsupported sender layout revision");
+            // Native MinecraftCommands request path, not ClientInstance+0x1e0.
+            native_profile::checked(root,sender.at("command_request_path"));
             native_profile::checked(root,layout.at("request_constructor"));
             requestVtable_=base_+native_profile::number(layout.at("request_vtable_rva"));
             outputVtable_=base_+native_profile::number(layout.at("output_vtable_rva"));
@@ -198,12 +195,24 @@ private:
     void senderState(SenderState state, const char* message) {
         if (senderState_!=state) { senderState_=state; note(message); }
     }
+    bool callGetter(void* object,std::size_t slot,void*& value) const noexcept {
+        void* table{}; void* fn{};
+        if (!native_profile::read(object,0,table) || !native_profile::read(table,slot,fn)) return false;
+        const auto address=reinterpret_cast<std::uintptr_t>(fn);
+        if (address<textBegin_ || address>=textEnd_) return false;
+        __try { value=reinterpret_cast<void*(__fastcall*)(void*)>(fn)(object); return true; }
+        __except(EXCEPTION_EXECUTE_HANDLER) { value=nullptr; return false; }
+    }
     void observeSender(void* client) {
         sender_=nullptr; void* sender{}; void* vtable{}; void* target{};
         if (!client) { senderState(SenderState::WaitingClient,"sender waiting: ClientInstance has not been observed"); return; }
         if (!level_) { senderState(SenderState::WaitingLevel,"sender waiting: no active level"); return; }
-        if (!native_profile::read(client,senderOffset_,sender) || !sender) {
-            senderState(SenderState::WaitingSender,"sender waiting: ClientInstance PacketSender pointer unavailable"); return;
+        void* minecraft{}; void* commands{}; void* provider{}; void* owner{};
+        if (!native_profile::read(client,0x1d0,minecraft) || !minecraft ||
+            !native_profile::read(minecraft,0xc8,commands) || !commands ||
+            !native_profile::read(commands,8,provider) || !provider ||
+            !callGetter(provider,8,owner) || !owner || !callGetter(owner,0xa40,sender) || !sender) {
+            senderState(SenderState::WaitingSender,"sender waiting: MinecraftCommands client PacketSender unavailable"); return;
         }
         if (!native_profile::read(sender,0,vtable) || !native_profile::read(vtable,senderSlot_*8,target)) {
             senderState(SenderState::WaitingVtable,"sender waiting: PacketSender virtual function is unreadable"); return;
@@ -280,7 +289,7 @@ private:
     std::atomic<bool> stopped_{},dropped_{};
     void* client_{}; void* level_{}; void* sendTarget_{};
     std::uintptr_t base_{},textBegin_{},textEnd_{},requestVtable_{},outputVtable_{};
-    std::uint32_t senderOffset_{},senderSlot_{};
+    std::uint32_t senderSlot_{};
     DWORD owner_{};
     BDS_HookToken sendToken_{},readToken_{};
     bool loaded_{};
