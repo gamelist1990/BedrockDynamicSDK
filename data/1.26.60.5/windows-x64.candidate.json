@@ -5,7 +5,7 @@
     "kind": "client",
     "platform": "windows",
     "arch": "x64",
-    "version": "1.26.6005.0",
+    "version": "1.26.60.5",
     "sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
     "text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
     "image_base": "0x140000000",
@@ -502,7 +502,7 @@
   "analysis": {
     "status": "offline_candidate_only",
     "source_exe_file_version": "1.26.60.5",
-    "target_version_label": "1.26.6005.0 (user supplied package version)",
+    "target_version_label": "1.26.60.5 (EXE file version)",
     "runtime_verified": false,
     "description": "Offline candidate locators only. These analysis records are not native SDK layouts and must not be called directly.",
     "native_function_candidates": [
@@ -810,7 +810,122 @@
         "status": "candidate",
         "abi_verified": false,
         "evidence": "Old verified source table slot 134; old slot 135 and 136 match new slots 137 and 138. Old/new candidate bodies share component hash 0xAF993816 and similar control flow. Ghidra ev_da62b1756dd47d91d392e84e88273850c15ee96de16ce6a443920e6f80792d5c; lifetime and event invocation unverified."
+      },
+      {
+        "table_rva": "0xF2B9310",
+        "method": "ClientInstance region getter",
+        "candidate_slot": 33,
+        "candidate_rva": "0x659E2F0",
+        "old_slot": 30,
+        "old_rva": "0x5DAEBB0",
+        "status": "candidate",
+        "abi_verified": false,
+        "evidence": "The new table entry has the same instruction structure and ActorOwnerComponent hash 0x85B93800 as the old region candidate; corresponding ClientInstance field changed from +0x248 to +0x268. REA/Ghidra ev_b54626361c3e2ea7d57eba23c2fa588a3056826978ffb01a75b00aa49b58dc1b; output type, lifetime and runtime unverified."
+      },
+      {
+        "table_rva": "0xF2B9310",
+        "method": "ClientInstance local player getter",
+        "candidate_slot": 34,
+        "candidate_rva": "0x659E470",
+        "old_slot": 31,
+        "old_rva": "0x5DAED30",
+        "status": "candidate",
+        "abi_verified": false,
+        "evidence": "Adjacent to region getter as in old table, with matching old/new instruction structure and +0x248 to +0x268 field change. Returned Actor identity and lifetime unverified."
       }
-    ]
+    ],
+    "component_observations": [
+      {
+        "component": "ActorTypeComponent",
+        "component_hash": "0x4F6BA419",
+        "new_function_rva": "0xB94CA0",
+        "old_function_rva": "0x19E9580",
+        "status": "static candidate",
+        "runtime_verified": false,
+        "evidence": "REA/Ghidra ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f; old and new function access component hash and compare the 4-byte value with 0x13F. Function identity and owner/layout are not established. Observed member accesses +0x270/+0x2C0/+0x2D8 changed to +0x290/+0x2E0/+0x2F8; field types are unknown."
+      }
+    ],
+    "world_render_observations": [
+      {
+        "name": "tessellator vertex",
+        "old_rva": "0x59CA7A0",
+        "new_rva": "0x54175E0",
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "REA/Ghidra ev_2636fc1a9036e6ad4a69d1f5baa037037336175849c8e6768c15b78c770d2d7e; compares native register and field usage. Caller, runtime and overall ABI not verified."
+      },
+      {
+        "name": "tessellator color",
+        "old_rva": "0x59CA610",
+        "new_rva": "0x5417520",
+        "status": "ambiguous",
+        "runtime_verified": false,
+        "evidence": "Old code accepts RGBA through RDX pointer. New similar packing function appears to use XMM arguments and stack; do not carry over old ABI without validating function identity and callers."
+      }
+    ],
+    "world_scan_observations": {
+      "status": "candidate_only",
+      "get_block_rva": "0x32CE440",
+      "block_source_table_candidates": [
+        "0xF188A20",
+        "0xF36D910",
+        "0xF49A7F0"
+      ],
+      "get_block_slot": 2,
+      "get_chunk_slot": 41,
+      "source_height_min_offset": "0x3A",
+      "source_height_max_offset": "0x38",
+      "level_chunk_sections_begin_offset": "0x1C8",
+      "level_chunk_sections_end_offset": "0x1D0",
+      "section_stride": "0x68",
+      "section_storage_offset": "0x30",
+      "storage_get_slot": 3,
+      "runtime_verified": false,
+      "evidence": "New version function and vtable pointers match loaded ScanClient rdata; old/new neighbor slots 3,5,6,8,41 anchored by multiple signatures. REA/Ghidra ev_09db4ac9048ab388b2a9593984880e908277b37d18d2c75a5058f6a36c6d6d04. Chunk vector offsets changed from 0x140/0x148 to 0x1C8/0x1D0. Static and loaded read-only data only: object layout, dispatch ABI, live getBlock behavior and thread/lifetime not verified."
+    },
+    "scanclient_observation": {
+      "version": "1.26.60.5",
+      "file_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+      "text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
+      "status": "static section capture complete",
+      "bytes_skipped": 0,
+      "read_failures": 0,
+      "dynamic_passes": 212,
+      "capture_scope": "module .text/.rdata/.pdata, writable module sections monitored; no private heap or native call tracing",
+      "limitations": "Loaded function pointers and module data changes are observations, not proof of a method call, ABI, component layout or safe object lifetime.",
+      "vtable_cross_checks": [
+        {
+          "table_rva": "0xF2B9310",
+          "matched_entries": {
+            "33": "0x659E2F0",
+            "34": "0x659E470",
+            "136": "0x65AC680",
+            "310": "0x65BB0A0",
+            "311": "0x65BB0F0",
+            "327": "0x65BD050",
+            "328": "0x65BD080"
+          }
+        },
+        {
+          "table_rva": "0xF2CE790",
+          "matched_entries": {
+            "325": "0x232F290",
+            "408": "0x6B8D550"
+          }
+        },
+        {
+          "table_rva": "0xF188A20",
+          "matched_entries": {
+            "2": "0x32CE440",
+            "3": "0x32CE5C0",
+            "5": "0x32CE830",
+            "6": "0x32CE890",
+            "8": "0x32DA070",
+            "41": "0x32CD550"
+          }
+        }
+      ],
+      "vtable_cross_check_note": "ScanClient loaded .rdata pointer values match corresponding exact on-disk .rdata, after correcting loaded module base. Raw pointer lists do not prove C++ type, that a live object uses this table, or that any method was invoked."
+    }
   }
 }
