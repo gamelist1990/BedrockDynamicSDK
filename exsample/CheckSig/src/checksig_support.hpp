@@ -30,6 +30,15 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
     if(catalog.value("schema",0)!=1 || catalog.at("target").at("sha256")!=target.value("sha256",std::string{})) return result;
     const auto& requirements=catalog.at("requirements");
     if(!requirements.is_array() || requirements.size()>2000) throw std::invalid_argument("support requirements must contain at most 2000 items");
+    const auto rvaKey=[](const SupportJson& row) -> std::uint64_t {
+        const auto& value=row.at("rva");
+        return value.is_string() ? std::stoull(value.get<std::string>(),nullptr,0) : value.get<std::uint64_t>();
+    };
+    std::map<std::uint64_t,SupportJson> recordedByRva;
+    if(profile.contains("symbols")) for(const auto& row:profile.at("symbols")) {
+        if(row.is_object() && row.contains("rva") && row.contains("runtime_observation"))
+            recordedByRva[rvaKey(row)]=row.at("runtime_observation");
+    }
     std::map<std::string,SupportJson> bySymbol,byPath;
     for(const auto& row:live) {
         if(row.contains("symbol")) bySymbol[row.at("symbol").get<std::string>()]=row;
@@ -63,7 +72,8 @@ inline SupportJson supportAudit(const SupportJson& profile,const SupportJson& ca
                 item["rva"]=value->at("rva");
                 item["abi_verified"]=value->value("abi_verified",false);
                 item["runtime_verified"]=value->value("runtime_verified",false);
-                const auto recorded=value->value("runtime_observation",SupportJson::object());
+                auto recorded=value->value("runtime_observation",SupportJson::object());
+                if(recorded.empty() && recordedByRva.contains(rvaKey(*value))) recorded=recordedByRva.at(rvaKey(*value));
                 if(!recorded.empty()) item["recorded_observation"]=recorded;
                 if(!observation.empty()) item["observation"]=observation;
                 const bool owned=observation.value("target_already_owned_by_sdk",SupportJson(false))==true;
