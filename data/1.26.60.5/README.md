@@ -62,6 +62,11 @@ Supplies offsetsは旧プロフィール由来の候補として保持してい�
 StateVector / FallDistance offsetsも旧版由来です。どの項目も動作時のread/writeを
 検証していません。候補を有効にするとModが処理を試しますが、実行できる保証にはなりません。
 
+`native_camera`にも新版のlocal-player / update-player / gamma / game-type setter候補を
+接続しました。Camera object offsetsは旧版由来の候補です。新しい関数開始位置が見つからない
+culler setter、inside-cube renderer、view factory、spectator predicateは呼び出し先として
+登録せず、CheckSigのsymbol候補と解析記録だけに残しています。描画・Camera機能全体は未完成です。
+
 BlockSourceのgetBlock候補は `0x32CE440`、関連vtableのslot 2とchunk取得slot 41を
 旧版と新EXE、およびScanClientの読み込み済み.rdataで照合しました。
 SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版の
