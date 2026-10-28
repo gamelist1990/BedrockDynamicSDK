@@ -115,4 +115,4 @@ DLLの取得をスクリプト化する場合は、リポジトリの `Get-Check
 
 GitHub Actionsの **All mod DLLs** がMSVC Windows x64でDLLをビルドします。CheckSigでは入力処理・署名検索・プロファイル検証のテストに加え、生成したDLLをテスト用Windows EXEにロードし、JSON投入から検出結果生成、壊れたJSONからの復帰、コマンド処理、既知ABIのテスト関数に対するHookと引数・戻り値の観測まで確認します。取得用PowerShellもWindows PowerShell 5.1で確認します。
 
-テスト用EXEでの確認と、Minecraft実機で候補ABI・値・寿命を確認することは別の検証です。Minecraft 1.26.60.5での実ゲーム動作は未検証です。
+テスト用EXEでの確認と、Minecraft実機で候補ABI・値・寿命を確認することは別の検証です。Minecraft 1.26.60.5では提供された実機ログと既存の静的ABI証拠を照合し、`Keyboard::feed` のHook・key/down・戻り値0の観測を確認済みです。更新済みJSONを読み込むと当該関数に `verification=complete` と表示します。その他の関数やnative keyboardレイアウトは実行時未検証です。

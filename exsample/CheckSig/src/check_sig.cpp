@@ -1537,6 +1537,11 @@ private:
                     {"source", symbol.value("source", std::string{})},
                     {"abi_verified", symbol.value("abi_verified", false)},
                     {"runtime_verified", symbol.value("runtime_verified", false)},
+                    {"verification_status", symbol.value("status", std::string{}) == "verified" &&
+                        symbol.value("abi_verified", false) && symbol.value("runtime_verified", false)
+                        ? "complete" : "pending"},
+                    {"runtime_validation", symbol.value("runtime_validation", json::object())},
+                    {"entry_validation", symbol.value("entry_validation", json::object())},
                     {"readable", !sample.empty()}, {"entry_guard_hit", guardHit},
                     {"entry_bytes", bytesHex(sample.data(), std::min<std::size_t>(sample.size(), 32))},
                     {"state", sample.empty() ? "unreadable" : guardHit ? "entry-match" : "entry-mismatch"},
@@ -1549,7 +1554,10 @@ private:
                     {"target_already_owned_by_sdk", owned ? json(*owned) : json(nullptr)},
                     {"hook_ready_for_explicit_test", hookReady}
                 });
-                entry["hook_reason"] = hookReady ? "ready for explicit hook command; runtime unverified" :
+                entry["hook_reason"] = hookReady ?
+                    (entry["verification_status"] == "complete" ?
+                        "ready; runtime validation complete for the recorded scope" :
+                        "ready for explicit hook command; runtime unverified") :
                     !guardHit ? "entry bytes unreadable or do not match profile" :
                     !functionEntry ? "not a .pdata function entry" :
                     !abiKnown ? "no supported ABI adapter for this definition" :
@@ -1576,7 +1584,8 @@ private:
             for (const auto& entry : activeSymbols_) {
                 readable << "  " << entry.value("symbol", std::string{}) << "  "
                          << entry.value("rva", std::string{}) << "  "
-                         << entry.value("state", std::string{}) << "  hook="
+                         << entry.value("state", std::string{}) << "  verification="
+                         << entry.value("verification_status", std::string("pending")) << "  hook="
                          << (entry.value("hook_ready_for_explicit_test", false) ? "ready" : "unavailable")
                          << "\n    " << entry.value("hook_reason", entry.value("error", std::string{})) << "\n";
             }

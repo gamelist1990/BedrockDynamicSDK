@@ -6,7 +6,12 @@
 10件を追加しました。`ClientInstance::onPlayerLoaded` はRVA候補が異なるため、
 既存定義を保ったまま `candidate::cross_version_port::` に別候補を保存しています。
 旧版アンカーからの生の候補一覧は `windows-x64.candidate.json` です。
-すべて `candidate`、`abi_verified:false`、`runtime_verified:false` のままです。
+2026-10-28提供のCheckSig実機ログにより、`Keyboard::feed`（RVA `0x331C20`）を
+`verified` / `abi_verified:true` / `runtime_verified:true` へ更新しました。
+静的REA/GhidraのABI比較に加えてHook設置、キー引数、押下/解放、戻り値0の観測を確認しています。
+10件の観測サンプルと累計97回以上の呼び出しが記録されています。戻り値1の意味、解除、長時間安定性は未確認です。
+残り42件の関数はcandidateのままです。43件すべての入口読み取り・ガード一致は `entry_validation` に完了記録を残しました。
+証跡のSHA-256と範囲はJSONの `analysis.runtime_validation` と `Keyboard::feed.runtime_validation` に保存しています。
 native keyboardのイベントレイアウトもcandidateとして登録しています。全Modに必要な
 nativeレイアウトは未完成なので、この定義だけで全SDK機能が使える状態ではありません。
 Actor / Item / Motionのnative layoutは1.26.52.3から候補として移し、このEXEに対する
