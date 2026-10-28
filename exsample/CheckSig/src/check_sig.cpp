@@ -786,6 +786,8 @@ private:
     std::unique_ptr<bedrock::Resolver> resolver_;
     std::map<std::string, std::unique_ptr<HookState>> hooks_;
     std::map<fs::path, std::pair<fs::file_time_type, std::uintmax_t>> commandFileState_;
+    std::map<fs::path, std::pair<fs::file_time_type, std::uintmax_t>> profileFileState_;
+    json lastProfileDetection_ = json::object();
     std::atomic<bool> stopping_{};
     std::mutex fileMutex_;
     std::mutex hookMapMutex_;
@@ -862,6 +864,8 @@ private:
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
         if (!error.empty()) status["error"] = error;
+        if (!lastProfileDetection_.empty())
+            status["profile_detection"] = lastProfileDetection_;
         status["hooks"] = json::array();
         {
             std::lock_guard lock(hookMapMutex_);
@@ -1548,6 +1552,74 @@ private:
         return true;
     }
 
+    json detectProfileText(const std::string& text, const std::string& path,
+                           std::string_view trigger) {
+        json document;
+        try { document = json::parse(text); }
+        catch (const std::exception& e) {
+            throw std::runtime_error(std::string("profile JSON parse failed: ") + e.what());
+        }
+        if (!document.is_object() || !document.contains("target") ||
+            !document["target"].is_object() || !document.contains("symbols") ||
+            !document["symbols"].is_object() || document["symbols"].size() > kMaxSymbols)
+            throw std::runtime_error("profile must contain a target object and a bounded symbols object");
+
+        const auto& target = document["target"];
+        const auto product = target.value("product", std::string{});
+        const auto platform = target.value("platform", std::string{});
+        const auto arch = target.value("arch", std::string{});
+        const auto version = target.value("version", std::string{});
+        const auto profileSha = target.value("sha256", std::string{});
+        std::size_t candidateCount = 0;
+        std::size_t abiVerifiedCount = 0;
+        for (const auto& [name, symbol] : document["symbols"].items()) {
+            (void)name;
+            if (!symbol.is_object()) continue;
+            if (symbol.value("status", std::string{}) == "candidate") ++candidateCount;
+            if (symbol.value("abi_verified", false)) ++abiVerifiedCount;
+        }
+
+        const auto loadedSha = identity_.fileSha256;
+        const bool supportedX64 = product == "minecraft-bedrock" &&
+            platform == "windows" && arch == "x64";
+        const bool shaMatches = profileSha.size() == 64 && loadedSha.size() == 64 &&
+            lower(profileSha) == lower(loadedSha);
+        json result = {
+            {"trigger", std::string(trigger)}, {"profile_path", path},
+            {"profile_version", version}, {"profile_arch", arch},
+            {"profile_platform", platform}, {"profile_sha256", profileSha},
+            {"loaded_exe_sha256", loadedSha},
+            {"supported_windows_x64_profile", supportedX64},
+            {"file_sha256_matches", shaMatches},
+            {"symbol_count", document["symbols"].size()},
+            {"candidate_symbol_count", candidateCount},
+            {"abi_verified_symbol_count", abiVerifiedCount},
+            {"loaded", false}
+        };
+
+        if (!supportedX64) {
+            result["status"] = "unsupported-profile-target";
+        } else if (!shaMatches) {
+            result["status"] = "different-executable-build";
+            result["active_profile_retained"] = resolver_ != nullptr;
+        } else {
+            std::string error;
+            if (loadProfileText(text, path, error)) {
+                result["status"] = "exact-build-match";
+                result["loaded"] = true;
+                result["exact_build"] = resolver_->exactBuild();
+            } else {
+                result["status"] = "matching-fingerprint-invalid-profile";
+                result["error"] = error;
+                result["active_profile_retained"] = resolver_ != nullptr;
+            }
+        }
+
+        lastProfileDetection_ = result;
+        writeEvent("detect-result", result);
+        return result;
+    }
+
     void loadSource(const std::string& argument) {
         const auto path = fromUtf8(argument);
         std::string text, error;
@@ -1839,11 +1911,14 @@ private:
 
     void processCommands() {
         if (commands_.empty() || !fs::exists(commands_)) return;
-        std::vector<fs::path> pending;
+        std::vector<fs::path> pendingProfiles;
+        std::vector<fs::path> pendingCommands;
         std::error_code ec;
         for (fs::directory_iterator it(commands_, ec), end; !ec && it != end; it.increment(ec)) {
-            if (!it->is_regular_file(ec) || lower(it->path().extension().string()) != ".txt")
-                continue;
+            if (!it->is_regular_file(ec)) continue;
+            const auto extension = lower(it->path().extension().string());
+            const bool isProfile = extension == ".json";
+            if (!isProfile && extension != ".txt") continue;
             const auto modified = it->last_write_time(ec);
             if (ec) { ec.clear(); continue; }
             const auto size = it->file_size(ec);
@@ -1854,10 +1929,51 @@ private:
                 saved->second = state;
                 continue;
             }
-            pending.push_back(it->path());
+            if (isProfile) {
+                const auto processed = profileFileState_.find(it->path());
+                if (processed != profileFileState_.end() && processed->second == state)
+                    continue;
+                pendingProfiles.push_back(it->path());
+            } else {
+                pendingCommands.push_back(it->path());
+            }
         }
-        std::sort(pending.begin(), pending.end());
-        for (const auto& path : pending) {
+        std::sort(pendingProfiles.begin(), pendingProfiles.end());
+        for (const auto& path : pendingProfiles) {
+            if (stopping_.load()) break;
+            std::string text, error;
+            if (!readFile(path, text, kMaxProfileBytes, error)) {
+                if (error == "file read was incomplete" || error == "file could not be opened")
+                    continue;
+                lastProfileDetection_ = {
+                    {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
+                    {"status", "profile-read-error"}, {"error", error}, {"loaded", false}
+                };
+                writeEvent("detect-result", lastProfileDetection_);
+            } else {
+                try {
+                    (void)detectProfileText(text, pathUtf8(path), "commands-json-auto");
+                } catch (const std::exception& e) {
+                    lastProfileDetection_ = {
+                        {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
+                        {"status", "invalid-profile"}, {"error", e.what()}, {"loaded", false}
+                    };
+                    writeEvent("detect-result", lastProfileDetection_);
+                } catch (...) {
+                    lastProfileDetection_ = {
+                        {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
+                        {"status", "invalid-profile"}, {"error", "unknown error"}, {"loaded", false}
+                    };
+                    writeEvent("detect-result", lastProfileDetection_);
+                }
+            }
+            const auto state = commandFileState_.find(path);
+            if (state != commandFileState_.end())
+                profileFileState_[path] = state->second;
+        }
+
+        std::sort(pendingCommands.begin(), pendingCommands.end());
+        for (const auto& path : pendingCommands) {
             if (stopping_.load()) break;
             std::string line, error;
             if (!readFile(path, line, 4096, error)) {
@@ -1888,13 +2004,51 @@ private:
         input >> command;
         if (command == "help") {
             writeEvent("help", {{"commands", json::array({
-                "identity", "source <old-profile.json>", "profile <target-profile.json>",
+                "identity", "detect [windows-x64-profile.json]",
+                "source <old-profile.json>", "profile <target-profile.json>",
                 "port [version]", "list", "probe <symbol>", "hook <symbol>",
                 "unhook <symbol>", "scan <masked-pattern>",
                 "read <VA|rva:0xRVA|actor:index+offset> <type>", "quit"
             })}});
         } else if (command == "identity") {
             writeEvent("identity", {{"identity", moduleIdentityJson(*image_, identity_)}});
+        } else if (command == "detect") {
+            const auto argument = commandArgument(line, command);
+            if (!argument.empty()) {
+                const auto path = fromUtf8(argument);
+                std::string text, error;
+                if (!readFile(path, text, kMaxProfileBytes, error)) {
+                    lastProfileDetection_ = {
+                        {"trigger", "detect-command"}, {"profile_path", argument},
+                        {"status", "profile-read-error"}, {"error", error}, {"loaded", false}
+                    };
+                    writeEvent("detect-result", lastProfileDetection_);
+                } else {
+                    try {
+                        (void)detectProfileText(text, argument, "detect-command");
+                    } catch (const std::exception& e) {
+                        lastProfileDetection_ = {
+                            {"trigger", "detect-command"}, {"profile_path", argument},
+                            {"status", "invalid-profile"}, {"error", e.what()}, {"loaded", false}
+                        };
+                        writeEvent("detect-result", lastProfileDetection_);
+                    } catch (...) {
+                        lastProfileDetection_ = {
+                            {"trigger", "detect-command"}, {"profile_path", argument},
+                            {"status", "invalid-profile"}, {"error", "unknown error"}, {"loaded", false}
+                        };
+                        writeEvent("detect-result", lastProfileDetection_);
+                    }
+                }
+            } else if (!lastProfileDetection_.empty()) {
+                auto result = lastProfileDetection_;
+                result["trigger"] = "detect-command-last-result";
+                writeEvent("detect-result", std::move(result));
+            } else if (resolver_) {
+                (void)detectProfileText(targetProfile_.dump(), targetPath_, "detect-command-active-profile");
+            } else {
+                throw std::runtime_error("drop a Windows x64 profile JSON into commands; CheckSig will detect it automatically");
+            }
         } else if (command == "source") {
             const auto argument = commandArgument(line, command);
             if (argument.empty()) throw std::runtime_error("usage: source <old-profile.json>");

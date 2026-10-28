@@ -110,10 +110,52 @@ powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
 取得前にPEヘッダーがx64であることを確認し、SHA-256を表示します。GitHub取得は
 公開リポジトリの `All mod DLLs` workflowを使い、artifactが期限切れの場合は前の成功実行も探します。
 
+### x64プロファイルを取得して自動検出する
+
+DLLを起動した後、`Documents/PEXData/CheckSig/commands/` にWindows x64プロファイルJSONを置くと、
+CheckSigがファイルの書き込み完了を待って自動で読み込みます。EXEのSHA-256が一致すれば
+プロファイルを有効化し、`events.jsonl` に `detect-result` の `exact-build-match` を記録します。
+一致しない場合も `different-executable-build` として検出結果を記録しますが、その定義での
+Hookや候補読み取りは有効化しません。最後の結果は `status.json` の `profile_detection` にも残ります。
+
+`Get-CheckSigProfile.ps1` はGitHubの最新Windows x64プロファイルを取得する方法と、
+手元のJSONまたはJSONを含むフォルダーを指定する方法に対応します。既定では選んだJSONを
+`Documents/PEXData/CheckSig/commands/<version>-windows-x64.json` にコピーします。
+既存ファイルを置き換える場合だけ `-Force` を指定します。
+
+GitHubから最新バージョンを取得:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 -Source GitHub
+```
+
+GitHubから特定バージョンを取得:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 `
+  -Source GitHub `
+  -Version "1.26.60.5"
+```
+
+ローカルのJSONを配置:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 `
+  -Source Local `
+  -LocalPath "C:\Downloads\1.26.60.5\windows-x64.json"
+```
+
+複数バージョンのJSONがあるフォルダーでは、既定で最も新しいバージョンを選びます。
+`-Version` を付けると対象を指定できます。保存先を変える場合は `-CommandsDirectory` を渡します。
+スクリプトを使わず手で配置する場合も、x64 JSONをcommandsフォルダーへコピーするだけで自動検出します。
+`detect` コマンドは最後の結果を再出力し、`detect "C:\path\to\windows-x64.json"` は指定ファイルを
+その場で照合します。
+
 ## コマンド入力
 
 `Documents/PEXData/CheckSig/commands/` にコマンドを1行書いた `.txt` ファイルを置きます。
-CheckSigが処理すると入力ファイルは削除されます。ファイル名順に処理するので、
+CheckSigが処理すると入力ファイルは削除されます。JSONプロファイルは削除せず、ファイル内容が
+変わったときだけ再検出します。ファイル名順に処理するので、
 複数コマンドを連続で置く場合は `01-source.txt`、`02-port.txt` のように番号を付けます。
 結果は `events.jsonl`、現在状態は `status.json` に書きます。
 
