@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .generator import make_database, port_database, write_json
+from .generator import make_database, merge_port_candidates, port_database, write_json
 from .pe import Executable
 from .index import build_index
 from .lens import targets_from_lens
@@ -32,6 +32,10 @@ def main() -> int:
     port = sub.add_parser("port", help="Port candidates with source-unique anchors and destination .pdata boundaries")
     port.add_argument("binary", type=Path)
     port.add_argument("--old", type=Path, required=True)
+    port.add_argument("--source-binary", type=Path,
+                      help="Exact executable for the source profile; derive unique body anchors from its .text")
+    port.add_argument("--base-profile", type=Path,
+                      help="Merge candidates into this exact-build profile without replacing existing symbols")
     port.add_argument("--version", required=True)
     port.add_argument("--output", type=Path, required=True)
     embed = sub.add_parser("embed", help="Embed a symbol JSON database into a single-DLL C++ header")
@@ -132,7 +136,12 @@ def main() -> int:
             write_json(args.output, output)
         else:
             old = json.loads(args.old.read_text(encoding="utf-8"))
-            output = port_database(old, pe, args.version)
+            source_pe = Executable(args.source_binary) if args.source_binary else None
+            output = port_database(old, pe, args.version, source_pe)
+            output["generation"]["source_profile"] = str(args.old)
+            if args.base_profile:
+                base = json.loads(args.base_profile.read_text(encoding="utf-8"))
+                output = merge_port_candidates(base, output)
             write_json(args.output, output)
         print(json.dumps(output if args.command == "inspect" else {
             "output": str(args.output), "symbols": len(output["symbols"]),

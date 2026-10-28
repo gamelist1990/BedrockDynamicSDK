@@ -5,7 +5,7 @@ Windows x64 Minecraft Bedrock向けの動的シンボルデータと、単一DLL
 
 バージョンプロファイルは **Bedrock 1.26.52.3** と **1.26.60.5** を収録しています。Minecraft本体の実行ファイルはGitHubに含めません。
 
-1.26.60.5はEXEの識別情報、8件のフック候補、native keyboard候補を収録した部分プロファイルです。いずれも実ゲーム上の動作は未検証で、`ProfileOptions` の既定値 `CandidatePolicy::VerifiedOnly` では有効になりません。明示的に `AllowCandidates` を選んだ場合も候補機能としての扱いです。Actors、Items、World、Camera、Motion、Packets、Commands、native GUI、World Events、World Renderの1.26.60.5用レイアウトは未収録です。1.26.52.3向けDLLやネイティブ配置が新しい版でも動くとは限りません。詳細は[1.26.60.5の調査記録](data/1.26.60.5/README.md)を参照してください。
+1.26.60.5はEXE識別情報と41件の診断エントリーを含む部分プロファイルです。旧版アンカーから31件を候補移植し、10件を追加、RVAが競合する候補は別名で保持しています。いずれも実ゲーム上の動作は未検証で、`ProfileOptions` の既定値 `CandidatePolicy::VerifiedOnly` では有効になりません。明示的に `AllowCandidates` を選んだ場合も候補機能としての扱いです。Actors、Items、World、Camera、Motion、Packets、Commands、native GUI、World Events、World Renderの1.26.60.5用レイアウトは未収録です。1.26.52.3向けDLLやネイティブ配置が新しい版でも動くとは限りません。詳細は[1.26.60.5の調査記録](data/1.26.60.5/README.md)を参照してください。
 
 公開サンプル：
 

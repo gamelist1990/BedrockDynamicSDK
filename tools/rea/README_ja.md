@@ -50,9 +50,17 @@ tools/rea/analyze.sh xrefs /path/to/Minecraft.Windows.exe 0x140123456
 
 ```sh
 .venv/bin/python -m bedrock_symbols.cli port NEW-Minecraft.Windows.exe \
-  --old data/1.26.52.3/windows-x64.json --version NEW_VERSION \
+  --old data/1.26.52.3/windows-x64.json \
+  --source-binary OLD-Minecraft.Windows.exe --version NEW_VERSION \
+  --base-profile data/NEW_VERSION/windows-x64.json \
   --output /tmp/windows-x64-candidates.json
 ```
+
+`--source-binary`には旧プロファイルと一致する実行ファイルを渡します。
+SHA-256と`.text`ハッシュを照合してから、旧EXE内の関数本体から一意な入口・本体アンカーを生成し、
+トップレベル定義と`native_*`内の関数を新版`.pdata`境界へ候補移植します。
+新しい候補はABIや構造体オフセットを検証済みにせず、旧レイアウトも引き継ぎません。
+`--base-profile`を指定すると既存の定義を上書きせず、同じRVAは照合記録へ、異なるRVAは別名候補として追加します。
 
 ラッパーはREAのGhidraプロバイダーとSHA-256接頭辞別の再利用可能な解析スナップショットを使います。各コマンドのJSON結果はWindowsでは `%USERPROFILE%\Documents\PEXData\REA`、Linux/macOSでは `$HOME/Documents/PEXData/REA` に保存されます。保存先を変える場合、PowerShellでは `-EvidenceDirectory`、shellでは4番目の引数にディレクトリを指定します。関数名も検索する場合はREA CLIの `search --kind procedures` を使ってください。
 

@@ -63,6 +63,23 @@ script or with `-EvidenceDirectory` in PowerShell to change the destination.
 Use procedure searches explicitly with the REA CLI's `search --kind
 procedures` command when needed.
 
+To port old SDK symbol candidates using both exact builds:
+
+```sh
+.venv/bin/python -m bedrock_symbols.cli port NEW-Minecraft.Windows.exe \
+  --old data/1.26.52.3/windows-x64.json \
+  --source-binary OLD-Minecraft.Windows.exe --version NEW_VERSION \
+  --base-profile data/NEW_VERSION/windows-x64.json \
+  --output /tmp/windows-x64-candidates.json
+```
+
+`--source-binary` must match the old profile's file and `.text` hashes. The
+offline port derives source-unique entry/body anchors from that executable and
+includes functions nested under `native_*`. Results remain candidates; it does
+not transfer native layouts or ABI claims. `--base-profile` merges results
+without replacing existing entries, records same-RVA matches, and stores a
+different-RVA candidate under a separate alias.
+
 ## Analysis discipline
 
 Start with `analyze`, then search for known strings/symbols, inspect a function,

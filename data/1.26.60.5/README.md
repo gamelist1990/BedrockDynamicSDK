@@ -1,12 +1,15 @@
 # 1.26.60.5 Windows x64 — 調査中
 
-`windows-x64.json` はEXE識別情報と30件の診断候補を収録した定義です。
-旧版アンカーで移植した関数、パケット/コマンド/カメラ/描画関数、vtable候補、
-BlockSourceとActorTypeComponentの調査候補を `symbols` からCheckSigで個別に確認できます。
+`windows-x64.json` はEXE識別情報と41件の診断エントリーを収録した定義です。
+旧版アンカーで移植したトップレベル/native内関数と、既存の手調査候補を
+`symbols` からCheckSigで個別に確認できます。31件の移植候補のうち20件は既存RVAと一致し、
+10件を追加しました。`ClientInstance::onPlayerLoaded` はRVA候補が異なるため、
+既存定義を保ったまま `candidate::cross_version_port::` に別候補を保存しています。
+旧版アンカーからの生の候補一覧は `windows-x64.candidate.json` です。
 すべて `candidate`、`abi_verified:false`、`runtime_verified:false` のままです。
 native keyboardのイベントレイアウトもcandidateとして登録しています。全Modに必要な
 nativeレイアウトは未完成なので、この定義だけで全SDK機能が使える状態ではありません。
-`windows-x64.candidate.json` は旧版アンカー移植の原本です。
+構造体オフセット、vtable slot、旧版レイアウトはこの移植で引き継いでいません。
 
 Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
 [CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
