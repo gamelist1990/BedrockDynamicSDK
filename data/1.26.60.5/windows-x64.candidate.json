@@ -1817,5 +1817,19 @@
     "source_executable_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
     "source_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
     "source_profile": "data/1.26.52.3/windows-x64.json"
+  },
+  "diagnostic_candidates": {
+    "actor_context": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "registry_pointer_offset_from_actor": "0x10",
+      "entity_id_offset_from_actor": "0x18",
+      "actor_type_component_hash": "0x4F6BA419",
+      "actor_type_value_offset": "0x0",
+      "actor_type_value_size": 4,
+      "player_type_id": 319,
+      "evidence_id": "ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f",
+      "evidence": "Exact 1.26.60.5 EXE static Ghidra candidate at RVA 0xB94CA0 reads the registry pointer and 32-bit entity id at Actor+0x10/+0x18, then resolves ActorTypeComponent 0x4F6BA419 and compares its 32-bit value at +0 with 319. Treating the function argument as Actor* and its relation to Level::getRuntimeActorList entries are static inferences; runtime behavior is unverified."
+    }
   }
 }

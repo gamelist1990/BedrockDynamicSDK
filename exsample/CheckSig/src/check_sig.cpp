@@ -44,6 +44,10 @@ constexpr std::size_t kMaxPatternBytes = 512;
 constexpr std::size_t kMaxPatternHits = 512;
 constexpr std::size_t kMaxReadBytes = 64;
 constexpr std::size_t kMaxSymbols = 20000;
+constexpr std::string_view k126605ExeSha256 =
+    "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a";
+constexpr std::string_view k126605ActorContextEvidence =
+    "ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f";
 
 struct Section {
     std::string name;
@@ -133,6 +137,12 @@ bool safeRead(std::uintptr_t address, void* output, std::size_t size) {
         copied += amount;
     }
     return true;
+}
+
+bool safeReadAt(std::uintptr_t base, std::size_t offset, void* output,
+                std::size_t size) {
+    if (!base || base > UINTPTR_MAX - offset) return false;
+    return safeRead(base + offset, output, size);
 }
 
 bool copyRva(const PeImage& image, std::uint32_t rva, void* output, std::size_t size) {
@@ -627,6 +637,10 @@ struct HookState {
     std::string symbol;
     std::atomic<std::uint64_t> calls{};
     std::atomic<std::int64_t> lastSampleNs{};
+    bool actorContextCandidate{};
+    std::uint32_t actorRegistryOffset{};
+    std::uint32_t actorEntityIdOffset{};
+    std::string actorContextEvidence;
     std::mutex mutex;
     json latest = json::object();
     bool dirty{};
@@ -829,13 +843,39 @@ private:
                 const auto count = (end - begin) / sizeof(void*);
                 values["actor_count"] = count;
                 json actors = json::array();
+                json actorContexts = json::array();
                 for (std::size_t i = 0; i < std::min<std::size_t>(count, 8); ++i) {
                     std::uintptr_t actor{};
                     if (!safeRead(begin + i * sizeof(void*), &actor, sizeof(actor))) break;
                     actors.push_back(hex(actor));
+                    if (state->actorContextCandidate) {
+                        std::uintptr_t registry{};
+                        std::uint32_t entityId{};
+                        const bool registryRead = safeReadAt(actor,
+                            state->actorRegistryOffset, &registry, sizeof(registry));
+                        const bool entityIdRead = safeReadAt(actor,
+                            state->actorEntityIdOffset, &entityId, sizeof(entityId));
+                        json context = {
+                            {"actor", hex(actor)},
+                            {"registry_read", registryRead},
+                            {"entity_id_read", entityIdRead}
+                        };
+                        if (registryRead) context["registry_pointer"] = hex(registry);
+                        if (entityIdRead) context["entity_id"] = hex(entityId);
+                        actorContexts.push_back(std::move(context));
+                    }
                 }
                 values["sample_actor_pointers"] = std::move(actors);
                 values["sample_limit"] = 8;
+                if (state->actorContextCandidate) {
+                    values["actor_context_layout_status"] = "candidate";
+                    values["actor_context_evidence"] = state->actorContextEvidence;
+                    values["actor_context_offsets_from_actor"] = {
+                        {"registry_pointer", hex(state->actorRegistryOffset)},
+                        {"entity_id", hex(state->actorEntityIdOffset)}
+                    };
+                    values["sample_actor_contexts"] = std::move(actorContexts);
+                }
                 break;
             }
             case BDS_HOOK_ACTOR_GET_NAME_TAG: {
@@ -1101,6 +1141,21 @@ private:
         }
 
         if (version.empty()) version = "unknown";
+        json diagnosticCandidates = json::object();
+        if (lower(identity_.fileSha256) == k126605ExeSha256) {
+            diagnosticCandidates["actor_context"] = {
+                {"status", "candidate"},
+                {"runtime_verified", false},
+                {"registry_pointer_offset_from_actor", "0x10"},
+                {"entity_id_offset_from_actor", "0x18"},
+                {"actor_type_component_hash", "0x4F6BA419"},
+                {"actor_type_value_offset", "0x0"},
+                {"actor_type_value_size", 4},
+                {"player_type_id", 319},
+                {"evidence_id", k126605ActorContextEvidence},
+                {"evidence", "Exact 1.26.60.5 EXE static Ghidra candidate at RVA 0xB94CA0 reads the registry pointer and 32-bit entity id at Actor+0x10/+0x18, then resolves ActorTypeComponent 0x4F6BA419 and compares its 32-bit value at +0 with 319. Treating the function argument as Actor* and its relation to Level::getRuntimeActorList entries are static inferences; runtime behavior is unverified."}
+            };
+        }
         json output = {
             {"schema", 1},
             {"target", {
@@ -1112,6 +1167,7 @@ private:
                 {"text_rva", hex(identity_.textRva)}, {"text_size", identity_.textSize}
             }},
             {"symbols", std::move(symbols)},
+            {"diagnostic_candidates", std::move(diagnosticCandidates)},
             {"generation", {
                 {"generator", "CheckSig"}, {"generated_utc", timestampUtc()},
                 {"source_profile", sourcePath_},
@@ -1520,6 +1576,32 @@ private:
             holder = std::make_unique<HookState>();
             holder->symbol = symbol;
             holder->point = spec->point;
+            if (spec->point == BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST &&
+                lower(identity_.fileSha256) == k126605ExeSha256 &&
+                targetProfile_.contains("diagnostic_candidates") &&
+                targetProfile_["diagnostic_candidates"].is_object() &&
+                targetProfile_["diagnostic_candidates"].contains("actor_context")) {
+                const auto& candidate = targetProfile_["diagnostic_candidates"]["actor_context"];
+                if (candidate.is_object() &&
+                    candidate.value("status", std::string{}) == "candidate" &&
+                    !candidate.value("runtime_verified", false) &&
+                    candidate.value("evidence_id", std::string{}) == k126605ActorContextEvidence &&
+                    jsonU32(candidate.at("actor_type_component_hash")) == 0x4F6BA419 &&
+                    jsonU32(candidate.at("actor_type_value_offset")) == 0 &&
+                    candidate.at("actor_type_value_size").get<unsigned>() == 4 &&
+                    candidate.at("player_type_id").get<unsigned>() == 319) {
+                    const auto registryOffset = jsonU32(
+                        candidate.at("registry_pointer_offset_from_actor"));
+                    const auto entityIdOffset = jsonU32(
+                        candidate.at("entity_id_offset_from_actor"));
+                    if (registryOffset == 0x10 && entityIdOffset == 0x18) {
+                        holder->actorContextCandidate = true;
+                        holder->actorRegistryOffset = registryOffset;
+                        holder->actorEntityIdOffset = entityIdOffset;
+                        holder->actorContextEvidence = candidate.value("evidence_id", std::string{});
+                    }
+                }
+            }
         }
         if (holder->token) throw std::runtime_error("hook is already installed");
         if (!BDS_HookSubscribe(spec->point, target,
@@ -1531,6 +1613,8 @@ private:
             {"symbol", symbol}, {"rva", hex(rva)},
             {"hook_runtime", BDS_HookRuntimeVersion()},
             {"transparent_pass_through", true},
+            {"actor_context_candidate_observation", holder->actorContextCandidate},
+            {"actor_context_evidence", holder->actorContextEvidence},
             {"note", "Callback always calls next and records values after the original."}
         });
     }

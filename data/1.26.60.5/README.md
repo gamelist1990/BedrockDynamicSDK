@@ -37,6 +37,14 @@ Ghidraで `Level::getRuntimeActorList` 候補を旧版と比較すると、返�
 動作時の検証は未完了です。`MultiPlayerLevel::_subTick` 候補も旧版と制御フローを
 比較していますが、実行時の呼び出しは確認していません。
 
+`candidate::ActorTypeComponent` のGhidra証拠（`actor-type-candidate-ghidra.json`）は、
+RVA `0xB94CA0` の関数がActorTypeComponent hash `0x4F6BA419` を解決し、32-bit値を
+offset `0` から読み、319と比較することを示します。同じコードはActor+`0x10`からregistry、
+Actor+`0x18`からentity idを読みます。関数引数をActor*とみなすこと、およびそのActorが
+`Level::getRuntimeActorList`の要素と同じ型であることは推定です。CheckSigはこの2値を
+読み取り専用で記録しますが、registryやコンポーネントの内部には触れません。
+プロファイル上もcandidateのままで、runtime verificationはありません。
+
 BlockSourceのgetBlock候補は `0x32CE440`、関連vtableのslot 2とchunk取得slot 41を
 旧版と新EXE、およびScanClientの読み込み済み.rdataで照合しました。
 SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版の

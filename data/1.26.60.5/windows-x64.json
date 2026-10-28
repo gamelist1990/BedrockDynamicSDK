@@ -2925,5 +2925,19 @@
     "status": "candidate",
     "runtime_verified": false,
     "evidence": "1.26.60.5 GameCore::keyboardEvent RVA 0x98C80 accesses context+0x10, context+0x18, owner+0x40 and processor vtable slots 1/2, matching old 1.26.52.3; direct call to new Keyboard::feed 0x331C20. REA/Ghidra ev_51b43b5ba487cbc5d9936bb450c6bf63108397073f9d64b69e9da5556b5e1f84. No game runtime observation yet."
+  },
+  "diagnostic_candidates": {
+    "actor_context": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "registry_pointer_offset_from_actor": "0x10",
+      "entity_id_offset_from_actor": "0x18",
+      "actor_type_component_hash": "0x4F6BA419",
+      "actor_type_value_offset": "0x0",
+      "actor_type_value_size": 4,
+      "player_type_id": 319,
+      "evidence_id": "ev_41859599452e24fd9afcb71522d132dc84b59b14ab622ad287a3f398a511501f",
+      "evidence": "Exact 1.26.60.5 EXE static Ghidra candidate at RVA 0xB94CA0 reads the registry pointer and 32-bit entity id at Actor+0x10/+0x18, then resolves ActorTypeComponent 0x4F6BA419 and compares its 32-bit value at +0 with 319. Treating the function argument as Actor* and its relation to Level::getRuntimeActorList entries are static inferences; runtime behavior is unverified."
+    }
   }
 }

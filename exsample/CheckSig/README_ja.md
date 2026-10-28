@@ -19,6 +19,8 @@ Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへ�
   呼び出し回数と既知の引数/戻り値フィールドを記録
 - `Level::getRuntimeActorList` は旧・新EXEの機械語でABIを比較した候補HookPoint。
   元処理の後でMSVC x64 vectorヘッダーを安全に読み、件数と先頭8件までのActorポインタを記録
+- 1.26.60.5では追加の静的候補としてActor+0x10/+0x18をページ検査付きで読み、
+  registryポインタとEntity IDを記録。registry先は辿らず、レイアウトもcandidateのまま
 - `ReadProcessMemory` と `VirtualQuery` を使い、読み取り可能なページから最大64バイトを
   型指定で読み取り
 - `list` で候補ごとの入口一致、`.pdata`境界、既知HookPoint、現在のHook可否を一覧
@@ -86,6 +88,9 @@ quit
 `hook-observation` を確認します。フックできる候補は、現在のEXEと一致し、入口ガードと
 `.pdata` の関数開始位置が一致し、SDK既知HookPointに対応するものに限ります。
 `list` と `probe-result` は `source`、候補根拠、ABI/runtime検証状態も記録します。
+1.26.60.5のexact profile、または `port 1.26.60.5` で生成した候補プロファイルを使うと、
+`Level::getRuntimeActorList` の `hook-observation` にActor+0x10のregistryポインタと
+Actor+0x18のEntity IDの読み取り可否・値も含まれます。ActorTypeComponentの内部は辿りません。
 
 フック解除後も安全のためDLLはプロセス終了までアンロードされません。ゲームを再起動すると
 解除されます。未知ABIの候補は `probe` で静的なヒット/周辺情報を調べられますが、
