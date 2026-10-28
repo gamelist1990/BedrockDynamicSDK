@@ -7,6 +7,7 @@ param(
 
     [string]$Version,
 
+    [Alias("CommandDirectory")]
     [string]$CommandsDirectory,
 
     [switch]$Force
@@ -30,7 +31,7 @@ function Get-ProfileMetadata {
         throw "Profile size must be between 1 byte and 16 MiB: $Path"
     }
 
-    $document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $document = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($document -isnot [pscustomobject] -or
         $document.target -isnot [pscustomobject] -or
         $document.symbols -isnot [pscustomobject]) {
@@ -48,8 +49,9 @@ function Get-ProfileMetadata {
     if ([string]$target.sha256 -notmatch '^[0-9a-fA-F]{64}$') {
         throw "Profile target.sha256 must be a 64-character SHA-256: $Path"
     }
-    if ($document.symbols.PSObject.Properties.Count -gt 20000) {
-        throw "Profile contains more than 20000 symbols: $Path"
+    $symbolCount = @($document.symbols.PSObject.Properties).Count
+    if ($document.schema -ne 1 -or $symbolCount -lt 1 -or $symbolCount -gt 20000) {
+        throw "Profile must use schema 1 and contain 1..20000 symbols: $Path"
     }
 
     return [pscustomobject]@{
@@ -57,7 +59,7 @@ function Get-ProfileMetadata {
         Version = [string]$target.version
         Sha256 = ([string]$target.sha256).ToLowerInvariant()
         ProfileFileSha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        SymbolCount = $document.symbols.PSObject.Properties.Count
+        SymbolCount = $symbolCount
     }
 }
 
@@ -70,7 +72,7 @@ function Get-RemoteProfile {
     $manifestUri = "https://raw.githubusercontent.com/$owner/$repository/$branch/data/manifest.json"
     $manifestPath = Join-Path $WorkDirectory "manifest.json"
     [void](Invoke-WebRequest -Uri $manifestUri -OutFile $manifestPath -UseBasicParsing)
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.schema -ne 1 -or $null -eq $manifest.versions) {
         throw "Unsupported or invalid profile manifest from GitHub."
     }
@@ -162,7 +164,7 @@ function Get-LocalProfile {
 
 $documentsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
 if ([string]::IsNullOrWhiteSpace($CommandsDirectory)) {
-    $CommandsDirectory = Join-Path $documentsPath "PEXData/CheckSig/commands"
+    $CommandsDirectory = Join-Path $documentsPath "PEXData/CheckSig/command"
 }
 $CommandsDirectory = [System.IO.Path]::GetFullPath($CommandsDirectory)
 
@@ -204,7 +206,7 @@ try {
     Write-Output "Installed Windows x64 profile $($metadata.Version) with $($metadata.SymbolCount) symbols."
     Write-Output "Profile SHA-256: $($metadata.Sha256)"
     Write-Output "File SHA-256:    $installedHash"
-    Write-Output "CheckSig will detect it from commands/: $destinationPath"
+    Write-Output "CheckSig will detect this JSON automatically: $destinationPath"
 }
 finally {
     Remove-Item -LiteralPath $workDirectory -Recurse -Force -ErrorAction SilentlyContinue

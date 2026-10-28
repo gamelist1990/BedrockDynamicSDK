@@ -17,10 +17,19 @@ jobs:
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
-          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }}
+          $extraArgs = @()
+          if ("${{ matrix.mod }}" -eq "CheckSig") { $extraArgs += "-DCHECKSIG_BUILD_TESTS=ON" }
+          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
+      - name: CheckSig input and DLL smoke tests
+        if: matrix.mod == 'CheckSig'
+        run: ctest --test-dir build-mod -C Release --output-on-failure
+      - name: CheckSig profile installer tests (Windows PowerShell 5.1)
+        if: matrix.mod == 'CheckSig'
+        shell: powershell
+        run: ./exsample/CheckSig/tests/profile_installer_test.ps1
       - name: Verify CheckSig DLL
         if: matrix.mod == 'CheckSig'
         shell: pwsh
@@ -28,10 +37,18 @@ jobs:
           if (!(Test-Path "build-mod/Release/CheckSig.dll")) {
             throw "CheckSig.dll was not produced"
           }
+      - name: Package CheckSig usage and profile tools
+        if: matrix.mod == 'CheckSig'
+        shell: pwsh
+        run: |
+          Copy-Item exsample/CheckSig/README_ja.md build-mod/Release/
+          Copy-Item exsample/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-windows-x64
           path: |
             build-mod/Release/*.dll
             build-mod/Release/BedrockHitBoxLoader.exe
+            build-mod/Release/README_ja.md
+            build-mod/Release/Get-CheckSigProfile.ps1
           if-no-files-found: error

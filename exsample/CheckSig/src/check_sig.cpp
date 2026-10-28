@@ -7,6 +7,7 @@
 #include <bedrock/resolver.hpp>
 #include <nlohmann/json.hpp>
 #include <hde64.h>
+#include "check_sig_core.hpp"
 
 #include <algorithm>
 #include <array>
@@ -33,17 +34,17 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <utility>
 
 namespace {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-constexpr std::size_t kMaxProfileBytes = 16 * 1024 * 1024;
+constexpr std::size_t kMaxProfileBytes = checksig::maxProfileBytes;
 constexpr std::size_t kMaxTextBytes = 512 * 1024 * 1024;
-constexpr std::size_t kMaxPatternBytes = 512;
 constexpr std::size_t kMaxPatternHits = 512;
 constexpr std::size_t kMaxReadBytes = 64;
-constexpr std::size_t kMaxSymbols = 20000;
+constexpr std::size_t kMaxSymbols = checksig::maxSymbols;
 constexpr std::string_view k126605ExeSha256 =
     "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a";
 constexpr std::string_view k126605ActorContextEvidence =
@@ -330,20 +331,7 @@ std::uint64_t parseUnsigned(std::string_view token, int base = 0) {
 
 bool readFile(const fs::path& path, std::string& result, std::size_t limit,
               std::string& error) {
-    std::error_code ec;
-    const auto size = fs::file_size(path, ec);
-    if (ec || size > limit) {
-        error = ec ? "file is missing or inaccessible" : "file exceeds size limit";
-        return false;
-    }
-    std::ifstream in(path, std::ios::binary);
-    if (!in) { error = "file could not be opened"; return false; }
-    result.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    if (in.bad() || result.size() != size) {
-        error = "file read was incomplete";
-        return false;
-    }
-    return true;
+    return checksig::readBounded(path, result, limit, error);
 }
 
 void atomicWrite(const fs::path& path, const std::string& contents) {
@@ -356,92 +344,16 @@ void atomicWrite(const fs::path& path, const std::string& contents) {
         out.flush();
         if (!out) throw std::runtime_error("could not write output file");
     }
-    std::error_code ec;
-    fs::rename(temporary, path, ec);
-    if (ec) {
-        fs::remove(path, ec);
-        ec.clear();
-        fs::rename(temporary, path, ec);
-    }
-    if (ec) throw std::runtime_error("could not replace output file");
+    if (!MoveFileExW(temporary.c_str(), path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        throw std::runtime_error("could not replace output file: " + pathUtf8(path));
 }
 
-std::optional<std::vector<int>> parsePattern(std::string_view pattern) {
-    std::istringstream in{std::string(pattern)};
-    std::vector<int> bytes;
-    std::string token;
-    while (in >> token) {
-        if (token == "?" || token == "??") bytes.push_back(-1);
-        else if (token.size() == 2 &&
-                 std::isxdigit(static_cast<unsigned char>(token[0])) &&
-                 std::isxdigit(static_cast<unsigned char>(token[1]))) {
-            unsigned value{};
-            std::istringstream hexIn(token);
-            hexIn >> std::hex >> value;
-            if (!hexIn || value > 255) return std::nullopt;
-            bytes.push_back(static_cast<int>(value));
-        } else return std::nullopt;
-        if (bytes.size() > kMaxPatternBytes) return std::nullopt;
-    }
-    if (bytes.empty()) return std::nullopt;
-    return bytes;
-}
-
-struct MatchResult {
-    std::vector<std::size_t> offsets;
-    bool capped{};
-};
-
-MatchResult findMatches(const std::vector<std::byte>& haystack, std::string_view pattern) {
-    MatchResult result;
-    const auto parsed = parsePattern(pattern);
-    if (!parsed) return result;
-    std::size_t anchorAt = 0, anchorSize = 0;
-    for (std::size_t i = 0; i < parsed->size();) {
-        if ((*parsed)[i] < 0) { ++i; continue; }
-        std::size_t j = i;
-        while (j < parsed->size() && (*parsed)[j] >= 0) ++j;
-        if (j - i > anchorSize) { anchorAt = i; anchorSize = j - i; }
-        i = j;
-    }
-    if (anchorSize < 4 || parsed->size() > haystack.size()) return result;
-    const auto* begin = reinterpret_cast<const char*>(haystack.data());
-    const auto* end = begin + haystack.size();
-    const auto* anchor = begin + anchorAt;
-    std::size_t seekFrom = 0;
-    while (seekFrom + anchorSize <= haystack.size()) {
-        const auto* found = std::search(begin + seekFrom, end, anchor, anchor + anchorSize);
-        if (found == end) break;
-        const auto position = static_cast<std::size_t>(found - begin);
-        seekFrom = position + 1;
-        if (position < anchorAt) continue;
-        const auto start = position - anchorAt;
-        if (start + parsed->size() > haystack.size()) continue;
-        bool matches = true;
-        for (std::size_t i = 0; i < parsed->size(); ++i) {
-            if ((*parsed)[i] >= 0 &&
-                std::to_integer<unsigned>(haystack[start + i]) !=
-                    static_cast<unsigned>((*parsed)[i])) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches) {
-            result.offsets.push_back(start);
-            if (result.offsets.size() > kMaxPatternHits) {
-                result.offsets.clear();
-                result.capped = true;
-                return result;
-            }
-        }
-    }
-    return result;
-}
+using checksig::parsePattern;
+using checksig::findMatches;
 
 std::uint32_t jsonU32(const json& value) {
-    if (value.is_string())
-        return static_cast<std::uint32_t>(std::stoull(value.get<std::string>(), nullptr, 0));
-    return value.get<std::uint32_t>();
+    return checksig::readU32(value);
 }
 
 json actorTypeComponentCandidate() {
@@ -728,6 +640,9 @@ public:
             output_ = documents / L"PEXData" / L"CheckSig";
             commands_ = output_ / L"commands";
             fs::create_directories(commands_);
+            command_ = output_ / L"command";
+            fs::create_directories(command_);
+            fs::create_directories(output_ / L"detect");
             std::string identityError;
             if (!bedrock::inspectLoadedGame(identity_, identityError))
                 throw std::runtime_error("Minecraft module identity failed: " + identityError);
@@ -741,16 +656,25 @@ public:
                 {"hook_runtime", BDS_HookRuntimeVersion()},
                 {"hook_runtime_abi", BDS_HookRuntimeAbi()}
             });
+            writeDetectionReports();
             writeStatus("running");
 
             auto lastStatus = std::chrono::steady_clock::now();
             while (!stopping_.load()) {
-                processCommands();
-                const auto now = std::chrono::steady_clock::now();
-                if (now - lastStatus >= std::chrono::seconds(1)) {
-                    flushHookState();
-                    writeStatus("running");
-                    lastStatus = now;
+                try {
+                    processCommands();
+                    if (detectionReportsDirty_) writeDetectionReports();
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now - lastStatus >= std::chrono::seconds(1)) {
+                        flushHookState();
+                        writeStatus("running");
+                        lastStatus = now;
+                    }
+                } catch (const std::exception& e) {
+                    OutputDebugStringA((std::string("CheckSig: ") + e.what() + "\n").c_str());
+                    try { writeEvent("processing-error", {{"message", e.what()}}); } catch (...) {}
+                } catch (...) {
+                    OutputDebugStringA("CheckSig: unknown processing error\n");
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
@@ -777,6 +701,7 @@ public:
 private:
     fs::path output_;
     fs::path commands_;
+    fs::path command_;
     std::optional<PeImage> image_;
     bedrock::GameIdentity identity_;
     std::string sourcePath_;
@@ -785,9 +710,12 @@ private:
     json targetProfile_;
     std::unique_ptr<bedrock::Resolver> resolver_;
     std::map<std::string, std::unique_ptr<HookState>> hooks_;
-    std::map<fs::path, std::pair<fs::file_time_type, std::uintmax_t>> commandFileState_;
-    std::map<fs::path, std::pair<fs::file_time_type, std::uintmax_t>> profileFileState_;
+    checksig::Inbox inbox_;
+    bool rescanProfiles_ = false;
+    std::map<std::string, json> profileDetections_;
     json lastProfileDetection_ = json::object();
+    bool detectionReportsDirty_ = true;
+    json activeSymbols_ = json::array();
     std::atomic<bool> stopping_{};
     std::mutex fileMutex_;
     std::mutex hookMapMutex_;
@@ -864,8 +792,14 @@ private:
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
         if (!error.empty()) status["error"] = error;
-        if (!lastProfileDetection_.empty())
-            status["profile_detection"] = lastProfileDetection_;
+        status["input_directories"] = {pathUtf8(command_), pathUtf8(commands_)};
+        status["detect_report"] = pathUtf8(output_ / L"detect" / L"result.txt");
+        status["active_profile"] = resolver_ ? json(targetPath_) : json(nullptr);
+        if (!lastProfileDetection_.empty()) {
+            auto summary = lastProfileDetection_;
+            summary.erase("symbols");
+            status["profile_detection"] = std::move(summary);
+        }
         status["hooks"] = json::array();
         {
             std::lock_guard lock(hookMapMutex_);
@@ -1531,97 +1465,226 @@ private:
 
     bool loadProfileText(const std::string& text, std::string path,
                          std::string& error) {
-        auto resolver = std::make_unique<bedrock::Resolver>();
-        if (!resolver->loadJson(text, error)) return false;
-        json document;
-        try { document = json::parse(text); }
-        catch (const std::exception& e) { error = e.what(); return false; }
-        const auto& target = document.at("target");
-        if (identity_.fileSha256.size() == 64 &&
-            lower(target.at("sha256").get<std::string>()) != lower(identity_.fileSha256)) {
-            error = "profile file SHA-256 does not match the loaded executable";
+        try {
+            auto document = checksig::parseProfile(text);
+            auto resolver = std::make_unique<bedrock::Resolver>();
+            if (!resolver->loadJson(text, error)) return false;
+            if (identity_.fileSha256.size() != 64 ||
+                lower(document["target"]["sha256"].get<std::string>()) != lower(identity_.fileSha256)) {
+                error = "profile file SHA-256 does not match the loaded executable";
+                return false;
+            }
+            if (!resolver->attachWindowsMainModule(identity_, error) || !resolver->exactBuild()) {
+                if (error.empty()) error = "profile PE layout does not match the loaded executable";
+                return false;
+            }
+            targetProfile_ = std::move(document);
+            targetPath_ = std::move(path);
+            resolver_ = std::move(resolver);
+            error.clear();
+            return true;
+        } catch (const std::exception& e) {
+            error = e.what();
             return false;
         }
-        if (!resolver->attachWindowsMainModule(identity_, error) || !resolver->exactBuild()) {
-            if (error.empty()) error = "profile does not match the loaded executable";
-            return false;
-        }
-        targetProfile_ = std::move(document);
-        targetPath_ = std::move(path);
-        resolver_ = std::move(resolver);
+    }
+
+    // Check only the specified RVA through guarded copies. A failed prologue
+    // never falls back to scanning/dereferencing the full live executable.
+    bool entryMatches(const json& symbol, std::vector<std::byte>* sample = nullptr) const {
+        const auto guard = parsePattern(symbol.at("entry_check").get<std::string>());
+        if (!guard) return false;
+        std::vector<std::byte> bytes(guard->size());
+        if (!copyRva(*image_, jsonU32(symbol.at("rva")), bytes.data(), bytes.size())) return false;
+        if (sample) *sample = bytes;
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            if ((*guard)[i] >= 0 && static_cast<unsigned>((*guard)[i]) !=
+                std::to_integer<unsigned>(bytes[i])) return false;
         return true;
     }
 
-    json detectProfileText(const std::string& text, const std::string& path,
-                           std::string_view trigger) {
-        json document;
-        try { document = json::parse(text); }
-        catch (const std::exception& e) {
-            throw std::runtime_error(std::string("profile JSON parse failed: ") + e.what());
-        }
-        if (!document.is_object() || !document.contains("target") ||
-            !document["target"].is_object() || !document.contains("symbols") ||
-            !document["symbols"].is_object() || document["symbols"].size() > kMaxSymbols)
-            throw std::runtime_error("profile must contain a target object and a bounded symbols object");
+    std::optional<bedrock::Resolution> resolveExact(const std::string& name) const {
+        if (!resolver_ || !resolver_->exactBuild()) return std::nullopt;
+        const auto& symbols = targetProfile_.at("symbols");
+        const auto it = symbols.find(name);
+        if (it == symbols.end() || !entryMatches(it.value())) return std::nullopt;
+        return bedrock::Resolution{image_->base + jsonU32(it->at("rva")),
+            "exact-rva", true, it->value("status", std::string{}) == "verified"};
+    }
 
-        const auto& target = document["target"];
-        const auto product = target.value("product", std::string{});
-        const auto platform = target.value("platform", std::string{});
-        const auto arch = target.value("arch", std::string{});
-        const auto version = target.value("version", std::string{});
-        const auto profileSha = target.value("sha256", std::string{});
-        std::size_t candidateCount = 0;
-        std::size_t abiVerifiedCount = 0;
-        for (const auto& [name, symbol] : document["symbols"].items()) {
-            (void)name;
-            if (!symbol.is_object()) continue;
-            if (symbol.value("status", std::string{}) == "candidate") ++candidateCount;
-            if (symbol.value("abi_verified", false)) ++abiVerifiedCount;
-        }
-
-        const auto loadedSha = identity_.fileSha256;
-        const bool supportedX64 = product == "minecraft-bedrock" &&
-            platform == "windows" && arch == "x64";
-        const bool shaMatches = profileSha.size() == 64 && loadedSha.size() == 64 &&
-            lower(profileSha) == lower(loadedSha);
-        json result = {
-            {"trigger", std::string(trigger)}, {"profile_path", path},
-            {"profile_version", version}, {"profile_arch", arch},
-            {"profile_platform", platform}, {"profile_sha256", profileSha},
-            {"loaded_exe_sha256", loadedSha},
-            {"supported_windows_x64_profile", supportedX64},
-            {"file_sha256_matches", shaMatches},
-            {"symbol_count", document["symbols"].size()},
-            {"candidate_symbol_count", candidateCount},
-            {"abi_verified_symbol_count", abiVerifiedCount},
-            {"loaded", false}
-        };
-
-        if (!supportedX64) {
-            result["status"] = "unsupported-profile-target";
-        } else if (!shaMatches) {
-            result["status"] = "different-executable-build";
-            result["active_profile_retained"] = resolver_ != nullptr;
-        } else {
-            std::string error;
-            if (loadProfileText(text, path, error)) {
-                result["status"] = "exact-build-match";
-                result["loaded"] = true;
-                result["exact_build"] = resolver_->exactBuild();
-            } else {
-                result["status"] = "matching-fingerprint-invalid-profile";
-                result["error"] = error;
-                result["active_profile_retained"] = resolver_ != nullptr;
+    json inspectSymbols() const {
+        json entries = json::array();
+        if (!resolver_) return entries;
+        for (const auto& [name, symbol] : targetProfile_.at("symbols").items()) {
+            json entry = {{"symbol", name}, {"hook_ready_for_explicit_test", false}};
+            try {
+                const auto rva = jsonU32(symbol.at("rva"));
+                const auto* function = containingFunction(*image_, rva);
+                const auto* spec = hookSpec(name);
+                std::vector<std::byte> sample;
+                const bool guardHit = entryMatches(symbol, &sample);
+                const bool functionEntry = rva >= identity_.textRva &&
+                    rva - identity_.textRva < identity_.textSize && function && function->begin == rva;
+                const bool abiKnown = spec && observerAbiMatches(spec, symbol);
+                const bool runtimeSupports = hookRuntimeSupports(spec);
+                const auto owned = hookTargetOwned(spec, reinterpret_cast<void*>(image_->base + rva));
+                const bool jumpStub = suspectedJumpStub(*image_, rva);
+                const bool hookReady = resolver_->exactBuild() && guardHit && functionEntry &&
+                    abiKnown && runtimeSupports && (!jumpStub || owned.value_or(false));
+                entry.update({
+                    {"rva", hex(rva)}, {"status", symbol.value("status", std::string("candidate"))},
+                    {"source", symbol.value("source", std::string{})},
+                    {"abi_verified", symbol.value("abi_verified", false)},
+                    {"runtime_verified", symbol.value("runtime_verified", false)},
+                    {"readable", !sample.empty()}, {"entry_guard_hit", guardHit},
+                    {"entry_bytes", bytesHex(sample.data(), std::min<std::size_t>(sample.size(), 32))},
+                    {"state", sample.empty() ? "unreadable" : guardHit ? "entry-match" : "entry-mismatch"},
+                    {"pdata_function_entry", functionEntry},
+                    {"hook_adapter", hookAdapterName(spec)}, {"hook_abi_known", abiKnown},
+                    {"hook_point", spec && spec->adapter == HookAdapter::Middleware
+                        ? json(static_cast<unsigned>(spec->point)) : json(nullptr)},
+                    {"hook_runtime_supports_adapter", runtimeSupports},
+                    {"entry_looks_like_jump_stub", jumpStub},
+                    {"target_already_owned_by_sdk", owned ? json(*owned) : json(nullptr)},
+                    {"hook_ready_for_explicit_test", hookReady}
+                });
+                entry["hook_reason"] = hookReady ? "ready for explicit hook command; runtime unverified" :
+                    !guardHit ? "entry bytes unreadable or do not match profile" :
+                    !functionEntry ? "not a .pdata function entry" :
+                    !abiKnown ? "no supported ABI adapter for this definition" :
+                    !runtimeSupports ? "hook runtime unavailable" : "entry patched by another hook";
+            } catch (const std::exception& e) {
+                entry["state"] = "symbol-error";
+                entry["error"] = e.what();
             }
+            entries.push_back(std::move(entry));
         }
+        return entries;
+    }
 
+    void writeDetectionReports() {
+        json profiles = json::array();
+        std::ostringstream readable;
+        readable << "CheckSig - Windows x64 profile detection\n"
+                 << "Put windows-x64.json in:\n  " << pathUtf8(command_) << "\n  "
+                 << pathUtf8(commands_) << "\n"
+                 << "Loaded EXE SHA-256: " << identity_.fileSha256 << "\n"
+                 << "Active profile: " << (resolver_ ? targetPath_ : "none") << "\n\n";
+        if (!activeSymbols_.empty()) {
+            readable << "Current active symbol checks:\n";
+            for (const auto& entry : activeSymbols_) {
+                readable << "  " << entry.value("symbol", std::string{}) << "  "
+                         << entry.value("rva", std::string{}) << "  "
+                         << entry.value("state", std::string{}) << "  hook="
+                         << (entry.value("hook_ready_for_explicit_test", false) ? "ready" : "unavailable")
+                         << "\n    " << entry.value("hook_reason", entry.value("error", std::string{})) << "\n";
+            }
+            readable << "\n";
+        }
+        if (profileDetections_.empty()) readable << "Waiting for a profile JSON.\n";
+        for (const auto& [path, detection] : profileDetections_) {
+            auto value = detection;
+            value["active_profile"] = resolver_ && path == targetPath_ && detection.value("loaded", false);
+            profiles.push_back(std::move(value));
+            readable << path << "\n  " << detection.value("status", std::string("unknown")) << "\n";
+            if (detection.contains("error")) readable << "  " << detection["error"].get<std::string>() << "\n";
+            if (detection.contains("next_step")) readable << "  " << detection["next_step"].get<std::string>() << "\n";
+            if (detection.contains("symbols") && path == targetPath_) {
+                readable << "  Entry matches: " << detection.value("entry_guard_hit_count", std::size_t{})
+                         << "/" << detection["symbols"].size() << "; hook eligible: "
+                         << detection.value("hook_ready_count", std::size_t{}) << "\n";
+            }
+            readable << "\n";
+        }
+        readable << "Entry matches do not prove ABI/runtime behavior. Hooks require hook <symbol>.\n"
+                 << "Use list to refresh entry checks; probe <symbol> scans signatures and surrounding code.\n"
+                 << "For a different build use source <old-profile.json>, then port.\n";
+        json report = {
+            {"schema", 1}, {"tool", "CheckSig"}, {"time_utc", timestampUtc()},
+            {"state", resolver_ ? "ready" : profiles.empty() ? "waiting-for-profile" : "no-matching-profile"},
+            {"input_directories", {pathUtf8(command_), pathUtf8(commands_)}},
+            {"loaded_exe_sha256", identity_.fileSha256},
+            {"active_profile", resolver_ ? json(targetPath_) : json(nullptr)},
+            {"active_symbols", activeSymbols_},
+            {"profiles", std::move(profiles)}
+        };
+        atomicWrite(output_ / L"detect" / L"result.json", report.dump(2) + "\n");
+        atomicWrite(output_ / L"detect" / L"result.txt", readable.str());
+        detectionReportsDirty_ = false;
+    }
+
+    void recordDetection(json result) {
+        detectionReportsDirty_ = true;
+        result["active_profile_path"] = resolver_ ? json(targetPath_) : json(nullptr);
+        result["time_utc"] = timestampUtc();
+        profileDetections_[result.at("profile_path").get<std::string>()] = result;
         lastProfileDetection_ = result;
-        writeEvent("detect-result", result);
-        return result;
+        writeEvent("detect-result", std::move(result));
+        writeDetectionReports();
+    }
+
+    void detectProfileText(const std::string& text, const std::string& path,
+                           std::string_view trigger) {
+        json result = {{"trigger", std::string(trigger)}, {"profile_path", path},
+                       {"loaded", false}, {"loaded_exe_sha256", identity_.fileSha256}};
+        try {
+            const auto document = checksig::parseProfile(text);
+            const auto& target = document.at("target");
+            const auto sha = target.at("sha256").get<std::string>();
+            const bool match = lower(sha) == lower(identity_.fileSha256);
+            result.update({{"profile_version", target.at("version")}, {"profile_sha256", sha},
+                           {"file_sha256_matches", match}, {"symbol_count", document["symbols"].size()}});
+            if (!match) {
+                result["status"] = "different-executable-build";
+                result["next_step"] = "Use source <this JSON>, then port to search this build using old signatures.";
+            } else {
+                std::string error;
+                if (!loadProfileText(text, path, error)) throw std::invalid_argument(error);
+                result["loaded"] = true;
+                result["status"] = "exact-build-match";
+                result["exact_build"] = true;
+                auto entries = inspectSymbols();
+                std::size_t readable = 0, matches = 0, ready = 0;
+                for (const auto& entry : entries) {
+                    readable += entry.value("readable", false);
+                    matches += entry.value("entry_guard_hit", false);
+                    ready += entry.value("hook_ready_for_explicit_test", false);
+                }
+                result["readable_symbol_count"] = readable;
+                result["entry_guard_hit_count"] = matches;
+                result["hook_ready_count"] = ready;
+                activeSymbols_ = entries;
+                result["symbols"] = std::move(entries);
+            }
+        } catch (const std::exception& e) {
+            result["status"] = "invalid-profile";
+            result["error"] = e.what();
+        }
+        recordDetection(std::move(result));
+    }
+
+    fs::path inputPath(const std::string& argument) const {
+        auto path = fromUtf8(argument);
+        if (path.is_relative()) {
+            std::error_code ec;
+            for (const auto& directory : {command_, commands_})
+                if (fs::is_regular_file(directory / path, ec)) return directory / path;
+        }
+        return path;
+    }
+
+    void detectProfileFile(const fs::path& path, std::string_view trigger) {
+        std::string text, error;
+        if (readFile(path, text, kMaxProfileBytes, error)) {
+            detectProfileText(text, pathUtf8(path), trigger);
+        } else {
+            recordDetection({{"trigger", std::string(trigger)}, {"profile_path", pathUtf8(path)},
+                             {"status", "profile-read-error"}, {"loaded", false}, {"error", error}});
+        }
     }
 
     void loadSource(const std::string& argument) {
-        const auto path = fromUtf8(argument);
+        const auto path = inputPath(argument);
         std::string text, error;
         if (!readFile(path, text, kMaxProfileBytes, error))
             throw std::runtime_error("source profile: " + error);
@@ -1856,6 +1919,10 @@ private:
             }
             symbols = std::move(mergedSymbols);
         }
+        if (symbols.empty()) {
+            writeEvent("port-no-candidates", {{"warnings", warnings}, {"port_support", support}});
+            throw std::runtime_error("no candidate functions matched; see port-no-candidates in events.jsonl");
+        }
         json output = {
             {"schema", 1},
             {"target", {
@@ -1884,9 +1951,10 @@ private:
         const auto path = output_ / L"candidate-profile.json";
         const auto serialized = output.dump(2) + "\n";
         atomicWrite(path, serialized);
-        std::string loadError;
-        if (!loadProfileText(serialized, pathUtf8(path), loadError))
-            throw std::runtime_error("candidate profile saved, but identity attach failed: " + loadError);
+        detectProfileText(serialized, pathUtf8(path), "port-generated-profile");
+        if (!lastProfileDetection_.value("loaded", false))
+            throw std::runtime_error("candidate profile saved but could not load: " +
+                lastProfileDetection_.value("error", std::string("identity mismatch")));
         writeEvent("port-complete", {
             {"path", pathUtf8(path)}, {"candidate_count", targetProfile_["symbols"].size()},
             {"warnings", targetProfile_["generation"]["warnings"]},
@@ -1910,90 +1978,41 @@ private:
     }
 
     void processCommands() {
-        if (commands_.empty() || !fs::exists(commands_)) return;
-        std::vector<fs::path> pendingProfiles;
-        std::vector<fs::path> pendingCommands;
-        std::error_code ec;
-        for (fs::directory_iterator it(commands_, ec), end; !ec && it != end; it.increment(ec)) {
-            if (!it->is_regular_file(ec)) continue;
-            const auto extension = lower(it->path().extension().string());
-            const bool isProfile = extension == ".json";
-            if (!isProfile && extension != ".txt") continue;
-            const auto modified = it->last_write_time(ec);
-            if (ec) { ec.clear(); continue; }
-            const auto size = it->file_size(ec);
-            if (ec) { ec.clear(); continue; }
-            const auto state = std::make_pair(modified, size);
-            const auto [saved, inserted] = commandFileState_.emplace(it->path(), state);
-            if (inserted || saved->second != state) {
-                saved->second = state;
-                continue;
-            }
-            if (isProfile) {
-                const auto processed = profileFileState_.find(it->path());
-                if (processed != profileFileState_.end() && processed->second == state)
-                    continue;
-                pendingProfiles.push_back(it->path());
-            } else {
-                pendingCommands.push_back(it->path());
-            }
-        }
-        std::sort(pendingProfiles.begin(), pendingProfiles.end());
-        for (const auto& path : pendingProfiles) {
+        const bool rescan = std::exchange(rescanProfiles_, false);
+        const auto inputs = inbox_.poll({command_, commands_}, checksig::Inbox::Clock::now(), rescan);
+        for (const auto& file : inputs) {
             if (stopping_.load()) break;
-            std::string text, error;
-            if (!readFile(path, text, kMaxProfileBytes, error)) {
-                if (error == "file read was incomplete" || error == "file could not be opened")
+            try {
+                if (file.profile) {
+                    if (file.error.empty()) detectProfileText(file.text, pathUtf8(file.path), "folder-json");
+                    else recordDetection({{"trigger", "folder-json"}, {"profile_path", pathUtf8(file.path)},
+                        {"status", "profile-read-error"}, {"error", file.error}, {"loaded", false}});
                     continue;
-                lastProfileDetection_ = {
-                    {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
-                    {"status", "profile-read-error"}, {"error", error}, {"loaded", false}
-                };
-                writeEvent("detect-result", lastProfileDetection_);
-            } else {
-                try {
-                    (void)detectProfileText(text, pathUtf8(path), "commands-json-auto");
-                } catch (const std::exception& e) {
-                    lastProfileDetection_ = {
-                        {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
-                        {"status", "invalid-profile"}, {"error", e.what()}, {"loaded", false}
-                    };
-                    writeEvent("detect-result", lastProfileDetection_);
-                } catch (...) {
-                    lastProfileDetection_ = {
-                        {"trigger", "commands-json"}, {"profile_path", pathUtf8(path)},
-                        {"status", "invalid-profile"}, {"error", "unknown error"}, {"loaded", false}
-                    };
-                    writeEvent("detect-result", lastProfileDetection_);
                 }
-            }
-            const auto state = commandFileState_.find(path);
-            if (state != commandFileState_.end())
-                profileFileState_[path] = state->second;
-        }
-
-        std::sort(pendingCommands.begin(), pendingCommands.end());
-        for (const auto& path : pendingCommands) {
-            if (stopping_.load()) break;
-            std::string line, error;
-            if (!readFile(path, line, 4096, error)) {
-                if (error == "file read was incomplete" || error == "file could not be opened")
+                // Consume once. A failed delete must never execute a hook repeatedly.
+                std::error_code ec;
+                if (!fs::remove(file.path, ec) || ec) {
+                    writeEvent("command-error", {{"file", pathUtf8(file.path)},
+                        {"message", "could not consume command file; no commands executed"}});
                     continue;
-                writeEvent("command-error", {{"file", pathUtf8(path)}, {"message", error}});
-                fs::remove(path, ec);
-                commandFileState_.erase(path);
-                continue;
-            }
-            fs::remove(path, ec);
-            commandFileState_.erase(path);
-            while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
-                line.pop_back();
-            if (line.empty()) continue;
-            try { execute(line); }
-            catch (const std::exception& e) {
-                writeEvent("command-error", {{"command", line}, {"message", e.what()}});
-            } catch (...) {
-                writeEvent("command-error", {{"command", line}, {"message", "unknown error"}});
+                }
+                if (!file.error.empty()) {
+                    writeEvent("command-error", {{"file", pathUtf8(file.path)}, {"message", file.error}});
+                    continue;
+                }
+                for (const auto& line : checksig::commandLines(file.text)) {
+                    if (stopping_.load()) break;
+                    try { execute(line); }
+                    catch (const std::exception& e) {
+                        writeEvent("command-error", {{"command", line}, {"message", e.what()}});
+                    } catch (...) {
+                        writeEvent("command-error", {{"command", line}, {"message", "unknown error"}});
+                    }
+                }
+            } catch (const std::exception& e) {
+                if (file.profile) inbox_.retry(file.path);
+                OutputDebugStringA((std::string("CheckSig input: ") + e.what() + "\n").c_str());
+                try { writeEvent("processing-error", {{"file", pathUtf8(file.path)}, {"message", e.what()}}); } catch (...) {}
             }
         }
     }
@@ -2015,39 +2034,15 @@ private:
         } else if (command == "detect") {
             const auto argument = commandArgument(line, command);
             if (!argument.empty()) {
-                const auto path = fromUtf8(argument);
-                std::string text, error;
-                if (!readFile(path, text, kMaxProfileBytes, error)) {
-                    lastProfileDetection_ = {
-                        {"trigger", "detect-command"}, {"profile_path", argument},
-                        {"status", "profile-read-error"}, {"error", error}, {"loaded", false}
-                    };
-                    writeEvent("detect-result", lastProfileDetection_);
-                } else {
-                    try {
-                        (void)detectProfileText(text, argument, "detect-command");
-                    } catch (const std::exception& e) {
-                        lastProfileDetection_ = {
-                            {"trigger", "detect-command"}, {"profile_path", argument},
-                            {"status", "invalid-profile"}, {"error", e.what()}, {"loaded", false}
-                        };
-                        writeEvent("detect-result", lastProfileDetection_);
-                    } catch (...) {
-                        lastProfileDetection_ = {
-                            {"trigger", "detect-command"}, {"profile_path", argument},
-                            {"status", "invalid-profile"}, {"error", "unknown error"}, {"loaded", false}
-                        };
-                        writeEvent("detect-result", lastProfileDetection_);
-                    }
-                }
-            } else if (!lastProfileDetection_.empty()) {
-                auto result = lastProfileDetection_;
-                result["trigger"] = "detect-command-last-result";
-                writeEvent("detect-result", std::move(result));
-            } else if (resolver_) {
-                (void)detectProfileText(targetProfile_.dump(), targetPath_, "detect-command-active-profile");
+                detectProfileFile(inputPath(argument), "detect-command");
             } else {
-                throw std::runtime_error("drop a Windows x64 profile JSON into commands; CheckSig will detect it automatically");
+                rescanProfiles_ = true;
+                // Refresh the active profile now too (including generated profiles).
+                if (resolver_) detectProfileFile(inputPath(targetPath_), "detect-command-active");
+                else {
+                    writeEvent("detect-rescan", {{"input_directories", {pathUtf8(command_), pathUtf8(commands_)}}});
+                    writeDetectionReports();
+                }
             }
         } else if (command == "source") {
             const auto argument = commandArgument(line, command);
@@ -2056,69 +2051,35 @@ private:
         } else if (command == "profile") {
             const auto argument = commandArgument(line, command);
             if (argument.empty()) throw std::runtime_error("usage: profile <target-profile.json>");
-            const auto path = fromUtf8(argument);
-            std::string text, error;
-            if (!readFile(path, text, kMaxProfileBytes, error))
-                throw std::runtime_error("target profile: " + error);
-            if (!loadProfileText(text, argument, error))
-                throw std::runtime_error("target profile identity mismatch: " + error);
-            writeEvent("profile-loaded", {{"path", argument},
+            const auto path = inputPath(argument);
+            detectProfileFile(path, "profile-command");
+            if (!lastProfileDetection_.value("loaded", false))
+                throw std::runtime_error(lastProfileDetection_.value("error",
+                    lastProfileDetection_.value("status", std::string("profile load failed"))));
+            writeEvent("profile-loaded", {{"path", pathUtf8(path)},
                 {"symbols", targetProfile_["symbols"].size()}, {"exact_build", true}});
         } else if (command == "port") {
             std::string version;
             input >> version;
             portSource(version);
         } else if (command == "list") {
-            if (!resolver_) throw std::runtime_error("load a target profile first with profile or port");
-            json entries = json::array();
-            for (auto it = targetProfile_["symbols"].begin();
-                 it != targetProfile_["symbols"].end(); ++it) {
-                const auto& symbolEntry = it.value();
-                const auto rva = jsonU32(symbolEntry.at("rva"));
-                const auto resolution = resolver_->resolve(it.key(), true);
-                const auto* function = containingFunction(*image_, rva);
-                const auto* hook = hookSpec(it.key());
-                const auto target = reinterpret_cast<void*>(image_->base + rva);
-                const bool abiKnown = hook && observerAbiMatches(hook, symbolEntry);
-                const bool exactGuard = resolution && resolution->method == "exact-rva" &&
-                    resolution->address == image_->base + rva;
-                const bool functionEntry = rva >= identity_.textRva &&
-                    rva < identity_.textRva + identity_.textSize && function &&
-                    function->begin == rva;
-                const bool runtimeSupports = hookRuntimeSupports(hook);
-                const auto owned = hookTargetOwned(hook, target);
-                const bool targetOwned = owned.value_or(false);
-                const bool jumpStub = suspectedJumpStub(*image_, rva);
-                const bool hookReady = abiKnown && exactGuard && functionEntry && runtimeSupports &&
-                    (!jumpStub || targetOwned);
-                entries.push_back({
-                    {"symbol", it.key()}, {"rva", hex(rva)},
-                    {"status", symbolEntry.value("status", std::string("candidate"))},
-                    {"abi_verified", symbolEntry.value("abi_verified", false)},
-                    {"runtime_verified", symbolEntry.value("runtime_verified", false)},
-                    {"source", symbolEntry.value("source", std::string{})},
-                    {"candidate_evidence", symbolEntry.value("candidate_evidence", std::string{})},
-                    {"entry_guard_hit", exactGuard},
-                    {"pdata_function_entry", functionEntry},
-                    {"hook_adapter", hookAdapterName(hook)},
-                    {"hook_point", hook && hook->adapter == HookAdapter::Middleware
-                        ? json(static_cast<unsigned>(hook->point)) : json(nullptr)},
-                    {"hook_abi_known", abiKnown},
-                    {"hook_abi_status", !hook ? "unknown" :
-                        hook->adapter == HookAdapter::Middleware ? "SDK HookPoint ABI" :
-                        abiKnown ? "static candidate; runtime unverified" :
-                            "profile ABI/RVA mismatch"},
-                    {"hook_runtime_supports_adapter", runtimeSupports},
-                    {"entry_looks_like_jump_stub", jumpStub},
-                    {"target_already_owned_by_sdk",
-                        owned.has_value() ? json(targetOwned) : json(nullptr)},
-                    {"hook_ready_for_explicit_test", hookReady}
-                });
+            if (!resolver_) throw std::runtime_error("put a matching Windows x64 JSON in command/ or commands/ first");
+            activeSymbols_ = inspectSymbols();
+            detectionReportsDirty_ = true;
+            writeEvent("candidate-list", {{"exact_build", true}, {"symbol_count", activeSymbols_.size()},
+                {"symbols", activeSymbols_}});
+            const auto found = profileDetections_.find(targetPath_);
+            if (found != profileDetections_.end() && found->second.value("loaded", false)) {
+                found->second["symbols"] = activeSymbols_;
+                std::size_t matches = 0, ready = 0;
+                for (const auto& entry : activeSymbols_) {
+                    matches += entry.value("entry_guard_hit", false);
+                    ready += entry.value("hook_ready_for_explicit_test", false);
+                }
+                found->second["entry_guard_hit_count"] = matches;
+                found->second["hook_ready_count"] = ready;
             }
-            writeEvent("candidate-list", {
-                {"exact_build", resolver_->exactBuild()},
-                {"symbol_count", entries.size()}, {"symbols", std::move(entries)}
-            });
+            writeDetectionReports();
         } else if (command == "probe") {
             std::string symbol; input >> symbol;
             if (symbol.empty()) throw std::runtime_error("usage: probe <symbol>");
@@ -2248,7 +2209,7 @@ private:
         const auto it = targetProfile_["symbols"].find(symbol);
         if (it == targetProfile_["symbols"].end())
             throw std::runtime_error("symbol is not present in the target profile");
-        const auto resolution = resolver_->resolve(symbol, true);
+        const auto resolution = resolveExact(symbol);
         const auto& symbolEntry = it.value();
         const auto rva = jsonU32(symbolEntry.at("rva"));
         const auto* function = containingFunction(*image_, rva);
@@ -2358,8 +2319,22 @@ private:
         if (!observerAbiMatches(spec, entry.value()))
             throw std::runtime_error(
                 "hook refused: no supported ABI adapter for this exact-build candidate; probe only");
+        {
+            std::lock_guard lock(hookMapMutex_);
+            const auto existing = hooks_.find(symbol);
+            if (existing != hooks_.end() && existing->second->token) {
+                auto& state = *existing->second;
+                if (spec->adapter != HookAdapter::Middleware &&
+                    !state.observing.exchange(true, std::memory_order_acq_rel)) {
+                    writeEvent("hook-observer-enabled", {{"symbol", symbol},
+                        {"adapter", hookAdapterName(spec)}, {"detour_retained_pass_through", true}});
+                    return;
+                }
+                throw std::runtime_error("hook is already installed");
+            }
+        }
         const auto rva = jsonU32(entry.value().at("rva"));
-        const auto resolution = resolver_->resolve(symbol, true);
+        const auto resolution = resolveExact(symbol);
         const auto* function = containingFunction(*image_, rva);
         const auto target = reinterpret_cast<void*>(image_->base + rva);
         const bool jumpStub = suspectedJumpStub(*image_, rva);
@@ -2414,17 +2389,6 @@ private:
                     }
                 }
             }
-        }
-        if (holder->token) {
-            if (spec->adapter != HookAdapter::Middleware &&
-                !holder->observing.exchange(true, std::memory_order_acq_rel)) {
-                writeEvent("hook-observer-enabled", {
-                    {"symbol", symbol}, {"adapter", hookAdapterName(spec)},
-                    {"detour_retained_pass_through", true}
-                });
-                return;
-            }
-            throw std::runtime_error("hook is already installed");
         }
         if (spec->adapter == HookAdapter::Middleware) {
             holder->observing.store(true, std::memory_order_release);

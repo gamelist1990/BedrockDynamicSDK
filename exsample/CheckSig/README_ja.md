@@ -1,266 +1,118 @@
 # CheckSig
 
-Minecraft Bedrock Windows x64 の開発用診断Modです。DLLをゲームへロードすると
-`Documents/PEXData/CheckSig/` に状態・診断ログ・コマンド入力用フォルダーを作ります。
-ゲームメモリは読み取り専用で調べます。ゲームコードへフックを設置するのは
-`hook` コマンドを明示した場合だけです。
+Minecraft Bedrock Windows x64向けの診断DLLです。**x64プロファイルJSONを `command` フォルダーに置くと、自動で読み取り、`detect` フォルダーへ結果を出します。** JSON投入だけでHookが設置されることはありません。
 
-## できること
+## 最初に使う手順
 
-- ゲームEXEのファイル/.text SHA-256、PE情報、`.pdata` 関数境界を記録
-- 旧定義の `signature_anchors` を現在の `.text` で検索し、複数アンカーの投票を
-  `.pdata` 関数へ集約して新しい候補プロファイルを生成
-- 旧プロファイルのトップレベル `symbols` に加え、`native_*` 内にある関数定義も移植
-  （構造体オフセットやvtable slotは自動で引き継がない）
-- 候補関数の入口・アンカー一致位置の前後バイト、近接する関数入口、相対call/branchと
-  `.rdata` 文字列への参照候補を記録
-- プロファイルの正確なビルド一致、入口ガード、関数境界、SDKフックランタイム対応を検査
-- SDKがABIを知っているHookPointに限り、元の処理をそのまま呼び出す透過フックを試行。
-  呼び出し回数と既知の引数/戻り値フィールドを記録
-- 1.26.60.5の完全一致EXEでは、静的なABI候補がある12関数に専用Observerを用意。
-  `native_camera.local_player`、`native_camera.visual.camera_render_observe`、
-  `native_camera.update_player`、`native_camera.visual.gamma`、
-  `native_camera.visual.render_dragon_inside_effect.predicate`、
-  `native_camera.visual.set_player_game_type`、
-  `native_client_commands.register_command`、`native_client_commands.find_command`、
-  `native_gui.display_message`、`native_world.get_region`、`native_world.get_block`、
-  `native_world.get_chunk` が対象
-- 各候補のABI・EXE SHA・入口ガード・`.pdata`関数開始位置を確認し、明示的な `hook` のみで試行。
-  元関数をそのまま呼び、引数や戻り値を記録
-- local player Observerは戻り値Actorを記録し、`read actor:0+...`で調査可能
-- camera render Observerは元の4引数を変更せずに呼び出した後、引数ポインタと
-  ViewRenderObject先頭64バイトの読み取り可否/値を記録
-- camera update Observerは元の3引数を変更せずに呼び出した後、引数ポインタを記録し、
-  第3引数をActor候補として `read actor:0+...` の読み取り元に登録
-- gamma Observerは元関数のfloat戻り値を記録。Dragon Effect predicate Observerは
-  引数ポインタとbool戻り値を記録。game type ObserverはPlayer候補ポインタとint引数を記録
-- command Observerはregistry・文字列オブジェクトのポインタ、permission/flags、find結果を記録。
-  GUI message ObserverはGuiData・文字列/optionalの各ポインタとfilter contextを記録し、
-  文字列オブジェクトの中身は自動で読みません
-- World ObserverはRegion戻り値と読み取り可能なvtable、getBlock/getChunkの座標と戻りポインタを記録。
-  座標構造体は`VirtualQuery`/`ReadProcessMemory`で必要な8/12 bytesだけを読み、返却先は自動で辿りません。
-  高頻度関数も記録サンプルは最大4回/秒です
-- `Level::getRuntimeActorList` は旧・新EXEの機械語でABIを比較した候補HookPoint。
-  元処理の後でMSVC x64 vectorヘッダーを安全に読み、件数と先頭8件までのActorポインタを記録
-- 1.26.60.5では追加の静的候補としてActor+0x10/+0x18をページ検査付きで読み、
-  registryポインタとEntity IDを記録。registry先は辿らず、レイアウトもcandidateのまま
-- `ReadProcessMemory` と `VirtualQuery` を使い、読み取り可能なページから最大64バイトを
-  型指定で読み取り
-- `list` で候補ごとの入口一致、`.pdata`境界、既知HookPoint、現在のHook可否を一覧
+1. GitHub Actionsの **All mod DLLs → CheckSig-windows-x64** を取得し、DLLローダーから `CheckSig.dll` をゲームにロードします。
+2. Windowsの「ドキュメント」にできる `PEXData/CheckSig/command/` へ、対象バージョンの `windows-x64.json` をコピーします。DLL起動前から置いてあっても読み込みます。従来の `commands/` も同じ入力フォルダーとして使えます。
+3. `PEXData/CheckSig/detect/result.txt` を開きます。JSONのコピーが落ち着いてから通常1〜2秒で結果が出ます。
 
-署名ヒットだけでは関数の意味やABIを証明しません。全てのポート結果は
-`candidate` / `abi_verified:false` / `runtime_verified:false` です。SDKが未知のABIを持つ
-関数を呼び出したり、任意の関数へ推測のdetourを設置する機能はありません。上記12個の
-専用Observerも静的ABI候補を使うため、実行時の意味・寿命は未検証です。特にgamma戻り値、
-predicateの呼び出し経路、game typeの引数意味はゲーム内で未確認です。対象EXEの完全一致と
-入口ガードが通る場合にだけ利用し、値は候補確認用として扱ってください。
-
-## ビルド
-
-GitHub Actions の `All mod DLLs` workflow がWindows x64/MSVCで全Mod DLLをビルドします。
-CheckSigは `CheckSig-windows-x64` artifact、他のModも各 `*-windows-x64` artifactとして保存します。
-
-### DLLを取得する
-
-`Get-CheckSig.ps1` はGitHub Actionsの最新成功artifactからCheckSig x64 DLLを取得する方法と、
-手元にあるDLL/ZIP/フォルダーを指定する方法に対応しています。デフォルトの保存先は
-`Documents/PEXData/CheckSig/bin/CheckSig.dll` です。実際にMod loaderへ登録する場合は、
-`-Destination` にloaderが使うパスを渡してください。既存ファイルは `-Force` を付けた場合だけ置き換えます。
-
-リポジトリをclone済みなら、リポジトリのルートからGitHubの最新成功artifactを取得:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 -Source GitHub
-```
-
-cloneせずに使う場合は、GitHubから取得スクリプトを保存して実行できます:
-
-```powershell
-$scriptPath = Join-Path $env:TEMP "Get-CheckSig.ps1"
-Invoke-WebRequest "https://raw.githubusercontent.com/gamelist1990/BedrockDynamicSDK/main/exsample/CheckSig/Get-CheckSig.ps1" -OutFile $scriptPath
-powershell -ExecutionPolicy Bypass -File $scriptPath -Source GitHub
-```
-
-ローカルのDLL、CI artifact ZIP、またはそれらを含むフォルダーを使う:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
-  -Source Local `
-  -LocalPath "C:\Downloads\CheckSig.dll" `
-  -Destination "C:\MyModLoader\mods\CheckSig.dll"
-```
-
-CI artifact ZIPを直接指定する場合も同じです:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
-  -Source Local `
-  -LocalPath "C:\Downloads\CheckSig-windows-x64.zip"
-```
-
-GitHub取得をloaderの配置先に直接出す場合:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSig.ps1 `
-  -Source GitHub `
-  -Destination "C:\MyModLoader\mods\CheckSig.dll" `
-  -Force
-```
-
-取得前にPEヘッダーがx64であることを確認し、SHA-256を表示します。GitHub取得は
-公開リポジトリの `All mod DLLs` workflowを使い、artifactが期限切れの場合は前の成功実行も探します。
-
-### x64プロファイルを取得して自動検出する
-
-DLLを起動した後、`Documents/PEXData/CheckSig/commands/` にWindows x64プロファイルJSONを置くと、
-CheckSigがファイルの書き込み完了を待って自動で読み込みます。EXEのSHA-256が一致すれば
-プロファイルを有効化し、`events.jsonl` に `detect-result` の `exact-build-match` を記録します。
-一致しない場合も `different-executable-build` として検出結果を記録しますが、その定義での
-Hookや候補読み取りは有効化しません。最後の結果は `status.json` の `profile_detection` にも残ります。
-
-`Get-CheckSigProfile.ps1` はGitHubの最新Windows x64プロファイルを取得する方法と、
-手元のJSONまたはJSONを含むフォルダーを指定する方法に対応します。既定では選んだJSONを
-`Documents/PEXData/CheckSig/commands/<version>-windows-x64.json` にコピーします。
-既存ファイルを置き換える場合だけ `-Force` を指定します。
-
-GitHubから最新バージョンを取得:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 -Source GitHub
-```
-
-GitHubから特定バージョンを取得:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 `
-  -Source GitHub `
-  -Version "1.26.60.5"
-```
-
-ローカルのJSONを配置:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\exsample\CheckSig\Get-CheckSigProfile.ps1 `
-  -Source Local `
-  -LocalPath "C:\Downloads\1.26.60.5\windows-x64.json"
-```
-
-複数バージョンのJSONがあるフォルダーでは、既定で最も新しいバージョンを選びます。
-`-Version` を付けると対象を指定できます。保存先を変える場合は `-CommandsDirectory` を渡します。
-スクリプトを使わず手で配置する場合も、x64 JSONをcommandsフォルダーへコピーするだけで自動検出します。
-`detect` コマンドは最後の結果を再出力し、`detect "C:\path\to\windows-x64.json"` は指定ファイルを
-その場で照合します。
-
-## コマンド入力
-
-`Documents/PEXData/CheckSig/commands/` にコマンドを1行書いた `.txt` ファイルを置きます。
-CheckSigが処理すると入力ファイルは削除されます。JSONプロファイルは削除せず、ファイル内容が
-変わったときだけ再検出します。ファイル名順に処理するので、
-複数コマンドを連続で置く場合は `01-source.txt`、`02-port.txt` のように番号を付けます。
-結果は `events.jsonl`、現在状態は `status.json` に書きます。
+このリポジトリの1.26.60.5用プロファイルは `data/1.26.60.5/windows-x64.json` です。ファイル名は変更してもよく、拡張子が `.json` なら読み込みます。サブフォルダーは検索しません。「ドキュメント」はWindowsが設定する実際の保存先を使うため、OneDriveなどへ移動している場合はそちらを確認してください。
 
 ```text
-source "C:\path\to\old\windows-x64.json"
+Documents/PEXData/CheckSig/
+├─ command/
+│  ├─ windows-x64.json      ← ここに置くだけで自動検出。JSONは消しません
+│  └─ next.txt              ← 必要な場合だけコマンドを書く
+├─ commands/               ← 従来の入力先も利用可能
+├─ detect/
+│  ├─ result.txt            ← 人が読む検出結果
+│  └─ result.json           ← 候補ごとの詳細を含む検出結果
+├─ events.jsonl            ← 検索結果・Hook観測・読み取り値・エラーの履歴
+└─ status.json             ← 実行状態、現在使っている定義、Hook呼び出し数
 ```
 
-旧版定義にあるトップレベルおよび `native_*` 内の関数を現在のEXEへ移植し、
-`.pdata` 境界へ集約して候補プロファイルを作成します:
+## 自動検出で分かること
+
+EXEのSHA-256とプロファイルを照合し、同じEXEなら各候補のRVAを読み取り、入口バイトの一致、`.pdata`関数開始位置、対応ABI、Hookランタイムを調べます。`result.txt` には候補名・RVA・入口一致/不一致・Hook試行可否とその理由を表示し、`result.json` には読み取り可否と入口バイトも保存します。
+
+| 結果 | 意味 |
+| --- | --- |
+| `waiting-for-profile` | まだJSONがありません。表示された入力フォルダーに置いてください |
+| `exact-build-match` | EXEと定義が一致し、候補ごとの検査を実行しました |
+| `different-executable-build` | 別バージョンのEXE向けです。旧定義からの移植手順を使えます |
+| `invalid-profile` | JSON形式、対象形式、RVA、入口ガード、PE情報などが不正です。具体的な理由を表示します |
+| `profile-read-error` | ファイルを読めないか、16 MiBの上限を超えています |
+
+JSONを更新すると自動で再検出します。サイズと更新時刻を保った上書きも内容の再確認で検出します。コピー途中は待ち、壊れたJSONを直すと再処理します。
+
+複数のJSONを置いた場合はファイルごとに結果を残します。有効な一致プロファイルを読み込んだ後で、別ビルドや不正なJSONを見つけても、そのJSONでは現在の定義を置き換えません。複数の有効な一致JSONがある場合はパス順で最後のものを使い、結果の `active_profile` に実際の選択を明記します。
+
+入口一致は関数の意味やABIの証明ではありません。`hook=ready` は明示的にHookを試せる条件を満たしたという意味で、実ゲームでの動作確認済みを意味しません。候補は自動で `verified` へ昇格しません。
+
+## コマンドを使う
+
+`command/next.txt` または `commands/next.txt` にコマンドを書きます。1ファイルに複数行を書けます。UTF-8 BOMとCRLFにも対応します。JSONを先に処理し、TXTをファイル名順、ファイル内は行順で処理します。処理したTXTは削除します。
 
 ```text
-port 1.26.60.5
-```
-
-既存の1.26.60.5候補も保持して移植結果と統合する場合は、先にexact profileを読み込みます。
-同一RVAは既存定義を保ったまま移植根拠を追記し、RVA競合は別の
-`candidate::cross_version_port::...` 名で保存します。exact profileを事前に読み込まない場合も、
-既知の1.26.60.5 ActorTypeComponent静的候補は生成プロファイルへ追加されます。
-
-```text
-profile "C:\path\to\1.26.60.5\windows-x64.json"
-source "C:\path\to\old\windows-x64.json"
-port 1.26.60.5
-```
-
-生成した `candidate-profile.json` は自動で現在のターゲット定義になります。
-旧定義からの移植をせず、既存の1.26.60.5候補を調べる場合は、リポジトリ内の
-`data/1.26.60.5/windows-x64.json` を `profile "C:\path\to\windows-x64.json"` で読み込みます。
-
-個別の確認例:
-
-```text
+detect
 list
 probe Keyboard::feed
-scan "55 48 83 EC ??"
-hook Keyboard::feed
-unhook Keyboard::feed
-hook Level::getRuntimeActorList
-read actor:0+0x20 bytes:16
-unhook Level::getRuntimeActorList
-probe native_camera.local_player
-hook native_camera.local_player
-read actor:0+0x20 bytes:16
-unhook native_camera.local_player
-probe native_camera.visual.camera_render_observe
-hook native_camera.visual.camera_render_observe
-unhook native_camera.visual.camera_render_observe
-probe native_camera.update_player
-hook native_camera.update_player
-read actor:0+0x20 bytes:16
-unhook native_camera.update_player
-probe native_camera.visual.gamma
-hook native_camera.visual.gamma
-unhook native_camera.visual.gamma
-probe native_camera.visual.render_dragon_inside_effect.predicate
-hook native_camera.visual.render_dragon_inside_effect.predicate
-unhook native_camera.visual.render_dragon_inside_effect.predicate
-probe native_camera.visual.set_player_game_type
-hook native_camera.visual.set_player_game_type
-unhook native_camera.visual.set_player_game_type
-probe native_client_commands.register_command
-hook native_client_commands.register_command
-unhook native_client_commands.register_command
-probe native_client_commands.find_command
-hook native_client_commands.find_command
-unhook native_client_commands.find_command
-probe native_gui.display_message
-hook native_gui.display_message
-unhook native_gui.display_message
-probe native_world.get_region
-hook native_world.get_region
-unhook native_world.get_region
-probe native_world.get_block
-hook native_world.get_block
-unhook native_world.get_block
-probe native_world.get_chunk
-hook native_world.get_chunk
-unhook native_world.get_chunk
-read rva:0x331C20 bytes:16
-read 0x00007FF612345678 f32
-identity
-help
-quit
 ```
 
-`read` はVA、`rva:0x...`、およびActor一覧Hookが最後に記録した最大8件のActorを基準にする
-`actor:<index>+<offset>`（例: `actor:0+0x20`）を受け付けます。Actor相対読み取りは
-`VirtualQuery` と `ReadProcessMemory` で指定範囲だけを確認します。サンプル後にオブジェクトの
-寿命が続いていることまでは保証せず、結果にも `lifetime_verified: false` と記録します。
-ポインター値を読んでも、その先を自動でたどりません。値を確認した後は、必要な場合だけ
-別の `read <VA> <type>` を明示してください。読み取り型は
-`u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64/bytes:N` です。
-`scan` は任意のmasked patternを `.text` から検索し、ヒット数、対応する `.pdata` 関数、
-相対参照と `.rdata` 文字列を記録します。512件を超える検索は部分結果を候補にしません。
-関数の引数や戻り値の値を追う場合は、`hook` が成功した後に `events.jsonl` の
-`hook-observation` を確認します。フックできる候補は、現在のEXEと一致し、入口ガードと
-`.pdata` の関数開始位置が一致し、SDK既知HookPointまたは上記専用Observerに対応するものに限ります。専用Observerの `unhook` は
-観測を止めます。Detourは処理中のゲームスレッドを安全に解放するため、元処理だけを呼ぶ
-pass-throughとしてプロセス終了まで残ります。
-`list` と `probe-result` は `source`、候補根拠、ABI/runtime検証状態も記録します。
-1.26.60.5のexact profile、または `port 1.26.60.5` で生成した候補プロファイルを使うと、
-`Level::getRuntimeActorList` の `hook-observation` にActor+0x10のregistryポインタと
-Actor+0x18のEntity IDの読み取り可否・値も含まれます。ActorTypeComponentの内部は辿りません。
+| コマンド | 動作 |
+| --- | --- |
+| `detect` | 入力JSONを再読込し、検出レポートを更新 |
+| `detect "windows-x64.json"` | 指定JSONを照合。相対パスは入力フォルダーからも検索 |
+| `list` | 現在の定義の入口・Hook可否を再検査してレポートと `candidate-list` を更新 |
+| `probe <symbol>` | signature/anchorのヒット数、`.pdata`境界、前後バイト、近接関数、相対参照を記録 |
+| `scan "55 48 83 EC ??"` | `.text`をパターン検索。512件を超える結果は部分候補にしない |
+| `hook <symbol>` | 対応ABIと入口ガードを確認し、元処理を通す観測Hookを明示的に試行 |
+| `unhook <symbol>` | 観測を停止 |
+| `read rva:0x331C20 bytes:16` | 指定RVAの値を読み取り |
+| `read 0x00007FF612345678 f32` | 指定VAの値を読み取り |
+| `identity` | 読み込み中EXEの識別情報を出力 |
+| `source "old.json"` | 移植元の旧定義を指定 |
+| `port [version]` | 旧signature/anchorから現EXEの候補定義を生成 |
+| `profile "path.json"` | 一致プロファイルをパス指定で読み込み |
+| `quit` | コマンド監視と観測を停止 |
 
-フック解除後も安全のためDLLはプロセス終了までアンロードされません。ゲームを再起動すると
-SDK middlewareのフックは解除され、専用Observerは元処理だけを呼ぶpass-throughになります。
-未知ABIの候補は `probe` で静的なヒット/周辺情報を調べられますが、
-ライブフックはできません。
+`probe` のヒットと周辺情報は `events.jsonl` の `probe-result`、Hook後の引数/戻り値は `hook-observation`、値の読み取りは `memory-read` に出ます。実際に観測対象の処理が呼ばれたときに呼び出し数が増えます。
+
+読み取り型は `u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64/bytes:N`、1回最大64バイトです。ページ状態を確認して `ReadProcessMemory` で読み、読めない範囲はエラーにします。ポインタ先を自動で辿りません。Actorを返す対応Hookの観測後は `read actor:0+0x20 bytes:16` も使えます。Actorの寿命は未保証として結果に記録します。
+
+SDK既知HookPointに加え、完全一致した1.26.60.5用プロファイルでは以下の静的ABI候補に専用Observerがあります。
+
+- `native_camera.local_player`、`native_camera.visual.camera_render_observe`、`native_camera.update_player`
+- `native_camera.visual.gamma`、`native_camera.visual.render_dragon_inside_effect.predicate`、`native_camera.visual.set_player_game_type`
+- `native_client_commands.register_command`、`native_client_commands.find_command`、`native_gui.display_message`
+- `native_world.get_region`、`native_world.get_block`、`native_world.get_chunk`
+
+未知ABIの候補は検索・周辺調査までです。専用Observerの `unhook` は観測を止め、設置済みdetourは元処理を通す状態でプロセス終了まで残します。再度 `hook` すると観測を再開します。DLL自体もゲーム終了まで保持します。
+
+## 旧定義から現EXEの候補を探す
+
+旧JSONを `command/old.json` に置き、TXTに次の2行を書きます。
+
+```text
+source "old.json"
+port
+```
+
+旧定義内のsignatureと複数anchorを現EXEの `.text` で検索し、`.pdata`関数単位に集約します。生成した `CheckSig/candidate-profile.json` は現在の定義として読み込み、検出レポートにも候補の入口とHook可否を出します。現EXEと一致する定義を既に読み込んでいる場合は統合し、RVAが競合した候補は `candidate::cross_version_port::...` 名で残します。構造体offsetやvtable slotを自動で確定しません。
+
+## JSONをGitHubまたはローカルから配置する
+
+手でコピーする代わりに、同梱の `Get-CheckSigProfile.ps1` を使えます。既定の保存先は `Documents/PEXData/CheckSig/command/<version>-windows-x64.json` です。
+
+```powershell
+# GitHubの最新x64プロファイルを配置
+powershell -ExecutionPolicy Bypass -File .\Get-CheckSigProfile.ps1 -Source GitHub
+
+# GitHubからバージョンを指定
+powershell -ExecutionPolicy Bypass -File .\Get-CheckSigProfile.ps1 -Source GitHub -Version "1.26.60.5"
+
+# ローカルJSONを配置
+powershell -ExecutionPolicy Bypass -File .\Get-CheckSigProfile.ps1 -Source Local -LocalPath "C:\Downloads\windows-x64.json"
+```
+
+ローカルのフォルダー指定にも対応し、`-Version` がなければ最新バージョンを選びます。配置先を変更する場合は `-CommandDirectory`（従来の `-CommandsDirectory` も有効）、既存JSONの置き換えは `-Force` を指定します。GitHub取得ではmanifestにあるJSON自体のSHA-256も照合します。
+
+DLLの取得をスクリプト化する場合は、リポジトリの `Get-CheckSig.ps1` を使います。JSON用は `Get-CheckSigProfile.ps1` です。
+
+## ビルドと確認範囲
+
+GitHub Actionsの **All mod DLLs** がMSVC Windows x64でDLLをビルドします。CheckSigでは入力処理・署名検索・プロファイル検証のテストに加え、生成したDLLをテスト用Windows EXEにロードし、JSON投入から検出結果生成、壊れたJSONからの復帰、コマンド処理、既知ABIのテスト関数に対するHookと引数・戻り値の観測まで確認します。取得用PowerShellもWindows PowerShell 5.1で確認します。
+
+テスト用EXEでの確認と、Minecraft実機で候補ABI・値・寿命を確認することは別の検証です。Minecraft 1.26.60.5での実ゲーム動作は未検証です。
