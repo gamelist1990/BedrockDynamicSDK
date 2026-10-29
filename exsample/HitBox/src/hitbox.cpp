@@ -1,6 +1,7 @@
 #include <bedrock/profile_json.hpp>
 #ifdef _WIN32
 #include <bedrock/native_local_player.hpp>
+#include <bedrock/native_player_list.hpp>
 #if !defined(_MSC_VER)
 #error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
 #endif
@@ -405,12 +406,12 @@ public:
         actorLayout_ = std::move(actors);
         actorTypeValueOffset_=actorTypeOffset; playerTypeId_=playerType;
     }
-    void loadLocalGetter(const nlohmann::json& root){localGetter_.load(root);}
+    void loadNativePlayers(std::string_view profile){localGetter_.load(profile);
+        try{playerRoster_.load(profile);}catch(const std::exception&){}}
     void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
     void* clientIdentity() const noexcept { return client_.load(std::memory_order_acquire); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
     void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
-    void setPlayerListOffset(std::size_t offset) noexcept {playerListOffset_=offset;}
     bool copyNameEntityId(void* actor,std::uint32_t& id) const noexcept {
         return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextEntityIdOffset,id);
     }
@@ -419,7 +420,7 @@ public:
     void* localPlayer() const noexcept override {
         void* client = client_.load(std::memory_order_acquire);
         void* world = world_.load(std::memory_order_acquire);
-        if (!client || itemLayout_.localPlayerVtableSlot > 0x1000) return nullptr;
+        if (!client) return nullptr;
         struct LocalCache {
             const HitBoxAccess* adapter{};
             void* client{};
@@ -439,7 +440,7 @@ public:
             safeRead(cached.actor, context + actorLayout_.contextEntityIdOffset, entity) &&
             entity == cached.entity) return cached.actor;
         cached = {};
-        void* actor = localGetter_.get(client,itemLayout_.localPlayerVtableSlot);
+        void* actor = localGetter_.get(client);
         if (actor && safeRead(actor, context + actorLayout_.contextRegistryOffset, registry) && registry &&
             safeRead(actor, context + actorLayout_.contextEntityIdOffset, entity))
             cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(50)};
@@ -514,12 +515,15 @@ public:
         return captureRegistryBatch(registry, local, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
     }
     void capturePlayerNames(void* world,std::uint64_t epoch,int minutes) const noexcept {
-        if(!playerListOffset_)return;
+        if(!playerRoster_.ready())return;
         const auto now=Clock::now();
         if(now<nextRoster_ && rosterEpoch_==epoch)return;
         nextRoster_=now+std::chrono::seconds(1);rosterEpoch_=epoch;
-        const auto count=copyPlayerNames(world,playerListOffset_,rosterCopies_.data());
-        if(count!=SIZE_MAX)playerNames.publish(epoch,rosterCopies_.data(),count,std::chrono::minutes(minutes));
+        const auto rows=playerRoster_.snapshot(world);if(!rows)return;
+        std::size_t count{};for(const auto& row:*rows){if(count==rosterCopies_.size())break;
+            auto& target=rosterCopies_[count++];target={};target.uuid={row.uuid.low,row.uuid.high};target.uniqueId=row.uniqueId;
+            target.size=std::min(row.name.size(),target.bytes.size());std::memcpy(target.bytes.data(),row.name.data(),target.size);}
+        playerNames.publish(epoch,rosterCopies_.data(),count,std::chrono::minutes(minutes));
     }
     // Keep stable EnTT handles for already discovered Actors. New Actor discovery
     // stays bounded; positions of all tracked live handles are copied once per
@@ -541,25 +545,7 @@ public:
         batch.tickPoseUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-begin).count());
     }
 private:
-    struct NativePlayerEntry {std::uint64_t uniqueId;hitbox::PlayerUuid uuid;std::string name;std::byte rest[0xA8-0x18-sizeof(std::string)];};
-    static_assert(sizeof(NativePlayerEntry)==0xA8);
-    using NativePlayerList=std::unordered_map<hitbox::PlayerUuid,NativePlayerEntry,hitbox::PlayerUuidHash>;
-    static std::size_t copyPlayerNames(void* world,std::size_t offset,hitbox::CopiedPlayerName* copies) noexcept {
-        std::size_t count=0;
-        __try {
-            NativePlayerList* list=nullptr;
-            if(!safeRead(world,offset,list)||!list||list->size()>512)return SIZE_MAX;
-            for(const auto& item:*list){auto& target=copies[count];target={};
-                target.uuid=item.first;target.uniqueId=item.second.uniqueId;
-                const auto& text=item.second.name;
-                if(text.size()<=4096){target.size=std::min(text.size(),target.bytes.size());
-                    if(target.size)std::memcpy(target.bytes.data(),text.data(),target.size);}
-                if(++count==512)break;
-            }
-        } __except(EXCEPTION_EXECUTE_HANDLER) {return SIZE_MAX;}
-        return count;
-    }
-    std::size_t playerListOffset_{};
+    bedrock::NativePlayerList playerRoster_;
     mutable Clock::time_point nextRoster_{};mutable std::uint64_t rosterEpoch_{};
     mutable std::array<hitbox::CopiedPlayerName,512> rosterCopies_{};
     static std::size_t copyTrackedPoses(void* registry,const bedrock::NativeActorLayout& layout,
@@ -1733,25 +1719,12 @@ DWORD WINAPI startClient(void*) {
     bedrock::Resolver resolver;
     bedrock::NativeItemLayout itemLayout;
     bedrock::NativeActorLayout actorLayout;
-    std::size_t playerListOffset{};
     const auto identity = choice.identity;
     const auto prepareProfile = [&](std::string_view candidate) {
         // Profile selection checks executable identity, but an older cache can
         // still lack layouts required by a newer mod. Validate the whole set
         // before accepting it or installing any native hooks.
         bedrock::Resolver candidateResolver;
-        try {
-            playerListOffset=0;
-            const auto root=bedrock::parseNativeProfile(candidate);
-            if(root.contains("native_player_identity")) {
-                const auto& data=root.at("native_player_identity");
-                if(data.at("schema")!=1 || data.at("pointer_size")!=8 || data.at("entry_size")!=0xA8 ||
-                   data.at("actor_unique_id_offset")!=0 || data.at("uuid_offset")!=8 || data.at("name_offset")!=24)
-                    throw std::runtime_error("unsupported native player identity layout");
-                playerListOffset=data.at("level_player_list_offset").get<std::size_t>();
-                if(!playerListOffset || playerListOffset>0x10000)throw std::runtime_error("invalid PlayerList offset");
-            }
-        } catch(const std::exception& ex){error=ex.what();return false;}
         bedrock::NativeItemLayout candidateItems;
         bedrock::NativeActorLayout candidateActors;
         if (!candidateResolver.loadJson(candidate, error) ||
@@ -1768,7 +1741,7 @@ DWORD WINAPI startClient(void*) {
         hitbox::WorldRenderProfile candidateRender;
         if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
         if (!bedrock::parseNativeWorldEventsLayout(candidate, error)) return false;
-        try{access.loadLocalGetter(bedrock::parseNativeProfile(candidate));}
+        try{access.loadNativePlayers(candidate);}
         catch(const std::exception& ex){error=ex.what();return false;}
         worldRenderProfile = std::move(candidateRender);
         resolver = std::move(candidateResolver);
@@ -1805,8 +1778,6 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed, std::memory_order_release);
         return 1;
     }
-    access.setPlayerListOffset(playerListOffset);
-    if(!playerListOffset)log("PlayerList UUID roster unavailable; ActorType/RuntimeID filtering and Actor NameTag capture remain active");
     access.setLayouts(std::move(itemLayout), std::move(actorLayout),
                       worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
     log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; ActorType + remembered RuntimeID player filter; no name filter; profile candidate]");

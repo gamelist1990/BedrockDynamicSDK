@@ -17,3 +17,18 @@ build before promoting any result into the SDK's verified symbol profile.
 Use ScanClient for runtime observations and REA/Ghidra for static analysis.
 Correlate both by executable fingerprint, RVA, and observed values; a runtime
 observation alone does not establish a function signature or ABI.
+
+# Native SDK boundary and version updates
+
+User requirement: Mod code must use SDK APIs for native access. Add executable
+signatures/RVAs, object/field offsets, vtable slots, function ABI, guards and
+version selection to the SDK and `data/<version>/windows-x64.json`; do not add
+another native layout or fallback constant to `exsample/*/src`.
+
+Use stable Minecraft function identifiers under `symbols` and refer to them
+from layouts with `{"symbol":"Class::function"}`. The identifier is a maintained
+SDK binding name, not a claim that the shipped EXE contains that debug symbol.
+Keep one executable function definition; do not copy its RVA/guard into Mods.
+Read `docs/profile-maintenance.md` for resolution order, ABI constraints and
+version migration evidence. Existing legacy native code is not permission to
+add more: migrate the touched native operation behind an SDK adapter.

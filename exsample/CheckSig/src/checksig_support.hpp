@@ -10,7 +10,13 @@ namespace checksig {
 using SupportJson=nlohmann::json;
 inline const SupportJson* supportLookup(const SupportJson& root,const std::string& path) {
     if(path.empty() || path.size()>4096) return nullptr;
-    try { const auto pointer=SupportJson::json_pointer(path); return root.contains(pointer) ? &root.at(pointer) : nullptr; }
+    try { const auto pointer=SupportJson::json_pointer(path);
+        if(!root.contains(pointer))return nullptr;
+        const auto* value=&root.at(pointer);
+        if(value->is_object()&&value->size()==1&&value->contains("symbol"))
+            return &root.at("symbols").at(value->at("symbol").get<std::string>());
+        return value;
+    }
     catch(const std::exception&) { return nullptr; }
 }
 inline bool supportLayoutVerified(const SupportJson& root,std::string path) {

@@ -27,7 +27,12 @@ inline std::uint32_t number(const nlohmann::json& value) {
     if (result > UINT32_MAX) throw std::runtime_error("native profile integer overflow");
     return static_cast<std::uint32_t>(result);
 }
-inline void* checked(const nlohmann::json& root, const nlohmann::json& function) {
+inline const nlohmann::json& functionDefinition(const nlohmann::json& root,const nlohmann::json& reference) {
+    if(reference.contains("symbol")&&!reference.contains("rva"))return root.at("symbols").at(reference.at("symbol").get<std::string>());
+    return reference;
+}
+inline void* checked(const nlohmann::json& root, const nlohmann::json& reference) {
+    const auto& function=functionDefinition(root,reference);
     const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const auto rva = number(function.at("rva"));
     const auto begin = number(root.at("target").at("text_rva"));

@@ -8,8 +8,22 @@ namespace bedrock {
 inline nlohmann::json parseNativeProfile(std::string_view text) {
     auto root = nlohmann::json::parse(text.begin(), text.end());
     if (!root.contains("layouts")) return root;
-    const auto& layouts = root.at("layouts");
+    auto& layouts = root.at("layouts");
     if (!layouts.is_object()) throw std::invalid_argument("layouts must be an object");
+    const auto expand=[&](const auto& self,nlohmann::json& node,unsigned depth)->void {
+        if(depth>64)throw std::invalid_argument("layout reference nesting limit");
+        if(node.is_object()){
+            if(node.size()==1&&node.contains("symbol")&&node.at("symbol").is_string()){
+                const auto name=node.at("symbol").get<std::string>();
+                const auto definition=root.at("symbols").at(name);
+                if(!definition.contains("rva")||!definition.contains("entry_check"))
+                    throw std::invalid_argument("layout reference is not a canonical function: "+name);
+                node=definition;node["symbol"]=name;return;
+            }
+            for(auto& child:node.items())self(self,child.value(),depth+1);
+        }else if(node.is_array())for(auto& child:node)self(self,child,depth+1);
+    };
+    expand(expand,layouts,0);
     if (layouts.contains("GameCore")) {
         if (root.contains("native_keyboard")) throw std::invalid_argument("duplicate layout: GameCore");
         root["native_keyboard"] = layouts.at("GameCore");

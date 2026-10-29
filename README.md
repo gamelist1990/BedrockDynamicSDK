@@ -26,6 +26,13 @@ FreecamのInsideBlockEffectに新EXEの対象型・呼出箇所を追加。飛�
 - TabList: 受領ログでは起動とTab入力のみ確認。GUIは表示されなかったとの報告を受領。旧固定PlayerList位置を版別定義へ置換し、空一覧の診断を追加。更新後の表示確認待ち。
 - 共有Hook runtimeは4.7.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
 
+## SDKと版別定義の更新
+
+ネイティブのRVA・シグネチャ・offset・ABIはSDKと`data/<version>/windows-x64.json`で管理します。
+PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Modへネイティブ配置を追加しません。
+関数は共通の識別名で参照し、版別定義を一箇所で更新します。
+[探索順序・更新手順・ABIの制約・既存処理の移行残](docs/profile-maintenance.md)を参照してください。
+
 ## CheckSig：JSONを置いて調査
 
 1. `CheckSig.dll` を対象ゲームへロードします。

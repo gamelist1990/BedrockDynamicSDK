@@ -404,6 +404,25 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "static_abi_verified": true,
       "abi": "void __fastcall(ClientInstance*)",
       "source": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 13; REA/Ghidra ev_f412fe40a7569c670e78130b19f4765c0f2712608162e58b2c70cf46426e0cf3. Native runtime invocation remains unverified."
+    },
+    "Level::getPlayerList": {
+      "rva": "0x117c430",
+      "entry_check": "48 8B 81 E0 04 00 00 C3",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi": "PlayerList* __fastcall(Level*)",
+      "source": "REA/Ghidra player-list.json; exact PE vtable correlation: slot319, six slots before Level::getRuntimeActorList. Leaf getter; no guessed pattern.",
+      "update_hint": "Keep this identifier stable. Re-identify via Level vtable slot correlation, then inspect the getter and return/container ABI. See docs/profile-maintenance.md."
+    },
+    "ClientInstance::getLocalPlayer": {
+      "rva": "0x5DAED30",
+      "entry_check": "48 83 EC 48 48 8B 05 45 B3 A2 0B 48 31 E0 48 89 44 24 40 48 8D 91 48 02",
+      "abi": "Actor* __fastcall(ClientInstance*)",
+      "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration",
+      "signature": "",
+      "cross_version_signature_available": false
     }
   },
   "virtual_methods": {
@@ -530,7 +549,26 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
     "actor_unique_id_offset": 0,
     "uuid_offset": 8,
     "name_offset": 24,
-    "evidence": "Existing exact-build player list player roster layout; reference declarations PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped."
+    "evidence": "Existing exact-build player list player roster layout; reference declarations PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped.",
+    "revision": 2,
+    "map_abi": "msvc_release_unordered_map_uuid_value_align8",
+    "maximum_entries": 512,
+    "maximum_name_bytes": 4096,
+    "get_list": {
+      "symbol": "Level::getPlayerList"
+    },
+    "skin": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "entry_pointer_offset": 128,
+      "image_offset": 160,
+      "width_offset": 4,
+      "height_offset": 8,
+      "data_offset": 32,
+      "size_offset": 40,
+      "note": "Existing release MSVC skin reader moved into SDK. New-build skin fields remain candidates; a readable image alone does not verify lifetime."
+    },
+    "update_hint": "Level getter and all entry/skin offsets belong here. Offset fallback is explicit metadata, never a Mod constant. See docs/profile-maintenance.md#playerlist."
   },
   "native_world": {
     "schema": 1,

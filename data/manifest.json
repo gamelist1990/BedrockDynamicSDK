@@ -4,9 +4,9 @@
     "1.26.52.3": {
       "windows-x64": {
         "path": "data/1.26.52.3/windows-x64.json",
-        "sha256": "33f8d8aa16f7fc325ab0d0df473e6dcae352efc57e5a5a9fb03015ae5ed75720",
+        "sha256": "25e3b480783698cf8a80e03fc43993ab8076c8192605048164840d54c121482d",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
-        "symbols": 15,
+        "symbols": 17,
         "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
         "size_of_image": 314576896,
         "text_rva": "0x1000",
@@ -17,9 +17,9 @@
     "1.26.60.5": {
       "windows-x64": {
         "path": "data/1.26.60.5/windows-x64.json",
-        "sha256": "c6999ce27b3a6d0c33711be1a49984de8481d9f81bc702d9f87d41be8d0b2bf8",
+        "sha256": "d5817053d56875b6f06ec6dfa509bcd37f974c9bdf46062b632d0079edd08c5f",
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
-        "symbols": 40,
+        "symbols": 41,
         "module_text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
         "size_of_image": 327397376,
         "text_rva": "0x1000",

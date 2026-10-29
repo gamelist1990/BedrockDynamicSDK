@@ -18,6 +18,8 @@ def generate_catalog():
    requirements.append({'id':'symbol:'+name,'group':id,'kind':'function','symbol':name,'path':'/symbols/'+name,'next_action':'Hookで実際の呼び出し・引数・戻り値を観測。入口一致だけで型や寿命を確定しない。'})
   def walk(value,path):
    if isinstance(value,dict):
+    if 'symbol' in value and value['symbol'] in old['symbols']:
+     requirements.append({'id':path,'group':id,'kind':'function','path':path,'symbol':value['symbol'],'next_action':'共通識別名からsymbolsの版別定義を解決し、入口・ABI・実呼出しを確認。'});return
     if 'rva' in value and 'entry_check' in value:
      parts=path.split('/'); old_name=legacy.get(parts[2],parts[2])+'.'+'.'.join(parts[3:])
      symbol=inverse.get(old_name)
@@ -68,6 +70,8 @@ def generate_catalog():
    if path.split('/')[-1].endswith(('_offset','_rva','_slot')):
     requirements.append({'id':path,'group':group_id,'kind':'layout','path':path,'next_action':'現在のオブジェクトやテーブルに対して値・型・寿命を確認。'})
    return
+  if 'symbol' in value and value['symbol'] in new['symbols']:
+   requirements.append({'id':path,'group':group_id,'kind':'function','path':path,'symbol':value['symbol'],'next_action':'symbolsの共通識別名で関数を解決。版別RVA/ABIと実機観測を確認。'});return
   if 'rva' in value and 'entry_check' in value:
    requirements.append({'id':path,'group':group_id,'kind':'function','path':path,**({'symbol':'CommandOutputPacket::read'} if path.endswith('/output_read') else {}),'next_action':'入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。'});return
   for k,v in value.items():append_new(v,path+'/'+k,group_id)

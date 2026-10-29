@@ -2166,6 +2166,17 @@
       },
       "verification_scope": "entry-guard",
       "name_status": "unresolved"
+    },
+    "Level::getPlayerList": {
+      "rva": "0x232f0b0",
+      "entry_check": "48 8B 81 E8 04 00 00 C3",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi": "PlayerList* __fastcall(Level*)",
+      "source": "REA/Ghidra player-list.json; exact PE vtable correlation: slot319, six slots before Level::getRuntimeActorList. Leaf getter; no guessed pattern.",
+      "update_hint": "Keep this identifier stable. Re-identify via Level vtable slot correlation, then inspect the getter and return/container ABI. See docs/profile-maintenance.md."
     }
   },
   "analysis": {
@@ -2424,7 +2435,8 @@
         "supplies_offset": "0x5B8",
         "selected_slot_offset": "0x10",
         "inventory_offset": "0xB8",
-        "evidence": "Candidate slot 34 from exact-build ClientInstance table analysis (table RVA 0xF2B9310, getter RVA 0x659E470); returned pointer identity and lifetime are unverified. Other supplies/inventory offsets are carried from 1.26.52.3."
+        "evidence": "Candidate slot 34 from exact-build ClientInstance table analysis (table RVA 0xF2B9310, getter RVA 0x659E470); returned pointer identity and lifetime are unverified. Other supplies/inventory offsets are carried from 1.26.52.3.",
+        "getter_symbol": "ClientInstance::getLocalPlayer"
       },
       "item_stack": {
         "item_reference_offset": "0x8",
@@ -2584,14 +2596,7 @@
       "renderer_player_offset": 1128,
       "render_origin_offset": 1632,
       "local_player": {
-        "rva": "0x659E470",
-        "entry_check": "48 83 EC 48 48 8B 05 45 9C D6 0B 48",
-        "abi": "Actor* __fastcall(ClientInstance*)",
-        "source": "1.26.60.5 candidate symbol; ClientInstance table slot 34 is statically inferred, output identity/lifetime unverified.",
-        "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
-        "status": "candidate",
-        "runtime_verified": false,
-        "candidate_evidence": "anchor-port:1.26.52.3 (1/2 source-unique anchors)"
+        "symbol": "ClientInstance::getLocalPlayer"
       },
       "visual": {
         "schema": 1,
@@ -3139,7 +3144,30 @@
       "uuid_offset": 8,
       "name_offset": 24,
       "evidence": "Exact-build REA/Ghidra getter 0x232F0B0 reads Level+0x4E8. It occupies slot319 (six before Level::getRuntimeActorList) in three new Level vtables, matching old getter0x117C430. UUID/map entry size and fields remain versioned candidates; bounded runtime reads required.",
-      "runtime_verified": false
+      "runtime_verified": false,
+      "revision": 2,
+      "map_abi": "msvc_release_unordered_map_uuid_value_align8",
+      "maximum_entries": 512,
+      "maximum_name_bytes": 4096,
+      "get_list": {
+        "symbol": "Level::getPlayerList"
+      },
+      "skin": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "entry_pointer_offset": 128,
+        "image_offset": 160,
+        "width_offset": 4,
+        "height_offset": 8,
+        "data_offset": 32,
+        "size_offset": 40,
+        "note": "Existing release MSVC skin reader moved into SDK. New-build skin fields remain candidates; a readable image alone does not verify lifetime."
+      },
+      "update_hint": "Level getter and all entry/skin offsets belong here. Offset fallback is explicit metadata, never a Mod constant. See docs/profile-maintenance.md#playerlist."
     }
+  },
+  "maintenance": {
+    "guide": "docs/profile-maintenance.md",
+    "symbol_policy": "Use stable Minecraft function identifiers; one function definition under symbols, layout references use symbol. Native ABI and version fields are implemented in SDK adapters."
   }
 }

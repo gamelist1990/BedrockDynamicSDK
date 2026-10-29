@@ -1012,6 +1012,17 @@
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
+      "id": "/layouts/ItemStack/local_player/getter_symbol",
+      "group": "items",
+      "kind": "layout",
+      "path": "/layouts/ItemStack/local_player/getter_symbol",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "ClientInstance::getLocalPlayer"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
       "id": "/layouts/ItemStack/item_stack/item_reference_offset",
       "group": "items",
       "kind": "layout",
@@ -1151,6 +1162,113 @@
       "reference_only": {
         "version": "1.26.52.3",
         "value": 24
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/maximum_entries",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/maximum_entries",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 512
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/maximum_name_bytes",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/maximum_name_bytes",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4096
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/get_list",
+      "group": "identity",
+      "kind": "function",
+      "path": "/layouts/LocalPlayer/get_list",
+      "symbol": "Level::getPlayerList",
+      "next_action": "共通識別名からsymbolsの版別定義を解決し、入口・ABI・実呼出しを確認。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/entry_pointer_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/entry_pointer_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 128
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/image_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/image_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 160
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/width_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/width_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 4
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/height_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/height_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 8
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/data_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/data_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 32
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/skin/size_offset",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/skin/size_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 40
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/LocalPlayer/update_hint",
+      "group": "identity",
+      "kind": "layout",
+      "path": "/layouts/LocalPlayer/update_hint",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "Level getter and all entry/skin offsets belong here. Offset fallback is explicit metadata, never a Mod constant. See docs/profile-maintenance.md#playerlist."
       },
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
@@ -1309,7 +1427,8 @@
       "group": "freecam_camera",
       "kind": "function",
       "path": "/layouts/Camera/local_player",
-      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+      "symbol": "ClientInstance::getLocalPlayer",
+      "next_action": "symbolsの共通識別名で関数を解決。版別RVA/ABIと実機観測を確認。"
     },
     {
       "id": "/layouts/Camera/visual/game_type_component_hash",
