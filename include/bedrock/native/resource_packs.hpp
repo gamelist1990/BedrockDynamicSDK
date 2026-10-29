@@ -17,6 +17,7 @@ class NativeResourcePacks final {
         std::uint64_t terrainAtlasCompleted{}, blockTexturesReloaded{}, clientsRefreshed{}, refreshCancelled{};
         std::uint64_t geometryReloaded{}, clientDefinitionsReloaded{}, resourceWaitFrames{};
         std::uint64_t levelBuildersRecreated{}, blockGraphicsRebuilt{}, graphicsCacheResets{};
+        std::uint64_t customResourcesRebuilt{}, blockClientDataRebuilt{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();

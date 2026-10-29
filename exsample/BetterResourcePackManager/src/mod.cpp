@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v7 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v8 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -77,7 +77,9 @@ DWORD WINAPI start(void *) noexcept {
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
                 current.levelBuildersRecreated != previous.levelBuildersRecreated ||
                 current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
-                current.graphicsCacheResets != previous.graphicsCacheResets) {
+                current.graphicsCacheResets != previous.graphicsCacheResets ||
+                current.customResourcesRebuilt != previous.customResourcesRebuilt ||
+                current.blockClientDataRebuilt != previous.blockClientDataRebuilt) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -100,6 +102,8 @@ DWORD WINAPI start(void *) noexcept {
                     << " level_builders_recreated=" << current.levelBuildersRecreated
                     << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
                     << " graphics_cache_resets=" << current.graphicsCacheResets
+                    << " custom_resources_rebuilt=" << current.customResourcesRebuilt
+                    << " block_client_data_rebuilt=" << current.blockClientDataRebuilt
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

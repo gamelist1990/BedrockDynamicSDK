@@ -1,20 +1,19 @@
-# BetterResourcePackManager（Windows プレイ中再読み込み v7）
+# BetterResourcePackManager（Windows プレイ中再読み込み v8）
 
 添付された Android ARM64 版 `BetterResourcePackManager v2.3.1` を解析し、
 BedrockDynamicSDK の API を使って Windows x64 向けに再実装するサンプルです。
-v6 の実機ログではプレイヤーモデルが復旧し、全修復段階が一度ずつ実行されました。
-ただし、サーバーのカスタム形状には別のテクスチャ領域が混ざり、新しく置いたブロックも崩れました。
-v7 は v6 のモデル復旧を維持し、元 Android 版の `BlockGraphics::initBlocks` に相当する
-ブロック描画定義全体の再初期化と、古い ClientData 描画参照を外す処理を追加します。
-再初期化前に描画タスクを待ち、以後 `BlockGraphics::getForBlock` が参照する古いキャッシュを無効化します。
-共有されている小さな読み取り関数の他用途には影響させず、getForBlock の呼び出し中だけ処理します。
-更新後の定義を使用するため、描画ビルダーも再生成します。
-`LevelRenderer::onAppResumed` の標準処理を呼び、実行中の描画タスクを待ってから
-現在のゲーム描画リソースで `LevelBuilder::recreateBuilders` を実行し、最後に全チャンクの再描画を要求します。
-呼び出す前に、取得した LevelRenderer の AppPlatformListener と対象仮想関数を照合します。
+v7 の実機ログではプレイヤーモデル・バニラブロックは復旧しましたが、
+カスタムブロックは全修復処理の実行後も崩れました。
+v8 はワールド参加時の LevelRenderer 初期化を追い、抜けていた
+BlockGeometry グループ・材質の初期化と、各ブロックのクライアント描画データ再生成を追加します。
+材質はアトラスの UV 座標を保持するため、BlockGraphics の再生成・チャンク更新だけでは不十分でした。
+各ブロックのクライアントデータ準備済みフラグだけを外し、ゲームの処理に
+新しい描画データへの交換と古いデータの解放を任せます。
+対象の全ブロックを再生成した後は、新しい描画参照を毎回外す処理を停止します。
+描画タスクの待機、プレイヤーモデル復旧、描画ビルダーの再生成を維持します。
 地形アトラスとネイティブローダーの準備完了を待ち、フレーム開始時に処理します。
-待機中のワールド変更は取り消し、プレイヤー・クライアントの生ポインターを非同期保持しません。
-**v7 がサーバーのカスタム材質の座標崩れまで直すかは実機確認待ちです。**
+待機中のワールド変更は取り消し、生ポインターを非同期保持しません。
+**v8 の新しい呼び出し経路とカスタムブロックの表示は実機確認待ちです。**
 
 対応プロファイルは **Minecraft 1.26.60.5 / Windows x64 / Release MSVC** のみ。
 EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`。
@@ -37,8 +36,8 @@ EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672
 ## 未完了・未確認
 
 設定終了とスタック合成の Windows 経路は、対象 EXE の命令列と REA/Ghidra の解析に基づきます。
-v7 は標準のテクスチャ更新に加え、BlockGraphics を作り直します。
-古い参照は SDK の getForBlock Hook で外し、ゲームの現在の登録表から解決させます。
+v8 は BlockGraphics とカスタムブロックの材質・クライアント描画データを作り直します。
+再生成中の古い BlockGraphics 参照は SDK の getForBlock Hook で外し、ゲームの現在の登録表から解決させます。全ブロックの描画データを再生成すると、その無効化を停止します。
 再生成・解放はゲーム自身の関数に任せ、DLL 側でゲームオブジェクトを解放しません。
 サーバーパックを含む full stack をそのまま使用します。サーバーパック固有の原因かは未確定です。別のサーバー用マネージャーをクライアント用スタックへ混ぜる処理は追加していません。
 既存・新設ブロック、アイテム・雲、複数回切替、ワールド退出の実機確認が必要です。
@@ -52,6 +51,8 @@ v5 では誤解を避けるため `language_subpacks_updated` に改名しまし
 v7 の `level_builders_recreated` は仮想関数の照合後、標準の描画ビルダー再生成処理から戻った回数です。
 `block_graphics_rebuilt` は全ブロック描画定義の再初期化から戻った回数、
 `graphics_cache_resets` は getForBlock 内で非 null の古い描画参照を外した回数です。
+`custom_resources_rebuilt` は材質・描画データ全体の再構築が完了した回数、
+`block_client_data_rebuilt` は再生成後の準備済みフラグとアクセサーを確認できたブロック状態数です。
 対象 LevelRenderer/TaskGroup が得られない、または仮想関数が一致しない場合は `failures` を増やします。
 これらも実際の表示が正しいことを保証するものではありません。
 プロファイルは `candidate` / `runtime_verified: false` を維持しています。
@@ -86,8 +87,8 @@ Linux では DLL は生成せず、画面判定・文字列・適用コールバ
    v2/v3 の `level_stack_included` は表示名が誤っていました。対象フラグはグローバルパックの包含です。
    変更なしの場合は適用回数が増えないことがあります。
    `settings` と `pre_game_overrides` だけでは反映成功は分かりません。
-   v7 は `terrain_atlas_completed` → `geometry_reloaded` / `client_definitions_reloaded` →
-   `block_textures_reloaded` / `block_graphics_rebuilt` / `level_builders_recreated` / `clients_refreshed` の増加と、
+   v8 は `terrain_atlas_completed` → `geometry_reloaded` / `client_definitions_reloaded` →
+   `block_textures_reloaded` / `block_graphics_rebuilt` / `custom_resources_rebuilt` / `block_client_data_rebuilt` / `level_builders_recreated` / `clients_refreshed` の増加と、
    既存・新設・カスタムブロック、三人称・インベントリのプレイヤー表示、他プレイヤー・動物を確認します。
    `refresh_cancelled` は待機中にワールドが変わり修復を取り消した回数です。
    反映しない場合は新しいログを確認します。
