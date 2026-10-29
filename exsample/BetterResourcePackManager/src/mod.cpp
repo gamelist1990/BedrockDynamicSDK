@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live apply adapter v3 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v4 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -63,21 +63,23 @@ DWORD WINAPI start(void *) noexcept {
                 current.reloadCalls != previous.reloadCalls ||
                 current.stackCompositions != previous.stackCompositions ||
                 current.reloadFinalized != previous.reloadFinalized ||
-                current.levelStackIncluded != previous.levelStackIncluded ||
+                current.globalStackIncluded != previous.globalStackIncluded ||
                 current.applyNavigations != previous.applyNavigations ||
                 current.liveApplications != previous.liveApplications ||
-                current.inWorldApplyEvents != previous.inWorldApplyEvents) {
+                current.inWorldApplyEvents != previous.inWorldApplyEvents ||
+                current.gameGateOverrides != previous.gameGateOverrides) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
                     << " apply_events=" << current.applyEvents
                     << " reload_calls=" << current.reloadCalls
                     << " stack_compositions=" << current.stackCompositions
-                    << " level_stack_included=" << current.levelStackIncluded
+                    << " global_stack_included=" << current.globalStackIncluded
                     << " reload_finalized=" << current.reloadFinalized
                     << " apply_navigations=" << current.applyNavigations
                     << " live_applications=" << current.liveApplications
                     << " in_world_apply_events=" << current.inWorldApplyEvents
+                    << " game_gate_overrides=" << current.gameGateOverrides
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

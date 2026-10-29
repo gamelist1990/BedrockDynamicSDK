@@ -10,6 +10,7 @@
 #include <bedrock/detail/owned_msvc_string.hpp>
 #include <bedrock/detail/owned_native_callback.hpp>
 #include <memory>
+#include <intrin.h>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
 #error NativeResourcePacks requires the Release MSVC STL ABI (_ITERATOR_DEBUG_LEVEL=0)
@@ -26,6 +27,7 @@ struct NativeResourcePacks::Binding {
     using Predicate = bool(__fastcall *)(void *);
     using ScreenName = void *(__fastcall *)(void *, void *);
     using LocalPlayer = void *(__fastcall *)(void *);
+    using ClientGame = void *(__fastcall *)(void *);
     using Deallocate = void(__fastcall *)(void *);
     void *initTarget{};
     void *ctorTarget{};
@@ -44,16 +46,20 @@ struct NativeResourcePacks::Binding {
     Predicate preGame{};
     ScreenName screenName{};
     LocalPlayer localPlayer{};
+    ClientGame clientGame{};
+    void *gameInGameTarget{}, *gameGateCaller{};
+    Predicate gameInGame{};
     Deallocate deallocate{};
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
-    std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeLevelOffset{};
-    std::array<BDS_HookToken, 9> tokens{};
+    std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
+    std::array<BDS_HookToken, 10> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
-    std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, finalized{}, levelIncluded{};
+    std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, finalized{}, globalIncluded{};
     std::atomic<std::uint64_t> navigations{}, liveApplications{}, inWorldEvents{};
+    std::atomic<std::uint64_t> gameGateOverrides{};
     std::mutex policyMutex;
     std::map<void *, ResourcePackMenuPolicy> policies;
 
@@ -81,6 +87,23 @@ struct NativeResourcePacks::Binding {
     void *clientFromModel(void *model) const noexcept {
         void *client{};
         return model && native_profile::read(model, modelClientOffset, client) ? client : nullptr;
+    }
+    static bool __fastcall onGameInGame(void *game) {
+        // The game has a second gate independent of ClientInstance::isPreGame.
+        // Scope the override to the one call in onFullPackStackInvalid. Other
+        // callers, other game instances and the remaining native readiness
+        // checks retain their original behavior.
+        const auto caller = _ReturnAddress();
+        auto &state = *active().load(std::memory_order_acquire);
+        const bool original = state.gameInGame(game);
+        const auto client = applyingClient();
+        if (original && state.enabled.load(std::memory_order_acquire) &&
+            caller == state.gameGateCaller && client &&
+            state.clientGame(client) == game && state.localPlayer(client)) {
+            ++state.gameGateOverrides;
+            return false;
+        }
+        return original;
     }
     static bool claimCallback(void *function, std::size_t offset, void *expected) noexcept {
         __try {
@@ -164,7 +187,7 @@ struct NativeResourcePacks::Binding {
         if (state.enabled.load(std::memory_order_acquire))
             ++state.finalized;
     }
-    static std::uint64_t __fastcall onCompose(void *self, void *full, void *level, void *global) {
+    static std::uint64_t __fastcall onCompose(void *self, void *full, void *global, void *level) {
         auto &state = *active().load(std::memory_order_acquire);
         const bool enabled = state.enabled.load(std::memory_order_acquire);
         if (enabled)
@@ -172,7 +195,7 @@ struct NativeResourcePacks::Binding {
         unsigned char previous{};
         const auto client = applyingClient();
         const bool inWorld = enabled && client && state.localPlayer(client);
-        const bool changed = inWorld && exchangeFlag(self, state.includeLevelOffset, 1, previous);
+        const bool changed = inWorld && exchangeFlag(self, state.includeGlobalOffset, 1, previous);
         if (inWorld && !changed)
             ++state.failures;
         struct Restore {
@@ -182,13 +205,13 @@ struct NativeResourcePacks::Binding {
             unsigned char previous;
             ~Restore() {
                 unsigned char ignored{};
-                if (changed && !exchangeFlag(self, state.includeLevelOffset, previous, ignored))
+                if (changed && !exchangeFlag(self, state.includeGlobalOffset, previous, ignored))
                     ++state.failures;
             }
         } restore{state, self, changed, previous};
         if (changed)
-            ++state.levelIncluded;
-        return state.compose(self, full, level, global);
+            ++state.globalIncluded;
+        return state.compose(self, full, global, level);
     }
 
     static bool writeFlag(void *self, std::size_t offset) noexcept {
@@ -298,7 +321,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-apply-v3")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v4")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -311,6 +334,12 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
                                "void* __fastcall(GeneralSettingsScreenController*, void* model, "
                                "bool, bool, const void* initialPack, bool)");
         next->preGameTarget = get("is_pre_game", "bool __fastcall(ClientInstance*)");
+        next->clientGame = reinterpret_cast<Binding::ClientGame>(
+            get("client_game", "void* __fastcall(ClientInstance*)"));
+        next->gameInGameTarget = get("game_is_in_game", "bool __fastcall(MinecraftGame*)");
+        // Check both the listener entry and the exact return-address guard.
+        get("on_full_stack_invalid", "bool __fastcall(ResourcePackListener*)");
+        next->gameGateCaller = native_profile::checked(root, layout.at("game_in_game_caller"));
         next->navigateTarget = get("navigate_apply_packs",
                                     "void __fastcall(MainMenuScreenModel*, void* callback)");
         next->eventDestroyTarget = get("destroy_apply_callback",
@@ -334,9 +363,9 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->closureOwnerOffset = native_profile::number(layout.at("exit_closure_owner_offset"));
         next->settingsModelOffset = native_profile::number(layout.at("settings_model_offset"));
         next->modelClientOffset = native_profile::number(layout.at("model_client_offset"));
-        next->includeLevelOffset = native_profile::number(layout.at("include_level_stack_offset"));
+        next->includeGlobalOffset = native_profile::number(layout.at("include_global_stack_offset"));
         for (auto offset : {next->closureOwnerOffset, next->settingsModelOffset,
-                            next->modelClientOffset, next->includeLevelOffset})
+                            next->modelClientOffset, next->includeGlobalOffset})
             if (offset < 8 || offset > 0x10000)
                 throw std::runtime_error("invalid resource pack apply layout");
         next->screenName = reinterpret_cast<Binding::ScreenName>(
@@ -380,7 +409,8 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
         !binding_->reloadTarget || !binding_->finalizeTarget ||
-        !binding_->navigateTarget || !binding_->eventDestroy) {
+        !binding_->navigateTarget || !binding_->eventDestroy ||
+        !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller) {
         error = "resource pack profile has not been loaded";
         return false;
     }
@@ -418,7 +448,10 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->finalize), &binding_->tokens[7]) &&
         BDS_HookDirectInstall(binding_->navigateTarget,
                               reinterpret_cast<void *>(&Binding::onNavigateApply),
-                              reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[8]);
+                              reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[8]) &&
+        BDS_HookDirectInstall(binding_->gameInGameTarget,
+                              reinterpret_cast<void *>(&Binding::onGameInGame),
+                              reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[9]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -435,7 +468,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),
             binding_->failures.load(), binding_->exits.load(), binding_->applyEvents.load(),
             binding_->reloads.load(), binding_->compositions.load(), binding_->finalized.load(),
-            binding_->levelIncluded.load(), binding_->navigations.load(),
-            binding_->liveApplications.load(), binding_->inWorldEvents.load()};
+            binding_->globalIncluded.load(), binding_->navigations.load(),
+            binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load()};
 }
 } // namespace bedrock
