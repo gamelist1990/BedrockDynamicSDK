@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native menu adapter is experimental; runtime "
+        log << "Hooks installed. Exact-build native apply adapter v2 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -57,9 +57,21 @@ DWORD WINAPI start(void *) noexcept {
             const auto current = packs->status();
             if (current.settingsOpened != previous.settingsOpened ||
                 current.preGameOverrides != previous.preGameOverrides ||
-                current.failures != previous.failures) {
+                current.failures != previous.failures ||
+                current.settingsExited != previous.settingsExited ||
+                current.applyEvents != previous.applyEvents ||
+                current.reloadCalls != previous.reloadCalls ||
+                current.stackCompositions != previous.stackCompositions ||
+                current.reloadFinalized != previous.reloadFinalized ||
+                current.levelStackIncluded != previous.levelStackIncluded) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
+                    << " exits=" << current.settingsExited
+                    << " apply_events=" << current.applyEvents
+                    << " reload_calls=" << current.reloadCalls
+                    << " stack_compositions=" << current.stackCompositions
+                    << " level_stack_included=" << current.levelStackIncluded
+                    << " reload_finalized=" << current.reloadFinalized
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

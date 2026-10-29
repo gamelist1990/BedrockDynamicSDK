@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-settings-menu-v1",
+      "adapter": "windows-settings-apply-v2",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -34,9 +34,28 @@
         },
         "deallocate": {
           "symbol": "Bedrock::Memory::deallocate"
+        },
+        "exit_settings": {
+          "symbol": "SettingsScreenController::_handleMenuExitButtonEvent"
+        },
+        "apply_stack_event": {
+          "symbol": "GeneralSettingsScreenController::_applyResourcePackStackEvent"
+        },
+        "compose_full_stack": {
+          "symbol": "ResourcePackManager::_composeFullStack"
+        },
+        "reload_stack": {
+          "symbol": "ResourcePackManager::_reloadStack"
+        },
+        "finalize_reload": {
+          "symbol": "ResourcePackManager::_finalizeReload"
         }
       },
-      "evidence": "Documents/PEXData/REA/brpm-windows-1.26.60.5. Native menu bootstrap only; alternative parent reload flag route inferred from _init arguments. Full-stack rebuild and in-world visual correctness require runtime testing; Android branch patches and renderer repairs are not claimed verified."
+      "evidence": "Exact Windows PE call chain: settings exit -> GeneralSettings stack apply -> queued event -> ResourcePackManager setStack/reload -> compose -> finalize. Apply scopes survive navigation and re-enter on the queued game event. Include-level flag is temporarily enabled only during in-world application, then restored. Static evidence is not visual runtime verification.",
+      "exit_closure_owner_offset": 8,
+      "settings_model_offset": 3400,
+      "model_client_offset": 88,
+      "include_level_stack_offset": 378
     }
   },
   "symbols": {
@@ -104,6 +123,71 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
       "evidence": "brpm-windows-1.26.60.5/deallocate-evidence.json ev_b106a6d44e025e05a63cf1fe7ad374eb517687e184fef2b234e67b754074bbbd; global delete thunk 0xE934B00 jumps here; RCX allocation; dispatches allocator slot2, ignores caller size"
+    },
+    "SettingsScreenController::_handleMenuExitButtonEvent": {
+      "rva": "0x5177070",
+      "signature": "",
+      "entry_check": "56 57 48 83 EC 58 48 8B 71 08 48 8B BE 48 0D 00 00 48 8B 4F 20 48 8B 01",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "uint64_t __fastcall(void* closure)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
+      "evidence": "brpm-windows-1.26.60.5/settings-exit-evidence.json; closure+8 -> SettingsScreenController; root+0x108A gates child apply at 0x5177130"
+    },
+    "GeneralSettingsScreenController::_applyResourcePackStackEvent": {
+      "rva": "0x5237200",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC A0 01 00 00 48 8D AC 24 80 00 00",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void* closure, void* model)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
+      "evidence": "brpm-windows-1.26.60.5/apply-event-evidence.json; RCX closure, RDX model; allocates stack, calls setStack(1), then reload if dirty at 0x5237507"
+    },
+    "ResourcePackManager::_composeFullStack": {
+      "rva": "0x17cc1e0",
+      "signature": "",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 28 4D 89 CC 4D 89 C6 48 89",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "uint64_t __fastcall(ResourcePackManager*, void*, void*, void*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
+      "evidence": "brpm-windows-1.26.60.5/compose-stack-evidence.json; RCX manager RDX output R8 level R9 global; manager+0x17A gates level inclusion at 0x17CC293; returns zero"
+    },
+    "ResourcePackManager::_reloadStack": {
+      "rva": "0x17cc040",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ResourcePackManager*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
+      "evidence": "brpm-windows-1.26.60.5/stack-reload-evidence.json; validates listeners then composes stack and notifies reload listeners; finalize call at 0x17CC18F"
+    },
+    "ResourcePackManager::_finalizeReload": {
+      "rva": "0x17cc8b0",
+      "signature": "",
+      "entry_check": "55 41 56 56 57 53 48 83 EC 60 48 8D 6C 24 60 48 C7 45 F8 FE FF FF FF 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ResourcePackManager*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
+      "evidence": "brpm-windows-1.26.60.5/finalize-reload-evidence.json; notifies each resource pack listener at vtable+0x20"
     }
   }
 }

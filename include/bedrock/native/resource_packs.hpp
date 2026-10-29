@@ -11,6 +11,8 @@ class NativeResourcePacks final {
     struct Status {
         bool installed{};
         std::uint64_t settingsOpened{}, preGameOverrides{}, failures{};
+        std::uint64_t settingsExited{}, applyEvents{}, reloadCalls{}, stackCompositions{},
+            reloadFinalized{}, levelStackIncluded{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();
