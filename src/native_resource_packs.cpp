@@ -164,8 +164,14 @@ struct NativeResourcePacks::Binding {
     }
     static bool clearGraphics(void *data, std::size_t offset, void *&previous) noexcept {
         __try {
-            previous = InterlockedExchangePointer(
-                reinterpret_cast<void *volatile *>(static_cast<std::byte *>(data) + offset), nullptr);
+            auto *slot = reinterpret_cast<void *volatile *>(static_cast<std::byte *>(data) + offset);
+            // Cleared entries dominate the mesh hot path. Avoid a locked RMW
+            // on an already-null pointer shared by many builder workers.
+            if (!*slot) {
+                previous = nullptr;
+                return true;
+            }
+            previous = InterlockedExchangePointer(slot, nullptr);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
