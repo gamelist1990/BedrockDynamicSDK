@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v6 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v7 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -74,7 +74,8 @@ DWORD WINAPI start(void *) noexcept {
                 current.refreshCancelled != previous.refreshCancelled ||
                 current.geometryReloaded != previous.geometryReloaded ||
                 current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
-                current.resourceWaitFrames != previous.resourceWaitFrames) {
+                current.resourceWaitFrames != previous.resourceWaitFrames ||
+                current.levelBuildersRecreated != previous.levelBuildersRecreated) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -94,6 +95,7 @@ DWORD WINAPI start(void *) noexcept {
                     << " geometry_reloaded=" << current.geometryReloaded
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
                     << " resource_wait_frames=" << current.resourceWaitFrames
+                    << " level_builders_recreated=" << current.levelBuildersRecreated
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

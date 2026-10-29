@@ -41,6 +41,10 @@ struct NativeResourcePacks::Binding {
     Initialize frame{};
     GeometryReload geometryReload{};
     Event notifyClientResources{};
+    ClientGame clientRenderer{};
+    Initialize resumeRenderer{};
+    std::size_t rendererListenerOffset{}, rendererResumeSlotOffset{};
+    std::atomic<std::uint64_t> levelBuildersRecreated{};
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
     std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{}, resourceWaitFrames{};
@@ -185,7 +189,7 @@ struct NativeResourcePacks::Binding {
             ++failures;
             return;
         }
-        // Full animation/geometry reload also rebuilds actor renderers, resumes
+        // Full animation/geometry reload also rebuilds actor renderers, post-initializes
         // client render resources, invalidates ECS render data, and rebinds
         // each live LevelRenderer to the new resource definition groups.
         geometryReload(game, true);
@@ -197,6 +201,25 @@ struct NativeResourcePacks::Binding {
         ++clientDefinitionsReloaded;
         reloadBlockTextures(manager, static_cast<std::byte *>(data) + experimentsOffset);
         ++blockTexturesReloaded;
+        // Dirty chunks alone reuse the existing tessellation builders. Rebuild
+        // them after block texture references have been refreshed. The native
+        // LevelRenderer resume routine first drains its TaskGroup, obtains the
+        // current gameplay graphics resources and recreates LevelBuilder workers.
+        auto *renderer = clientRenderer(client);
+        if (renderer) {
+            auto *listener = static_cast<std::byte *>(renderer) + rendererListenerOffset;
+            void *vtable{}, *resumeEntry{};
+            if (native_profile::read(listener, 0, vtable) &&
+                native_profile::read(vtable, rendererResumeSlotOffset, resumeEntry) &&
+                resumeEntry == reinterpret_cast<void *>(resumeRenderer)) {
+                resumeRenderer(listener);
+                ++levelBuildersRecreated;
+            } else {
+                ++failures;
+            }
+        } else {
+            ++failures;
+        }
         refreshClient(nullptr, client);
         ++clientsRefreshed;
     }
@@ -434,7 +457,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v6")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v7")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -487,6 +510,16 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->frameTarget = get("start_frame", "void __fastcall(MinecraftGame*)");
         next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
         next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
+        next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
+        next->resumeRenderer = reinterpret_cast<Binding::Initialize>(get("resume_renderer", "void __fastcall(AppPlatformListener*)"));
+        // Check the callee reached by the native resume routine too.
+        get("recreate_builders", "void __fastcall(LevelBuilder*, void* graphicsResources)");
+        const auto &renderer = layout.at("level_renderer");
+        next->rendererListenerOffset = native_profile::number(renderer.at("app_listener_offset"));
+        next->rendererResumeSlotOffset = native_profile::number(renderer.at("resume_slot_offset"));
+        if (next->rendererListenerOffset > 0x1000 || next->rendererListenerOffset % sizeof(void *) ||
+            next->rendererResumeSlotOffset > 0x1000 || next->rendererResumeSlotOffset % sizeof(void *))
+            throw std::runtime_error("invalid renderer resume layout");
         native_profile::checked(root, layout.at("primary_client_lookup_entry"));
         const auto &clients = layout.at("primary_clients");
         next->clientsOffset = native_profile::number(clients.at("map_offset"));
@@ -560,6 +593,7 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->geometryReload || !binding_->notifyClientResources ||
+        !binding_->clientRenderer || !binding_->resumeRenderer ||
         !binding_->levelData || !binding_->gamePacks || !binding_->reloadBlockTextures || !binding_->refreshClient) {
         error = "resource pack profile has not been loaded";
         return false;
@@ -627,6 +661,6 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->terrainCompleted.load(), binding_->blockTexturesReloaded.load(),
             binding_->clientsRefreshed.load(), binding_->refreshCancelled.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
-            binding_->resourceWaitFrames.load()};
+            binding_->resourceWaitFrames.load(), binding_->levelBuildersRecreated.load()};
 }
 } // namespace bedrock

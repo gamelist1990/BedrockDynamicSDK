@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v6",
+      "adapter": "windows-live-reload-v7",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -91,9 +91,18 @@
         },
         "notify_client_resources": {
           "symbol": "MinecraftGame::_notifyClientResourcePacksChanged"
+        },
+        "client_renderer": {
+          "symbol": "ClientInstance::getLevelRenderer"
+        },
+        "resume_renderer": {
+          "symbol": "LevelRenderer::onAppResumed"
+        },
+        "recreate_builders": {
+          "symbol": "LevelBuilder::recreateBuilders"
         }
       },
-      "evidence": "v5 user observed terrain_atlas_completed=1, block_textures_reloaded=1, clients_refreshed=1 and vanilla block appearance repaired; all model views and server custom blocks still broken. v6 additionally waits for native loader ready/no outstanding work; performs synchronous native animation/geometry + renderer/ECS rebinding and client resource-change notification at startFrame before final block texture/chunk refresh. Does not merge the separate server resource manager (native getter returns server-data context; not established as client resource layer). No v6 runtime proof; custom-block repair remains a hypothesis until user testing.",
+      "evidence": "v6 user confirms player model repaired and geometry_reloaded/client_definitions_reloaded=1, but screenshots show custom-geometry atlas fragments after all stages; newly placed blocks also wrong. v7 retains v6 and adds native LevelRenderer onAppResumed after block UV updates, before all-chunk dirty callback, to drain tasks and recreate LevelBuilder workers rather than reusing old tessellation builders. Whether this also repairs server custom-material UV snapshots is not runtime established. No direct client component-memory patch or server-manager merge.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -142,6 +151,11 @@
         "object_bytes": 16,
         "game_offset": 8,
         "evidence": "Native invoker RVA956930 reads only closure+8 Game*. It obtains current ActorResourceDefinitionGroup through Game vtable+380, calls client vtable+AB8 onActiveResourcePacksChanged, destroys its own temporary NonOwnerPtr. No vtable or ownership operations on the borrowed closure."
+      },
+      "level_renderer": {
+        "app_listener_offset": 8,
+        "resume_slot_offset": 40,
+        "evidence": "Exact LevelRenderer constructor [53484D0,534D318) stores primary table F2465C0 at self, AppPlatformListener table F2466C0 at self+8 (534855B/5348562). Listener table slot5 is53542E0. Resume uses listener-relative embedded LevelBuilder at+548, drains TaskGroup via773730, calls5333590 with current gameplay resources and finishes via tail jump53544A0 with primary self=listener-8. Runtime vtable slot must equal checked resume entry before invocation."
       }
     }
   },
@@ -443,7 +457,7 @@
       "abi": "void __fastcall(MinecraftGame*, bool sync)",
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
-      "evidence": "reload-animation-geometry-evidence.json, exact .pdata [8C27A0,8C3B05); Game primary vtable F091B70 slot67 (0x218), immediately before getGeometryGroup slot0x220. RCXGame, DLsync. Clears/rebuilds geometry and actor definitions; reloads client entity renderers at8C34E7, invokes client onAppResumed at8C358D, refreshes ECS render data at8C3596, reinitializes live LevelRenderer at8C36F7. Bool true takes synchronous native path. Candidate ABI, not runtime verified."
+      "evidence": "reload-animation-geometry-evidence.json, exact .pdata [8C27A0,8C3B05); Game primary vtable F091B70 slot67 (0x218), immediately before getGeometryGroup slot0x220. RCXGame, DLsync. Clears/rebuilds geometry and actor definitions; reloads client entity renderers at8C34E7, invokes client postInitRenderResources at8C358D (corrected v6 descriptive label; this does not itself recreate LevelBuilder workers), refreshes ECS render data at8C3596, reinitializes live LevelRenderer at8C36F7. Bool true takes synchronous native path. Candidate ABI, not runtime verified."
     },
     "MinecraftGame::_notifyClientResourcePacksChanged": {
       "rva": "0x956930",
@@ -457,6 +471,45 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
       "evidence": "client-resource-notification-evidence.json; exact native per-client full resource change callback [956930,9569F9). RCX borrowed gameClosure (only+8 used), RDXliveClient. Gets Game ActorResourceDefinitionGroupMutable via vtable+380; calls ClientInstance::onActiveResourcePacksChanged (target65A6E10) via+AB8. That target clears block tessellator state, item texture caches, entity renderer resources, LevelRenderer references and UI scene cache."
+    },
+    "ClientInstance::getLevelRenderer": {
+      "rva": "0x8ab680",
+      "signature": "",
+      "entry_check": "48 8B 81 E0 01 00 00 C3",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
+      "evidence": "Exact ClientInstance primary vtable F2B9330 slot185 (0x5C8); leaf MOV RAX,[RCX+1E0]; RET. Same getter used by native per-client hotreload callback946B80."
+    },
+    "LevelRenderer::onAppResumed": {
+      "rva": "0x53542e0",
+      "signature": "",
+      "entry_check": "55 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45 00 FE FF FF FF 48 89 CE",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(AppPlatformListener*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
+      "evidence": "renderer-resume-builders-evidence.json and v7-exact-calls.json. ABI RCX = LevelRenderer+8 AppPlatformListener subobject, NOT primary LevelRenderer*. Exact vtable slot5, validated against instance at runtime. Drains renderer tasks, recreates builders, resumes camera/helper resources; tail jumps53544A0. Raw slice Ghidra cannot follow the out-of-slice tail jump; full PE instructions retained separately."
+    },
+    "LevelBuilder::recreateBuilders": {
+      "rva": "0x5333590",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC E8 00 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(LevelBuilder*, void* graphicsResources)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
+      "evidence": "recreate-level-builders-evidence.json; lambda28 type anchor LevelBuilder::recreateBuilders vtable F2478E0; exact resume call5354359 RCXlistener+548, RDXgameplayGraphicsResources. Recreates worker builders in vector, disposing prior workers through533C0E0. Entry additionally checked; adapter invokes it through native LevelRenderer resume, retaining native task drain/resource ownership handling."
     }
   }
 }
