@@ -4,7 +4,7 @@
     "1.26.52.3": {
       "windows-x64": {
         "path": "data/1.26.52.3/windows-x64.json",
-        "sha256": "b397d90f43a454bb9a02ddabc6ca9645f0654d70abfe01f6171a18552fa2d197",
+        "sha256": "33f8d8aa16f7fc325ab0d0df473e6dcae352efc57e5a5a9fb03015ae5ed75720",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
         "symbols": 15,
         "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
@@ -17,7 +17,7 @@
     "1.26.60.5": {
       "windows-x64": {
         "path": "data/1.26.60.5/windows-x64.json",
-        "sha256": "4bbfd654586ea03b83065290a6a0cabfe06fc9ad92c021e9024d9e11fb2e03fd",
+        "sha256": "ab1b9f00ccf2d5a9b8913d5c9780c2b4b7b749bf5386e4e268939e4923fc61e7",
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
         "symbols": 40,
         "module_text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",

@@ -414,722 +414,714 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "source": "reference client Level vftable signature matched uniquely in the exact 1.26.52.3 PE; slot 0x145 points to RVA 0x117C640"
     }
   },
-  "native_keyboard": {
-    "schema": 1,
-    "pointer_size": 8,
-    "callback_symbol": "GameCore::keyboardEvent",
-    "owner_offset": 0,
-    "processor_offset": 64,
-    "message_offset": 16,
-    "key_offset": 24,
-    "key_down_vtable_slot": 1,
-    "key_up_vtable_slot": 2,
-    "hardware_origin": 1
-  },
-  "native_actors": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "actor_context": {
-      "actor_offset": "0x8",
-      "registry_offset": "0x8",
-      "entity_id_offset": "0x10"
-    },
-    "actor_owner": {
-      "component_hash": "0x85B93800",
-      "component_hash_alternate": "0x0",
-      "actor_pointer_offset": "0x0"
-    },
-    "actor_type": {
-      "component_hash": "0x4F6BA419",
-      "value_offset": "0x0",
-      "value_size": 4,
-      "player_type_id": 319,
-      "evidence": "reference client ActorTypeComponent and Actor::isPlayer (319); exact EXE REA ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa: RVA 0x019e9580 resolves 0x4F6BA419 and compares the four-byte component at offset 0 to 0x13F. Runtime layout remains candidate."
-    },
-    "actor_unique_id": {
-      "component_hash": "0x18F957AF",
-      "value_offset": "0x0",
-      "value_size": 8
-    },
-    "runtime_id": {
-      "component_hash": "0xFC0DBBB5",
-      "value_offset": "0x0",
-      "value_size": 8
-    },
-    "aabb_shape": {
-      "component_hash": "0xBAC1B3CF",
-      "component_hash_alternate": "0x0",
-      "minimum_offset": "0x0",
-      "maximum_offset": "0xC"
-    },
-    "state_vector": {
-      "component_hash": "0x1B5D5238",
-      "component_hash_alternate": "0x0",
-      "position_offset": "0x0"
-    },
-    "actor_rotation": {
-      "component_hash": "0x75DF36B7",
-      "component_hash_alternate": "0x0",
-      "pitch_offset": "0x0",
-      "yaw_offset": "0x4"
-    },
-    "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), ActorUniqueIDComponent (0x18F957AF), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Disassembly shows ActorUniqueIDComponent resolved through the entity registry and writes an eight-byte value at component offset 0; RuntimeIDComponent is also provisionally read as a 64-bit scalar at offset 0. Native storage ABI and live values still require runtime validation."
-  },
-  "native_items": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "actor_context": {
-      "actor_offset": "0x8",
-      "entt_registry_offset": "0x8",
-      "entity_id_offset": "0x10"
-    },
-    "equipment": {
-      "component_hash": "0xB06141A9",
-      "hand_container_offset": "0x0",
-      "armor_container_offset": "0x8",
-      "slots": {
-        "main_hand": 0,
-        "offhand": 1,
-        "head": 0,
-        "chest": 1,
-        "legs": 2,
-        "feet": 3
-      }
-    },
-    "inventory": {
-      "get_item_vtable_slot": 7,
-      "local_slot_count": 36,
-      "hotbar_slot_count": 9
-    },
-    "local_player": {
-      "get_local_player_vtable_slot": 31,
-      "supplies_offset": "0x5B8",
-      "selected_slot_offset": "0x10",
-      "inventory_offset": "0xB8"
-    },
-    "item_stack": {
-      "item_reference_offset": "0x8",
-      "count_offset": "0x22",
-      "namespaced_id_string_offset": "0x128",
-      "translation_key_string_offset": "0xB0",
-      "string_size_offset": "0x10",
-      "string_capacity_offset": "0x18",
-      "max_string_bytes": 256,
-      "hover_name_abi_verified": false
-    },
-    "evidence": "Reference Actor declarations at commit 9f74635 Actor EntityContext and ActorEquipmentComponent declarations; inventory virtual slot; independently verify per Minecraft build"
-  },
-  "native_player_identity": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "level_player_list_offset": 1248,
-    "entry_size": 168,
-    "actor_unique_id_offset": 0,
-    "uuid_offset": 8,
-    "name_offset": 24,
-    "evidence": "Existing exact-build player list player roster layout; reference declarations PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped."
-  },
-  "native_world": {
-    "schema": 1,
-    "pointer_size": 8,
-    "revision": 3,
-    "status": "candidate",
-    "runtime_verified": false,
-    "get_region": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x5DAEBB0",
-      "entry_check": "56 57 48 83 EC 48 48 8D 91 48 02 00 00 48 8D 4C 24 28 E8 B9 17 81 FC 80",
-      "abi": "BlockSource* __fastcall(ClientInstance*)"
-    },
-    "get_block": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x2D80120",
-      "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05 50 9F A5 0E 48 31 E0 48 89 44 24 30",
-      "abi": "Block const* __fastcall(BlockSource*, BlockPos const*)"
-    },
-    "select_hotbar": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x1F4860",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80",
-      "abi": "bool __fastcall(PlayerInventory*, int slot, signed char ContainerID=0)"
-    },
-    "get_hit_result": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x117D580",
-      "entry_check": "48 8B 81 E8 01 00 00 C3",
-      "abi": "HitResult* __fastcall(Level*)"
-    },
-    "build_block": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x259BC60",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
-      "abi": "bool __fastcall(GameMode*, BlockPos const*, unsigned char face, unsigned char HandSlot=0, bool isSimTick=false)"
-    },
-    "base_placement_state": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x3184DC0",
-      "entry_check": "41 57 41 56 41 55 41 54 56 57 53 48 83 EC 40 44 89 CB 4C 89 C6 48 89 D7",
-      "abi": "Block const* __fastcall(BlockType*, Actor const*, BlockPos const*, unsigned char face, Vec3 const* fractionalClick, int aux)"
-    },
-    "game_mode_vtables": [
-      "0xE827560",
-      "0xE827600"
-    ],
-    "candidate_layouts": {
-      "player_game_mode_offset": "0xAA0",
-      "player_level_offset": "0x1D8",
-      "block_type_offset": "0x68",
-      "block_type_full_name_string_offset": "0xE8",
-      "block_type_flags_offset": "0x164",
-      "block_type_solid_mask": 2,
-      "item_stack_block_offset": "0x18",
-      "item_stack_aux_offset": "0x20",
-      "block_source_get_block_slot": 2,
-      "block_source_get_chunk_slot": 41,
-      "block_type_placement_state_slot": 79,
-      "level_hit_result_slot": 335,
-      "hit_result_scalar_prefix_size": 56,
-      "hit_type_offset": 24,
-      "hit_face_offset": 28,
-      "hit_block_offset": 32,
-      "hit_position_offset": 44,
-      "block_state_data_offset": "0x120",
-      "block_type_collision_shape_slot": 4,
-      "collision_shape_abi": "AABB* __fastcall(BlockType*, AABB* hidden_return, Block const*, IConstBlockSource const*, BlockPos const*, GetCollisionShapeInterface const* optional=nullptr)",
-      "block_serialization_tag_offset": "0xF0",
-      "compound_tag_head_offset": 8,
-      "compound_tag_size_offset": 16,
-      "tree_left_offset": 0,
-      "tree_parent_offset": 8,
-      "tree_right_offset": 16,
-      "tree_nil_offset": 25,
-      "tree_key_offset": 32,
-      "tree_tag_variant_offset": 64,
-      "tag_variant_index_offset": 40,
-      "tag_scalar_or_string_offset": 8,
-      "tag_get_id_slot": 5,
-      "game_mode_build_block_slot": 6,
-      "game_mode_drag_active_offset": 64,
-      "game_mode_drag_previous_offset": 65
-    },
-    "height_limits": {
-      "min_height_offset": "0x3A",
-      "max_height_offset": "0x38"
-    },
-    "evidence": [
-      "REA/Ghidra ev_af167bba2797b60ffe45d17af648fa2edcc644be90a65a64b07bf3d2d2959fff: current ClientInstance region getter resolves dimension and region through native virtual dispatch",
-      "REA/Ghidra ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5: BlockSource getBlock uses BlockPos, vertical bounds and virtual chunk slot41; unavailable chunks must be rejected before reading the fallback air block",
-      "REA/Ghidra ev_e7280da801fec58140c2eb36b18894b34cf02a2c2f8290891ae57279b5f5529d: native selectSlot bounds0..8, stores selected+0x10/container+0xB0, and follows HUD/selection notification path",
-      "REA/Ghidra ev_07f9860a4edc80ba3885f69bfe84649d59d1916b638291a4920a35e31edc4fab: base GameMode buildBlock consumes RCX this, RDX BlockPos, R8B face, R9B hand and stack boolean, preserving native inventory transaction machinery",
-      "REA/Ghidra ev_9cd48a09599490c10dd724724053b2f8351e790ea6334881e2540241be774c0c: build closure reads Player+0x5B8 selectedslot, Player+0x1D8 Level, Level vtable0xA78 HitResult type+0x18/face+0x1C/BlockPos+0x20/worldhit+0x2C, and subtracts support position for transaction click",
-      "REA/Ghidra ev_8bfbdd8e95a06043f5c9b662c3c7cf0b36c98b3a0847d2fc885b060393e96eaa: BlockType placement getter chooses aux state/default and executes const placement callbacks with actor, pos, face and click",
-      "REA/Ghidra ev_05c5c1018ab7d235651741c3bc7c4c5c623fc607ea3692b9f1ebb0ac504b619b and ev_b599387268910ce4ece43d8e0cc024e866c013c8cd1d966b39f79d34376cb444: SetTitlePacket constructor layout and stream read hidden result with success at0x40",
-      "BlockType NameInfo, flags and ItemStack field semantics corroborated with existing SDK/reference client/reference client/reference declarations declarations and render callsites. These layouts, prediction click coordinates, actual receive path, native placement and server acceptance remain runtime-unverified; no symbol promoted to verified.",
-      "REA/Ghidra ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b: ItemStackBase uses Block+0x120 data for block-backed stacks except raw aux sentinel0x7FFF. Renderer 0x47B0F4E..0x47B0F7F calls BlockType collision-shape slot4 with hidden AABB return in RDX, Block in R8, source in R9, BlockPos and null optional on stack (existing ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a). Native placement remains runtime-unverified.",
-      "REA/Ghidra ev_7384df9c2cbd7961b2b68138bb1d131fbff5b3a9923acc5d5d609104aecf07ce at0x2548830 establishes CompoundTag tree head+8, root=head+8, nil+0x19, key+0x20/string length+0x30/capacity+0x38, TagVariant+0x40 and discriminator+0x68. Inline Block serialization tag+0xF0 is a layout candidate corroborated by Block.h field sizes and leaf LEA+0xF0 at0x640EF0/0xB57130. Runtime reader requires Compound type10, bounded valid tree, matching name and compound states before exposing owned property copies. No NBT vtable function is invoked or foreign STL object modified.",
-      "Live revision2 user log: native build calls/returns4 and observed exact sandstone states4. Walls and hive sea_shells had successful type-compatible predictions but pre-placement state differed. Revision3 permits type-compatible proposals, uses named orientation when available, allows real observed supports before final connection states and candle/cluster count increases; completion still requires exact recorded state. Hive-specific server properties remain live-unverified."
-    ],
-    "subchunk_scan": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "source": "Exact PE BlockSource::getBlock RVA 0x2D80120; REA/Ghidra assembly: source Y bounds, LevelChunk vector, 0x68 stride, layer-0 storage +0x30, virtual slot 3; no direct palette decoding",
-      "guard": {
-        "rva": "0x2D80186",
-        "entry_check": "44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 40 01 00 00 48 8B 80 48 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 3D 48 6B C1"
-      },
-      "source_min_y": "0x3A",
-      "source_max_y": "0x38",
-      "chunk_sections_begin": "0x140",
-      "chunk_sections_end": "0x148",
-      "section_stride": "0x68",
-      "section_storage": "0x30",
-      "storage_get_slot": 3,
-      "storage_get_abi": "Block const* __fastcall(BlockStorage*, unsigned local_index)",
-      "local_index": "(x & 15) << 8 | (z & 15) << 4 | (y & 15)",
-      "limitations": [
-        "Layer 0 only, matching existing getBlock API",
-        "Null storage is empty; no claim that allocated storage is uniform",
-        "Pointers valid for owning client tick only; runtime confirmation pending"
-      ]
-    }
-  },
-  "native_motion": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "state_vector": {
-      "state_position_offset": 0,
-      "state_previous_position_offset": 12,
-      "state_velocity_offset": 24,
-      "fall_distance_component_hash": "0xce6b34f6",
-      "fall_distance_value_offset": 0
-    },
-    "evidence": "local actor proxy detached camera + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and reference declarations declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes)."
-  },
-  "native_packets": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "sender": {
-      "client_packet_sender_offset": 464,
-      "sender_send_to_server_slot": 4,
-      "packet_id_slot": 1,
-      "packet_sender_getter": {
-        "rva": "0x80B340",
-        "entry_check": "48 8B 81 D0 01 00 00 C3 CC CC CC CC CC CC CC CC",
-        "abi": "PacketSender& __fastcall(ClientInstance*)"
-      }
-    },
-    "motion": {
+  "layouts": {
+    "GameCore": {
       "schema": 1,
+      "pointer_size": 8,
+      "callback_symbol": "GameCore::keyboardEvent",
+      "owner_offset": 0,
+      "processor_offset": 64,
+      "message_offset": 16,
+      "key_offset": 24,
+      "key_down_vtable_slot": 1,
+      "key_up_vtable_slot": 2,
+      "hardware_origin": 1
+    },
+    "Actor": {
+      "schema": 1,
+      "pointer_size": 8,
       "status": "candidate",
-      "runtime_verified": false,
-      "auth_input": {
-        "vtable_rva": "0xE83A360",
-        "position_offset": 56,
-        "delta_offset": 72,
-        "analog_move_offset": 92,
-        "move_offset": 100,
-        "raw_move_offset": 128,
-        "input_flags_offset": 136,
-        "input_flags_size": 16,
-        "vehicle_offset": 216,
-        "get_id": {
-          "rva": "0xB26A00",
-          "entry_check": "B8 90 00 00 00 C3 CC CC"
-        },
-        "is_valid": {
-          "rva": "0x3C8BA90",
-          "entry_check": "56 57 48 83 EC 38 48 8B 05 E3 E5 B4 0D 48 31 E0 48 89 44 24 30 B8 FF FF"
+      "actor_context": {
+        "actor_offset": "0x8",
+        "registry_offset": "0x8",
+        "entity_id_offset": "0x10"
+      },
+      "actor_owner": {
+        "component_hash": "0x85B93800",
+        "component_hash_alternate": "0x0",
+        "actor_pointer_offset": "0x0"
+      },
+      "actor_type": {
+        "component_hash": "0x4F6BA419",
+        "value_offset": "0x0",
+        "value_size": 4,
+        "player_type_id": 319,
+        "evidence": "reference client ActorTypeComponent and Actor::isPlayer (319); exact EXE REA ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa: RVA 0x019e9580 resolves 0x4F6BA419 and compares the four-byte component at offset 0 to 0x13F. Runtime layout remains candidate."
+      },
+      "actor_unique_id": {
+        "component_hash": "0x18F957AF",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "runtime_id": {
+        "component_hash": "0xFC0DBBB5",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "aabb_shape": {
+        "component_hash": "0xBAC1B3CF",
+        "component_hash_alternate": "0x0",
+        "minimum_offset": "0x0",
+        "maximum_offset": "0xC"
+      },
+      "state_vector": {
+        "component_hash": "0x1B5D5238",
+        "component_hash_alternate": "0x0",
+        "position_offset": "0x0"
+      },
+      "actor_rotation": {
+        "component_hash": "0x75DF36B7",
+        "component_hash_alternate": "0x0",
+        "pitch_offset": "0x0",
+        "yaw_offset": "0x4"
+      },
+      "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), ActorUniqueIDComponent (0x18F957AF), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Disassembly shows ActorUniqueIDComponent resolved through the entity registry and writes an eight-byte value at component offset 0; RuntimeIDComponent is also provisionally read as a 64-bit scalar at offset 0. Native storage ABI and live values still require runtime validation."
+    },
+    "ItemStack": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "actor_context": {
+        "actor_offset": "0x8",
+        "entt_registry_offset": "0x8",
+        "entity_id_offset": "0x10"
+      },
+      "equipment": {
+        "component_hash": "0xB06141A9",
+        "hand_container_offset": "0x0",
+        "armor_container_offset": "0x8",
+        "slots": {
+          "main_hand": 0,
+          "offhand": 1,
+          "head": 0,
+          "chest": 1,
+          "legs": 2,
+          "feet": 3
         }
       },
-      "move_player": {
-        "vtable_rva": "0xE85BFC0",
-        "position_offset": 56,
-        "vehicle_offset": 88,
-        "get_id": {
-          "rva": "0x2ECD950",
-          "entry_check": "B8 13 00 00 00 C3 CC CC"
-        },
-        "is_valid": {
-          "rva": "0x2ECE550",
-          "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05 20 7E 6F 0B 0F 28 D1 0F 54 D0 0F 2E"
-        }
+      "inventory": {
+        "get_item_vtable_slot": 7,
+        "local_slot_count": 36,
+        "hotbar_slot_count": 9
       },
-      "evidence": [
-        "REA/Ghidra ev_0b98d57e71d487b6113586c65b50b93de981c7c1a89563912ddc072c77a676f8: exact-build auth input validation + Validate PlayerAuthInputPacketPayload field-name strings; transaction flags34/35/36 paired with owning payloads at0xB0/0xC0/0xB8",
-        "REA/Ghidra ev_9905a373c2eddd0de8ff5f3f373e0ad3cac2f2ab232817382ca317e5b25095e9: MovePlayer position at0x38 and mode at0x50; reference declarations payload declarations corroborate field names",
-        "Static evidence only; packet serialization timing, transaction handling and live server acceptance remain unverified"
-      ]
+      "local_player": {
+        "get_local_player_vtable_slot": 31,
+        "supplies_offset": "0x5B8",
+        "selected_slot_offset": "0x10",
+        "inventory_offset": "0xB8"
+      },
+      "item_stack": {
+        "item_reference_offset": "0x8",
+        "count_offset": "0x22",
+        "namespaced_id_string_offset": "0x128",
+        "translation_key_string_offset": "0xB0",
+        "string_size_offset": "0x10",
+        "string_capacity_offset": "0x18",
+        "max_string_bytes": 256,
+        "hover_name_abi_verified": false
+      },
+      "evidence": "Reference Actor declarations at commit 9f74635 Actor EntityContext and ActorEquipmentComponent declarations; inventory virtual slot; independently verify per Minecraft build"
     },
-    "command_request": {
-      "vtable_rva": "0xE897420",
-      "command_offset": "0x30",
-      "get_id": {
-        "status": "candidate",
-        "runtime_verified": false,
-        "rva": "0x38E6CB0",
-        "entry_check": "B8 4D 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC 48 89 D0 48 8D 0D FD 3A",
-        "abi": "int __fastcall(CommandRequestPacket const*)",
-        "evidence": "Constant leaf EAX=77; adjacent getName returns CommandRequestPacket; table0xE897420. Packet payload+0x30 in ev_4097a24c921f54e8a8fcb9e61281a0c41e9fbcd465af646f8e7f2760c404f7f5."
-      }
-    },
-    "title": {
-      "vtable_rva": "0xE89D5E0",
-      "read": {
-        "status": "candidate",
-        "runtime_verified": false,
-        "rva": "0x3A83770",
-        "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 01 00 00 48 8D AC 24 80 00 00",
-        "abi": "void* __fastcall(SetTitlePacket*, Result<void>* hidden_result, ReadOnlyBinaryStream*)"
-      }
-    }
-  },
-  "native_client_commands": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "register_command": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x4A78840",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 02 00 00 48 8D AC 24 80",
-      "abi": "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)",
-      "evidence": "ev_72b721b2d99f368a86f80c6217c57fe5a34a12eb3a83d540d0d06f19b866ca1e"
-    },
-    "find_command": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x4A56630",
-      "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45 00 FE FF FF FF 48 89 CB",
-      "abi": "Signature* __fastcall(CommandRegistry*, std::string const*)",
-      "evidence": "ev_131f6e121ee6efabddbca73c5a98b58a9e252ea991f3a97bb19a7914d0a3bab5"
-    },
-    "make_parameter": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x4A47C80",
-      "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC 28 4C 89 CF 48 89 CE 0F B7 02 66 89",
-      "abi": "CommandParameterData* __fastcall(void* out_0x78, uint16 const* type_id, ParamParseRule const*, char const* name, int type, char const* enum_name, char const* subchain, int offset, bool optional, int set_offset)",
-      "evidence": "ev_021470f8834c2fd4b4e816cc8332790e256566d80dabe48b2a68a9855c145b98"
-    },
-    "register_optional_parameter": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x4A224D0",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80",
-      "abi": "Overload* __fastcall(CommandRegistry*, char const* name, uint64 packed_version, brstd_copyable_callable_64* factory, CommandParameterData const* one_param)",
-      "evidence": "ev_768d5883b24cf069aac46a82804b4311d47ed3702538485b71e3604e4110e744"
-    },
-    "factory_vtable_rva": "0xE8EEE40",
-    "factory_copy": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x791D0",
-      "entry_check": "48 8B 41 08 48 89 42 08 C3 CC CC CC CC CC CC CC",
-      "abi": "void __fastcall(void* source, void* destination); copies callable free-function at +8",
-      "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
-    },
-    "factory_destroy": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x76BC0",
-      "entry_check": "C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC",
-      "abi": "void __fastcall(void*); no-op for free-function storage",
-      "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
-    },
-    "factory_invoke": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x9B7880",
-      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 42 08 FF 15 16 42",
-      "abi": "unique_ptr<Command>* __fastcall(void* hidden_result, void const* callable); invokes callable free function with hidden_result RCX",
-      "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
-    },
-    "client_commands_anchor": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x5DB9F00",
-      "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 10 FE",
-      "abi": "void __fastcall(ClientInstance*); reads Minecraft+0xC0 Commands, writes Commands+0x18 output sender",
-      "evidence": "ev_fc0c0ccbd2548e064fedb0c1b353b63b7139c76603ba192004677516b3613ba3"
-    },
-    "has_commands_anchor": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x5DC2120",
-      "entry_check": "48 8B 81 B0 01 00 00 48 83 B8 C0 00 00 00 00 0F 95 C0 C3",
-      "abi": "bool __fastcall(ClientInstance*); Client+0x1B0 -> Minecraft+0xC0 non-null",
-      "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
-    },
-    "integer_type_rva": "0x11E141D0",
-    "integer_rule_rva": "0x11E145F8",
-    "layout": {
-      "client_minecraft_offset": "0x1B0",
-      "minecraft_commands_offset": "0xC0",
-      "commands_registry_offset": "0x10",
-      "argument_offset": "0x20",
-      "argument_set_offset": "0x24",
-      "parameter_size": "0x78",
-      "overload_size": "0x80",
-      "signature_overloads_offset": "0x40",
-      "output_success_offset": "0x28"
-    },
-    "evidence": "Exact-build Help setup0x80E7250 registers SyncLocal0x10 + NotCheat0x80, then optional page:int via make_parameter and one-param overload helper. Helper uses native allocator/copy constructors; 64-byte brstd callable has vtable + free-function prefix. Native Command base0x20; int +0x20, is_set +0x24. Help factory0x811DAC0 and Help vtable0xEA0D0C0 corroborate virtual destructor/collectOptionalArguments/execute. Client+0x1B0 -> Minecraft+0xC0 -> MinecraftCommands+0x10 registry; output success counter+0x28 observed in native Help execute. No runtime verification yet."
-  },
-  "native_gui": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "client_gui_offset": "0x650",
-    "get_gui": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x5DC5830",
-      "entry_check": "56 57 53 48 83 EC 20 48 8B B9 50 06 00 00 48 85 FF 0F 84 94 00 00 00 0F",
-      "abi": "NotNullNonOwnerPtr<GuiData>* __fastcall(ClientInstance*, hidden_result*)",
-      "evidence": "IClientInstance slot217; reads ClientInstance+0x650. Returned raw GuiData pointer is result+0x10; ev_06cd0676a4f9439790988afdfe48f165bbb2f72b839908eae884b5c532d01f73."
-    },
-    "display_message": {
-      "status": "candidate",
-      "runtime_verified": false,
-      "rva": "0x1560AE0",
-      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80 00 00 00 48",
-      "abi": "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)",
-      "evidence": "GuiData displaySystemMessage candidate. Calling closure0x878310 passes message, empty optional, empty TTS and stack context4; ev_88e76570b9a11e33d34759c9436ebba76b71ad2ee98cc633c41c51331d64cd50. Raw x64 instruction/caller evidence required because raw slice decompiler uses gcc calling conventions."
-    },
-    "evidence": "SHA256 4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4; original PE .pdata ranges extracted and inspected through REA/Ghidra. Heights source+0x38 max exclusive/source+0x3A min inclusive in existing getBlock ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5. Runtime command routing, messages and teleport validation pending."
-  },
-  "native_camera": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "update_player": {
-      "rva": "0x6733360",
-      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC D8 00 00 00 44 0F 29 94 24 C0 00 00 00 44 0F 29 8C",
-      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
-      "abi": "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)"
-    },
-    "camera_position_offset": 64,
-    "camera_orientation_offset": 48,
-    "hurt_time_component_hash": "0xD7A3585C",
-    "hurt_time_value_offset": 0,
-    "hurt_time_value_size": 4,
-    "actor_type_offset": 0,
-    "player_type_id": 319,
-    "renderer_player_offset": 1128,
-    "render_origin_offset": 1632,
-    "local_player": {
-      "rva": "0x5DAED30",
-      "entry_check": "48 83 EC 48 48 8B 05 45 B3 A2 0B 48 31 E0 48 89 44 24 40 48 8D 91 48 02",
-      "abi": "Actor* __fastcall(ClientInstance*)",
-      "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration"
-    },
-    "visual": {
+    "LocalPlayer": {
       "schema": 1,
-      "revision": 9,
+      "pointer_size": 8,
+      "status": "candidate",
+      "level_player_list_offset": 1248,
+      "entry_size": 168,
+      "actor_unique_id_offset": 0,
+      "uuid_offset": 8,
+      "name_offset": 24,
+      "evidence": "Existing exact-build player list player roster layout; reference declarations PlayerListEntry mId, mUUID, mName. UUID is durable; RuntimeID aliases are world-scoped."
+    },
+    "BlockSource": {
+      "schema": 1,
+      "pointer_size": 8,
+      "revision": 3,
       "status": "candidate",
       "runtime_verified": false,
-      "game_type_component_hash": "0x88D3EDDF",
-      "game_type_value_offset": 0,
-      "game_type_value_size": 4,
-      "spectator_value": 6,
-      "spectator_predicate": {
-        "rva": "0x19E0840",
-        "entry_check": "56 48 83 EC 20 48 8B 51 10 8B 41 18 4C 8B 42 48 4C 8B 4A 50 4D 29 C1 49"
-      },
-      "gamma": {
-        "rva": "0xFB7880",
-        "entry_check": "48 83 EC 38 48 8B 05 F5 27 82 10 48 31 E0 48 89 44 24 30 48 8B 01 48 8B"
-      },
-      "gamma_abi": "float __fastcall(Options*)",
-      "legacy_game_type_fields_unused": true,
-      "spectator_mode_behavior": "native_spectator_culler_mode5",
-      "terrain_visibility_status": "candidate: revision8 matching view flags failed visually; revision9 filters tagged RenderDragon InsideBlockEffect extraction; reachability and appearance unverified",
-      "terrain_culling": {
-        "schema": 1,
+      "get_region": {
         "status": "candidate",
         "runtime_verified": false,
-        "spectator_mode": 5,
-        "camera_culler_offset": "0x9A8",
-        "camera_culler_type_offset": "0x9B8",
-        "spectator_vtable_rva": "0xE8DFE00",
-        "set_culler": {
-          "status": "candidate",
-          "runtime_verified": false,
-          "rva": "0x4690910",
-          "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
-          "abi": "void __fastcall(LevelRendererPlayer*, unsigned char cullerType)"
-        },
-        "factory_check": {
-          "status": "candidate",
-          "runtime_verified": false,
-          "rva": "0x4690B80",
-          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
-          "abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)"
-        },
-        "spectator_update_check": {
-          "rva": "0x47E40B0",
-          "entry_check": "55 56 57 53 48 81 EC 68 01 00 00 48 8D AC 24 80 00 00 00 0F 29 B5 D0 00 00 00 48"
-        },
-        "abi": "void __fastcall(LevelRendererPlayer*, unsigned char mode)",
-        "observed_vanilla_modes": {
-          "normal": {
-            "mode": 3,
-            "vtable_rva": "0xE8E3B10"
-          },
-          "spectator": {
-            "mode": 5,
-            "vtable_rva": "0xE8DFE00"
-          }
-        },
-        "source_request_filter": true,
-        "successful_switch_limit_per_activation": 8,
-        "evidence": [
-          "User visibility.jsonl SHA256 recorded in docs/native-profile-layout.md: exact exe fingerprint, 76 samples, mode3/5 and corresponding native vtables; two spectator intervals.",
-          "REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680: setter idle check and native replacement/cache invalidation.",
-          "REA/Ghidra ev_dbb58e05697d13e67c057b0a586e5cdba95b6b93c30d10c6c549deecb6c8b47e: mode5 vtable slot1 update0x47E40B0 schedules asynchronous task.",
-          "REA/Ghidra ev_15ce07b37b64de3891a74801345de843639d3f7bf7df1bb13c81586737544331: mode5 task0x4809A70. Factory mode5 installs vtable0xE8DFE00 by RIP-relative LEA at0x46911F0.",
-          "REA/Ghidra ev_fcec2d12337538e3335dbb43d038435de03c4ec30851a447539ac584c29b24ab: preRenderUpdate0x46AA4A0 loads params+0x4D at0x46AA824 and calls setter at0x46AA82B, return0x46AA830. Revision5 user logs show about1600 successful switches/5s; selector must be filtered before native update."
-        ]
+        "rva": "0x5DAEBB0",
+        "entry_check": "56 57 48 83 EC 48 48 8D 91 48 02 00 00 48 8D 4C 24 28 E8 B9 17 81 FC 80",
+        "abi": "BlockSource* __fastcall(ClientInstance*)"
       },
-      "camera_render_observe": {
+      "get_block": {
         "status": "candidate",
         "runtime_verified": false,
-        "rva": "0x4686F20",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 0C 00 00 48 8D AC 24 80 00 00 00",
-        "abi": "void __fastcall(LevelRendererCamera* RCX, BaseActorRenderContext* RDX, ViewRenderObject const* R8, IClientInstance* R9)",
-        "read_only": true,
-        "view_flags_offset": "0x7C",
-        "view_flags_count": 13,
-        "draw_inside_cubes_offset": "0x80",
-        "evidence": "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: four register arguments preserved; ViewRenderObject R8 saved then read at+0x80 at0x4688F92 before inside-cube call0x468908E. Observe only; leave flags and original arguments unchanged."
+        "rva": "0x2D80120",
+        "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05 50 9F A5 0E 48 31 E0 48 89 44 24 30",
+        "abi": "Block const* __fastcall(BlockSource*, BlockPos const*)"
       },
-      "inside_cube_render": {
+      "select_hotbar": {
         "status": "candidate",
         "runtime_verified": false,
-        "rva": "0x47B0360",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 68 04 00 00 48 8D AC 24 80 00 00 00",
-        "abi": "void __fastcall(ScreenRenderer* RCX, IClientInstance* RDX, BaseActorRenderContext* R8)",
-        "return_rva": "0x4689093",
-        "caller_check": {
-          "rva": "0x468908E",
-          "entry_check": "E8 CD 72 12 00 48 8B 8D 68 01 00 00 48 85 C9 74"
-        },
-        "scope": "active detached camera primary camera and exact camera-render call site only; bypass draw, no ViewRenderObject or abilities writes",
-        "retired": true,
-        "retirement_reason": "Revision7 runtime confirmed bypass but user observed unchanged underground display.",
-        "evidence": [
-          "REA/Ghidra cube-render.snapshot.json retained for exact-build function0x47B0360: three input registers preserved; void return.",
-          "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: camera renderer tests view+0x80 and calls0x47B0360 at0x468908E.",
-          "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056: producer stores draw flag at frame+0x3950, reading layered twelve-byte ability at index17 (offset0xCC), layers stride0xF0; reference declarations identifies index17 as NoClip. Header association is inference; runtime visual success unverified."
-        ]
+        "rva": "0x1F4860",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80",
+        "abi": "bool __fastcall(PlayerInventory*, int slot, signed char ContainerID=0)"
       },
-      "create_view": {
+      "get_hit_result": {
         "status": "candidate",
         "runtime_verified": false,
-        "rva": "0x46AC3A0",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 B8 28 3C 00 00 E8 7A 3C A2 09 48 29 C4 48 8D",
-        "abi": "ViewRenderObject* __fastcall(LevelRendererPlayer* RCX, ViewRenderObject* hidden_return RDX, ScreenContext* R8, unsigned char SubClientId R9B)",
-        "output_draw_inside_cubes_offset": "0x80",
-        "scope": "newly constructed return buffer, current primary camera and world, active detached camera spectator view only",
-        "evidence": [
-          "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056; PE registers: RDX saved toR15 at0x46AC41A, RCX saved toR13, R8 ScreenContext +0x7C temporarily usesR9B, epilogue returnsR15 at0x46B0C7D. Four-register ABI matches reference declarations LevelRendererPlayer::createViewRenderObject(ScreenContext&, SubClientId).",
-          "User revision7 real spectator comparison: GameType6 and culler5 have draw_inside_cubes=false; survival detached camera has culler5 but true. Remaining recorded view flag bits match; per-frame legacy cube bypass had already been reached."
-        ]
+        "rva": "0x117D580",
+        "entry_check": "48 8B 81 E8 01 00 00 C3",
+        "abi": "HitResult* __fastcall(Level*)"
       },
-      "render_dragon_inside_effect": {
-        "schema": 1,
+      "build_block": {
         "status": "candidate",
         "runtime_verified": false,
-        "predicate": {
-          "rva": "0x5308990",
-          "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02 4C 8B 4A 08 48 8B 0E 48 8B 56 08 48",
-          "abi": "bool __fastcall(void* callable RCX, void* render_argument_pair RDX)"
-        },
-        "variants": [
-          {
-            "callable_vtable_rva": "0xE9387C0",
-            "type_getter_check": {
-              "rva": "0x531A140",
-              "entry_check": "48 8D 05 69 E5 68 0C C3"
-            },
-            "caller_check": {
-              "rva": "0x529826B",
-              "entry_check": "FF 15 37 38 E6 09 84 C0 74 BB 48 8B 8D 98 67 00"
-            },
-            "return_rva": "0x5298271"
-          },
-          {
-            "callable_vtable_rva": "0xEA3E540",
-            "type_getter_check": {
-              "rva": "0x8DAA130",
-              "entry_check": "48 8D 05 F9 C3 E5 08 C3"
-            },
-            "caller_check": {
-              "rva": "0x8D17AFB",
-              "entry_check": "FF 15 A7 3F 3E 06 84 C0 74 BB 48 8B 8D 38 05 00"
-            },
-            "return_rva": "0x8D17B01"
-          }
-        ],
-        "evidence": [
-          "Exact PE type_info strings at0x119A86C0 and0x11C06540 name extractAndDrawWithExclusion<InsideBlockEffect,...> lambda. Leaf target_type0x531A140/0x8DAA130 return the corresponding type descriptors. Callable tables0xE9387C0/0xEA3E540 slot3 point to these getters, slot2 to shared predicate0x5308990.",
-          "REA/Ghidra ev_1f59c49ef2ea2fb9ac76415165a37dd01e0c8c2b1b310100fc44585cfbba4457: shared bool predicate; Windows RCX/RDX ABI checked in exact PE assembly.",
-          "REA/Ghidra ev_728f7f9dd71ea8c5b08678f78dc8976631bb66ab8f98a5905f6018f6dbf4a937: InsideBlockEffect extraction at0x52981BC creates tagged callable; calls slot2 at0x529826B, false branches0x5298273 to next0xC8 render entry at0x5298230, true reaches extraction0x531A150. Second path has matching branch at0x8D17B03.",
-          "User revision8 data show correct culler5 + draw_inside_cubes=false at consumer and restoration, but user confirms visual failure. This falsifies sufficiency of revision8; it does not establish runtime reachability or visual success of this separate RenderDragon filter."
-        ]
+        "rva": "0x259BC60",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
+        "abi": "bool __fastcall(GameMode*, BlockPos const*, unsigned char face, unsigned char HandSlot=0, bool isSimTick=false)"
       },
-      "evidence": [
-        "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; reference client Options_getGamma signature and Fullbright(25) corroborate meaning"
+      "base_placement_state": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x3184DC0",
+        "entry_check": "41 57 41 56 41 55 41 54 56 57 53 48 83 EC 40 44 89 CB 4C 89 C6 48 89 D7",
+        "abi": "Block const* __fastcall(BlockType*, Actor const*, BlockPos const*, unsigned char face, Vec3 const* fractionalClick, int aux)"
+      },
+      "game_mode_vtables": [
+        "0xE827560",
+        "0xE827600"
       ],
-      "notes": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator detached camera returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes.",
-      "set_player_game_type": {
-        "rva": "0x1E1570",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 06 00 00 48 8D AC 24 80 00 00 00 48 C7 85 80 05",
-        "abi": "void __fastcall(Player*, int)",
+      "candidate_layouts": {
+        "player_game_mode_offset": "0xAA0",
+        "player_level_offset": "0x1D8",
+        "block_type_offset": "0x68",
+        "block_type_full_name_string_offset": "0xE8",
+        "block_type_flags_offset": "0x164",
+        "block_type_solid_mask": 2,
+        "item_stack_block_offset": "0x18",
+        "item_stack_aux_offset": "0x20",
+        "block_source_get_block_slot": 2,
+        "block_source_get_chunk_slot": 41,
+        "block_type_placement_state_slot": 79,
+        "level_hit_result_slot": 335,
+        "hit_result_scalar_prefix_size": 56,
+        "hit_type_offset": 24,
+        "hit_face_offset": 28,
+        "hit_block_offset": 32,
+        "hit_position_offset": 44,
+        "block_state_data_offset": "0x120",
+        "block_type_collision_shape_slot": 4,
+        "collision_shape_abi": "AABB* __fastcall(BlockType*, AABB* hidden_return, Block const*, IConstBlockSource const*, BlockPos const*, GetCollisionShapeInterface const* optional=nullptr)",
+        "block_serialization_tag_offset": "0xF0",
+        "compound_tag_head_offset": 8,
+        "compound_tag_size_offset": 16,
+        "tree_left_offset": 0,
+        "tree_parent_offset": 8,
+        "tree_right_offset": 16,
+        "tree_nil_offset": 25,
+        "tree_key_offset": 32,
+        "tree_tag_variant_offset": 64,
+        "tag_variant_index_offset": 40,
+        "tag_scalar_or_string_offset": 8,
+        "tag_get_id_slot": 5,
+        "game_mode_build_block_slot": 6,
+        "game_mode_drag_active_offset": 64,
+        "game_mode_drag_previous_offset": 65
+      },
+      "height_limits": {
+        "min_height_offset": "0x3A",
+        "max_height_offset": "0x38"
+      },
+      "evidence": [
+        "REA/Ghidra ev_af167bba2797b60ffe45d17af648fa2edcc644be90a65a64b07bf3d2d2959fff: current ClientInstance region getter resolves dimension and region through native virtual dispatch",
+        "REA/Ghidra ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5: BlockSource getBlock uses BlockPos, vertical bounds and virtual chunk slot41; unavailable chunks must be rejected before reading the fallback air block",
+        "REA/Ghidra ev_e7280da801fec58140c2eb36b18894b34cf02a2c2f8290891ae57279b5f5529d: native selectSlot bounds0..8, stores selected+0x10/container+0xB0, and follows HUD/selection notification path",
+        "REA/Ghidra ev_07f9860a4edc80ba3885f69bfe84649d59d1916b638291a4920a35e31edc4fab: base GameMode buildBlock consumes RCX this, RDX BlockPos, R8B face, R9B hand and stack boolean, preserving native inventory transaction machinery",
+        "REA/Ghidra ev_9cd48a09599490c10dd724724053b2f8351e790ea6334881e2540241be774c0c: build closure reads Player+0x5B8 selectedslot, Player+0x1D8 Level, Level vtable0xA78 HitResult type+0x18/face+0x1C/BlockPos+0x20/worldhit+0x2C, and subtracts support position for transaction click",
+        "REA/Ghidra ev_8bfbdd8e95a06043f5c9b662c3c7cf0b36c98b3a0847d2fc885b060393e96eaa: BlockType placement getter chooses aux state/default and executes const placement callbacks with actor, pos, face and click",
+        "REA/Ghidra ev_05c5c1018ab7d235651741c3bc7c4c5c623fc607ea3692b9f1ebb0ac504b619b and ev_b599387268910ce4ece43d8e0cc024e866c013c8cd1d966b39f79d34376cb444: SetTitlePacket constructor layout and stream read hidden result with success at0x40",
+        "BlockType NameInfo, flags and ItemStack field semantics corroborated with existing SDK/reference client/reference client/reference declarations declarations and render callsites. These layouts, prediction click coordinates, actual receive path, native placement and server acceptance remain runtime-unverified; no symbol promoted to verified.",
+        "REA/Ghidra ev_8056d6a2d217bc31b9c0bff01ce9e370d409dd6aea7107ae82af82c97261d46b: ItemStackBase uses Block+0x120 data for block-backed stacks except raw aux sentinel0x7FFF. Renderer 0x47B0F4E..0x47B0F7F calls BlockType collision-shape slot4 with hidden AABB return in RDX, Block in R8, source in R9, BlockPos and null optional on stack (existing ev_9e7258db40a792298ea2c11e444eab62e5c4ad3fb078c7c0acf6f97767d0434a). Native placement remains runtime-unverified.",
+        "REA/Ghidra ev_7384df9c2cbd7961b2b68138bb1d131fbff5b3a9923acc5d5d609104aecf07ce at0x2548830 establishes CompoundTag tree head+8, root=head+8, nil+0x19, key+0x20/string length+0x30/capacity+0x38, TagVariant+0x40 and discriminator+0x68. Inline Block serialization tag+0xF0 is a layout candidate corroborated by Block.h field sizes and leaf LEA+0xF0 at0x640EF0/0xB57130. Runtime reader requires Compound type10, bounded valid tree, matching name and compound states before exposing owned property copies. No NBT vtable function is invoked or foreign STL object modified.",
+        "Live revision2 user log: native build calls/returns4 and observed exact sandstone states4. Walls and hive sea_shells had successful type-compatible predictions but pre-placement state differed. Revision3 permits type-compatible proposals, uses named orientation when available, allows real observed supports before final connection states and candle/cluster count increases; completion still requires exact recorded state. Hive-specific server properties remain live-unverified."
+      ],
+      "subchunk_scan": {
         "status": "candidate",
         "runtime_verified": false,
         "abi_verified": false,
-        "required_component_hash": "0x68B75D48",
-        "player_level_offset": "0x1D8",
-        "scope": "local Player game-mode core setter; does not grant server authority",
-        "source": "Exact 1.26.52.3 .pdata range 0x1E1570-0x1E1B0A; Player::_setPlayerGameType candidate. RCX Player and EDX int checked in PE assembly. Reads ActorGameTypeComponent, replaces Player+0xAA0 GameMode, calls 0x2096F0 to update game type and layered abilities; handles default5/spectator6. REA ev_ffd7bbccb01e8ba335eedcab861753f22d5a4ab2ffc988ff9e25aae6db144bdb and ev_3f502740423ae916ab45e21e355d2e6b68a16a2a7111cf3002659742ffec8d3c. Raw Ghidra import uses gcc convention; Windows ABI conclusion uses register-level PE assembly. Runtime pending."
+        "source": "Exact PE BlockSource::getBlock RVA 0x2D80120; REA/Ghidra assembly: source Y bounds, LevelChunk vector, 0x68 stride, layer-0 storage +0x30, virtual slot 3; no direct palette decoding",
+        "guard": {
+          "rva": "0x2D80186",
+          "entry_check": "44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 40 01 00 00 48 8B 80 48 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 3D 48 6B C1"
+        },
+        "source_min_y": "0x3A",
+        "source_max_y": "0x38",
+        "chunk_sections_begin": "0x140",
+        "chunk_sections_end": "0x148",
+        "section_stride": "0x68",
+        "section_storage": "0x30",
+        "storage_get_slot": 3,
+        "storage_get_abi": "Block const* __fastcall(BlockStorage*, unsigned local_index)",
+        "local_index": "(x & 15) << 8 | (z & 15) << 4 | (y & 15)",
+        "limitations": [
+          "Layer 0 only, matching existing getBlock API",
+          "Null storage is empty; no claim that allocated storage is uniform",
+          "Pointers valid for owning client tick only; runtime confirmation pending"
+        ]
       }
     },
-    "evidence": "docs/native-profile-layout.md; exact EXE reference client _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation."
-  },
-  "native_world_render": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "functions": {
-      "render_level": {
-        "rva": "0x47F8570",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 02 00 00 48 8D AC 24 80"
+    "StateVectorComponent": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "state_vector": {
+        "state_position_offset": 0,
+        "state_previous_position_offset": 12,
+        "state_velocity_offset": 24,
+        "fall_distance_component_hash": "0xce6b34f6",
+        "fall_distance_value_offset": 0
       },
-      "begin": {
-        "rva": "0x59CA2E0",
-        "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 91 FD E0 0B 48 31 E0 48 89 44 24 30 80"
+      "evidence": "local actor proxy detached camera + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and reference declarations declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes)."
+    },
+    "Camera": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "update_player": {
+        "rva": "0x6733360",
+        "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC D8 00 00 00 44 0F 29 94 24 C0 00 00 00 44 0F 29 8C",
+        "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+        "abi": "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)"
       },
-      "vertex": {
-        "rva": "0x59CA7A0",
-        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80"
+      "camera_position_offset": 64,
+      "camera_orientation_offset": 48,
+      "hurt_time_component_hash": "0xD7A3585C",
+      "hurt_time_value_offset": 0,
+      "hurt_time_value_size": 4,
+      "actor_type_offset": 0,
+      "player_type_id": 319,
+      "renderer_player_offset": 1128,
+      "render_origin_offset": 1632,
+      "local_player": {
+        "rva": "0x5DAED30",
+        "entry_check": "48 83 EC 48 48 8B 05 45 B3 A2 0B 48 31 E0 48 89 44 24 40 48 8D 91 48 02",
+        "abi": "Actor* __fastcall(ClientInstance*)",
+        "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration"
       },
-      "color": {
-        "rva": "0x59CA610",
-        "entry_check": "80 B9 54 02 00 00 00 0F 85 BE 00 00 00 F3 0F 10 05 43 3B C5 08 F3 0F 10"
+      "visual": {
+        "schema": 1,
+        "revision": 9,
+        "status": "candidate",
+        "runtime_verified": false,
+        "game_type_component_hash": "0x88D3EDDF",
+        "game_type_value_offset": 0,
+        "game_type_value_size": 4,
+        "spectator_value": 6,
+        "spectator_predicate": {
+          "rva": "0x19E0840",
+          "entry_check": "56 48 83 EC 20 48 8B 51 10 8B 41 18 4C 8B 42 48 4C 8B 4A 50 4D 29 C1 49"
+        },
+        "gamma": {
+          "rva": "0xFB7880",
+          "entry_check": "48 83 EC 38 48 8B 05 F5 27 82 10 48 31 E0 48 89 44 24 30 48 8B 01 48 8B"
+        },
+        "gamma_abi": "float __fastcall(Options*)",
+        "legacy_game_type_fields_unused": true,
+        "spectator_mode_behavior": "native_spectator_culler_mode5",
+        "terrain_visibility_status": "candidate: revision8 matching view flags failed visually; revision9 filters tagged RenderDragon InsideBlockEffect extraction; reachability and appearance unverified",
+        "terrain_culling": {
+          "schema": 1,
+          "status": "candidate",
+          "runtime_verified": false,
+          "spectator_mode": 5,
+          "camera_culler_offset": "0x9A8",
+          "camera_culler_type_offset": "0x9B8",
+          "spectator_vtable_rva": "0xE8DFE00",
+          "set_culler": {
+            "status": "candidate",
+            "runtime_verified": false,
+            "rva": "0x4690910",
+            "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
+            "abi": "void __fastcall(LevelRendererPlayer*, unsigned char cullerType)"
+          },
+          "factory_check": {
+            "status": "candidate",
+            "runtime_verified": false,
+            "rva": "0x4690B80",
+            "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
+            "abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)"
+          },
+          "spectator_update_check": {
+            "rva": "0x47E40B0",
+            "entry_check": "55 56 57 53 48 81 EC 68 01 00 00 48 8D AC 24 80 00 00 00 0F 29 B5 D0 00 00 00 48"
+          },
+          "abi": "void __fastcall(LevelRendererPlayer*, unsigned char mode)",
+          "observed_vanilla_modes": {
+            "normal": {
+              "mode": 3,
+              "vtable_rva": "0xE8E3B10"
+            },
+            "spectator": {
+              "mode": 5,
+              "vtable_rva": "0xE8DFE00"
+            }
+          },
+          "source_request_filter": true,
+          "successful_switch_limit_per_activation": 8,
+          "evidence": [
+            "User visibility.jsonl SHA256 recorded in docs/native-profile-layout.md: exact exe fingerprint, 76 samples, mode3/5 and corresponding native vtables; two spectator intervals.",
+            "REA/Ghidra ev_ca340be48bd0463ab307ac4dd6c045695e5744ffeb7eea795b2fb33f97fe9680: setter idle check and native replacement/cache invalidation.",
+            "REA/Ghidra ev_dbb58e05697d13e67c057b0a586e5cdba95b6b93c30d10c6c549deecb6c8b47e: mode5 vtable slot1 update0x47E40B0 schedules asynchronous task.",
+            "REA/Ghidra ev_15ce07b37b64de3891a74801345de843639d3f7bf7df1bb13c81586737544331: mode5 task0x4809A70. Factory mode5 installs vtable0xE8DFE00 by RIP-relative LEA at0x46911F0.",
+            "REA/Ghidra ev_fcec2d12337538e3335dbb43d038435de03c4ec30851a447539ac584c29b24ab: preRenderUpdate0x46AA4A0 loads params+0x4D at0x46AA824 and calls setter at0x46AA82B, return0x46AA830. Revision5 user logs show about1600 successful switches/5s; selector must be filtered before native update."
+          ]
+        },
+        "camera_render_observe": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x4686F20",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 0C 00 00 48 8D AC 24 80 00 00 00",
+          "abi": "void __fastcall(LevelRendererCamera* RCX, BaseActorRenderContext* RDX, ViewRenderObject const* R8, IClientInstance* R9)",
+          "read_only": true,
+          "view_flags_offset": "0x7C",
+          "view_flags_count": 13,
+          "draw_inside_cubes_offset": "0x80",
+          "evidence": "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: four register arguments preserved; ViewRenderObject R8 saved then read at+0x80 at0x4688F92 before inside-cube call0x468908E. Observe only; leave flags and original arguments unchanged."
+        },
+        "inside_cube_render": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x47B0360",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 68 04 00 00 48 8D AC 24 80 00 00 00",
+          "abi": "void __fastcall(ScreenRenderer* RCX, IClientInstance* RDX, BaseActorRenderContext* R8)",
+          "return_rva": "0x4689093",
+          "caller_check": {
+            "rva": "0x468908E",
+            "entry_check": "E8 CD 72 12 00 48 8B 8D 68 01 00 00 48 85 C9 74"
+          },
+          "scope": "active detached camera primary camera and exact camera-render call site only; bypass draw, no ViewRenderObject or abilities writes",
+          "retired": true,
+          "retirement_reason": "Revision7 runtime confirmed bypass but user observed unchanged underground display.",
+          "evidence": [
+            "REA/Ghidra cube-render.snapshot.json retained for exact-build function0x47B0360: three input registers preserved; void return.",
+            "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: camera renderer tests view+0x80 and calls0x47B0360 at0x468908E.",
+            "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056: producer stores draw flag at frame+0x3950, reading layered twelve-byte ability at index17 (offset0xCC), layers stride0xF0; reference declarations identifies index17 as NoClip. Header association is inference; runtime visual success unverified."
+          ]
+        },
+        "create_view": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x46AC3A0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 B8 28 3C 00 00 E8 7A 3C A2 09 48 29 C4 48 8D",
+          "abi": "ViewRenderObject* __fastcall(LevelRendererPlayer* RCX, ViewRenderObject* hidden_return RDX, ScreenContext* R8, unsigned char SubClientId R9B)",
+          "output_draw_inside_cubes_offset": "0x80",
+          "scope": "newly constructed return buffer, current primary camera and world, active detached camera spectator view only",
+          "evidence": [
+            "REA/Ghidra ev_cc9e7a556f28a2128f55f18942897455dc72843125a1f0a2488e885c4b379056; PE registers: RDX saved toR15 at0x46AC41A, RCX saved toR13, R8 ScreenContext +0x7C temporarily usesR9B, epilogue returnsR15 at0x46B0C7D. Four-register ABI matches reference declarations LevelRendererPlayer::createViewRenderObject(ScreenContext&, SubClientId).",
+            "User revision7 real spectator comparison: GameType6 and culler5 have draw_inside_cubes=false; survival detached camera has culler5 but true. Remaining recorded view flag bits match; per-frame legacy cube bypass had already been reached."
+          ]
+        },
+        "render_dragon_inside_effect": {
+          "schema": 1,
+          "status": "candidate",
+          "runtime_verified": false,
+          "predicate": {
+            "rva": "0x5308990",
+            "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02 4C 8B 4A 08 48 8B 0E 48 8B 56 08 48",
+            "abi": "bool __fastcall(void* callable RCX, void* render_argument_pair RDX)"
+          },
+          "variants": [
+            {
+              "callable_vtable_rva": "0xE9387C0",
+              "type_getter_check": {
+                "rva": "0x531A140",
+                "entry_check": "48 8D 05 69 E5 68 0C C3"
+              },
+              "caller_check": {
+                "rva": "0x529826B",
+                "entry_check": "FF 15 37 38 E6 09 84 C0 74 BB 48 8B 8D 98 67 00"
+              },
+              "return_rva": "0x5298271"
+            },
+            {
+              "callable_vtable_rva": "0xEA3E540",
+              "type_getter_check": {
+                "rva": "0x8DAA130",
+                "entry_check": "48 8D 05 F9 C3 E5 08 C3"
+              },
+              "caller_check": {
+                "rva": "0x8D17AFB",
+                "entry_check": "FF 15 A7 3F 3E 06 84 C0 74 BB 48 8B 8D 38 05 00"
+              },
+              "return_rva": "0x8D17B01"
+            }
+          ],
+          "evidence": [
+            "Exact PE type_info strings at0x119A86C0 and0x11C06540 name extractAndDrawWithExclusion<InsideBlockEffect,...> lambda. Leaf target_type0x531A140/0x8DAA130 return the corresponding type descriptors. Callable tables0xE9387C0/0xEA3E540 slot3 point to these getters, slot2 to shared predicate0x5308990.",
+            "REA/Ghidra ev_1f59c49ef2ea2fb9ac76415165a37dd01e0c8c2b1b310100fc44585cfbba4457: shared bool predicate; Windows RCX/RDX ABI checked in exact PE assembly.",
+            "REA/Ghidra ev_728f7f9dd71ea8c5b08678f78dc8976631bb66ab8f98a5905f6018f6dbf4a937: InsideBlockEffect extraction at0x52981BC creates tagged callable; calls slot2 at0x529826B, false branches0x5298273 to next0xC8 render entry at0x5298230, true reaches extraction0x531A150. Second path has matching branch at0x8D17B03.",
+            "User revision8 data show correct culler5 + draw_inside_cubes=false at consumer and restoration, but user confirms visual failure. This falsifies sufficiency of revision8; it does not establish runtime reachability or visual success of this separate RenderDragon filter."
+          ]
+        },
+        "evidence": [
+          "REA/Ghidra ev_edc97e3e4ab756fe53ae5f3ebbecac083ceaa3129225047afe1358d32180e081: Options getter selects0x32 and returns float inXMM0; reference client Options_getGamma signature and Fullbright(25) corroborate meaning"
+        ],
+        "notes": "Retain observed mode5 and fresh view flag. Add exact-tag + caller guarded RenderDragon InsideBlockEffect extraction predicate filter. Only active spectator detached camera returns false; other tags/callers keep original result. No terrain mesh or game-mode/ability writes.",
+        "set_player_game_type": {
+          "rva": "0x1E1570",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 06 00 00 48 8D AC 24 80 00 00 00 48 C7 85 80 05",
+          "abi": "void __fastcall(Player*, int)",
+          "status": "candidate",
+          "runtime_verified": false,
+          "abi_verified": false,
+          "required_component_hash": "0x68B75D48",
+          "player_level_offset": "0x1D8",
+          "scope": "local Player game-mode core setter; does not grant server authority",
+          "source": "Exact 1.26.52.3 .pdata range 0x1E1570-0x1E1B0A; Player::_setPlayerGameType candidate. RCX Player and EDX int checked in PE assembly. Reads ActorGameTypeComponent, replaces Player+0xAA0 GameMode, calls 0x2096F0 to update game type and layered abilities; handles default5/spectator6. REA ev_ffd7bbccb01e8ba335eedcab861753f22d5a4ab2ffc988ff9e25aae6db144bdb and ev_3f502740423ae916ab45e21e355d2e6b68a16a2a7111cf3002659742ffec8d3c. Raw Ghidra import uses gcc convention; Windows ABI conclusion uses register-level PE assembly. Runtime pending."
+        }
       },
-      "render_mesh": {
-        "rva": "0x467EE50",
-        "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 70 04 00 00 48 8D AC 24 80 00 00"
+      "evidence": "docs/native-profile-layout.md; exact EXE reference client _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation."
+    },
+    "PacketSender": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "sender": {
+        "client_packet_sender_offset": 464,
+        "sender_send_to_server_slot": 4,
+        "packet_id_slot": 1,
+        "packet_sender_getter": {
+          "rva": "0x80B340",
+          "entry_check": "48 8B 81 D0 01 00 00 C3 CC CC CC CC CC CC CC CC",
+          "abi": "PacketSender& __fastcall(ClientInstance*)"
+        }
       },
-      "hashed_name_ctor": {
-        "rva": "0x6AC970",
-        "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 D7"
+      "command_request": {
+        "vtable_rva": "0xE897420",
+        "command_offset": "0x30",
+        "get_id": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x38E6CB0",
+          "entry_check": "B8 4D 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC 48 89 D0 48 8D 0D FD 3A",
+          "abi": "int __fastcall(CommandRequestPacket const*)",
+          "evidence": "Constant leaf EAX=77; adjacent getName returns CommandRequestPacket; table0xE897420. Packet payload+0x30 in ev_4097a24c921f54e8a8fcb9e61281a0c41e9fbcd465af646f8e7f2760c404f7f5."
+        }
       },
-      "material_ctor": {
-        "rva": "0x52F1E00",
-        "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50 0F 29 75 F0 48 C7 45 E8 FE FF FF FF"
+      "title": {
+        "vtable_rva": "0xE89D5E0",
+        "read": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x3A83770",
+          "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 01 00 00 48 8D AC 24 80 00 00",
+          "abi": "void* __fastcall(SetTitlePacket*, Result<void>* hidden_result, ReadOnlyBinaryStream*)"
+        }
       }
     },
-    "offsets": {
-      "level_renderer_player": 1128,
-      "render_origin": 1632,
-      "selection_material": 4336,
-      "screen_tessellator": 184,
-      "screen_shader_color": 48,
-      "tess_translation": 460,
-      "tess_building": 672,
-      "tess_special_mode": 597,
-      "shader_color_dirty": 16
+    "CommandRegistry": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "register_command": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x4A78840",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08 02 00 00 48 8D AC 24 80",
+        "abi": "void __fastcall(CommandRegistry*, std::string const*, char const*, uint8 permission, uint16 flags1, uint16 flags2)",
+        "evidence": "ev_72b721b2d99f368a86f80c6217c57fe5a34a12eb3a83d540d0d06f19b866ca1e"
+      },
+      "find_command": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x4A56630",
+        "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45 00 FE FF FF FF 48 89 CB",
+        "abi": "Signature* __fastcall(CommandRegistry*, std::string const*)",
+        "evidence": "ev_131f6e121ee6efabddbca73c5a98b58a9e252ea991f3a97bb19a7914d0a3bab5"
+      },
+      "make_parameter": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x4A47C80",
+        "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC 28 4C 89 CF 48 89 CE 0F B7 02 66 89",
+        "abi": "CommandParameterData* __fastcall(void* out_0x78, uint16 const* type_id, ParamParseRule const*, char const* name, int type, char const* enum_name, char const* subchain, int offset, bool optional, int set_offset)",
+        "evidence": "ev_021470f8834c2fd4b4e816cc8332790e256566d80dabe48b2a68a9855c145b98"
+      },
+      "register_optional_parameter": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x4A224D0",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80",
+        "abi": "Overload* __fastcall(CommandRegistry*, char const* name, uint64 packed_version, brstd_copyable_callable_64* factory, CommandParameterData const* one_param)",
+        "evidence": "ev_768d5883b24cf069aac46a82804b4311d47ed3702538485b71e3604e4110e744"
+      },
+      "factory_vtable_rva": "0xE8EEE40",
+      "factory_copy": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x791D0",
+        "entry_check": "48 8B 41 08 48 89 42 08 C3 CC CC CC CC CC CC CC",
+        "abi": "void __fastcall(void* source, void* destination); copies callable free-function at +8",
+        "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
+      },
+      "factory_destroy": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x76BC0",
+        "entry_check": "C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC",
+        "abi": "void __fastcall(void*); no-op for free-function storage",
+        "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
+      },
+      "factory_invoke": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x9B7880",
+        "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 42 08 FF 15 16 42",
+        "abi": "unique_ptr<Command>* __fastcall(void* hidden_result, void const* callable); invokes callable free function with hidden_result RCX",
+        "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
+      },
+      "client_commands_anchor": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x5DB9F00",
+        "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 10 FE",
+        "abi": "void __fastcall(ClientInstance*); reads Minecraft+0xC0 Commands, writes Commands+0x18 output sender",
+        "evidence": "ev_fc0c0ccbd2548e064fedb0c1b353b63b7139c76603ba192004677516b3613ba3"
+      },
+      "has_commands_anchor": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x5DC2120",
+        "entry_check": "48 8B 81 B0 01 00 00 48 83 B8 C0 00 00 00 00 0F 95 C0 C3",
+        "abi": "bool __fastcall(ClientInstance*); Client+0x1B0 -> Minecraft+0xC0 non-null",
+        "evidence": "Native Help registration and callable vtable instructions; see docs/native-profile-layout.md"
+      },
+      "integer_type_rva": "0x11E141D0",
+      "integer_rule_rva": "0x11E145F8",
+      "layout": {
+        "client_minecraft_offset": "0x1B0",
+        "minecraft_commands_offset": "0xC0",
+        "commands_registry_offset": "0x10",
+        "argument_offset": "0x20",
+        "argument_set_offset": "0x24",
+        "parameter_size": "0x78",
+        "overload_size": "0x80",
+        "signature_overloads_offset": "0x40",
+        "output_success_offset": "0x28"
+      },
+      "evidence": "Exact-build Help setup0x80E7250 registers SyncLocal0x10 + NotCheat0x80, then optional page:int via make_parameter and one-param overload helper. Helper uses native allocator/copy constructors; 64-byte brstd callable has vtable + free-function prefix. Native Command base0x20; int +0x20, is_set +0x24. Help factory0x811DAC0 and Help vtable0xEA0D0C0 corroborate virtual destructor/collectOptionalArguments/execute. Client+0x1B0 -> Minecraft+0xC0 -> MinecraftCommands+0x10 registry; output success counter+0x28 observed in native Help execute. No runtime verification yet."
     },
-    "common_material_group_rva": "0x11E3B308",
-    "evidence": "Exact-build REA/Ghidra raw-function dossiers; docs/actor bounds-world-render.md. Windows x64 ABI corroborated with reference client source and native call sites; runtime validation pending. Native constructors of HashedString (48 bytes) and MaterialPtr (16 bytes) corroborated by REA dossiers; selection_overlay uses engine-owned allocation and is held until process exit."
-  },
-  "native_world_events": {
-    "schema": 1,
-    "pointer_size": 8,
-    "status": "candidate",
-    "runtime_verified": false,
-    "exit_client_offset": 136,
-    "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+    "GuiData": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "client_gui_offset": "0x650",
+      "get_gui": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x5DC5830",
+        "entry_check": "56 57 53 48 83 EC 20 48 8B B9 50 06 00 00 48 85 FF 0F 84 94 00 00 00 0F",
+        "abi": "NotNullNonOwnerPtr<GuiData>* __fastcall(ClientInstance*, hidden_result*)",
+        "evidence": "IClientInstance slot217; reads ClientInstance+0x650. Returned raw GuiData pointer is result+0x10; ev_06cd0676a4f9439790988afdfe48f165bbb2f72b839908eae884b5c532d01f73."
+      },
+      "display_message": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x1560AE0",
+        "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80 00 00 00 48",
+        "abi": "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)",
+        "evidence": "GuiData displaySystemMessage candidate. Calling closure0x878310 passes message, empty optional, empty TTS and stack context4; ev_88e76570b9a11e33d34759c9436ebba76b71ad2ee98cc633c41c51331d64cd50. Raw x64 instruction/caller evidence required because raw slice decompiler uses gcc calling conventions."
+      },
+      "evidence": "SHA256 4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4; original PE .pdata ranges extracted and inspected through REA/Ghidra. Heights source+0x38 max exclusive/source+0x3A min inclusive in existing getBlock ev_f00a2d8382b7c94b9a4906c20fc8af347d5f96c6927b13b4385e5ca15cc469d5. Runtime command routing, messages and teleport validation pending."
+    },
+    "LevelRenderer": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "functions": {
+        "render_level": {
+          "rva": "0x47F8570",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 02 00 00 48 8D AC 24 80"
+        },
+        "begin": {
+          "rva": "0x59CA2E0",
+          "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 91 FD E0 0B 48 31 E0 48 89 44 24 30 80"
+        },
+        "vertex": {
+          "rva": "0x59CA7A0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80"
+        },
+        "color": {
+          "rva": "0x59CA610",
+          "entry_check": "80 B9 54 02 00 00 00 0F 85 BE 00 00 00 F3 0F 10 05 43 3B C5 08 F3 0F 10"
+        },
+        "render_mesh": {
+          "rva": "0x467EE50",
+          "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 70 04 00 00 48 8D AC 24 80 00 00"
+        },
+        "hashed_name_ctor": {
+          "rva": "0x6AC970",
+          "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 D7"
+        },
+        "material_ctor": {
+          "rva": "0x52F1E00",
+          "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50 0F 29 75 F0 48 C7 45 E8 FE FF FF FF"
+        }
+      },
+      "offsets": {
+        "level_renderer_player": 1128,
+        "render_origin": 1632,
+        "selection_material": 4336,
+        "screen_tessellator": 184,
+        "screen_shader_color": 48,
+        "tess_translation": 460,
+        "tess_building": 672,
+        "tess_special_mode": 597,
+        "shader_color_dirty": 16
+      },
+      "common_material_group_rva": "0x11E3B308",
+      "evidence": "Exact-build REA/Ghidra raw-function dossiers; docs/actor bounds-world-render.md. Windows x64 ABI corroborated with reference client source and native call sites; runtime validation pending. Native constructors of HashedString (48 bytes) and MaterialPtr (16 bytes) corroborated by REA dossiers; selection_overlay uses engine-owned allocation and is held until process exit."
+    },
+    "ClientInstance": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "exit_client_offset": 136,
+      "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+    },
+    "Packet": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "get_id_slot": 1,
+      "is_valid_slot": 11,
+      "scope": "native virtual ABI, independent of the wire protocol field ordering",
+      "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor."
+    },
+    "PacketWire": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "format": "bedrock_packet_header_and_payload",
+      "abi": "void(stage*, const std::string&, uintptr_t, int)",
+      "batch_append": {
+        "rva": "0x46eb60",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "protocol_schema": "movement_array_options_v1",
+      "source": "PrismarineJS/minecraft-data@9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.51/protocol.json",
+      "evidence": "REA/Ghidra: common pre-batch append reads an MSVC string, writes varuint byte count, copies the entire packet into BinaryStream, then compression staging. Native symbol name is unknown; batch_append is an SDK bridge role, not a Minecraft symbol. Exact executable identity is target.file_sha256.",
+      "limitations": [
+        "Static candidate; requires observation of Packet ID and client sender attribution at runtime.",
+        "Sender attribution is scoped to synchronous sendToServer; deferred/foreign/server sends are not edited.",
+        "No per-packet C++ fields or per-packet function bindings are used by this bridge."
+      ]
+    }
   }
 }
 )BDK_SYM_V1";

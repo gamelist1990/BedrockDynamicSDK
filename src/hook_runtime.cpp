@@ -62,7 +62,7 @@ struct Frame {
 };
 
 std::mutex registryMutex;
-std::array<State, 17> states{};
+std::array<State, 18> states{};
 bool minHookInitialized{};
 bool modulePinned{};
 bool clientModulePinned{};
@@ -104,7 +104,7 @@ struct SharedApi {
 // stable for additive releases; runtime version and supported points are separate.
 constexpr DWORD kSharedAbiVersion = 4;
 constexpr DWORD kMinimumCompatibleAbi = 3;
-constexpr unsigned kBuildVersion = 0x00040500u; // major/minor/patch: 4.5.0
+constexpr unsigned kBuildVersion = 0x00040600u; // major/minor/patch: 4.6.0
 SharedApi* getSharedApi(bool discover = true);
 SharedApi* bootstrapPreferredRuntime();
 std::mutex diagnosticMutex;
@@ -153,7 +153,7 @@ void publishCapabilities(const SharedApi* owner) {
     capabilities->pid=GetCurrentProcessId();capabilities->abi=owner->abiVersion;
     capabilities->buildVersion=kBuildVersion;
     capabilities->ownerSubscribe=reinterpret_cast<std::uintptr_t>(owner->subscribe);
-    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_COMMAND_OUTPUT_READ+1))-2;
+    capabilities->points=(std::uint64_t{1}<<(BDS_HOOK_PACKET_WIRE_SEND+1))-2;
     MemoryBarrier();InterlockedExchange(&capabilities->state,2);
 }
 const Capabilities* ownerCapabilities(const SharedApi* owner) {
@@ -444,6 +444,12 @@ uintptr_t callOriginal(BDS_HookPoint point, void* args) {
                             : a.input_fov;
         return 0;
     }
+    case BDS_HOOK_PACKET_WIRE_SEND: {
+        auto& a=*static_cast<BDS_PacketWireArgs*>(args);
+        using WireFn=void(__fastcall*)(void*,const void*,uintptr_t,int);
+        if(original)reinterpret_cast<WireFn>(original)(a.stage,a.bytes,a.a3,a.flags);
+        return 0;
+    }
     case BDS_HOOK_PACKET_SEND_TO_SERVER: {
         auto& a=*static_cast<BDS_PacketSendArgs*>(args);
         if(original) reinterpret_cast<ClientPlayerLoadedFn>(original)(a.sender,a.packet);
@@ -566,8 +572,16 @@ void* __fastcall gameCoreKeyboardEventDetour(void* self, void* output, void* con
 void __fastcall renderLevelDetour(void* renderer, void* screen, void* context) {
     BDS_RenderLevelArgs args{renderer, screen, context}; invoke(BDS_HOOK_RENDER_LEVEL, &args);
 }
+thread_local void* wireSendingClient{};
 void __fastcall packetSendDetour(void* sender,void* packet) {
+    // Preserve nested sends; no sender attribution crosses an asynchronous queue.
+    struct Scope {void* previous;~Scope(){wireSendingClient=previous;}} scope{wireSendingClient};
+    wireSendingClient=sender;
     BDS_PacketSendArgs args{sender,packet};invoke(BDS_HOOK_PACKET_SEND_TO_SERVER,&args);
+}
+void __fastcall packetWireDetour(void* stage,const void* bytes,uintptr_t a3,int flags) {
+    BDS_PacketWireArgs args{stage,bytes,a3,flags,wireSendingClient};
+    invoke(BDS_HOOK_PACKET_WIRE_SEND,&args);
 }
 void* __fastcall commandOutputReadDetour(void* packet, void* output, void* stream, void* context) {
     BDS_CommandOutputReadArgs args{packet, output, stream, context, output};
@@ -576,6 +590,7 @@ void* __fastcall commandOutputReadDetour(void* packet, void* output, void* strea
 }
 void* detourFor(BDS_HookPoint point) {
     switch (point) {
+    case BDS_HOOK_PACKET_WIRE_SEND: return reinterpret_cast<void*>(&packetWireDetour);
     case BDS_HOOK_COMMAND_OUTPUT_READ: return reinterpret_cast<void*>(&commandOutputReadDetour);
     case BDS_HOOK_PACKET_SEND_TO_SERVER: return reinterpret_cast<void*>(&packetSendDetour);
     case BDS_HOOK_RENDER_LEVEL: return reinterpret_cast<void*>(&renderLevelDetour);
@@ -598,7 +613,7 @@ void* detourFor(BDS_HookPoint point) {
     }
 }
 bool validPoint(BDS_HookPoint point) {
-    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_COMMAND_OUTPUT_READ;
+    return point >= BDS_HOOK_KEYBOARD_FEED && point <= BDS_HOOK_PACKET_WIRE_SEND;
 }
 } // namespace
 
@@ -662,7 +677,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     std::shared_ptr<Entry> removed;
     {
         std::lock_guard lock(registryMutex);
-        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_COMMAND_OUTPUT_READ; ++point) {
+        for (unsigned point = BDS_HOOK_KEYBOARD_FEED; point <= BDS_HOOK_PACKET_WIRE_SEND; ++point) {
             auto& state = states[point];
             auto it = std::find_if(state.entries.begin(), state.entries.end(),
                 [token](const auto& entry) { return entry->token == token; });
@@ -680,7 +695,7 @@ void BDS_HOOK_CALL leaderUnsubscribe(BDS_HookToken token) {
     }
 }
 
-const char* BDS_HOOK_CALL leaderVersion() { return "4.5.0"; }
+const char* BDS_HOOK_CALL leaderVersion() { return "4.6.0"; }
 
 int BDS_HOOK_CALL leaderDirectInstall(void* target, void* detour,
     void** originalOut, BDS_HookToken* tokenOut) {

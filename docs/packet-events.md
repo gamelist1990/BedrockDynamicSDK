@@ -1,51 +1,73 @@
-# PacketHookとSDKのパケットアクセス
+# PacketHook / Packet IDでの読み書き
 
-## 送信の共通経路
+## Freecamの移動パケット
 
-`BDS_HOOK_PACKET_SEND_TO_SERVER` はプロセス内で1本のHookを共有します。
-各Modは同じ入口を購読し、`NativePacketEvents` でID付きの借用イベントを受け取ります。
-変更・キャンセルは送信前のコールバック中に完了させます。ポインタを別スレッドへ保持しません。
+Freecamは共通の `BDS_HOOK_PACKET_WIRE_SEND` を購読します。
+ここにはバッチ化・圧縮・暗号化より前の「Packet header + payload」が届きます。
+Packet IDを通信ヘッダーから読み、ID19 / 144を `MovementPackets` で編集します。
+移動パケットのC++フィールドオフセット、個別vtable、個別getter/validatorのRVAは不要です。
+旧 `NativeMovementPackets` と両バージョンの `PacketSender.motion` は削除しました。
+
+ゲームとの接続には共通送信HookのRVA/ABIとMSVC x64文字列ABIが必要です。
+`layouts.PacketWire.batch_append` はSDK内での役割名です。Minecraftのシンボル名は未特定です。
+共通Hookはexact-buildの入口ガードと.pdata境界を確認します。
+Hook runtime 4.6以上が必要です。古いruntime ownerが既に選ばれたプロセスでは再起動してください。
+
+## SDK API
+
+- `WirePacket`: `id()`, `rawId()`, サブクライアントID、`payload()`, `replacePayload()`。
+- `WireReader`: byte / bool / unsigned varint32・64 / zigzag / little-endian float / string / 範囲指定読み取り。
+- `WireWriter`: 対応する書き込み。`replacePayload()`で長さが変わる編集も可能です。
+- `PacketWireSendEvent`: `sender()`, `packet()`, `cancel()`。
+- `PacketWireEvents`: 共通Hookへの購読と同期イベントの配信。
 
 ```cpp
-bedrock::NativePacketEvents packets;
-// exact-build ProfileManager adapter内で packets.load(parseNativeProfile(profile.json()))
-// 共有送信Hookのcallback内:
-packets.dispatch(args, [](bedrock::PacketSendEvent& event) {
-    if (event.id() == bedrock::PacketId::PlayerAuthInput) {
-        // SDKのtyped accessorで参照・編集。event.cancel()で送信を中止。
-    }
+// PacketWireEvents::subscribeで登録したBDS_PacketWireArgs callback内:
+bool prepared = packets.dispatch(args, [](bedrock::PacketWireSendEvent& event) {
+    if (event.id() != bedrock::PacketId::MovePlayer) return;
+    bedrock::WireReader reader(event.packet().payload());
+    auto runtimeId = reader.varuint(32);
+    // 独自の編集はWireWriterでpayloadを組み立て、最後にreplacePayload。
+    // 中止する場合はevent.cancel()。
 }, next, frame);
+// prepared=falseならnextは未実行。呼出元が通過/キャンセルを決めます。
 ```
 
-`NativePacketView` は実際のPacket vtableからgetId / isValidを呼びます。
-個別Packetのvtable RVA・getter RVA・validator RVAを起動条件にしません。
-共通ABIのslotとモジュール内関数ポインタを検査し、native呼出しはSEHで保護します。
-送信入口そのものの取得とHook対象の正確な関数入口確認は引き続き必要です。
+コールバックが終わると借用ポインタは無効になります。
+編集対象はSDK所有のコピーです。ゲームの文字列やPacketオブジェクトへ直接書き込みません。
+未編集のパケットは元の引数を渡します。編集時は一時文字列を同期的に渡し、ゲーム側が
+新しい長さを書いてコピーします。圧縮・暗号化・送信自体はゲームが処理します。
 
-## プロトコルとネイティブレイアウト
+## 通信定義
 
-| 情報 | 使用する根拠 |
+[PrismarineJS/minecraft-data 1.26.60](https://github.com/PrismarineJS/minecraft-data/tree/9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60)
+のcommitを固定しています。`data/protocols/bedrock-1.26.60.json` にID、選択した4パケットの
+通信定義、InputData、ソースSHA256を保存しています。
+再生成は `python3 tools/import_bedrock_protocol.py`。
+1.26.51ソースのMovePlayer / PlayerAuthInput / InputData定義も同一で、1.26.52.3の共通Hook候補を別EXEから取得しています。
+
+`MovementPackets` は通信上の順序で読みます。InputDataはzigzag32 enumの配列です。
+位置・移動ベクトル・delta・analog/raw入力を編集し、teleport ackなどの非移動フラグを保持します。
+transaction / stack request / block actionの可変長部分は元のバイト列をそのまま保持します。
+ネストしたアイテムデータの型付き編集はこのcodecの対象外です。
+移動のreset/teleport/rotation、vehicle、不明なフラグ、壊れたデータは編集しません。
+Freecam有効中の編集失敗は送信を止め、Freecam解除・本体復帰へ進みます。
+
+## 実機確認の範囲
+
+この経路は静的解析に基づく候補で、実機の位置固定・解除復帰は未確認です。
+FreecamはsendToServerの同期呼出しに帰属するwireイベントだけを編集します。
+別スレッドへ遅延した送信、サーバー側送信、受信パケットをクライアント送信と推定しません。
+受信Hookは今回のAPIに追加していません。既存のFake応答経路は従来のCommandOutput read Hookです。
+
+`Freecam.log` の5秒ごとのsnapshotに次を出します。
+
+| 項目 | 意味 |
 | --- | --- |
-| Packet ID、通信上のフィールド名・型、InputDataの値 | PrismarineJS/minecraft-data 1.26.60 |
-| Packet共通vtable ABI、C++フィールドのオフセット | 対象EXEの解析とバージョン別windows-x64.json |
-| 編集方針、元の値の保存と復元 | SDK NativeMovementPackets |
+| wire_packets | 対象クライアント送信に帰属した通信パケット数 |
+| wire_without_sender | sendToServerの同期スコープ外の呼出し数 |
+| movement_packet_kinds | 読み取れた移動パケット種別（Move=1 / Auth=2） |
+| wire_movement_rejected | 姿勢読み取りできなかった移動パケット数 |
 
-参照元: https://github.com/PrismarineJS/minecraft-data/tree/9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60
-
-`data/protocols/bedrock-1.26.60.json` は選択した4パケットの通信定義、InputData、
-ソースcommit/SHA256を保持します。`tools/import_bedrock_protocol.py` が
-SDK用のID・フラグ定数も再生成します。通常のDLLビルドと実行時に外部取得は不要です。
-
-この通信定義のInputDataは配列ですが、対象ネイティブ実装は128bitの集合です。
-SDKは確認済みのenum値とネイティブ保存形式を明示的に対応させます。
-
-## Freecam
-
-FreecamはID19と144だけを処理し、座標・フラグのオフセットをMod内に持ちません。
-SDKが元の姿勢を読み、位置固定・移動入力の解除を行います。
-teleport acknowledgement、item interaction、block action、stack requestとそれに対応する所有データは保持します。
-編集の前後にネイティブ検証を通し、不成立なら変更したスカラー値を戻します。
-呼出元は編集失敗したパケットをキャンセルし、Freecamの解除・本体復帰へ進みます。
-
-1.26.52.3で使う移動フラグの集合は従来実装から変更していません。
-1.26.60.5での実機の送信・位置固定・解除復帰は引き続き確認が必要です。
+`movement_packet_kinds=0` の間はFreecamを有効化しません。
+Fake等の既存ネイティブAPIとActor/Cameraのレイアウトは移動パケットの通信codecとは別に残ります。

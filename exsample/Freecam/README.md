@@ -187,20 +187,23 @@ LocalPlayerは所有Tick内で取得し、追加のLocalPlayer直接Hookは設�
 onPlayerLoaded / onCancelJoinGameは未解決で、今回のプロファイルでは購読しません。
 
 実機での飛行・本体座標固定・解除復帰は確認待ちです。
-`Freecam.log` の `ready 1.26.60.5`、`Borion packet source ready`、
+`Freecam.log` の `ready 1.26.60.5`、`Freecam wire PacketHook ready`、
 `freecam-player-pose` と有効化・解除のログを確認してください。
 
 CheckSigの調査Hookが動いている場合は、調査用JSONをcommandsから退避してMinecraftを完全再起動してからFreecamを確認します。
 保存済みresultは残せます。CheckSig.dll自体は共通runtimeの提供元として利用できます。
 
-## 共通PacketHookへの整理
+## Packet IDと通信データでの読み書き
 
-送信入口は共有runtimeのPacketHookを1本使用し、SDKの `PacketSendEvent` が
-`Packet::getId()` のIDで移動パケットを振り分けます。
-Freecamの移動処理は個別vtable RVA・getId/isValidの関数アドレス・シグネチャを要求しません。
-`NativeMovementPackets` がネイティブのフィールドアクセス・妥当性検査・失敗時復元を担当します。
+移動パケットは共有runtime 4.6のpre-batch PacketHookを使います。
+SDKからも移動パケット固有のネイティブ配置を削除し、ID19/144の通信データを `MovementPackets` で読み書きします。
+位置・移動入力を編集し、アイテム操作・ブロック操作・ackなどのデータを保持します。
+通信データのコピーを編集し、ゲームが長さ・バッチ化・圧縮・暗号化を処理します。
 
-PrismarineJS minecraft-dataの1.26.60定義をコミット固定で取り込み、ID・入力フラグ・通信フィールドを参照します。
-通信の可変長整数/optional/arrayの並びから、C++オブジェクトのオフセットを計算することはしません。
-InputDataは通信上array、対象ネイティブオブジェクト内では128bitのビット集合です。
-再生成: `python3 tools/import_bedrock_protocol.py`。詳細は [packet-events.md](../../docs/packet-events.md)。
+定義はPrismarineJS minecraft-dataの固定commitに基づきます。
+共通Hookの入口・ABIとActor/Cameraの配置は引き続きEXEごとの情報が必要です。
+実機未確認です。`Freecam.log` の `wire_packets` / `wire_without_sender` /
+`wire_movement_rejected` / `movement_packet_kinds` で送信経路と読み取り状況を確認できます。
+`movement_packet_kinds=0` の間は有効化しません。
+
+詳細とSDK APIは [packet-events.md](../../docs/packet-events.md)。

@@ -38,7 +38,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_RENDER_LEVEL = 13,
     BDS_HOOK_PACKET_SEND_TO_SERVER = 14,
     BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST = 15,
-    BDS_HOOK_COMMAND_OUTPUT_READ = 16
+    BDS_HOOK_COMMAND_OUTPUT_READ = 16,
+    BDS_HOOK_PACKET_WIRE_SEND = 17
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -51,6 +52,12 @@ typedef struct BDS_MouseArgs {
 typedef struct BDS_CursorArgs { void* self; } BDS_CursorArgs;
 typedef struct BDS_FovArgs { void* self; float input_fov; void* a3; void* a4; float result; } BDS_FovArgs;
 typedef struct BDS_PacketSendArgs { void* sender; void* packet; } BDS_PacketSendArgs;
+// Before batch length-prefixing/compression. bytes is a borrowed const MSVC
+// std::string containing the packet header and payload. Replace the pointer
+// only for the synchronous continuation; the game copies its contents.
+typedef struct BDS_PacketWireArgs {
+    void* stage; const void* bytes; uintptr_t a3; int flags; void* sender;
+} BDS_PacketWireArgs;
 // CommandOutputPacket slot 16: hidden Result<void>* return, stream, context.
 typedef struct BDS_CommandOutputReadArgs {
     void* packet; void* output; void* stream; void* context; void* result;

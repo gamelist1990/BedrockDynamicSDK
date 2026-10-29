@@ -21,7 +21,7 @@ FeaturePath path(Feature f){
     case Feature::Motion:return {"native_motion","state_vector"};
     case Feature::Camera:case Feature::Brightness:case Feature::GameType:return {"native_camera","visual"};
     case Feature::PacketSender:return {"native_packets","sender"};
-    case Feature::MovementPackets:return {"native_packets","motion"};
+    case Feature::PacketWire:case Feature::MovementPackets:return {"layouts","PacketWire"};
     case Feature::TitlePackets:return {"native_packets","title"};
     case Feature::CommandPackets:return {"native_packets","command_request"};
     case Feature::ClientCommands:return {"native_client_commands",nullptr};
@@ -46,7 +46,7 @@ std::string_view featureName(Feature f)noexcept{
     case Feature::Camera:case Feature::Brightness:return "Camera";
     case Feature::GameType:return "Player::setPlayerGameType";
     case Feature::PacketSender:return "PacketSender::sendToServer";
-    case Feature::MovementPackets:return "MovePlayerPacket";
+    case Feature::PacketWire:case Feature::MovementPackets:return "Packet wire bridge";
     case Feature::TitlePackets:return "SetTitlePacket";
     case Feature::CommandPackets:return "CommandRequestPacket";
     case Feature::ClientCommands:return "CommandRegistry";
@@ -106,8 +106,9 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
 #endif
             if(std::string_view{p.root}=="symbols")continue;
 
-            if(node.value("schema",0)!=1||node.value("pointer_size",8)!=8){error="unsupported capability schema: "+std::string(p.root);return false;}
             if(p.child&&(!node.contains(p.child)||!node.at(p.child).is_object())){error=std::string("missing capability layout: ")+p.root+"."+p.child;return false;}
+            const auto& schemaNode=std::string_view{p.root}=="layouts"?node.at(p.child):node;
+            if(schemaNode.value("schema",0)!=1||schemaNode.value("pointer_size",8)!=8){error="unsupported capability schema: "+std::string(p.root);return false;}
             if((f==Feature::World||f==Feature::WorldHeight)&&node.value("revision",0)<3){error="world adapter requires layout revision >=3";return false;}
             if(f==Feature::Camera&&node.at("visual").value("revision",0)<9){error="camera adapter requires visual revision >=9";return false;}
             const auto candidate=[](const nlohmann::json& value){

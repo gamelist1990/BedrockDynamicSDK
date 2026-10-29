@@ -2779,45 +2779,7 @@
         }
       },
       "evidence": "REA/Ghidra ev_f023356f27adb325f3a07f9386a17729b25492b1328ef5bad28ce9a5c448999a; exact getter RVA0x8AB680 reads ClientInstance+0x1E0. Adjacent0x8AB690 is a different function and is NOT used.",
-      "limitations": "The getter is statically identified. The concrete sender object and virtual send slot still require runtime observation.",
-      "motion": {
-        "schema": 1,
-        "status": "candidate",
-        "runtime_verified": false,
-        "auth_input": {
-          "position_offset": 56,
-          "delta_offset": 72,
-          "analog_move_offset": 92,
-          "move_offset": 100,
-          "raw_move_offset": 128,
-          "input_flags_offset": 136,
-          "input_flags_size": 16,
-          "vehicle_offset": 216,
-          "input_flags_storage": "native_bitset128"
-        },
-        "move_player": {
-          "position_offset": 56,
-          "vehicle_offset": 88,
-          "runtime_id_offset": 48,
-          "mode_offset": 80,
-          "on_ground_offset": 81
-        },
-        "evidence": [
-          "Exact executable SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
-          "New native vtables located through getId leaf + getName literal (MovePlayerPacket / PlayerAuthInputPacket) and native virtual slot11 validators. REA evidence saved under PEXData/REA/1.26.6005.0/freecam.",
-          "auth validator reads position+0x38, delta+0x48, analog+0x5C, move+0x64, rawMove+0x80, flags+0x88, vehicle+0xD8; preserves transaction flags34/35/36 and payloads.",
-          "Native field values, body anchoring and server acceptance require new Freecam runtime observations."
-        ],
-        "dispatch": "packet_id",
-        "native_layout_revision": 2,
-        "wire_protocol": {
-          "source": "PrismarineJS/minecraft-data",
-          "commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
-          "version": 2225,
-          "metadata": "data/protocols/bedrock-1.26.60.json",
-          "scope": "packet IDs, wire field names/types, InputData enum; not native memory offsets"
-        }
-      }
+      "limitations": "The getter is statically identified. The concrete sender object and virtual send slot still require runtime observation."
     },
     "CommandRegistry": {
       "schema": 1,
@@ -2997,6 +2959,28 @@
       "is_valid_slot": 11,
       "scope": "native virtual ABI, independent of the wire protocol field ordering",
       "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor. See REA freecam/auth-valid-evidence.json and move-valid-evidence.json; Windows RCX and AL checked in exact PE disassembly."
+    },
+    "PacketWire": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "format": "bedrock_packet_header_and_payload",
+      "abi": "void(stage*, const std::string&, uintptr_t, int)",
+      "batch_append": {
+        "rva": "0x4bf1d0",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "protocol_schema": "movement_array_options_v1",
+      "source": "PrismarineJS/minecraft-data@9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60/protocol.json",
+      "evidence": "REA/Ghidra: common pre-batch append reads an MSVC string, writes varuint byte count, copies the entire packet into BinaryStream, then compression staging. Native symbol name is unknown; batch_append is an SDK bridge role, not a Minecraft symbol. Exact executable identity is target.file_sha256.",
+      "limitations": [
+        "Static candidate; requires observation of Packet ID and client sender attribution at runtime.",
+        "Sender attribution is scoped to synchronous sendToServer; deferred/foreign/server sends are not edited.",
+        "No per-packet C++ fields or per-packet function bindings are used by this bridge."
+      ]
     }
   }
 }

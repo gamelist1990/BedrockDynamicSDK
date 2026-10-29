@@ -9,8 +9,8 @@
 #include <bedrock/game_api.hpp>
 #include <bedrock/native_motion.hpp>
 #include <bedrock/native_packet_sender.hpp>
-#include <bedrock/packet_events.hpp>
-#include <bedrock/native_movement_packets.hpp>
+#include <bedrock/wire_packet_events.hpp>
+#include <bedrock/movement_packets.hpp>
 #include <bedrock/native_brightness.hpp>
 #include <bedrock/native_camera.hpp>
 #include <bedrock/native_game_type.hpp>
@@ -358,7 +358,7 @@ std::mutex borionMutex;
 std::atomic<bool> suppressMovement{},packetReady{};
 std::atomic<void*> observedSender{};
 std::atomic<unsigned> movementPacketsSeen{},blockedPackets{};
-BDS_HookToken packetToken{};
+BDS_HookToken packetToken{},wireToken{};
 void* subscribedPacketTarget{};
 std::atomic<void*> capturedSender{},capturedSendTarget{};
 std::atomic<std::uint64_t> capturedSendEpoch{};
@@ -372,8 +372,8 @@ bool inText(void* pointer) noexcept {
     const auto p=reinterpret_cast<std::uintptr_t>(pointer);return p>=moduleTextBegin&&p+16>=p&&p+16<moduleTextEnd;
 }
 
-bedrock::NativePacketEvents packetEvents;
-bedrock::NativeMovementPackets movementPackets;
+bedrock::PacketWireEvents packetEvents;
+bedrock::MovementPackets movementPackets;
 struct PacketPose {Vec position{};Clock::time_point seen{};std::uint64_t runtime{};std::uint8_t onGround{};};
 struct MovementAnchor {std::uint64_t epoch{},runtime{};std::array<PacketPose,2> poses{};};
 // Serialize only scalar packet edits and activation/restoration phases. Never
@@ -382,10 +382,11 @@ std::mutex packetMotionMutex,packetPoseMutex;
 MovementAnchor observedPacketPoses;
 std::atomic<std::shared_ptr<const MovementAnchor>> movementAnchor;
 std::atomic<unsigned> anchoredPackets{},interactionPackets{};
+std::atomic<unsigned> wirePacketsSeen{},wireMovementRejected{},wireWithoutSender{};
 
-void observeMotionPose(bedrock::NativePacketView packet,bool auth) noexcept {
+void observeMotionPose(const bedrock::WirePacket& packet,bool auth) noexcept {
     bedrock::MovementPacketPose value;
-    if(!movementPackets.pose(packet,value))return;
+    if(!movementPackets.pose(packet,value)){wireMovementRejected.fetch_add(1);return;}
     PacketPose pose{value.position,Clock::now(),value.runtimeId,value.onGround};
     const auto e=epoch.load();
     std::unique_lock lock(packetPoseMutex,std::try_to_lock);if(!lock)return;
@@ -407,10 +408,9 @@ bool prepareMovementAnchor(std::uint64_t runtime,Vec position) {
     if(!ready)return false;
     anchor.runtime=runtime;movementAnchor.store(std::make_shared<const MovementAnchor>(anchor));return true;
 }
-void packetEvent(bedrock::PacketSendEvent& event,const std::shared_ptr<const MovementAnchor>& enteringAnchor) noexcept {
-    const auto packet=event.packet();
-    if(packet.rawId()<0) {if(suppressMovement.load()){disable(ReadFailed);event.cancel();}return;}
-    if(!bedrock::NativeMovementPackets::handles(event.id()))return;
+void packetEvent(bedrock::PacketWireSendEvent& event,const std::shared_ptr<const MovementAnchor>& enteringAnchor) noexcept {
+    auto& packet=event.packet();
+    if(!bedrock::MovementPackets::handles(event.id()))return;
     const bool auth=event.id()==bedrock::PacketId::PlayerAuthInput;
     std::unique_lock phase(packetMotionMutex);
     const auto anchor=enteringAnchor?enteringAnchor:movementAnchor.load();
@@ -425,10 +425,18 @@ void packetEvent(bedrock::PacketSendEvent& event,const std::shared_ptr<const Mov
     anchoredPackets.fetch_add(1);
 }
 void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
-    const auto enteringAnchor=movementAnchor.load();
-    auto& args=*static_cast<BDS_PacketSendArgs*>(raw);
+    // Runtime 4.6 attributes synchronous wire events to this native sender.
+    next(frame,raw);
+}
+void BDS_HOOK_CALL wireSubscriber(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
+    auto& args=*static_cast<BDS_PacketWireArgs*>(raw);
+    if(!args.sender){wireWithoutSender.fetch_add(1);next(frame,raw);return;}
     if(args.sender!=observedSender.load()){next(frame,raw);return;}
-    packetEvents.dispatch(args,[&](bedrock::PacketSendEvent& event){packetEvent(event,enteringAnchor);},next,frame);
+    wirePacketsSeen.fetch_add(1);
+    const auto enteringAnchor=movementAnchor.load();
+    if(!packetEvents.dispatch(args,[&](bedrock::PacketWireSendEvent& event){packetEvent(event,enteringAnchor);},next,frame)){
+        if(suppressMovement.load()){disable(ReadFailed);blockedPackets.fetch_add(1);}else next(frame,raw);
+    }
 }
 void observePacketSender(void* instance) noexcept {
     if(stop.load())return;
@@ -449,6 +457,7 @@ bool installPacketSource() {
         const auto* entry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(target),&image,nullptr);
         if(!entry||image+entry->BeginAddress!=reinterpret_cast<DWORD64>(target))return false;
     }
+    if(!wireToken&&!packetEvents.subscribe(wireSubscriber,nullptr,&wireToken))return false;
     if(packetToken) {
         if(target!=subscribedPacketTarget)return false;
         observedSender.store(sender);packetReady.store(capturedEpoch==epoch.load());return packetReady.load();
@@ -456,7 +465,7 @@ bool installPacketSource() {
     observedSender.store(sender);
     if(!BDS_HookSubscribe(BDS_HOOK_PACKET_SEND_TO_SERVER,target,packetSubscriber,nullptr,&packetToken))return false;
     subscribedPacketTarget=target;packetReady.store(capturedEpoch==epoch.load());
-    log("Borion packet source ready: sendToServer RVA="+std::to_string(reinterpret_cast<std::uintptr_t>(target)-reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)))+" [runtime-derived vtable slot; candidate]");
+    log("Freecam wire PacketHook ready [Packet ID, pre-batch read/write]; sender RVA="+std::to_string(reinterpret_cast<std::uintptr_t>(target)-reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)))+" [runtime-derived vtable slot; candidate]");
     return true;
 }
 std::uint64_t actorRuntime(void* actor) noexcept {
@@ -517,7 +526,9 @@ void borionTick(const bedrock::LevelTickEvent&) {
                 {"position",{sample->position.x,sample->position.y,sample->position.z}},
                 {"velocity",{sample->velocity.x,sample->velocity.y,sample->velocity.z}},
                 {"fall_distance",sample->fallDistance},{"sender_ready",packetReady.load()},
-                {"movement_packet_kinds",movementPacketsSeen.load()}}).dump());
+                {"movement_packet_kinds",movementPacketsSeen.load()},{"wire_packets",wirePacketsSeen.load()},
+                {"wire_movement_rejected",wireMovementRejected.load()},{"wire_without_sender",wireWithoutSender.load()},
+                {"wire_bridge_runtime_verified",false}}).dump());
             else log("Freecam waiting: local Actor / StateVector / AABB / rotation / FallDistance snapshot unavailable");
         }
     }
@@ -631,7 +642,7 @@ void prepareProfile(const std::string& profile){
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
-    senderLayout.load(j);packetEvents.load(j);movementPackets.load(j);
+    senderLayout.load(j);packetEvents.load(j);
     if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0)
         throw std::runtime_error("unsupported Borion native actor layout");
 
@@ -741,7 +752,7 @@ DWORD WINAPI start(void*){
         if(!loadConfig(path))throw std::runtime_error("initial config invalid");
         std::string error;bedrock::ProfileManager profiles;
         const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::Camera,bedrock::Feature::Motion,
-            bedrock::Feature::PacketSender,bedrock::Feature::MovementPackets,bedrock::Feature::WorldEvents};
+            bedrock::Feature::PacketSender,bedrock::Feature::PacketWire,bedrock::Feature::WorldEvents};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
         if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
             try{prepareProfile(selected.json());if(!nativeCamera.load(selected,failure))return false;

@@ -10,7 +10,7 @@
 #include <vector>
 namespace bedrock {
 enum class Feature { Input, Gameplay, LevelTick, NameTags, Fov, Keyboard, Actors, Items, PlayerIdentity, World, Motion, Camera,
-    PacketSender, MovementPackets, TitlePackets, CommandPackets, ClientCommands, Gui, WorldRender, WorldEvents, WorldHeight, Brightness, GameType };
+    PacketSender, PacketWire, MovementPackets, TitlePackets, CommandPackets, ClientCommands, Gui, WorldRender, WorldEvents, WorldHeight, Brightness, GameType };
 std::string_view featureName(Feature feature) noexcept;
 class ProfileRequirements {
     std::vector<Feature> features_;
