@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v8 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v9 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -56,13 +56,10 @@ DWORD WINAPI start(void *) noexcept {
             std::this_thread::sleep_for(std::chrono::seconds{2});
             const auto current = packs->status();
             if (current.settingsOpened != previous.settingsOpened ||
-                current.preGameOverrides != previous.preGameOverrides ||
                 current.failures != previous.failures ||
                 current.settingsExited != previous.settingsExited ||
                 current.applyEvents != previous.applyEvents ||
-                current.reloadCalls != previous.reloadCalls ||
                 current.stackCompositions != previous.stackCompositions ||
-                current.languageSubpacksUpdated != previous.languageSubpacksUpdated ||
                 current.globalStackIncluded != previous.globalStackIncluded ||
                 current.applyNavigations != previous.applyNavigations ||
                 current.liveApplications != previous.liveApplications ||
@@ -75,19 +72,13 @@ DWORD WINAPI start(void *) noexcept {
                 current.geometryReloaded != previous.geometryReloaded ||
                 current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
-                current.levelBuildersRecreated != previous.levelBuildersRecreated ||
-                current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
-                current.graphicsCacheResets != previous.graphicsCacheResets ||
-                current.customResourcesRebuilt != previous.customResourcesRebuilt ||
-                current.blockClientDataRebuilt != previous.blockClientDataRebuilt) {
+                current.levelBuildersRecreated != previous.levelBuildersRecreated) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
                     << " apply_events=" << current.applyEvents
-                    << " reload_calls=" << current.reloadCalls
                     << " stack_compositions=" << current.stackCompositions
                     << " global_stack_included=" << current.globalStackIncluded
-                    << " language_subpacks_updated=" << current.languageSubpacksUpdated
                     << " apply_navigations=" << current.applyNavigations
                     << " live_applications=" << current.liveApplications
                     << " in_world_apply_events=" << current.inWorldApplyEvents
@@ -100,10 +91,6 @@ DWORD WINAPI start(void *) noexcept {
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
                     << " resource_wait_frames=" << current.resourceWaitFrames
                     << " level_builders_recreated=" << current.levelBuildersRecreated
-                    << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
-                    << " graphics_cache_resets=" << current.graphicsCacheResets
-                    << " custom_resources_rebuilt=" << current.customResourcesRebuilt
-                    << " block_client_data_rebuilt=" << current.blockClientDataRebuilt
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

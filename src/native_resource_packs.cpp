@@ -10,7 +10,6 @@
 #include <bedrock/detail/owned_msvc_string.hpp>
 #include <bedrock/detail/owned_native_callback.hpp>
 #include <memory>
-#include <vector>
 #include <intrin.h>
 #include <bedrock/detail/pending_terrain_refresh.hpp>
 
@@ -30,14 +29,13 @@ struct NativeResourcePacks::Binding {
     using ScreenName = void *(__fastcall *)(void *, void *);
     using LocalPlayer = void *(__fastcall *)(void *);
     using ClientGame = void *(__fastcall *)(void *);
-    using GraphicsGetter = void*(__fastcall *)(const void *);
     using GeometryReload = void(__fastcall *)(void *, bool);
     using AtlasUpdate = void(__fastcall *)(void *, const void *, bool);
     using Deallocate = void(__fastcall *)(void *);
     void *initTarget{};
     void *ctorTarget{};
     void *preGameTarget{};
-    void *exitTarget{}, *eventTarget{}, *composeTarget{}, *reloadTarget{}, *languageTarget{};
+    void *exitTarget{}, *eventTarget{}, *composeTarget{};
     void *navigateTarget{}, *eventDestroyTarget{};
     void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
     Initialize frame{};
@@ -45,19 +43,7 @@ struct NativeResourcePacks::Binding {
     Event notifyClientResources{};
     ClientGame clientRenderer{};
     Initialize resumeRenderer{}, drainRendererTasks{};
-    Event initializeBlockGraphics{}, cachedGraphics{};
-    GraphicsGetter blockGraphics{};
-    void *blockGraphicsTarget{}, *cachedGraphicsTarget{};
-    std::size_t rendererTasksOffset{}, cachedGraphicsOffset{};
-    std::atomic<bool> freshBlockGraphics{};
-    Initialize initializeBlockGeometry{};
-    Event initializeBlockMaterials{}, rebuildBlockClientData{}, visitBlockTypes{};
-    void *blockRegistry{};
-    std::array<std::size_t, 10> customOffsets{};
-    std::uint32_t clientDataReadyMask{};
-    std::atomic<std::uint64_t> customResourcesRebuilt{}, blockClientDataRebuilt{};
-    std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{};
-    std::size_t rendererListenerOffset{}, rendererResumeSlotOffset{};
+    std::size_t rendererTasksOffset{}, rendererListenerOffset{}, rendererResumeSlotOffset{};
     std::atomic<std::uint64_t> levelBuildersRecreated{};
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
@@ -77,7 +63,6 @@ struct NativeResourcePacks::Binding {
     Exit exit{};
     Event event{};
     Compose compose{};
-    Initialize reload{}, languageUpdate{};
     Initialize initialize{};
     Construct construct{};
     Predicate preGame{};
@@ -90,11 +75,11 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 14> tokens{};
+    std::array<BDS_HookToken, 10> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
-    std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, languageUpdates{}, globalIncluded{};
+    std::atomic<std::uint64_t> exits{}, applyEvents{}, compositions{}, globalIncluded{};
     std::atomic<std::uint64_t> navigations{}, liveApplications{}, inWorldEvents{};
     std::atomic<std::uint64_t> gameGateOverrides{};
     std::mutex policyMutex;
@@ -155,47 +140,6 @@ struct NativeResourcePacks::Binding {
         if (state.pendingRefresh.complete(game))
             ++state.terrainCompleted;
     }
-    static bool &readingBlockGraphics() {
-        static thread_local bool value{};
-        return value;
-    }
-    static void *__fastcall onBlockGraphics(const void *block) {
-        auto &state = *active().load(std::memory_order_acquire);
-        const bool previous = readingBlockGraphics();
-        struct Restore {
-            bool previous;
-            ~Restore() { readingBlockGraphics() = previous; }
-        } restore{previous};
-        readingBlockGraphics() = true;
-        return state.blockGraphics(block);
-    }
-    static bool clearGraphics(void *data, std::size_t offset, void *&previous) noexcept {
-        __try {
-            auto *slot = reinterpret_cast<void *volatile *>(static_cast<std::byte *>(data) + offset);
-            // Cleared entries dominate the mesh hot path. Avoid a locked RMW
-            // on an already-null pointer shared by many builder workers.
-            if (!*slot) {
-                previous = nullptr;
-                return true;
-            }
-            previous = InterlockedExchangePointer(slot, nullptr);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    }
-    static void __fastcall onCachedGraphics(void *capture, void *data) {
-        auto &state = *active().load(std::memory_order_acquire);
-        // The same tiny field-reader is folded into other callers. Restrict
-        // invalidation to BlockGraphics::getForBlock, matching the source mod.
-        if (readingBlockGraphics() && state.enabled.load(std::memory_order_acquire) &&
-            state.freshBlockGraphics.load(std::memory_order_acquire)) {
-            void *previous{};
-            if (!clearGraphics(data, state.cachedGraphicsOffset, previous))
-                ++state.failures;
-            else if (previous)
-                ++state.graphicsCacheResets;
-        }
-        state.cachedGraphics(capture, data);
-    }
     void *primaryClient(void *game) const noexcept {
         // Borrow the primary map entry only during startFrame on its owning
         // thread. This is the same key-zero lookup as the native App getter.
@@ -216,111 +160,6 @@ struct NativeResourcePacks::Binding {
         return native_profile::read(game, loaderOffset, loader) && loader &&
                native_profile::read(loader, loaderReadyOffset, ready) && ready == 1 &&
                native_profile::read(loader, loaderOutstandingOffset, outstanding) && outstanding == 0;
-    }
-    struct BlockRefreshPlan {
-        struct Type { void *legacy; std::vector<void *> blocks; };
-        Binding *binding;
-        bool valid{true};
-        std::vector<Type> types;
-    };
-    static void __fastcall collectBlockType(void *opaque, void *legacy) {
-        auto &plan = *static_cast<BlockRefreshPlan *>(opaque);
-        if (!plan.valid)
-            return;
-        auto &state = *plan.binding;
-        void **begin{}, **end{};
-        if (plan.types.size() >= 65536 ||
-            !native_profile::read(legacy, state.customOffsets[7], begin) ||
-            !native_profile::read(legacy, state.customOffsets[8], end)) {
-            plan.valid = false;
-            return;
-        }
-        const auto first = reinterpret_cast<std::uintptr_t>(begin);
-        const auto last = reinterpret_cast<std::uintptr_t>(end);
-        if (last < first || (last - first) % sizeof(void *) ||
-            (last - first) / sizeof(void *) > 262144) {
-            plan.valid = false;
-            return;
-        }
-        BlockRefreshPlan::Type type{legacy, {}};
-        for (auto cursor = first; cursor != last; cursor += sizeof(void *)) {
-            void *block{};
-            std::uint32_t flags{};
-            if (!native_profile::read(reinterpret_cast<void *>(cursor), 0, block) ||
-                (block && !native_profile::read(block, state.customOffsets[9], flags))) {
-                plan.valid = false;
-                return;
-            }
-            if (block)
-                type.blocks.push_back(block);
-        }
-        plan.types.push_back(std::move(type));
-    }
-    struct BlockRebuildContext {
-        Binding *binding;
-        std::array<void *, 8> *native;
-    };
-    static void __fastcall rebuildBlockType(void *opaque, void *legacy) {
-        auto &context = *static_cast<BlockRebuildContext *>(opaque);
-        context.binding->rebuildBlockClientData(context.native->data(), legacy);
-    }
-    bool rebuildCustomResources(void *game, void *experiments) {
-        // Borrow current game-owned groups for this synchronous frame only.
-        // The native constructor's callback captures these seven references;
-        // it owns replacement client data and releases the previous data itself.
-        std::array<void *, 8> context{};
-        void *atlas{};
-        if (!native_profile::read(game, customOffsets[0], context[1]) || !context[1] ||
-            !native_profile::read(game, customOffsets[1], context[2]) || !context[2] ||
-            !native_profile::read(game, customOffsets[2], context[3]) || !context[3] ||
-            !native_profile::read(game, terrainAtlasOffset, atlas) || !atlas ||
-            !native_profile::read(atlas, customOffsets[3], context[4]) || !context[4] ||
-            !native_profile::read(context[1], customOffsets[4], context[5]) || !context[5] ||
-            !native_profile::read(game, customOffsets[5], context[7]) || !context[7])
-            return false;
-        context[6] = experiments;
-        // Validate every permutation before changing the group or ready flags.
-        // Native registry traversal also preserves its normal component-cache pass.
-        BlockRefreshPlan plan{this, true, {}};
-        using Visitor = void(__fastcall *)(void *, void *);
-        struct CallbackRef { Visitor invoke; void *context; };
-        CallbackRef visitor{&collectBlockType, &plan};
-        visitBlockTypes(blockRegistry, &visitor);
-        if (!plan.valid || plan.types.empty())
-            return false;
-        initializeBlockGeometry(context[1]);
-        initializeBlockMaterials(context[5], context[4]);
-        for (const auto &type : plan.types) {
-            for (auto *block : type.blocks) {
-                auto *flags = reinterpret_cast<std::uint32_t *>(
-                    static_cast<std::byte *>(block) + customOffsets[9]);
-                // Only the native client-data ready bit is invalidated. Other
-                // Block flags and the old owned accessor remain intact until
-                // the native replacement callback exchanges/destroys it.
-                *flags &= ~clientDataReadyMask;
-            }
-        }
-        // Match constructor ordering: initialize each type, then let the native
-        // traversal update/deduplicate that type's permutation component caches.
-        BlockRebuildContext rebuild{this, &context};
-        CallbackRef rebuildVisitor{&rebuildBlockType, &rebuild};
-        visitBlockTypes(blockRegistry, &rebuildVisitor);
-        for (const auto &type : plan.types) {
-            for (auto *block : type.blocks) {
-                std::uint32_t flags{};
-                void *accessor{};
-                if (!native_profile::read(block, customOffsets[9], flags) ||
-                    !(flags & clientDataReadyMask) ||
-                    !native_profile::read(block, customOffsets[6], accessor) || !accessor)
-                    return false;
-                ++blockClientDataRebuilt;
-            }
-        }
-        ++customResourcesRebuilt;
-        // All permutations now carry fresh native graphics/material references.
-        // Do not keep clearing these freshly rebuilt references every render.
-        freshBlockGraphics.store(false, std::memory_order_release);
-        return true;
     }
     void refreshAtFrame(void *game) {
         if (!enabled.load(std::memory_order_acquire) ||
@@ -349,51 +188,34 @@ struct NativeResourcePacks::Binding {
             ++failures;
             return;
         }
-        // Full animation/geometry reload also rebuilds actor renderers, post-initializes
-        // client render resources, invalidates ECS render data, and rebinds
-        // each live LevelRenderer to the new resource definition groups.
+        auto *renderer = clientRenderer(client);
+        if (!renderer) {
+            ++failures;
+            return;
+        }
+        auto *listener = static_cast<std::byte *>(renderer) + rendererListenerOffset;
+        void *vtable{}, *resumeEntry{}, *tasks{};
+        if (!native_profile::read(listener, 0, vtable) ||
+            !native_profile::read(vtable, rendererResumeSlotOffset, resumeEntry) ||
+            resumeEntry != reinterpret_cast<void *>(resumeRenderer) ||
+            !native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
+            ++failures;
+            return;
+        }
+        // Stop existing mesh work before changing resources. The Windows native
+        // in-place texture reload preserves BlockGraphics ownership/pointers, so
+        // neither initBlocks nor cached-graphics hooks are needed.
+        drainRendererTasks(tasks);
+        // Retain the Windows model repair confirmed by the user's v6 tests.
         geometryReload(game, true);
         ++geometryReloaded;
-        // Native per-client callback obtains/releases the current nonowner
-        // definition-group reference itself. Its only capture is Game at +8.
         std::array<void *, 2> closure{nullptr, game};
         notifyClientResources(closure.data(), client);
         ++clientDefinitionsReloaded;
         reloadBlockTextures(manager, static_cast<std::byte *>(data) + experimentsOffset);
         ++blockTexturesReloaded;
-        // Dirty chunks alone reuse the existing tessellation builders. Rebuild
-        // them after block texture references have been refreshed. The native
-        // LevelRenderer resume routine first drains its TaskGroup, obtains the
-        // current gameplay graphics resources and recreates LevelBuilder workers.
-        auto *renderer = clientRenderer(client);
-        if (renderer) {
-            auto *listener = static_cast<std::byte *>(renderer) + rendererListenerOffset;
-            void *vtable{}, *resumeEntry{};
-            if (native_profile::read(listener, 0, vtable) &&
-                native_profile::read(vtable, rendererResumeSlotOffset, resumeEntry) &&
-                resumeEntry == reinterpret_cast<void *>(resumeRenderer)) {
-                void *tasks{};
-                if (!native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
-                    ++failures;
-                    return;
-                }
-                // Drain old mesh jobs before initBlocks destroys owned graphics.
-                drainRendererTasks(tasks);
-                freshBlockGraphics.store(true, std::memory_order_release);
-                initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
-                ++blockGraphicsRebuilt;
-                if (!rebuildCustomResources(game, static_cast<std::byte *>(data) + experimentsOffset)) {
-                    ++failures;
-                    return;
-                }
-                resumeRenderer(listener);
-                ++levelBuildersRecreated;
-            } else {
-                ++failures;
-            }
-        } else {
-            ++failures;
-        }
+        resumeRenderer(listener);
+        ++levelBuildersRecreated;
         refreshClient(nullptr, client);
         ++clientsRefreshed;
     }
@@ -473,18 +295,6 @@ struct NativeResourcePacks::Binding {
         // throughout the game's queued stack update and reload notifications.
         ApplyScope scope(client);
         state.event(closure, model);
-    }
-    static void __fastcall onReload(void *self) {
-        auto &state = *active().load(std::memory_order_acquire);
-        if (state.enabled.load(std::memory_order_acquire))
-            ++state.reloads;
-        state.reload(self);
-    }
-    static void __fastcall onLanguageUpdate(void *self) {
-        auto &state = *active().load(std::memory_order_acquire);
-        state.languageUpdate(self);
-        if (state.enabled.load(std::memory_order_acquire))
-            ++state.languageUpdates;
     }
     static std::uint64_t __fastcall onCompose(void *self, void *full, void *global, void *level) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -631,7 +441,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v8")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v9")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -668,8 +478,6 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->eventTarget = get("apply_stack_event", "void __fastcall(void* closure, void* model)");
         next->composeTarget = get("compose_full_stack",
                                    "uint64_t __fastcall(ResourcePackManager*, void*, void*, void*)");
-        next->reloadTarget = get("reload_stack", "void __fastcall(ResourcePackManager*)");
-        next->languageTarget = get("update_language_subpacks", "void __fastcall(ResourcePackManager*)");
         next->closureOwnerOffset = native_profile::number(layout.at("exit_closure_owner_offset"));
         next->settingsModelOffset = native_profile::number(layout.at("settings_model_offset"));
         next->modelClientOffset = native_profile::number(layout.at("model_client_offset"));
@@ -685,45 +493,14 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
         next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
         next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
-        next->blockGraphicsTarget = get("get_block_graphics", "void* __fastcall(const void* block)");
-        next->cachedGraphicsTarget = get("read_cached_graphics", "void __fastcall(void* capture, void* clientData)");
-        next->initializeBlockGraphics = reinterpret_cast<Binding::Event>(get("initialize_block_graphics", "void __fastcall(ResourcePackManager*, const void* experiments)"));
         next->drainRendererTasks = reinterpret_cast<Binding::Initialize>(get("drain_renderer_tasks", "void __fastcall(TaskGroup*)"));
-        next->initializeBlockGeometry = reinterpret_cast<Binding::Initialize>(get("initialize_block_geometry", "void __fastcall(void* blockGeometryGroup)"));
-        next->initializeBlockMaterials = reinterpret_cast<Binding::Event>(get("initialize_block_materials", "void __fastcall(void* materials, void* atlasItems)"));
-        next->rebuildBlockClientData = reinterpret_cast<Binding::Event>(get("rebuild_block_client_data", "void __fastcall(void* context, void* blockType)"));
-        next->visitBlockTypes = reinterpret_cast<Binding::Event>(get("visit_block_types", "void __fastcall(void* registry, void* callbackRef)"));
-        const auto &custom = layout.at("custom_blocks");
-        auto *registryReference = static_cast<std::byte *>(
-            native_profile::checked(root, custom.at("registry_reference")));
-        std::int32_t registryDisplacement{};
-        if (!native_profile::read(registryReference, 3, registryDisplacement))
-            throw std::runtime_error("unreadable block registry reference");
-        next->blockRegistry = registryReference + 7 + registryDisplacement;
-        constexpr std::array<const char *, 10> customKeys{
-            "game_block_geometry", "game_block_culling", "game_geometry", "atlas_items",
-            "geometry_materials", "game_texture_shifts", "block_accessor",
-            "type_blocks_begin", "type_blocks_end", "block_flags"};
-        for (std::size_t i = 0; i != customKeys.size(); ++i) {
-            next->customOffsets[i] = native_profile::number(custom.at(customKeys[i]));
-            if (!next->customOffsets[i] || next->customOffsets[i] > 0x10000 ||
-                next->customOffsets[i] % (i == 9 ? alignof(std::uint32_t) : alignof(void *)))
-                throw std::runtime_error("invalid custom block resource layout");
-        }
-        next->clientDataReadyMask = native_profile::number(custom.at("client_data_ready_mask"));
-        if (next->clientDataReadyMask != 2 || native_profile::number(custom.at("context_bytes")) != 8 * sizeof(void *))
-            throw std::runtime_error("unsupported custom block resource ABI");
-        for (const auto &guard : custom.at("guards"))
-            native_profile::checked(root, guard);
         next->resumeRenderer = reinterpret_cast<Binding::Initialize>(get("resume_renderer", "void __fastcall(AppPlatformListener*)"));
         // Check the callee reached by the native resume routine too.
         get("recreate_builders", "void __fastcall(LevelBuilder*, void* graphicsResources)");
         const auto &renderer = layout.at("level_renderer");
         next->rendererTasksOffset = native_profile::number(renderer.at("task_group_offset"));
-        next->cachedGraphicsOffset = native_profile::number(layout.at("block_client_graphics_offset"));
-        if (next->rendererTasksOffset > 0x10000 || next->rendererTasksOffset % sizeof(void *) ||
-            next->cachedGraphicsOffset > 0x1000 || next->cachedGraphicsOffset % sizeof(void *))
-            throw std::runtime_error("invalid block graphics cache layout");
+        if (next->rendererTasksOffset > 0x10000 || next->rendererTasksOffset % sizeof(void *))
+            throw std::runtime_error("invalid renderer task layout");
         next->rendererListenerOffset = native_profile::number(renderer.at("app_listener_offset"));
         next->rendererResumeSlotOffset = native_profile::number(renderer.at("resume_slot_offset"));
         if (next->rendererListenerOffset > 0x1000 || next->rendererListenerOffset % sizeof(void *) ||
@@ -797,13 +574,11 @@ bool NativeResourcePacks::install(std::string &error) {
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
-        !binding_->reloadTarget || !binding_->languageTarget ||
         !binding_->navigateTarget || !binding_->eventDestroy ||
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->geometryReload || !binding_->notifyClientResources ||
         !binding_->clientRenderer || !binding_->resumeRenderer || !binding_->drainRendererTasks ||
-        !binding_->initializeBlockGraphics || !binding_->blockGraphicsTarget || !binding_->cachedGraphicsTarget ||
         !binding_->levelData || !binding_->gamePacks || !binding_->reloadBlockTextures || !binding_->refreshClient) {
         error = "resource pack profile has not been loaded";
         return false;
@@ -836,24 +611,16 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->event), &binding_->tokens[4]) &&
         BDS_HookDirectInstall(binding_->composeTarget, reinterpret_cast<void *>(&Binding::onCompose),
                               reinterpret_cast<void **>(&binding_->compose), &binding_->tokens[5]) &&
-        BDS_HookDirectInstall(binding_->reloadTarget, reinterpret_cast<void *>(&Binding::onReload),
-                              reinterpret_cast<void **>(&binding_->reload), &binding_->tokens[6]) &&
-        BDS_HookDirectInstall(binding_->languageTarget, reinterpret_cast<void *>(&Binding::onLanguageUpdate),
-                              reinterpret_cast<void **>(&binding_->languageUpdate), &binding_->tokens[7]) &&
         BDS_HookDirectInstall(binding_->navigateTarget,
                               reinterpret_cast<void *>(&Binding::onNavigateApply),
-                              reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[8]) &&
+                              reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[6]) &&
         BDS_HookDirectInstall(binding_->gameInGameTarget,
                               reinterpret_cast<void *>(&Binding::onGameInGame),
-                              reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[9]) &&
+                              reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[7]) &&
         BDS_HookDirectInstall(binding_->atlasTarget, reinterpret_cast<void *>(&Binding::onAtlasUpdate),
-                              reinterpret_cast<void **>(&binding_->atlasUpdate), &binding_->tokens[10]) &&
+                              reinterpret_cast<void **>(&binding_->atlasUpdate), &binding_->tokens[8]) &&
         BDS_HookDirectInstall(binding_->frameTarget, reinterpret_cast<void *>(&Binding::onStartFrame),
-                              reinterpret_cast<void **>(&binding_->frame), &binding_->tokens[11]) &&
-        BDS_HookDirectInstall(binding_->blockGraphicsTarget, reinterpret_cast<void *>(&Binding::onBlockGraphics),
-                              reinterpret_cast<void **>(&binding_->blockGraphics), &binding_->tokens[12]) &&
-        BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
-                              reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[13]);
+                              reinterpret_cast<void **>(&binding_->frame), &binding_->tokens[9]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -869,14 +636,12 @@ bool NativeResourcePacks::install(std::string &error) {
 NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),
             binding_->failures.load(), binding_->exits.load(), binding_->applyEvents.load(),
-            binding_->reloads.load(), binding_->compositions.load(), binding_->languageUpdates.load(),
+            binding_->compositions.load(),
             binding_->globalIncluded.load(), binding_->navigations.load(),
             binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load(),
             binding_->terrainCompleted.load(), binding_->blockTexturesReloaded.load(),
             binding_->clientsRefreshed.load(), binding_->refreshCancelled.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
-            binding_->resourceWaitFrames.load(), binding_->levelBuildersRecreated.load(),
-            binding_->blockGraphicsRebuilt.load(), binding_->graphicsCacheResets.load(),
-            binding_->customResourcesRebuilt.load(), binding_->blockClientDataRebuilt.load()};
+            binding_->resourceWaitFrames.load(), binding_->levelBuildersRecreated.load()};
 }
 } // namespace bedrock

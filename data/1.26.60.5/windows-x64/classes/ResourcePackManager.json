@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v8",
+      "adapter": "windows-live-reload-v9",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -44,9 +44,6 @@
         "compose_full_stack": {
           "symbol": "ResourcePackManager::composeFullStack"
         },
-        "reload_stack": {
-          "symbol": "ResourcePackManager::_composeFullStack"
-        },
         "navigate_apply_packs": {
           "symbol": "MainMenuScreenModel::navigateToApplyResourcePacksScreen"
         },
@@ -61,9 +58,6 @@
         },
         "on_full_stack_invalid": {
           "symbol": "MinecraftGame::onFullPackStackInvalid"
-        },
-        "update_language_subpacks": {
-          "symbol": "ResourcePackManager::_updateLanguageSubpacks"
         },
         "client_level": {
           "symbol": "ClientInstance::getLevel"
@@ -101,32 +95,11 @@
         "recreate_builders": {
           "symbol": "LevelBuilder::recreateBuilders"
         },
-        "get_block_graphics": {
-          "symbol": "BlockGraphics::getForBlock"
-        },
-        "read_cached_graphics": {
-          "symbol": "BlockGraphics::_readCachedClientGraphics"
-        },
-        "initialize_block_graphics": {
-          "symbol": "BlockGraphics::initBlocks"
-        },
         "drain_renderer_tasks": {
           "symbol": "TaskGroup::flush"
-        },
-        "initialize_block_geometry": {
-          "symbol": "BlockGeometry::Group::initialize"
-        },
-        "initialize_block_materials": {
-          "symbol": "ClientBlockPipeline::MaterialRepository::initialize"
-        },
-        "rebuild_block_client_data": {
-          "symbol": "LevelRenderer::_initializeBlockTypeClientData"
-        },
-        "visit_block_types": {
-          "symbol": "BlockTypeRegistry::forEachBlock"
         }
       },
-      "evidence": "v6 user confirms player model repaired and geometry_reloaded/client_definitions_reloaded=1, but screenshots show custom-geometry atlas fragments after all stages; newly placed blocks also wrong. v7 retains v6 and adds native LevelRenderer onAppResumed after block UV updates, before all-chunk dirty callback, to drain tasks and recreate LevelBuilder workers rather than reusing old tessellation builders. Whether this also repairs server custom-material UV snapshots is not runtime established. No direct client component-memory patch or server-manager merge. Final v7 also ports the previously omitted full initBlocks + scoped lazy getForBlock cached-pointer clearing from the Android mod. TaskGroup is drained before old owned graphics are destroyed. User v7 build f0f23cf reports custom blocks still wrong despite all refresh counters. v8 reconstructs the separate BlockGeometry group/material initialization and native per-type client-data replacement observed in LevelRenderer constructor; custom UV rebuilding is runtime unverified.",
+      "evidence": "User reports v8 2437435 crashes after block_graphics_rebuilt=1, before custom_resources_rebuilt/block_client_data_rebuilt. Exact faulting instruction is unknown without a crash dump. v9 removes all v8 registry traversal, group/material initialization, raw Block ready-bit mutation and native per-type client-data reconstruction. Rechecked attached Android v2.3.1 SHA0995969634128e548ac912f54d92e8b22f99badb0d015ec827a1fbd56a6ac4ee: finalize calls initBlocks and getForBlock hook clears one cached graphics pointer, camera-frame hook resets clouds and invokes preDimensionChanged; no v8-style global client-data regeneration. Windows v9 uses the existing in-place reloadBlockTextures path instead of destroying/recreating owned BlockGraphics, so both cached-graphics hooks are removed. Preserve Windows v6 model repair confirmed by user plus v7 native builder recreation; one claimed refresh per ready terrain completion. Language-subpack detour removed because it observed a counter only. Performance and custom-block visuals remain runtime unverified. Reload-stack detour also removed because it observed a counter only.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -182,72 +155,27 @@
         "evidence": "Exact LevelRenderer constructor [53484D0,534D318) stores primary table F2465C0 at self, AppPlatformListener table F2466C0 at self+8 (534855B/5348562). Listener table slot5 is53542E0. Resume uses listener-relative embedded LevelBuilder at+548, drains TaskGroup via773730, calls5333590 with current gameplay resources and finishes via tail jump53544A0 with primary self=listener-8. Runtime vtable slot must equal checked resume entry before invocation.",
         "task_group_offset": 1000
       },
-      "block_client_graphics_offset": 48,
-      "block_graphics_cache_evidence": "Exact getForBlock RVA67ED140 -> Block client accessor at +118 -> folded reader6A459E0 reads cached BlockGraphics* at clientData+30; returns cached pointer if nonnull, otherwise resolves current global map by block runtime ID+114. Reader also appears in three item renderer functions; clearing is scoped by TLS to getForBlock only. Android source mod clears cached graphics in getForBlock before original and uses initBlocks instead of only reloadBlockTextures. v7 performs task drain, then full initBlocks, then native renderer resume/builder recreation; lazy cache invalidation remains active after the first rebuild. Runtime visual validation pending.",
-      "custom_blocks": {
-        "game_block_geometry": 584,
-        "game_block_culling": 576,
-        "game_geometry": 560,
-        "atlas_items": 24,
-        "geometry_materials": 88,
-        "game_texture_shifts": 2056,
-        "block_accessor": 280,
-        "type_blocks_begin": 552,
-        "type_blocks_end": 560,
-        "block_flags": 204,
-        "client_data_ready_mask": 2,
-        "context_bytes": 64,
-        "registry_reference": {
-          "rva": "0x534ac53",
-          "entry_check": "48 8D 0D FE B7 61 0D 48 8D 95 D0 04 00 00 E8 CA 99 EA FD"
-        },
-        "guards": [
-          {
-            "rva": "0x8bb667",
-            "entry_check": "48 8B B9 30 02 00 00 48 85 FF 0F 84 90 00"
-          },
-          {
-            "rva": "0x8bb717",
-            "entry_check": "48 8B B9 40 02 00 00 48 85 FF 0F 84 90 00"
-          },
-          {
-            "rva": "0x8bb7c7",
-            "entry_check": "48 8B B9 48 02 00 00 48 85 FF 0F 84 90 00"
-          },
-          {
-            "rva": "0x8a3127",
-            "entry_check": "48 8B B9 08 08 00 00 48 85 FF 0F 84 90 00"
-          },
-          {
-            "rva": "0x534a84b",
-            "entry_check": "48 8B 48 20 48 85 C9 74 50 F0 FF 41 08 48 8B 70 18"
-          },
-          {
-            "rva": "0x534a93b",
-            "entry_check": "48 8B 48 60 48 85 C9 74 2E F0 FF 41 08 48 8B 58 60"
-          },
-          {
-            "rva": "0x534abf1",
-            "entry_check": "48 8D 05 D8 E8 F7 09 48 89 85 00 04 00 00 4C 89 AD 08 04 00 00 4C 89 BD 10 04 00 00 48 89 B5 18 04 00 00 48 8B 85"
-          },
-          {
-            "rva": "0x534ac14",
-            "entry_check": "48 8B 85 28 05 00 00 48 89 85 20 04 00 00 48 89 BD 28 04 00 00 48 89 9D 30 04 00 00 4C 89 B5 38 04 00 00"
-          },
-          {
-            "rva": "0x6a4dc99",
-            "entry_check": "48 63 41 0C 4C 8B 41 10 49 8B 08 4D 8B 40 08 49 29 C8 49 C1 F8 03 49 B9 CD CC CC CC"
-          },
-          {
-            "rva": "0x6a4dcde",
-            "entry_check": "48 8D 04 80 48 8D 3C C1 41 83 C8 02 44 89 82 CC 00 00 00 48 3B 17 74 0B C7 04 25 00 00 00 00 DE C0 AD DE"
-          },
-          {
-            "rva": "0x6a4dd51",
-            "entry_check": "48 8B 47 08 48 C7 47 08 00 00 00 00 48 8B 8A 18 01 00 00 48 89 82 18 01 00 00 48 85 C9 74 11 48 8B 01 48 8B 00 BA 01 00 00 00"
-          }
+      "optimization": {
+        "hooks": 10,
+        "removed": [
+          "global BlockGraphics::initBlocks",
+          "BlockGraphics::getForBlock detour",
+          "folded cached-graphics reader detour",
+          "language-subpack diagnostic-only detour",
+          "v8 registry enumeration and flag writes",
+          "v8 material/group/client-data reconstruction",
+          "reload-stack diagnostic-only detour"
         ],
-        "evidence": "level-renderer-constructor-evidence.json, material-initialize-evidence.json, custom-material-binding-evidence.json, block-client-cache-rebuild-evidence.json, v8-exact-calls.json. Synchronous borrowed context is {unused vtable, BlockGeometryGroup, BlockCullingGroup, GeometryGroup, AtlasItemManager, MaterialRepository, Experiments, TextureShiftManager}. Registry guard decodes RIP LEA to current ASLR data address. Preflight every BlockType permutation and only invalidate uint32 ready bit2; preserve other flags and old accessor until native transfer/destructor. Recreate builders after replacement; stop lazy raw graphics clearing once all permutations are recached. Native counters do not establish visual correctness."
+        "preserved": [
+          "terrain and native-loader completion wait",
+          "world/thread identity cancellation",
+          "native renderer task barrier",
+          "v6 model/definition repair",
+          "Windows in-place BlockGraphics texture refresh",
+          "native LevelBuilder recreation",
+          "native all-chunk dirty notification"
+        ],
+        "evidence": "brpm-v9-android/recheck-evidence.json; block-texture-reload-evidence.json; camera-pre-dimension-evidence.json; v9-optimization-audit.md. Android camera dimension-listener Windows equivalent detaches dimension state; do not call it blindly in a live world. No new native function or field layout introduced by v9."
       }
     }
   },
@@ -421,32 +349,6 @@
       "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
       "evidence": "compose-stack-evidence.json; RDX output, R8 global, R9 level; native wrapper loads global from manager+0x138 and level from+0x130. manager+0x17A gates GLOBAL stack inclusion. Returns zero."
     },
-    "ResourcePackManager::_composeFullStack": {
-      "rva": "0x17cc040",
-      "signature": "",
-      "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(ResourcePackManager*)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
-      "evidence": "brpm-windows-1.26.60.5/stack-reload-evidence.json; validates listeners then composes stack and notifies reload listeners; finalize call at 0x17CC18F"
-    },
-    "ResourcePackManager::_updateLanguageSubpacks": {
-      "rva": "0x17cc8b0",
-      "signature": "",
-      "entry_check": "55 41 56 56 57 53 48 83 EC 60 48 8D 6C 24 60 48 C7 45 F8 FE FF FF FF 48",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(ResourcePackManager*)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
-      "evidence": "brpm-windows-1.26.60.5/finalize-reload-evidence.json; notifies each resource pack listener at vtable+0x20; corrected identification: locale subpack/listener update, not terrain atlas completion."
-    },
     "ClientInstance::getLevel": {
       "rva": "0x65b02f0",
       "signature": "",
@@ -603,45 +505,6 @@
       "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
       "evidence": "recreate-level-builders-evidence.json; lambda28 type anchor LevelBuilder::recreateBuilders vtable F2478E0; exact resume call5354359 RCXlistener+548, RDXgameplayGraphicsResources. Recreates worker builders in vector, disposing prior workers through533C0E0. Entry additionally checked; adapter invokes it through native LevelRenderer resume, retaining native task drain/resource ownership handling."
     },
-    "BlockGraphics::getForBlock": {
-      "rva": "0x67ed140",
-      "signature": "",
-      "entry_check": "56 48 83 EC 60 48 89 CE 48 8B 05 71 AF B1 0B 48 31 E0 48 89 44 24 58 48",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void* __fastcall(const void* block)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
-      "evidence": "block-graphics-getter-evidence.json. Pdata[67ED140,67ED299). RCXblock; cached graphics reader at6A459E0 via client accessor+118; fallback global BlockGraphics map keyed block+114 runtime ID. Hook scopes shared field-reader invalidation to this resolver only."
-    },
-    "BlockGraphics::_readCachedClientGraphics": {
-      "rva": "0x6a459e0",
-      "signature": "",
-      "entry_check": "48 8B 42 30 48 8B 09 48 89 01 C3",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* capture, void* clientData)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
-      "evidence": "cached-block-graphics-evidence.json. Leaf 11 bytes: MOV RAX,[RDX+30]; MOV RCX,[RCX]; MOV [RCX],RAX; RET. Shared with item-renderer functions6EDCDB0,6EDDB30,6EDEB90; SDK invalidates only within getForBlock TLS scope. Borrowed pointer is atomically cleared without destruction."
-    },
-    "BlockGraphics::initBlocks": {
-      "rva": "0x67f8f90",
-      "signature": "",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(ResourcePackManager*, const void* experiments)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
-      "evidence": "init-block-graphics-evidence.json; exact native initial gameplay callback94D20A passes manager RCX, LevelData+160 Experiments RDX. Destroys old owned BlockGraphics, reconstructs registry including runtime entries, invokes block client initialization hooks. SDK drains renderer tasks first and invalidates cached pointers on subsequent getForBlock lookups, matching Android mod cache handling."
-    },
     "TaskGroup::flush": {
       "rva": "0x773730",
       "signature": "",
@@ -654,58 +517,6 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
       "evidence": "Exact LevelRenderer::onAppResumed first call53542FF receives [listener+3E0] = [primaryRenderer+3E8]. Pdata[773730,773A38). SDK uses the same wait operation before replacing owned BlockGraphics, then lets native resume drain again/recreate workers."
-    },
-    "BlockGeometry::Group::initialize": {
-      "rva": "0x6ac4ef0",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC D8 00 00 00 48 8D AC 24 80",
-      "signature": "",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* blockGeometryGroup)",
-      "function_boundary": true,
-      "source": "Exact Minecraft1.26.60.5 PE and REA/Ghidra. Windows x64 register/stack instructions control ABI; raw Ghidra uses gcc spec. v8 runtime validation pending.",
-      "evidence": "block-geometry-initialize-evidence.json; only direct caller in exact PE is LevelRenderer constructor534A908; resets schematic/group data."
-    },
-    "ClientBlockPipeline::MaterialRepository::initialize": {
-      "rva": "0x6ad82b0",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC F8 00 00 00 48 8D AC 24 80",
-      "signature": "",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* materials, void* atlasItems)",
-      "function_boundary": true,
-      "source": "Exact Minecraft1.26.60.5 PE and REA/Ghidra. Windows x64 register/stack instructions control ABI; raw Ghidra uses gcc spec. v8 runtime validation pending.",
-      "evidence": "material-repository-initialize-evidence.json; exact constructor534A995 passes material repository from blockGeometry+58 and atlas items from terrainAtlas+18. Rebuilds default UV material."
-    },
-    "LevelRenderer::_initializeBlockTypeClientData": {
-      "rva": "0x6a4dde0",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC F8 00 00 00 48 8D AC 24 80",
-      "signature": "",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* context, void* blockType)",
-      "function_boundary": true,
-      "source": "Exact Minecraft1.26.60.5 PE and REA/Ghidra. Windows x64 register/stack instructions control ABI; raw Ghidra uses gcc spec. v8 runtime validation pending.",
-      "evidence": "block-client-cache-rebuild-evidence.json and block-client-cache-callback-evidence.json. RCX borrowed64byte context, RDXBlockType. Native component initializer212C800; per-permutation callback6A4D3B0 builds material vectors via6AD8B70/6AD9920;6A4DC80 transfers owned accessor intoBlock+118, replacing and destroying prior accessor; flag2 atBlock+CC skips already initialized permutations. No destructor/vtable use on context by direct target."
-    },
-    "BlockTypeRegistry::forEachBlock": {
-      "rva": "0x31f4630",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45",
-      "signature": "",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* registry, void* callbackRef)",
-      "function_boundary": true,
-      "source": "Exact Minecraft1.26.60.5 PE and REA/Ghidra. Windows x64 register/stack instructions control ABI; raw Ghidra uses gcc spec. v8 runtime validation pending.",
-      "evidence": "for-each-block-registry-evidence.json; constructor534AC61. RCX global registry address12966458, RDX two-pointer function_ref {invoke,context}; invokes callback(context,BlockType*) then normal deduplicated component cache processing for permutations. Native function manages temporary set ownership."
     }
   }
 }

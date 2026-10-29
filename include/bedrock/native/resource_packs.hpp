@@ -11,13 +11,12 @@ class NativeResourcePacks final {
     struct Status {
         bool installed{};
         std::uint64_t settingsOpened{}, preGameOverrides{}, failures{};
-        std::uint64_t settingsExited{}, applyEvents{}, reloadCalls{}, stackCompositions{},
-            languageSubpacksUpdated{}, globalStackIncluded{};
+        std::uint64_t settingsExited{}, applyEvents{}, stackCompositions{},
+            globalStackIncluded{};
         std::uint64_t applyNavigations{}, liveApplications{}, inWorldApplyEvents{}, gameGateOverrides{};
         std::uint64_t terrainAtlasCompleted{}, blockTexturesReloaded{}, clientsRefreshed{}, refreshCancelled{};
         std::uint64_t geometryReloaded{}, clientDefinitionsReloaded{}, resourceWaitFrames{};
-        std::uint64_t levelBuildersRecreated{}, blockGraphicsRebuilt{}, graphicsCacheResets{};
-        std::uint64_t customResourcesRebuilt{}, blockClientDataRebuilt{};
+        std::uint64_t levelBuildersRecreated{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();
