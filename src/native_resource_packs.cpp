@@ -256,6 +256,14 @@ struct NativeResourcePacks::Binding {
         }
         plan.types.push_back(std::move(type));
     }
+    struct BlockRebuildContext {
+        Binding *binding;
+        std::array<void *, 8> *native;
+    };
+    static void __fastcall rebuildBlockType(void *opaque, void *legacy) {
+        auto &context = *static_cast<BlockRebuildContext *>(opaque);
+        context.binding->rebuildBlockClientData(context.native->data(), legacy);
+    }
     bool rebuildCustomResources(void *game, void *experiments) {
         // Borrow current game-owned groups for this synchronous frame only.
         // The native constructor's callback captures these seven references;
@@ -291,7 +299,13 @@ struct NativeResourcePacks::Binding {
                 // the native replacement callback exchanges/destroys it.
                 *flags &= ~clientDataReadyMask;
             }
-            rebuildBlockClientData(context.data(), type.legacy);
+        }
+        // Match constructor ordering: initialize each type, then let the native
+        // traversal update/deduplicate that type's permutation component caches.
+        BlockRebuildContext rebuild{this, &context};
+        CallbackRef rebuildVisitor{&rebuildBlockType, &rebuild};
+        visitBlockTypes(blockRegistry, &rebuildVisitor);
+        for (const auto &type : plan.types) {
             for (auto *block : type.blocks) {
                 std::uint32_t flags{};
                 void *accessor{};
