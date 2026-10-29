@@ -6,10 +6,12 @@
 namespace bedrock::auto_profile {
 // Use instruction lengths, not guessed byte positions. Unsupported VEX/EVEX
 // or truncated instructions terminate a window; they are never decoded as data.
+// HDE may look past 15 bytes before rejecting malformed prefix sequences.
+// Keep decoder lookahead inside owned padding; accept only original input bytes.
 inline std::string instructionSignature(std::span<const std::byte> input){
     const char* digits="0123456789ABCDEF";std::string out;
     for(std::size_t offset=0;offset<input.size();){
-        std::array<std::byte,16> padded{};const auto count=std::min<std::size_t>(16,input.size()-offset);
+        std::array<std::byte,64> padded{};const auto count=std::min<std::size_t>(16,input.size()-offset);
         std::memcpy(padded.data(),input.data()+offset,count);hde64s h{};
         if(!hde64_disasm(padded.data(),&h)||h.flags&F_ERROR||!h.len||h.len>count||h.opcode==0xC4||h.opcode==0xC5||h.opcode==0x62)break;
         const auto immediateFlags=h.flags&(F_IMM8|F_IMM16|F_IMM32|F_IMM64);if(immediateFlags&&(immediateFlags&(immediateFlags-1)))break;
@@ -28,7 +30,7 @@ inline std::string instructionSignature(std::span<const std::byte> input){
 inline Json instructionFacts(std::span<const std::byte> input){
     Json facts=Json::array();std::size_t offset{};bool terminal=false;
     for(unsigned count=0;offset<input.size()&&count<256;++count){
-        std::array<std::byte,16> padded{};const auto available=std::min<std::size_t>(16,input.size()-offset);
+        std::array<std::byte,64> padded{};const auto available=std::min<std::size_t>(16,input.size()-offset);
         std::memcpy(padded.data(),input.data()+offset,available);hde64s h{};
         if(!hde64_disasm(padded.data(),&h)||h.flags&F_ERROR||!h.len||h.len>available||h.opcode==0xC4||h.opcode==0xC5||h.opcode==0x62)break;
         const auto immediateFlags=h.flags&(F_IMM8|F_IMM16|F_IMM32|F_IMM64);if(immediateFlags&&(immediateFlags&(immediateFlags-1)))break;
