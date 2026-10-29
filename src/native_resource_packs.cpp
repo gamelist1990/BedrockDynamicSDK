@@ -1,6 +1,7 @@
 #include <bedrock/native/resource_packs.hpp>
 #include <bedrock/api/resource_packs.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <array>
 #include <atomic>
@@ -78,8 +79,10 @@ struct NativeResourcePacks::Binding {
         if (state.enabled.load(std::memory_order_acquire)) {
             if (writeFlag(self, state.reloadOffset))
                 ++state.opened;
-            else
+            else {
                 ++state.failures;
+                state.enabled.store(false, std::memory_order_release);
+            }
         }
         state.initialize(self);
     }

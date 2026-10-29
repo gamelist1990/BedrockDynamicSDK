@@ -34,7 +34,7 @@ BlockGraphics 再初期化、雲テクスチャ・描画参照の修復があり
 リポジトリのルートから実行します。
 
 ```powershell
-cmake -S exsample/BetterResourcePackManager -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$PWD" -DBEDROCK_GAME_VERSION=1.26.60.5
+cmake -S exsample/BetterResourcePackManager -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$PWD" "-DBEDROCK_GAME_VERSION=1.26.60.5"
 cmake --build build-brpm --config Release --parallel 2
 ctest --test-dir build-brpm -C Release --output-on-failure
 ```

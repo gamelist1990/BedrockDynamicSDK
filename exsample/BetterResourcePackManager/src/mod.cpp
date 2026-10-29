@@ -42,6 +42,11 @@ DWORD WINAPI start(void *) noexcept {
             startupStatus = 4;
             return 1;
         }
+        const auto snapshot = profiles.snapshot();
+        log << "profile=" << snapshot->choice().version
+            << " source=" << bedrock::profileSourceName(snapshot->choice().source)
+            << " exe_sha256=" << snapshot->choice().identity.fileSha256
+            << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
         log << "Hooks installed. Exact-build native menu adapter is experimental; runtime "
                "validation pending.\n";
         log.flush();

@@ -79,7 +79,7 @@ jobs:
       - name: Build resource pack example for 1.26.60.5
         shell: pwsh
         run: |
-          cmake -S exsample/BetterResourcePackManager -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_GAME_VERSION=1.26.60.5 -DBEDROCK_BUILD_ID=${{ github.sha }}
+          cmake -S exsample/BetterResourcePackManager -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" "-DBEDROCK_GAME_VERSION=1.26.60.5" -DBEDROCK_BUILD_ID=${{ github.sha }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-brpm --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -141,8 +141,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
-      - name: CheckSig input and DLL smoke tests
-        if: matrix.mod == 'CheckSig'
+      - name: Mod input and DLL smoke tests
+        if: matrix.mod == 'CheckSig' || matrix.mod == 'BetterResourcePackManager'
         run: ctest --test-dir build-mod -C Release --output-on-failure
       - name: CheckSig profile installer tests (Windows PowerShell 5.1)
         if: matrix.mod == 'CheckSig'
