@@ -5,6 +5,9 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#if _ITERATOR_DEBUG_LEVEL != 0
+#error PlayerList native adapter requires MSVC Release STL ABI.
+#endif
 
 namespace bedrock {
 struct PlayerUuid {std::uint64_t low{},high{};bool operator==(const PlayerUuid&) const=default;};

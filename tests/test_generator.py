@@ -203,6 +203,8 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         "Actor::getNameTag",
         "ItemStackBase::getHoverName",
         "Level::getRuntimeActorList",
+        "Level::getPlayerList",
+        "ClientInstance::getLocalPlayer",
         "ClientInstance::onPlayerLoaded",
         "ClientInstance::onLevelExit",
         "ClientInstance::onDimensionChangedEvent",
@@ -223,4 +225,4 @@ def test_real_profile_marks_only_disassembled_abi_verified():
         else:
             assert symbol["status"] == "candidate", name
             assert symbol["abi_verified"] is False
-        assert symbol["signature"]
+        assert symbol["signature"] or symbol["cross_version_signature_available"] is False

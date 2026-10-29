@@ -414,7 +414,8 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "runtime_verified": false,
       "abi": "PlayerList* __fastcall(Level*)",
       "source": "REA/Ghidra player-list.json; exact PE vtable correlation: slot319, six slots before Level::getRuntimeActorList. Leaf getter; no guessed pattern.",
-      "update_hint": "Keep this identifier stable. Re-identify via Level vtable slot correlation, then inspect the getter and return/container ABI. See docs/profile-maintenance.md."
+      "update_hint": "Keep this identifier stable. Re-identify via Level vtable slot correlation, then inspect the getter and return/container ABI. See docs/profile-maintenance.md.",
+      "abi_verified": false
     },
     "ClientInstance::getLocalPlayer": {
       "rva": "0x5DAED30",
@@ -422,7 +423,10 @@ inline constexpr const char* kSymbolDatabase = R"BDK_SYM_V1({
       "abi": "Actor* __fastcall(ClientInstance*)",
       "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration",
       "signature": "",
-      "cross_version_signature_available": false
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false
     }
   },
   "virtual_methods": {
