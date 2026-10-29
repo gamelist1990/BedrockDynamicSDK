@@ -209,7 +209,7 @@ bool copyLive(const void* source,void* output,std::size_t count) noexcept {
     __try{std::memcpy(output,source,count);return true;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 }
-Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
+static Image captureImageImpl(const GameIdentity& identity,const std::atomic<bool>& stop,bool preferDisk) {
     if(identity.fileSha256.size()!=64)throw std::runtime_error("auto-dev cannot emit an SDK profile without the loaded EXE file SHA256; obtain the exact executable identity first");
     Image result;result.identity=identity;
     const auto module=GetModuleHandleW(nullptr);const auto loaded=reinterpret_cast<std::uintptr_t>(module);
@@ -218,7 +218,7 @@ Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
     const std::filesystem::path filePath(path.data());std::error_code ec;
     const auto fileSize=std::filesystem::file_size(filePath,ec);
     std::ifstream file;std::string digest;
-    bool disk=!ec&&fileSize<=1024ull*1024*1024&&hashFile(filePath,digest)&&digest==identity.fileSha256;
+    bool disk=preferDisk&&!ec&&fileSize<=1024ull*1024*1024&&hashFile(filePath,digest)&&digest==identity.fileSha256;
     if(disk)file.open(filePath,std::ios::binary);
     disk=disk&&file.good();
     const auto read=[&](bool fromDisk,std::uint64_t offset,void* output,std::size_t count){
@@ -260,6 +260,19 @@ Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
     if(result.text.rva!=identity.textRva||result.text.bytes.size()!=identity.textSize||pdata.bytes.empty())throw std::runtime_error("auto-dev section metadata differs from loaded module");
     if(disk&&(!hashFile(filePath,digest)||digest!=identity.fileSha256))throw std::runtime_error("EXE changed during auto-dev snapshot");
     if(!hashMemory(result.text.bytes.data(),result.text.bytes.size(),result.identity.textSha256))throw std::runtime_error("auto-dev text hashing failed");
+    if(disk){
+        // A parseable GDK disk PE may still contain encrypted code. Compare
+        // distributed mapped-code samples; sparse hooks/relocations do not
+        // invalidate an otherwise clean file snapshot.
+        unsigned compared{},equal{};
+        for(unsigned i=0;i<32&&result.text.bytes.size()>=64;++i){
+            const auto offset=(result.text.bytes.size()-64)*i/31;std::array<std::byte,64> live{};
+            if(copyLive(reinterpret_cast<const void*>(loaded+result.text.rva+offset),live.data(),live.size())){
+                ++compared;if(std::memcmp(live.data(),result.text.bytes.data()+offset,live.size())==0)++equal;
+            }
+        }
+        if(compared<16||equal*4<compared*3)return captureImageImpl(identity,stop,false);
+    }
     result.pointerBase=disk?nt.OptionalHeader.ImageBase:loaded;
     result.provenance=disk?"loaded EXE path; file SHA256 checked before and after snapshot; clean file code":"guarded live module snapshot; disk code inaccessible/encrypted; patched entries are not accepted as new guards";
     if(pdata.bytes.size()/12>1000000)throw std::runtime_error("auto-dev pdata exceeds function limit");
@@ -271,6 +284,8 @@ Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
     if(result.functions.empty())throw std::runtime_error("auto-dev has no validated pdata functions");
     return result;
 }
+
+Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop){return captureImageImpl(identity,stop,true);}
 
 Json inspectLive(const Json& profile){
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));const auto size=number(profile.at("target").at("size_of_image"));
