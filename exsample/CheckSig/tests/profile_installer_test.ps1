@@ -30,10 +30,13 @@ try {
     Assert-Rejected { & $installer -Source Local -LocalPath $local -Version "0.0.0.0" -CommandsDirectory $destination } "Wrong requested version was accepted"
     $remote = Join-Path $temporary "from-github"
     & $installer -Source GitHub -Version "1.26.60.5" -CommandsDirectory $remote | Out-Null
-    # Git checkouts on Windows may use CRLF; the manifest hashes GitHub's raw bytes.
-    $manifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "data/manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    $expectedRemoteHash = $manifest.versions.'1.26.60.5'.'windows-x64'.sha256
-    Assert-True ((Get-FileHash (Join-Path $remote "1.26.60.5-windows-x64.json")).Hash -eq $expectedRemoteHash) "GitHub profile download differs from manifest SHA-256"
+    # The transport authenticates the manifest and each part; installed output
+    # is the assembled profile, not the manifest's original byte stream.
+    $remoteDocument = Get-Content -LiteralPath (Join-Path $remote "1.26.60.5-windows-x64.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $localDocument = Get-Content -LiteralPath $local -Raw -Encoding UTF8 | ConvertFrom-Json
+    $remoteCanonical = $remoteDocument | ConvertTo-Json -Depth 100 -Compress
+    $expectedCanonical = $localDocument | ConvertTo-Json -Depth 100 -Compress
+    Assert-True ($remoteCanonical -ceq $expectedCanonical) "Assembled GitHub profile differs from class definitions"
     Write-Output "CheckSig profile installer tests passed (Local file/folder, GitHub, Force, invalid inputs)"
 }
 finally {

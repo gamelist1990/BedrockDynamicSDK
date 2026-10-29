@@ -6,7 +6,11 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(BEDROCK_GAME_VERSION "" CACHE STRING "Game profile key from data/manifest.json; empty uses its default")
 set(BEDROCK_GENERATED_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
 file(GLOB_RECURSE BEDROCK_DATA_INPUTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/*.json")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BEDROCK_DATA_INPUTS})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BEDROCK_DATA_INPUTS}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/configure_sdk_data.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_protocol.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/bedrock_symbols/profile_parts.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/bedrock_symbols/embed.py")
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/configure_sdk_data.py"
     --root "${CMAKE_CURRENT_SOURCE_DIR}" --version "${BEDROCK_GAME_VERSION}" --output "${BEDROCK_GENERATED_INCLUDE}"
     RESULT_VARIABLE BEDROCK_DATA_RESULT)

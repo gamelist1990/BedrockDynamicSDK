@@ -40,6 +40,7 @@ data/
     protocol.json                      # upstreamの完全なJSONをそのまま保存
     version.json
   policies/movement.json               # SDKが抑制する入力の名前。bit番号はprotocol由来
+  policies/packet_names.json           # 公開Enum名とprotocolの名前の対応
 ```
 
 クラスファイルの`symbols`はMinecraft関数名、`layouts`はそのクラスの配置・ABIです。
@@ -62,6 +63,6 @@ SDKキャッシュ・CheckSigの結果JSONも単一JSONを使用できます。
 
 CMakeの`BEDROCK_GAME_VERSION`で版を選択します。空の場合は`data/manifest.json`の`default_version`を使います。
 `tools/configure_sdk_data.py`が版別manifestを読み、選択したクラス定義とプロトコルをビルドディレクトリへ生成します。
-生成ヘッダーは`bedrock/generated/symbols.hpp`、`protocol.hpp`、`profile_sources.hpp`です。
+生成ヘッダーは`bedrock/generated/symbols.hpp`、`protocol.hpp`、`packet_ids.inc`、`profile_sources.hpp`です。
 版名付きのC++プロトコルファイルを追加する必要はありません。
 プロトコルの取得元commitとSHAは版別manifestの`protocol`へ記録します。

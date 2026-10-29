@@ -348,4 +348,4 @@ def merge_port_candidates(base: dict, ported: dict) -> dict:
 
 def write_json(out: Path, value: dict) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")

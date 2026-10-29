@@ -36,7 +36,7 @@ def load_profile(path:Path):
     return root
 
 def write_json(path,value):
-    path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+    path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
 
 def split_profile(source:Path):
     value=load_profile(source);base=source.with_name('windows-x64');parts={}
