@@ -32,6 +32,8 @@ public:
         if(!BDS_HookOwnsTarget(BDS_HOOK_PACKET_WIRE_SEND,target_))target_=native_profile::checked(root,function);
         DWORD64 image{};const auto* entry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(target_),&image,nullptr);
         if(!entry||image+entry->BeginAddress!=reinterpret_cast<DWORD64>(target_))throw std::runtime_error("wire bridge is not a function entry");
+        if(!BDS_HookRuntimeSupports(BDS_HOOK_PACKET_WIRE_SEND))
+            throw std::runtime_error("Packet wire Hook requires runtime 4.6 or newer; replace DLLs and restart Minecraft");
     }
     bool subscribe(BDS_HookCallback callback,void* user,BDS_HookToken* token) const {
         return target_&&BDS_HookRuntimeSupports(BDS_HOOK_PACKET_WIRE_SEND)&&BDS_HookSubscribe(BDS_HOOK_PACKET_WIRE_SEND,target_,callback,user,token);
