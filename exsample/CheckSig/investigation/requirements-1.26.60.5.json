@@ -1703,6 +1703,17 @@
       "symbol": "Player::setPlayerGameType"
     },
     {
+      "id": "/layouts/Camera/minimum_visual_revision",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/minimum_visual_revision",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 9
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
       "id": "/layouts/BlockSource/get_region",
       "group": "world",
       "kind": "function",

@@ -8,8 +8,18 @@
         "actor_offset": "0x0",
         "registry_offset": "0x10",
         "entity_id_offset": "0x18",
-        "status": "candidate",
-        "evidence": "1.26.60.5 exact-build static candidate: function RVA 0xB94CA0 reads [RCX+0x10] and [RCX+0x18] while resolving ActorTypeComponent. Interpreting RCX as Actor* and the values as registry/entity id is inferred; relation to Level::getRuntimeActorList elements is unverified."
+        "status": "verified",
+        "evidence": "1.26.60.5 exact-build static candidate: function RVA 0xB94CA0 reads [RCX+0x10] and [RCX+0x18] while resolving ActorTypeComponent. Interpreting RCX as Actor* and the values as registry/entity id is inferred; relation to Level::getRuntimeActorList elements is unverified.",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-freecam-local-player",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "scope": "Freecam local Player proxy, runtime ID and position/AABB reads and writes; other Actors and alternate hashes not independently confirmed"
+        },
+        "runtime_unverified_fields": []
       },
       "actor_owner": {
         "component_hash": "0x85B93800",
@@ -31,18 +41,55 @@
       "runtime_id": {
         "component_hash": "0xFC0DBBB5",
         "value_offset": "0x0",
-        "value_size": 8
+        "value_size": 8,
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-freecam-local-player",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "scope": "Freecam local Player proxy, runtime ID and position/AABB reads and writes; other Actors and alternate hashes not independently confirmed"
+        },
+        "runtime_unverified_fields": []
       },
       "aabb_shape": {
         "component_hash": "0xBAC1B3CF",
         "component_hash_alternate": "0x0",
         "minimum_offset": "0x0",
-        "maximum_offset": "0xC"
+        "maximum_offset": "0xC",
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-freecam-local-player",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "scope": "Freecam local Player proxy, runtime ID and position/AABB reads and writes; other Actors and alternate hashes not independently confirmed"
+        },
+        "runtime_unverified_fields": [
+          "component_hash_alternate"
+        ]
       },
       "state_vector": {
         "component_hash": "0x1B5D5238",
         "component_hash_alternate": "0x0",
-        "position_offset": "0x0"
+        "position_offset": "0x0",
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-freecam-local-player",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "scope": "Freecam local Player proxy, runtime ID and position/AABB reads and writes; other Actors and alternate hashes not independently confirmed"
+        },
+        "runtime_unverified_fields": [
+          "component_hash_alternate"
+        ]
       },
       "actor_rotation": {
         "component_hash": "0x75DF36B7",

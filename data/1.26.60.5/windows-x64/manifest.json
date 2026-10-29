@@ -49,7 +49,7 @@
     },
     {
       "path": "analysis/runtime_verified_symbols.json",
-      "sha256": "a891a22ba47ea3eeb11afdc76e28cdb8069798c4a66a07b49eafa0e458112ee0"
+      "sha256": "02981911769ea926318d67fecd328edc6a65f3fadc2f835e42f729b73ad22518"
     },
     {
       "path": "analysis/status.json",
@@ -57,7 +57,7 @@
     },
     {
       "path": "classes/Actor.json",
-      "sha256": "0fe022ff559562dd2a4dca46748ab9685d377bcd88878855a2f5a733fc63175e"
+      "sha256": "8ae097fc3b17ee193ba2ceeb4d508532ee25f75390900bd9697d4b82bcef7254"
     },
     {
       "path": "classes/BlockSource.json",
@@ -65,7 +65,7 @@
     },
     {
       "path": "classes/Camera.json",
-      "sha256": "8169039083e7fcff261bfef77628b6e33805c60d73757c4c0b40f64d98ababcb"
+      "sha256": "6bc7f2531a8d96d65569f105c01723d41c0c6e44c0098c88edbc0337e8121205"
     },
     {
       "path": "classes/ClientInstance.json",
@@ -73,7 +73,7 @@
     },
     {
       "path": "classes/CommandRegistry.json",
-      "sha256": "037664c1f79e38cda1dc2dc698fb0b7445ff6747a7287330e889e5a8ec4203f9"
+      "sha256": "25493a6f798fe0b689dcca795138f701109b5c18bd2596e9a7a3021663c7fb48"
     },
     {
       "path": "classes/CommandRequestPacket.json",
@@ -93,7 +93,7 @@
     },
     {
       "path": "classes/Internal.json",
-      "sha256": "5050a16903f6a7f49054fb3d67088a02ea44e0c03b0a107006f25d9749181ff7"
+      "sha256": "bae4137b4f3610baafe09e1d62b39ff6b4d6632497324a4288f887d31f181e2d"
     },
     {
       "path": "classes/ItemStack.json",

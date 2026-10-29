@@ -9,7 +9,10 @@
       "Keyboard::feed",
       "LevelRendererPlayer::getFov",
       "MouseDevice::feed",
-      "MultiPlayerLevel::_subTick"
+      "MultiPlayerLevel::_subTick",
+      "sub_56887B0",
+      "sub_5AFB520",
+      "sub_6F313F0"
     ]
   }
 }

@@ -312,7 +312,7 @@
         "mods": [
           "Fake"
         ],
-        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "scope": "Custom command registration/message execution path",
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
@@ -400,7 +400,7 @@
         "mods": [
           "Fake"
         ],
-        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "scope": "Custom command registration/message execution path",
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]

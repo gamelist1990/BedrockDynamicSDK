@@ -197,7 +197,8 @@
           "source": "Exact 1.26.52.3 .pdata range 0x1E1570-0x1E1B0A; Player::_setPlayerGameType candidate. RCX Player and EDX int checked in PE assembly. Reads ActorGameTypeComponent, replaces Player+0xAA0 GameMode, calls 0x2096F0 to update game type and layered abilities; handles default5/spectator6. REA ev_ffd7bbccb01e8ba335eedcab861753f22d5a4ab2ffc988ff9e25aae6db144bdb and ev_3f502740423ae916ab45e21e355d2e6b68a16a2a7111cf3002659742ffec8d3c. Raw Ghidra import uses gcc convention; Windows ABI conclusion uses register-level PE assembly. Runtime pending."
         }
       },
-      "evidence": "docs/native-profile-layout.md; exact EXE reference client _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation."
+      "evidence": "docs/native-profile-layout.md; exact EXE reference client _updatePlayer signature unique; REA/Ghidra ev_3af7807da2aedee3d05efa046feb07e3e732e83205bf7083c8bc6317ba5eea54. RCX CameraComponent, RDX LookMode component, R8 Actor. Camera position pipeline requires live validation.",
+      "minimum_visual_revision": 9
     }
   }
 }

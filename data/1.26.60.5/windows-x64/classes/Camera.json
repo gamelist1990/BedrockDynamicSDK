@@ -246,7 +246,8 @@
         "hurt_time_component_hash",
         "hurt_time_value_offset",
         "hurt_time_value_size"
-      ]
+      ],
+      "minimum_visual_revision": 10
     }
   }
 }

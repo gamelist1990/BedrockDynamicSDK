@@ -65,3 +65,16 @@ CMakeの`BEDROCK_GAME_VERSION`で版を選択します。空の場合は`data/ma
 生成ヘッダーは`bedrock/generated/symbols.hpp`、`protocol.hpp`、`packet_ids.inc`、`profile_sources.hpp`です。
 版名付きのC++プロトコルファイルを追加する必要はありません。
 プロトコルの取得元commitとSHAは版別manifestの`protocol`へ記録します。
+
+## 公開APIの分割
+
+- `api/geometry.hpp`：Vec3・ActorBounds・ActorRotation。
+- `api/item_stack.hpp` / `server_address.hpp`：所有する値スナップショット。
+- `api/game_access.hpp`：ゲーム固有アダプターのインターフェース。
+- `api/game_event_registry.hpp`：イベントチャンネルの一覧。
+- `api/actor_samples.hpp`：ワーカーへ渡せる追跡AABBフレーム。
+- `native/actor_components.hpp`：版別hash/offsetを使うゲームtickのコンポーネント取得。
+- `native/player_bounds_tracker.hpp`：Actorの世代・runtime IDを確認し、時間上限付きでPlayerのAABBを追跡。
+- `packets/title_packets.hpp`：wire/旧native両方を覆うタイトル購読。
+
+`game_api.hpp`はこれらを組み合わせるファサードです。コピー済み座標だけの処理はgeometry.hppを直接includeできます。

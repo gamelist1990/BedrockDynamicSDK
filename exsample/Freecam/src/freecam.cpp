@@ -19,11 +19,12 @@
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/generated/symbols.hpp>
 #include <bedrock/native/actors.hpp>
+#include <bedrock/native/actor_components.hpp>
+#include <bedrock/native/player_bounds_tracker.hpp>
 #include <bedrock/native/items.hpp>
 #include <bedrock/native/world_render.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
-#include <entt/entt.hpp>
 #include "freecam/config.hpp"
 #include <array>
 #include <atomic>
@@ -38,42 +39,10 @@
 #if !defined(_MSC_VER) || _ITERATOR_DEBUG_LEVEL != 0
 #error "Freecam requires MSVC Release STL layout."
 #endif
-namespace freecam_native {
-struct Entity {
-    std::uint32_t value;
-    constexpr operator std::uint32_t() const {
-        return value;
-    }
-    constexpr bool operator==(const Entity &) const = default;
-};
-struct Traits {
-    using value_type = Entity;
-    using entity_type = std::uint32_t;
-    using version_type = std::uint16_t;
-    static constexpr entity_type entity_mask = 0x3ffff;
-    static constexpr version_type version_mask = 0x3fff;
-};
-} // namespace freecam_native
-namespace entt {
-template <> struct entt_traits<freecam_native::Entity> : basic_entt_traits<freecam_native::Traits> {
-    static constexpr std::size_t page_size = 2048;
-};
-} // namespace entt
 namespace {
 using Vec = bedrock::Vec3;
 using Clock = std::chrono::steady_clock;
-using Registry = entt::basic_registry<freecam_native::Entity>;
-struct Box {
-    std::uint64_t id{};
-    bedrock::ActorBounds bounds{}, blendFrom{};
-};
-struct Capture {
-    std::uint64_t epoch{};
-    Clock::time_point made{};
-    std::array<Box, 128> boxes{};
-    unsigned count{};
-    Vec origin{};
-};
+using Capture=bedrock::ActorBoundsFrame;
 struct Mesh {
     std::uint64_t epoch{};
     Clock::time_point made{};
@@ -92,6 +61,8 @@ std::atomic<std::shared_ptr<const freecam::Config>> config{
 bedrock::GameApi api;
 std::unique_ptr<bedrock::GameHooks> hooks;
 bedrock::NativeActorLayout actors;
+bedrock::NativeActorComponents actorComponents;
+bedrock::NativePlayerBoundsTracker playerBounds;
 bedrock::WorldRenderProfile render;
 std::size_t hurtOffset{};
 std::uint32_t hurtHash{};
@@ -478,22 +449,7 @@ void reset() {
     for (auto &key : keys)
         key.store(false);
 }
-void *component(void *actor, std::uint32_t hash) noexcept {
-    void *registry{};
-    std::uint32_t id{};
-    if (!read(actor, actors.actorEntityContextOffset + actors.contextRegistryOffset, registry) ||
-        !read(actor, actors.actorEntityContextOffset + actors.contextEntityIdOffset, id) ||
-        !registry)
-        return nullptr;
-    __try {
-        auto *r = static_cast<Registry *>(registry);
-        const freecam_native::Entity e{id};
-        auto *s = r->storage(hash);
-        return r->valid(e) && s && s->contains(e) ? s->value(e) : nullptr;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
-}
+void *component(void *actor,std::uint32_t hash) noexcept {return actorComponents.component(actor,hash);}
 bool hurtTime(void *actor, int &value) noexcept {
     return read(component(actor, hurtHash), hurtOffset, value) && value >= 0 && value < 10000;
 }
@@ -545,109 +501,6 @@ void mouseEvent(const bedrock::MouseEvent &e) {
     else if (!c->allowInteraction &&
              (e.action == 1 || e.action == 2 || e.action == 3 || e.action == 4))
         e.cancel();
-}
-bool capturePlayers(void *actor, Capture *batch, unsigned limit) noexcept {
-    // The game thread owns these generation-checked handles. Workers receive
-    // only copied AABBs; discovery stays bounded while known Players update each tick.
-    struct Tracked {
-        freecam_native::Entity entity{};
-        std::uint64_t id{};
-        bedrock::ActorBounds bounds{};
-        Clock::time_point seen{};
-    };
-    static thread_local std::array<Tracked, 128> tracked{};
-    static thread_local std::size_t trackedCount = 0, cursor = 0;
-    static thread_local void *previousRegistry{};
-    static thread_local std::uint64_t previousEpoch{};
-    void *registry{};
-    if (!read(actor, actors.actorEntityContextOffset + actors.contextRegistryOffset, registry) ||
-        !registry)
-        return false;
-    if (previousRegistry != registry || previousEpoch != batch->epoch) {
-        trackedCount = cursor = 0;
-        previousRegistry = registry;
-        previousEpoch = batch->epoch;
-    }
-    batch->made = Clock::now();
-    batch->count = 0;
-    __try {
-        auto *r = static_cast<Registry *>(registry);
-        auto *types = r->storage(actors.actorTypeComponentHash);
-        auto *owners = r->storage(actors.actorOwnerComponentHash);
-        auto *bounds = r->storage(actors.aabbShapeComponentHash);
-        auto *ids = r->storage(actors.runtimeIdComponentHash);
-        if (!types || !owners || !bounds || !ids)
-            return false;
-        const auto size = types->size();
-        if (size > 16384)
-            return false;
-        const auto start = Clock::now();
-        for (unsigned n = 0; n < limit && n < size; ++n) {
-            if (n && Clock::now() - start > std::chrono::microseconds(150))
-                break;
-            if (cursor >= size)
-                cursor = 0;
-            const auto entity = types->data()[cursor++];
-            std::uint32_t type{};
-            void *owner{};
-            std::uint64_t id{};
-            if (!r->valid(entity) || !types->contains(entity) ||
-                !read(types->value(entity), render.actorTypeValueOffset, type) ||
-                type != render.playerTypeId || !owners->contains(entity) ||
-                !read(owners->value(entity), actors.actorOwnerPointerOffset, owner) || !owner ||
-                owner == actor || !ids->contains(entity) ||
-                !read(ids->value(entity), actors.runtimeIdValueOffset, id) || !id)
-                continue;
-            std::size_t i = 0;
-            for (; i < trackedCount; ++i)
-                if (tracked[i].id == id)
-                    break;
-            if (i == trackedCount && trackedCount < tracked.size())
-                tracked[trackedCount++] = {entity, id};
-        }
-        for (std::size_t i = 0; i < trackedCount;) {
-            auto &item = tracked[i];
-            std::uint64_t id{};
-            void *owner{};
-            Box box;
-            if (!r->valid(item.entity) || !ids->contains(item.entity) ||
-                !owners->contains(item.entity) ||
-                !read(ids->value(item.entity), actors.runtimeIdValueOffset, id) || id != item.id ||
-                !read(owners->value(item.entity), actors.actorOwnerPointerOffset, owner) ||
-                !owner || owner == actor || !bounds->contains(item.entity)) {
-                tracked[i] = tracked[--trackedCount];
-                continue;
-            }
-            auto *shape = bounds->value(item.entity);
-            if (!read(shape, actors.aabbMinimumOffset, box.bounds.minimum) ||
-                !read(shape, actors.aabbMaximumOffset, box.bounds.maximum) || !box.bounds.valid() ||
-                !finite(box.bounds.minimum) || !finite(box.bounds.maximum)) {
-                tracked[i] = tracked[--trackedCount];
-                continue;
-            }
-            const auto a = box.bounds.minimum, b = box.bounds.maximum;
-            if (b.x - a.x > 4 || b.y - a.y > 5 || b.z - a.z > 4) {
-                tracked[i] = tracked[--trackedCount];
-                continue;
-            }
-            box.id = id;
-            box.blendFrom = box.bounds;
-            const float dx = a.x - item.bounds.minimum.x, dy = a.y - item.bounds.minimum.y,
-                        dz = a.z - item.bounds.minimum.z;
-            if (item.seen != Clock::time_point{} &&
-                batch->made - item.seen <= std::chrono::milliseconds(250) &&
-                dx * dx + dy * dy + dz * dz <= 64.f)
-                box.blendFrom = item.bounds;
-            item.bounds = box.bounds;
-            item.seen = batch->made;
-            batch->boxes[batch->count++] = box;
-            ++i;
-        }
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        batch->count = 0;
-        return false;
-    }
 }
 // Borion-style local Player proxy. All mutable native access is confined to
 // LevelTick/world teardown callbacks; the network middleware reads atomics only.
@@ -1067,7 +920,7 @@ void borionTick(const bedrock::LevelTickEvent &) {
         Capture batch;
         batch.epoch = epoch.load();
         batch.origin = borion.position;
-        if (capturePlayers(player, &batch, c->captureRows)) {
+        if (playerBounds.capture(player, &batch, c->captureRows)) {
             std::unique_lock lock(mailboxMutex, std::try_to_lock);
             if (lock.owns_lock()) {
                 mailbox = batch;
@@ -1210,8 +1063,7 @@ void prepareProfile(const std::string &profile) {
     if (hurtOffset > 4096 || f.at("hurt_time_value_size") != 4)
         throw std::runtime_error("invalid camera/hurt layout");
     const auto &visual = f.at("visual");
-    if (j.at("target").value("version", std::string{}) == "1.26.60.5" &&
-        visual.value("revision", 0) < 10)
+    if (visual.value("revision", 0) < f.value("minimum_visual_revision", 0))
         throw std::runtime_error("Freecam visual definition predates InsideBlockEffect port; exact "
                                  "embedded profile required");
     if (visual.at("schema") != 1)
@@ -1235,7 +1087,9 @@ void prepareProfile(const std::string &profile) {
     std::string error;
     if (!bedrock::parseNativeActorLayout(profile, actors, error))
         throw std::runtime_error(error);
+    actorComponents.configure(actors,j);
     renderReady = bedrock::parseWorldRenderProfile(profile, render, error);
+    if(renderReady)playerBounds.configure(actors,render);
 }
 std::filesystem::path directory() {
     PWSTR path{};
@@ -1608,7 +1462,7 @@ DWORD WINAPI start(void *) {
                 throw std::runtime_error("native culler selector hook conflict");
             setCuller = originalSetCuller;
             terrainReady.store(true);
-            log("Freecam spectator culler ready [native selector hook; mode5/vtable0xE8DFE00; game "
+            log("Freecam spectator culler ready [native selector hook; profile-defined vtable; game "
                 "mode unchanged; visual revision9]");
         } catch (const std::exception &e) {
             terrainReady.store(false);

@@ -1,5 +1,6 @@
 #pragma once
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/api/geometry.hpp>
+#include <optional>
 #include <bedrock/api/api_types.hpp>
 #include <chrono>
 #include <algorithm>

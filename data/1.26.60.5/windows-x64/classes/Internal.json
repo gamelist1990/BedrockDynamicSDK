@@ -35,8 +35,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -46,8 +46,21 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
-      "name_status": "unresolved"
+      "verification_scope": "user-reported-mod-operation",
+      "name_status": "unresolved",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Camera update hook used by local Freecam",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     },
     "sub_5AFB520": {
       "rva": "0x5AFB520",
@@ -68,8 +81,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -79,8 +92,21 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
-      "name_status": "unresolved"
+      "verification_scope": "user-reported-mod-operation",
+      "name_status": "unresolved",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Owner-scoped gamma override in normal Freecam operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     },
     "sub_56887B0": {
       "rva": "0x56887B0",
@@ -109,8 +135,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -120,8 +146,21 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
-      "name_status": "unresolved"
+      "verification_scope": "user-reported-mod-operation",
+      "name_status": "unresolved",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Predicate hook in Freecam visual filter; individual variant reachability not counted",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     },
     "sub_5417230": {
       "rva": "0x5417230",

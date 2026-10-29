@@ -8,7 +8,7 @@ CheckSigへ単一ファイルで渡す場合だけ`profile.json`を明示的にe
 | 場所 | 管理するもの |
 | --- | --- |
 | `data/<version>/windows-x64/classes/*.json` | EXE識別、RVA、入口ガード、シグネチャ、ABI、vtable slot、構造体とフィールド位置、候補・観測状態 |
-| SDK `include/bedrock/native_*.hpp` / `detail/` | 関数呼出し、ネイティブABI、メモリ読取・書込、寿命・スレッド・範囲検査、コピーへの変換 |
+| SDK `include/bedrock/native/` / `detail/` | 関数呼出し、ネイティブABI、メモリ読取・書込、寿命・スレッド・範囲検査、コピーへの変換 |
 | Mod | SDKを呼ぶ条件、表示、設定、ゲーム機能の組合せ。アドレス探索・ネイティブ構造体・版別数値を追加しない |
 
 `0x4E8`をModへ書き込まず、PlayerList APIの定義へ置きます。SDKはこの値を新しい版の既定値としても使いません。
@@ -121,10 +121,10 @@ LocalPlayer取得も`NativeLocalPlayerGetter::load(profile)` / `get(client)`を�
 
 | 箇所 | 残っている処理 |
 | --- | --- |
-| Freecam | culler、view factory、InsideBlockEffectのHook管理・ABI検査・ネイティブ描画 |
+| Freecam | culler、view factoryのHook管理・ネイティブ描画の一部。InsideBlockEffect・Actor component・Player bounds追跡はSDKへ移行済み |
 | HitBox | EnTT/Actorコピー、描画・名前キャプチャの一部 |
-| TabList | Actor/equipment/session取得、ネイティブイベント連携 |
-| SpeedBuilder | 旧版のnative title fallback。設置・world読取はSDK detailへ移行済みだが呼出側も整理が必要 |
+| TabList | equipmentのItemStackコピー・キャッシュとネイティブイベント連携。Actor component / runtime ID / game type / packet rosterはSDKへ移行済み |
+| SpeedBuilder | タイトル受信は旧版fallbackも含めTitlePacketsへ移行済み。設置・world読取はSDK detailを使用 |
 | その他のexamples | 各native呼出しをSDK APIへ移す際に調査。UI用座標や色、入力キーはnative layoutとは区別する |
 
 これらへ新しい版別数値を足して拡張せず、触る機能単位でSDKアダプターへ移してください。
