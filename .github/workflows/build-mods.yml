@@ -124,7 +124,7 @@ jobs:
         run: |
           $extraArgs = @()
           if ("${{ matrix.mod }}" -eq "CheckSig") { $extraArgs += "-DCHECKSIG_BUILD_TESTS=ON" }
-          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} -DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }} @extraArgs
+          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2

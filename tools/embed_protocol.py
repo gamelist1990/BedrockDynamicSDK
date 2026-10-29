@@ -28,6 +28,18 @@ def generate(source: Path, version_source: Path, policy_source: Path, output: Pa
        'inline constexpr std::string_view minecraftVersion="'+version['minecraftVersion']+'";',
        '} // namespace bedrock::protocol','']
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text('\n'.join(lines),encoding='utf-8')
+    names=json.loads((policy_source.parent/'packet_names.json').read_text(encoding='utf-8'))['names']
+    catalog=[];seen={}
+    for item in names:
+        number=ids.get(item.get('protocol_name'))
+        if number is None:number=item.get('legacy_id')
+        if number is None:continue
+        if number in seen:raise ValueError('duplicate packet enum ID: '+str(number))
+        seen[number]=item['name'];catalog.append((item['name'],number))
+    for name,number in ids.items():
+        if number not in seen:catalog.append((camel(name),number));seen[number]=camel(name)
+    (output.parent/'packet_ids.inc').write_text('// Generated from the selected protocol and stable SDK name mapping.\n'+''.join(f'BEDROCK_PACKET_ID({name}, {number})\n' for name,number in catalog),encoding='utf-8')
+
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path,required=True);parser.add_argument('--version-source',type=Path,required=True)

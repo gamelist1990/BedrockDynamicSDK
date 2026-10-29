@@ -9,7 +9,7 @@ namespace bedrock {
 // layout nor a capability to send a packet. Unknown and private IDs stay raw.
 enum class PacketId : std::uint16_t {
 #define BEDROCK_PACKET_ID(name, value) name = value,
-#include <bedrock/detail/packet_ids.inc>
+#include <bedrock/generated/packet_ids.inc>
 #undef BEDROCK_PACKET_ID
     MobEquipment = PlayerEquipment,
     LevelChunk = FullChunkData,
@@ -27,7 +27,7 @@ using MinecraftPacketIds = PacketId;
 [[nodiscard]] constexpr std::string_view packetName(PacketId id) noexcept {
     switch (id) {
 #define BEDROCK_PACKET_ID(name, value) case PacketId::name: return #name;
-#include <bedrock/detail/packet_ids.inc>
+#include <bedrock/generated/packet_ids.inc>
 #undef BEDROCK_PACKET_ID
     default: return "Unknown";
     }
@@ -42,7 +42,7 @@ using MinecraftPacketIds = PacketId;
 [[nodiscard]] constexpr std::optional<PacketId> packetIdFromName(
     std::string_view name) noexcept {
 #define BEDROCK_PACKET_ID(symbol, value) if (name == #symbol) return PacketId::symbol;
-#include <bedrock/detail/packet_ids.inc>
+#include <bedrock/generated/packet_ids.inc>
 #undef BEDROCK_PACKET_ID
     if (name == "MobEquipment") return PacketId::MobEquipment;
     if (name == "LevelChunk") return PacketId::LevelChunk;

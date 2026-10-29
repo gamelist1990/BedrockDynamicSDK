@@ -63,12 +63,12 @@ int main() {
     assert(!bedrock::captureNativeKeyboardEvent(nullptr, *layout));
 
     auto profile = nlohmann::json::parse(bedrock::generated::kSymbolDatabase);
-    profile.erase("native_keyboard");
+    profile["layouts"].erase("GameCore");
     assert(!bedrock::parseNativeKeyboardLayout(profile.dump(), error));
     profile = nlohmann::json::parse(bedrock::generated::kSymbolDatabase);
-    profile["native_keyboard"]["owner_offset"] = -1;
+    profile["layouts"]["GameCore"]["owner_offset"] = -1;
     assert(!bedrock::parseNativeKeyboardLayout(profile.dump(), error));
-    profile["native_keyboard"]["owner_offset"] = 0;
-    profile["native_keyboard"]["key_down_vtable_slot"] = 100;
+    profile["layouts"]["GameCore"]["owner_offset"] = 0;
+    profile["layouts"]["GameCore"]["key_down_vtable_slot"] = 100;
     assert(!bedrock::parseNativeKeyboardLayout(profile.dump(), error));
 }

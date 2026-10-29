@@ -1,0 +1,1025 @@
+{
+  "schema": 1,
+  "description": "Stable public enum names mapped to protocol names; numeric IDs come from the selected protocol.",
+  "names": [
+    {
+      "name": "KeepAlive",
+      "legacy_id": 0,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "Login",
+      "protocol_name": "login"
+    },
+    {
+      "name": "PlayStatus",
+      "protocol_name": "play_status"
+    },
+    {
+      "name": "ServerToClientHandshake",
+      "protocol_name": "server_to_client_handshake"
+    },
+    {
+      "name": "ClientToServerHandshake",
+      "protocol_name": "client_to_server_handshake"
+    },
+    {
+      "name": "Disconnect",
+      "protocol_name": "disconnect"
+    },
+    {
+      "name": "ResourcePacksInfo",
+      "protocol_name": "resource_packs_info"
+    },
+    {
+      "name": "ResourcePackStack",
+      "protocol_name": "resource_pack_stack"
+    },
+    {
+      "name": "ResourcePackClientResponse",
+      "protocol_name": "resource_pack_client_response"
+    },
+    {
+      "name": "Text",
+      "protocol_name": "text"
+    },
+    {
+      "name": "SetTime",
+      "protocol_name": "set_time"
+    },
+    {
+      "name": "StartGame",
+      "protocol_name": "start_game"
+    },
+    {
+      "name": "AddPlayer",
+      "protocol_name": "add_player"
+    },
+    {
+      "name": "AddActor",
+      "protocol_name": "add_entity"
+    },
+    {
+      "name": "RemoveActor",
+      "protocol_name": "remove_entity"
+    },
+    {
+      "name": "AddItemActor",
+      "protocol_name": "add_item_entity"
+    },
+    {
+      "name": "ServerPlayerPostMovePosition",
+      "protocol_name": "server_post_move"
+    },
+    {
+      "name": "TakeItemActor",
+      "protocol_name": "take_item_entity"
+    },
+    {
+      "name": "MoveAbsoluteActor",
+      "protocol_name": "move_entity"
+    },
+    {
+      "name": "MovePlayer",
+      "protocol_name": "move_player"
+    },
+    {
+      "name": "PassengerJumpDeprecated",
+      "protocol_name": "rider_jump"
+    },
+    {
+      "name": "UpdateBlock",
+      "protocol_name": "update_block"
+    },
+    {
+      "name": "AddPainting",
+      "protocol_name": "add_painting"
+    },
+    {
+      "name": "TickSyncDeprecated",
+      "protocol_name": "tick_sync"
+    },
+    {
+      "name": "LevelSoundEventV1Deprecated",
+      "protocol_name": "level_sound_event_old"
+    },
+    {
+      "name": "LevelEvent",
+      "protocol_name": "level_event"
+    },
+    {
+      "name": "TileEvent",
+      "protocol_name": "block_event"
+    },
+    {
+      "name": "ActorEvent",
+      "protocol_name": "entity_event"
+    },
+    {
+      "name": "MobEffect",
+      "protocol_name": "mob_effect"
+    },
+    {
+      "name": "UpdateAttributes",
+      "protocol_name": "update_attributes"
+    },
+    {
+      "name": "InventoryTransaction",
+      "protocol_name": "inventory_transaction"
+    },
+    {
+      "name": "PlayerEquipment",
+      "protocol_name": "mob_equipment"
+    },
+    {
+      "name": "MobArmorEquipment",
+      "protocol_name": "mob_armor_equipment"
+    },
+    {
+      "name": "Interact",
+      "protocol_name": "interact"
+    },
+    {
+      "name": "BlockPickRequest",
+      "protocol_name": "block_pick_request"
+    },
+    {
+      "name": "ActorPickRequest",
+      "protocol_name": "entity_pick_request"
+    },
+    {
+      "name": "PlayerAction",
+      "protocol_name": "player_action"
+    },
+    {
+      "name": "ActorFallDeprecated",
+      "legacy_id": 37,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "HurtArmor",
+      "protocol_name": "hurt_armor"
+    },
+    {
+      "name": "SetActorData",
+      "protocol_name": "set_entity_data"
+    },
+    {
+      "name": "SetActorMotion",
+      "protocol_name": "set_entity_motion"
+    },
+    {
+      "name": "SetActorLink",
+      "protocol_name": "set_entity_link"
+    },
+    {
+      "name": "SetHealth",
+      "protocol_name": "set_health"
+    },
+    {
+      "name": "SetSpawnPosition",
+      "protocol_name": "set_spawn_position"
+    },
+    {
+      "name": "Animate",
+      "protocol_name": "animate"
+    },
+    {
+      "name": "Respawn",
+      "protocol_name": "respawn"
+    },
+    {
+      "name": "ContainerOpen",
+      "protocol_name": "container_open"
+    },
+    {
+      "name": "ContainerClose",
+      "protocol_name": "container_close"
+    },
+    {
+      "name": "PlayerHotbar",
+      "protocol_name": "player_hotbar"
+    },
+    {
+      "name": "InventoryContent",
+      "protocol_name": "inventory_content"
+    },
+    {
+      "name": "InventorySlot",
+      "protocol_name": "inventory_slot"
+    },
+    {
+      "name": "ContainerSetData",
+      "protocol_name": "container_set_data"
+    },
+    {
+      "name": "CraftingData",
+      "protocol_name": "crafting_data"
+    },
+    {
+      "name": "CraftingEventDeprecated",
+      "protocol_name": "crafting_event"
+    },
+    {
+      "name": "GuiDataPickItem",
+      "protocol_name": "gui_data_pick_item"
+    },
+    {
+      "name": "AdventureSettingsDeprecated",
+      "protocol_name": "adventure_settings"
+    },
+    {
+      "name": "BlockActorData",
+      "protocol_name": "block_entity_data"
+    },
+    {
+      "name": "PlayerInputDeprecated",
+      "protocol_name": "player_input"
+    },
+    {
+      "name": "FullChunkData",
+      "protocol_name": "level_chunk"
+    },
+    {
+      "name": "SetCommandsEnabled",
+      "protocol_name": "set_commands_enabled"
+    },
+    {
+      "name": "SetDifficulty",
+      "protocol_name": "set_difficulty"
+    },
+    {
+      "name": "ChangeDimension",
+      "protocol_name": "change_dimension"
+    },
+    {
+      "name": "SetPlayerGameType",
+      "protocol_name": "set_player_game_type"
+    },
+    {
+      "name": "PlayerList",
+      "protocol_name": "player_list"
+    },
+    {
+      "name": "SimpleEvent",
+      "protocol_name": "simple_event"
+    },
+    {
+      "name": "LegacyTelemetryEvent",
+      "protocol_name": "event"
+    },
+    {
+      "name": "SpawnExperienceOrb",
+      "protocol_name": "spawn_experience_orb"
+    },
+    {
+      "name": "MapData",
+      "protocol_name": "clientbound_map_item_data"
+    },
+    {
+      "name": "MapInfoRequest",
+      "protocol_name": "map_info_request"
+    },
+    {
+      "name": "RequestChunkRadius",
+      "protocol_name": "request_chunk_radius"
+    },
+    {
+      "name": "ChunkRadiusUpdated",
+      "protocol_name": "chunk_radius_update"
+    },
+    {
+      "name": "ItemFrameDropItemDeprecated",
+      "legacy_id": 71,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "GameRulesChanged",
+      "protocol_name": "game_rules_changed"
+    },
+    {
+      "name": "Camera",
+      "protocol_name": "camera"
+    },
+    {
+      "name": "BossEvent",
+      "protocol_name": "boss_event"
+    },
+    {
+      "name": "ShowCredits",
+      "protocol_name": "show_credits"
+    },
+    {
+      "name": "AvailableCommands",
+      "protocol_name": "available_commands"
+    },
+    {
+      "name": "CommandRequest",
+      "protocol_name": "command_request"
+    },
+    {
+      "name": "CommandBlockUpdate",
+      "protocol_name": "command_block_update"
+    },
+    {
+      "name": "CommandOutput",
+      "protocol_name": "command_output"
+    },
+    {
+      "name": "UpdateTrade",
+      "protocol_name": "update_trade"
+    },
+    {
+      "name": "UpdateEquip",
+      "protocol_name": "update_equipment"
+    },
+    {
+      "name": "ResourcePackDataInfo",
+      "protocol_name": "resource_pack_data_info"
+    },
+    {
+      "name": "ResourcePackChunkData",
+      "protocol_name": "resource_pack_chunk_data"
+    },
+    {
+      "name": "ResourcePackChunkRequest",
+      "protocol_name": "resource_pack_chunk_request"
+    },
+    {
+      "name": "Transfer",
+      "protocol_name": "transfer"
+    },
+    {
+      "name": "PlaySound",
+      "protocol_name": "play_sound"
+    },
+    {
+      "name": "StopSound",
+      "protocol_name": "stop_sound"
+    },
+    {
+      "name": "SetTitle",
+      "protocol_name": "set_title"
+    },
+    {
+      "name": "AddBehaviorTree",
+      "protocol_name": "add_behavior_tree"
+    },
+    {
+      "name": "StructureBlockUpdate",
+      "protocol_name": "structure_block_update"
+    },
+    {
+      "name": "ShowStoreOffer",
+      "protocol_name": "show_store_offer"
+    },
+    {
+      "name": "PurchaseReceipt",
+      "protocol_name": "purchase_receipt"
+    },
+    {
+      "name": "PlayerSkin",
+      "protocol_name": "player_skin"
+    },
+    {
+      "name": "SubclientLogin",
+      "protocol_name": "sub_client_login"
+    },
+    {
+      "name": "AutomationClientConnect",
+      "protocol_name": "initiate_web_socket_connection"
+    },
+    {
+      "name": "SetLastHurtBy",
+      "protocol_name": "set_last_hurt_by"
+    },
+    {
+      "name": "BookEdit",
+      "protocol_name": "book_edit"
+    },
+    {
+      "name": "NPCRequest",
+      "protocol_name": "npc_request"
+    },
+    {
+      "name": "PhotoTransfer",
+      "protocol_name": "photo_transfer"
+    },
+    {
+      "name": "ShowModalForm",
+      "protocol_name": "modal_form_request"
+    },
+    {
+      "name": "ModalFormResponse",
+      "protocol_name": "modal_form_response"
+    },
+    {
+      "name": "ServerSettingsRequest",
+      "protocol_name": "server_settings_request"
+    },
+    {
+      "name": "ServerSettingsResponse",
+      "protocol_name": "server_settings_response"
+    },
+    {
+      "name": "ShowProfile",
+      "protocol_name": "show_profile"
+    },
+    {
+      "name": "SetDefaultGameType",
+      "protocol_name": "set_default_game_type"
+    },
+    {
+      "name": "RemoveObjective",
+      "protocol_name": "remove_objective"
+    },
+    {
+      "name": "SetDisplayObjective",
+      "protocol_name": "set_display_objective"
+    },
+    {
+      "name": "SetScore",
+      "protocol_name": "set_score"
+    },
+    {
+      "name": "LabTable",
+      "protocol_name": "lab_table"
+    },
+    {
+      "name": "UpdateBlockSynced",
+      "protocol_name": "update_block_synced"
+    },
+    {
+      "name": "MoveDeltaActor",
+      "protocol_name": "move_entity_delta"
+    },
+    {
+      "name": "SetScoreboardIdentity",
+      "protocol_name": "set_scoreboard_identity"
+    },
+    {
+      "name": "SetLocalPlayerAsInit",
+      "protocol_name": "set_local_player_as_initialized"
+    },
+    {
+      "name": "UpdateSoftEnum",
+      "protocol_name": "update_soft_enum"
+    },
+    {
+      "name": "Ping",
+      "protocol_name": "network_stack_latency"
+    },
+    {
+      "name": "BlockPaletteDeprecated",
+      "legacy_id": 116,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "ScriptCustomEvent",
+      "protocol_name": "script_custom_event"
+    },
+    {
+      "name": "SpawnParticleEffect",
+      "protocol_name": "spawn_particle_effect"
+    },
+    {
+      "name": "AvailableActorIDList",
+      "protocol_name": "available_entity_identifiers"
+    },
+    {
+      "name": "LevelSoundEventV2Deprecated",
+      "protocol_name": "level_sound_event_v2"
+    },
+    {
+      "name": "NetworkChunkPublisherUpdate",
+      "protocol_name": "network_chunk_publisher_update"
+    },
+    {
+      "name": "BiomeDefinitionList",
+      "protocol_name": "biome_definition_list"
+    },
+    {
+      "name": "LevelSoundEvent",
+      "protocol_name": "level_sound_event"
+    },
+    {
+      "name": "LevelEventGeneric",
+      "protocol_name": "level_event_generic"
+    },
+    {
+      "name": "LecternUpdate",
+      "protocol_name": "lectern_update"
+    },
+    {
+      "name": "VideoStreamConnectDeprecated",
+      "protocol_name": "video_stream_connect"
+    },
+    {
+      "name": "AddEntityDeprecated",
+      "legacy_id": 127,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "RemoveEntityDeprecated",
+      "legacy_id": 128,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "ClientCacheStatus",
+      "protocol_name": "client_cache_status"
+    },
+    {
+      "name": "OnScreenTextureAnimation",
+      "protocol_name": "on_screen_texture_animation"
+    },
+    {
+      "name": "MapCreateLockedCopy",
+      "protocol_name": "map_create_locked_copy"
+    },
+    {
+      "name": "StructureTemplateDataExportRequest",
+      "protocol_name": "structure_template_data_export_request"
+    },
+    {
+      "name": "StructureTemplateDataExportResponse",
+      "protocol_name": "structure_template_data_export_response"
+    },
+    {
+      "name": "UnusedPlsUseMe",
+      "protocol_name": "update_block_properties"
+    },
+    {
+      "name": "ClientCacheBlobStatusPacket",
+      "protocol_name": "client_cache_blob_status"
+    },
+    {
+      "name": "ClientCacheMissResponsePacket",
+      "protocol_name": "client_cache_miss_response"
+    },
+    {
+      "name": "EducationSettingsPacket",
+      "protocol_name": "education_settings"
+    },
+    {
+      "name": "Emote",
+      "protocol_name": "emote"
+    },
+    {
+      "name": "MultiplayerSettingsPacket",
+      "protocol_name": "multiplayer_settings"
+    },
+    {
+      "name": "SettingsCommandPacket",
+      "protocol_name": "settings_command"
+    },
+    {
+      "name": "AnvilDamage",
+      "protocol_name": "anvil_damage"
+    },
+    {
+      "name": "CompletedUsingItem",
+      "protocol_name": "completed_using_item"
+    },
+    {
+      "name": "NetworkSettings",
+      "protocol_name": "network_settings"
+    },
+    {
+      "name": "PlayerAuthInputPacket",
+      "protocol_name": "player_auth_input"
+    },
+    {
+      "name": "CreativeContent",
+      "protocol_name": "creative_content"
+    },
+    {
+      "name": "PlayerEnchantOptions",
+      "protocol_name": "player_enchant_options"
+    },
+    {
+      "name": "ItemStackRequest",
+      "protocol_name": "item_stack_request"
+    },
+    {
+      "name": "ItemStackResponse",
+      "protocol_name": "item_stack_response"
+    },
+    {
+      "name": "PlayerArmorDamage",
+      "protocol_name": "player_armor_damage"
+    },
+    {
+      "name": "CodeBuilderPacket",
+      "protocol_name": "code_builder"
+    },
+    {
+      "name": "UpdatePlayerGameType",
+      "protocol_name": "update_player_game_type"
+    },
+    {
+      "name": "EmoteList",
+      "protocol_name": "emote_list"
+    },
+    {
+      "name": "PositionTrackingDBServerBroadcast",
+      "protocol_name": "position_tracking_db_broadcast"
+    },
+    {
+      "name": "PositionTrackingDBClientRequest",
+      "protocol_name": "position_tracking_db_request"
+    },
+    {
+      "name": "DebugInfoPacket",
+      "protocol_name": "debug_info"
+    },
+    {
+      "name": "PacketViolationWarning",
+      "protocol_name": "packet_violation_warning"
+    },
+    {
+      "name": "MotionPredictionHints",
+      "protocol_name": "motion_prediction_hints"
+    },
+    {
+      "name": "TriggerAnimation",
+      "protocol_name": "animate_entity"
+    },
+    {
+      "name": "CameraShake",
+      "protocol_name": "camera_shake"
+    },
+    {
+      "name": "PlayerFogSetting",
+      "protocol_name": "player_fog"
+    },
+    {
+      "name": "CorrectPlayerMovePredictionPacket",
+      "protocol_name": "correct_player_move_prediction"
+    },
+    {
+      "name": "ItemRegistryPacket",
+      "protocol_name": "item_registry"
+    },
+    {
+      "name": "FilterTextPacketDeprecated",
+      "protocol_name": "filter_text_packet"
+    },
+    {
+      "name": "ClientBoundDebugRendererPacket",
+      "protocol_name": "primitive_shapes"
+    },
+    {
+      "name": "SyncActorProperty",
+      "protocol_name": "sync_entity_property"
+    },
+    {
+      "name": "AddVolumeEntityPacket",
+      "protocol_name": "add_volume_entity"
+    },
+    {
+      "name": "RemoveVolumeEntityPacket",
+      "protocol_name": "remove_volume_entity"
+    },
+    {
+      "name": "SimulationTypePacket",
+      "protocol_name": "simulation_type"
+    },
+    {
+      "name": "NpcDialoguePacket",
+      "protocol_name": "npc_dialogue"
+    },
+    {
+      "name": "EduUriResourcePacket",
+      "protocol_name": "edu_uri_resource_packet"
+    },
+    {
+      "name": "CreatePhotoPacket",
+      "protocol_name": "create_photo"
+    },
+    {
+      "name": "UpdateSubChunkBlocks",
+      "protocol_name": "update_subchunk_blocks"
+    },
+    {
+      "name": "PhotoInfoRequestDeprecated",
+      "protocol_name": "photo_info_request"
+    },
+    {
+      "name": "SubChunkPacket",
+      "protocol_name": "subchunk"
+    },
+    {
+      "name": "SubChunkRequestPacket",
+      "protocol_name": "subchunk_request"
+    },
+    {
+      "name": "PlayerStartItemCooldown",
+      "protocol_name": "client_start_item_cooldown"
+    },
+    {
+      "name": "ScriptMessagePacket",
+      "protocol_name": "script_message"
+    },
+    {
+      "name": "CodeBuilderSourcePacket",
+      "protocol_name": "code_builder_source"
+    },
+    {
+      "name": "TickingAreasLoadStatus",
+      "protocol_name": "ticking_areas_load_status"
+    },
+    {
+      "name": "DimensionDataPacket",
+      "protocol_name": "dimension_data"
+    },
+    {
+      "name": "AgentAction",
+      "protocol_name": "agent_action"
+    },
+    {
+      "name": "ChangeMobProperty",
+      "protocol_name": "change_mob_property"
+    },
+    {
+      "name": "LessonProgressPacket",
+      "protocol_name": "lesson_progress"
+    },
+    {
+      "name": "RequestAbilityPacket",
+      "protocol_name": "request_ability"
+    },
+    {
+      "name": "RequestPermissionsPacket",
+      "protocol_name": "request_permissions"
+    },
+    {
+      "name": "ToastRequest",
+      "protocol_name": "toast_request"
+    },
+    {
+      "name": "UpdateAbilitiesPacket",
+      "protocol_name": "update_abilities"
+    },
+    {
+      "name": "UpdateAdventureSettingsPacket",
+      "protocol_name": "update_adventure_settings"
+    },
+    {
+      "name": "DeathInfo",
+      "protocol_name": "death_info"
+    },
+    {
+      "name": "EditorNetworkPacket",
+      "protocol_name": "editor_network"
+    },
+    {
+      "name": "FeatureRegistryPacket",
+      "protocol_name": "feature_registry"
+    },
+    {
+      "name": "ServerStats",
+      "protocol_name": "server_stats"
+    },
+    {
+      "name": "RequestNetworkSettings",
+      "protocol_name": "request_network_settings"
+    },
+    {
+      "name": "GameTestRequestPacket",
+      "protocol_name": "game_test_request"
+    },
+    {
+      "name": "GameTestResultsPacket",
+      "protocol_name": "game_test_results"
+    },
+    {
+      "name": "PlayerClientInputPermissions",
+      "protocol_name": "update_client_input_locks"
+    },
+    {
+      "name": "ClientCheatAbilityPacketDeprecated",
+      "protocol_name": "client_cheat_ability"
+    },
+    {
+      "name": "CameraPresets",
+      "protocol_name": "camera_presets"
+    },
+    {
+      "name": "UnlockedRecipes",
+      "protocol_name": "unlocked_recipes"
+    },
+    {
+      "name": "CameraInstruction",
+      "protocol_name": "camera_instruction"
+    },
+    {
+      "name": "CompressedBiomeDefinitionListDeprecated",
+      "protocol_name": "compressed_biome_definitions"
+    },
+    {
+      "name": "TrimData",
+      "protocol_name": "trim_data"
+    },
+    {
+      "name": "OpenSign",
+      "protocol_name": "open_sign"
+    },
+    {
+      "name": "AgentAnimation",
+      "protocol_name": "agent_animation"
+    },
+    {
+      "name": "RefreshEntitlementsPacket",
+      "protocol_name": "refresh_entitlements"
+    },
+    {
+      "name": "PlayerToggleCrafterSlotRequestPacket",
+      "protocol_name": "toggle_crafter_slot_request"
+    },
+    {
+      "name": "SetPlayerInventoryOptions",
+      "protocol_name": "set_player_inventory_options"
+    },
+    {
+      "name": "SetHudPacket",
+      "protocol_name": "set_hud"
+    },
+    {
+      "name": "AwardAchievementPacket",
+      "protocol_name": "award_achievement"
+    },
+    {
+      "name": "ClientboundCloseScreen",
+      "protocol_name": "clientbound_close_form"
+    },
+    {
+      "name": "ClientboundLoadingScreenPacketDeprecated",
+      "legacy_id": 311,
+      "scope": "legacy public SDK identifier; not defined by selected wire schema"
+    },
+    {
+      "name": "ServerboundLoadingScreenPacket",
+      "protocol_name": "serverbound_loading_screen"
+    },
+    {
+      "name": "JigsawStructureDataPacket",
+      "protocol_name": "jigsaw_structure_data"
+    },
+    {
+      "name": "CurrentStructureFeaturePacket",
+      "protocol_name": "current_structure_feature"
+    },
+    {
+      "name": "ServerboundDiagnosticsPacket",
+      "protocol_name": "serverbound_diagnostics"
+    },
+    {
+      "name": "CameraAimAssist",
+      "protocol_name": "camera_aim_assist"
+    },
+    {
+      "name": "ContainerRegistryCleanup",
+      "protocol_name": "container_registry_cleanup"
+    },
+    {
+      "name": "MovementEffect",
+      "protocol_name": "movement_effect"
+    },
+    {
+      "name": "SetMovementAuthorityModeDeprecated",
+      "protocol_name": "set_movement_authority"
+    },
+    {
+      "name": "CameraAimAssistPresets",
+      "protocol_name": "camera_aim_assist_presets"
+    },
+    {
+      "name": "ClientCameraAimAssist",
+      "protocol_name": "client_camera_aim_assist"
+    },
+    {
+      "name": "ClientMovementPredictionSyncPacket",
+      "protocol_name": "client_movement_prediction_sync"
+    },
+    {
+      "name": "UpdateClientOptions",
+      "protocol_name": "update_client_options"
+    },
+    {
+      "name": "PlayerVideoCapturePacket",
+      "protocol_name": "player_video_capture"
+    },
+    {
+      "name": "PlayerUpdateEntityOverridesPacket",
+      "protocol_name": "player_update_entity_overrides"
+    },
+    {
+      "name": "PlayerLocation",
+      "protocol_name": "player_location"
+    },
+    {
+      "name": "ClientboundControlSchemeSetPacket",
+      "protocol_name": "clientbound_controls_scheme"
+    },
+    {
+      "name": "PrimitiveShapesPacket",
+      "protocol_name": "server_script_debug_drawer"
+    },
+    {
+      "name": "ServerboundPackSettingChangePacket",
+      "protocol_name": "serverbound_pack_setting_change"
+    },
+    {
+      "name": "ClientboundDataStore",
+      "protocol_name": "clientbound_data_store"
+    },
+    {
+      "name": "GraphicsParameterOverridePacket",
+      "protocol_name": "graphics_override_parameter"
+    },
+    {
+      "name": "ServerboundDataStore",
+      "protocol_name": "serverbound_data_store"
+    },
+    {
+      "name": "ClientboundDataDrivenUIShowScreen",
+      "protocol_name": "clientbound_data_driven_ui_show_screen"
+    },
+    {
+      "name": "ClientboundDataDrivenUICloseScreen",
+      "protocol_name": "clientbound_data_driven_ui_close_screen"
+    },
+    {
+      "name": "ClientboundDataDrivenUIReload",
+      "protocol_name": "clientbound_data_driven_ui_reload"
+    },
+    {
+      "name": "ClientboundTextureShiftPacket",
+      "protocol_name": "clientbound_texture_shift"
+    },
+    {
+      "name": "VoxelShapesPacket",
+      "protocol_name": "voxel_shapes"
+    },
+    {
+      "name": "CameraSpline",
+      "protocol_name": "camera_spline"
+    },
+    {
+      "name": "CameraAimAssistActorPriority",
+      "protocol_name": "camera_aim_assist_actor_priority"
+    },
+    {
+      "name": "ResourcePacksReadyForValidation",
+      "protocol_name": "resource_packs_ready_for_validation"
+    },
+    {
+      "name": "LocatorBarPacket",
+      "protocol_name": "locator_bar"
+    },
+    {
+      "name": "PartyChanged",
+      "protocol_name": "party_changed"
+    },
+    {
+      "name": "ServerboundDataDrivenScreenClosed",
+      "protocol_name": "serverbound_data_driven_screen_closed"
+    },
+    {
+      "name": "SyncWorldClocks",
+      "protocol_name": "sync_world_clocks"
+    },
+    {
+      "name": "ClientboundAttributeLayerSyncPacket",
+      "protocol_name": "clientbound_attribute_layer_sync"
+    },
+    {
+      "name": "ServerStoreInfo",
+      "protocol_name": "server_store_info"
+    },
+    {
+      "name": "ServerPresenceInfo",
+      "protocol_name": "server_presence_info"
+    },
+    {
+      "name": "ClientboundUpdateSoundData",
+      "protocol_name": "clientbound_update_sound_data"
+    },
+    {
+      "name": "SendPartyDestinationCookie",
+      "protocol_name": "send_party_destination_cookie"
+    },
+    {
+      "name": "PartyDestinationCookieResponse",
+      "protocol_name": "party_destination_cookie_response"
+    },
+    {
+      "name": "SetPlayerFurnaceOptions",
+      "protocol_name": "set_player_furnace_options"
+    },
+    {
+      "name": "RecordStarted",
+      "protocol_name": "record_started"
+    }
+  ]
+}
