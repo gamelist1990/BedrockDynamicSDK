@@ -56,6 +56,8 @@ class MemoryInspector {
             request.address > UINTPTR_MAX - request.bytes || !rowBytes || rowBytes > 4096)
             throw std::invalid_argument(
                 "memory range: 1..1048576 bytes, rows 1..4096, no x64 overflow");
+        if ((request.bytes + rowBytes - 1) / rowBytes > 4096)
+            throw std::invalid_argument("memory range exceeds 4096 rows; increase row_bytes");
         nlohmann::json rows = nlohmann::json::array();
         std::size_t offset{}, read{};
         while (offset < request.bytes) {

@@ -852,6 +852,7 @@ private:
                     throw std::runtime_error("actions must contain 1..128 objects");
                 // Validate the whole job before applying any hook actions.
                 std::vector<std::string> lines;
+                std::size_t memoryBudget{};
                 for (const auto& action : actions) {
                     const auto op = action.at("op").get<std::string>();
                     std::string line = op;
@@ -868,6 +869,9 @@ private:
                         const auto length=checksig::readU32(action.at("length"));
                         const auto rows=action.contains("row_bytes")?checksig::readU32(action.at("row_bytes")):256;
                         if(!length||length>1024*1024||!rows||rows>4096)throw std::runtime_error("memory requires length 1..1048576, row_bytes 1..4096");
+                        if((length+rows-1)/rows>4096)throw std::runtime_error("memory exceeds 4096 rows; increase row_bytes");
+                        if(length>4*1024*1024-memoryBudget)throw std::runtime_error("memory job exceeds 4MiB total requested bytes");
+                        memoryBudget+=length;
                     }
                     else if (op == "read") line += " " + action.at("address").get<std::string>() + " " + action.at("type").get<std::string>();
                     else if (op != "identity" && op != "detect" && op != "list" && op != "port")
@@ -888,6 +892,9 @@ private:
                         result["label"]=action.value("label",std::string("memory-"+std::to_string(i)));
                         result["source"]=std::move(provenance);
                         jobResults_[source]["memory"].push_back(result);
+                        // Keep byte rows once in the input-specific result. Event
+                        // history retains a bounded summary, not another full dump.
+                        result.erase("regions");
                         writeEvent("memory-range",std::move(result));
                     }
                     else if(action.at("op")=="observe") observeSymbols(action,source);
