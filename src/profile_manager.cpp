@@ -28,6 +28,7 @@ FeaturePath path(Feature f){
     case Feature::Gui:return {"native_gui",nullptr};
     case Feature::WorldRender:return {"native_world_render",nullptr};
     case Feature::WorldEvents:return {"native_world_events",nullptr};
+    case Feature::ResourcePacks:return {"layouts","ResourcePackManager"};
     case Feature::WorldHeight:return {"native_world","height_limits"};
     }
     return {nullptr,nullptr};
@@ -53,6 +54,7 @@ std::string_view featureName(Feature f)noexcept{
     case Feature::Gui:return "GuiData::displayClientMessage";
     case Feature::WorldRender:return "LevelRenderer";
     case Feature::WorldEvents:return "ClientInstance world events";
+    case Feature::ResourcePacks:return "ResourcePackManager";
     default:return "unknown feature";
     }
 }

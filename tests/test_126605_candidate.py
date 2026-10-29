@@ -17,9 +17,22 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     assert profile["analysis"]["runtime_verified"] is False
     runtime_symbols = set(profile["analysis"]["runtime_verified_symbols"])
     assert {"Keyboard::feed", "LevelRendererPlayer::getFov", "ClientInstance::getLocalPlayer"} <= runtime_symbols
-    assert len(profile["symbols"]) == 41
+    resource_layout = profile["layouts"]["ResourcePackManager"]
+    resource_candidates = {
+        row["symbol"] for row in resource_layout["functions"].values()
+    } - {"ClientInstance::getLocalPlayer"}
+    assert len(profile["symbols"]) == 41 + len(resource_candidates)
+    assert resource_layout["status"] == "candidate"
+    assert resource_layout["runtime_verified"] is False
+    for name in resource_candidates:
+        row = profile["symbols"][name]
+        assert row["status"] == "candidate"
+        assert row["runtime_verified"] is False
+        assert row["abi_verified"] is False
+        assert name not in runtime_symbols
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
-    assert verified == set(profile["symbols"]) - {"Level::getPlayerList"}
+    assert len(verified) == 40
+    assert verified == set(profile["symbols"]) - {"Level::getPlayerList"} - resource_candidates
     for name in verified:
         row = profile["symbols"][name]
         assert row["abi_verified"] is (name in runtime_symbols)
@@ -52,7 +65,7 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
             native_keyboard["message_offset"], native_keyboard["key_offset"]) == (0, 64, 16, 24)
     assert (native_keyboard["key_down_vtable_slot"], native_keyboard["key_up_vtable_slot"]) == (1, 2)
     entry = build_index(root)["versions"]["1.26.60.5"]["windows-x64"]
-    assert entry["symbols"] == 41
+    assert entry["symbols"] == len(profile["symbols"])
     assert entry["sha256"] == hashlib.sha256((root.parent / entry["path"]).read_bytes()).hexdigest()
     assert entry["module_sha256"] == profile["target"]["sha256"]
     assert json.loads((root / "manifest.json").read_text())["versions"]["1.26.60.5"]["windows-x64"] == entry

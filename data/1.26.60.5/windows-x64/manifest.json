@@ -69,7 +69,7 @@
     },
     {
       "path": "classes/ClientInstance.json",
-      "sha256": "4d6fa817ecb440a93e1f1e76af6949a95bf4233b9a7cf6973496aaa25caecf96"
+      "sha256": "f06ee23084e35090cdf454af1994d01c9a19e589ab4373629a9422100787e1b5"
     },
     {
       "path": "classes/CommandRegistry.json",
@@ -158,6 +158,10 @@
     {
       "path": "classes/PlayerAuthInputPacket.json",
       "sha256": "6ce1aeb35cb217267bacf76ae19ee9b978a0acc2ea443d5f9d545485a007a5fb"
+    },
+    {
+      "path": "classes/ResourcePackManager.json",
+      "sha256": "d36f10b0358d04ea64b6e09043348ac11dc94c86ae5743a57fda7d4f6dd773bc"
     },
     {
       "path": "classes/RuntimeActorList.json",

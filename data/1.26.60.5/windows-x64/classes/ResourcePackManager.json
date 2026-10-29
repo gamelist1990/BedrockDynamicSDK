@@ -1,0 +1,109 @@
+{
+  "layouts": {
+    "ResourcePackManager": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "adapter": "windows-settings-menu-v1",
+      "reload_on_exit_offset": 4234,
+      "string_abi": {
+        "object_bytes": 32,
+        "size_offset": 16,
+        "capacity_offset": 24,
+        "inline_bytes": 16,
+        "maximum_bytes": 512,
+        "large_allocation_threshold": 4096,
+        "alignment_overhead": 39
+      },
+      "functions": {
+        "initialize_settings": {
+          "symbol": "SettingsScreenController::_init"
+        },
+        "construct_general_settings": {
+          "symbol": "GeneralSettingsScreenController::GeneralSettingsScreenController"
+        },
+        "is_pre_game": {
+          "symbol": "ClientInstance::isPreGame"
+        },
+        "top_screen_name": {
+          "symbol": "ClientInstance::getTopScreenName"
+        },
+        "local_player": {
+          "symbol": "ClientInstance::getLocalPlayer"
+        },
+        "deallocate": {
+          "symbol": "Bedrock::Memory::deallocate"
+        }
+      },
+      "evidence": "Documents/PEXData/REA/brpm-windows-1.26.60.5. Native menu bootstrap only; alternative parent reload flag route inferred from _init arguments. Full-stack rebuild and in-world visual correctness require runtime testing; Android branch patches and renderer repairs are not claimed verified."
+    }
+  },
+  "symbols": {
+    "SettingsScreenController::_init": {
+      "rva": "0x50e50d0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 38 06 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(SettingsScreenController*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
+      "evidence": "brpm-windows-1.26.60.5/settings-init-evidence.json; .pdata [0x50E50D0,0x50E7BD7); root+0x1089/0x108A become GeneralSettings ctor R8B/R9B at call 0x50E5356; REA ev_17cdbae0b8130ee1aefcdb62e1680e1b326bdf81651ab368b2f3e2073598289e"
+    },
+    "GeneralSettingsScreenController::GeneralSettingsScreenController": {
+      "rva": "0x51c8d30",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 0A 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(GeneralSettingsScreenController*, void* model, bool, bool, const void* initialPack, bool)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
+      "evidence": "brpm-windows-1.26.60.5/ctor-evidence.json; lambda_301 type descriptor 0x12494190 -> wrapper vtable 0xF236BD0 -> ctor; preserves stack args initialPack and legacySync"
+    },
+    "ClientInstance::isPreGame": {
+      "rva": "0x65b04b0",
+      "signature": "",
+      "entry_check": "48 83 EC 28 48 8B 01 48 8B 80 30 05 00 00 FF 15 AC EA 3E 09 48 85 C0 0F",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "bool __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
+      "evidence": "IClientInstance vtable 0xF2B9328 slot170: call getLevel slot166; test RAX; SETE AL. Nearby slot133 matches existing onDimensionChangedEvent; REA ev_f3c7243af469e680cbb667bbbeef09d000bd0c10faecaf809776715037a68744 (pre-game-evidence.json)"
+    },
+    "ClientInstance::getTopScreenName": {
+      "rva": "0x65accd0",
+      "signature": "",
+      "entry_check": "55 56 57 48 81 EC A0 00 00 00 48 8D AC 24 80 00 00 00 0F 29 75 10 48 C7",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(ClientInstance*, void* stringResult)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
+      "evidence": "IClientInstance vtable 0xF2B9328 slot135, after existing onDimensionChangedEvent slot133 and onGameEventNotification slot134. Method RCX=this, RDX=owned MSVC string result; REA ev_28167c680a5941bb73f7f8b9b319a98a5a5debb4984818cd19abe3c07e73bbdd (screen-name-evidence.json)"
+    },
+    "Bedrock::Memory::deallocate": {
+      "rva": "0x392960",
+      "signature": "",
+      "entry_check": "55 48 83 EC 30 48 8D 6C 24 30 48 C7 45 F8 FE FF FF FF 48 89 CA 48 8B 0D",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE slices, REA/Ghidra 12.1.4 and Capstone; no runtime invocation observed",
+      "evidence": "brpm-windows-1.26.60.5/deallocate-evidence.json ev_b106a6d44e025e05a63cf1fe7ad374eb517687e184fef2b234e67b754074bbbd; global delete thunk 0xE934B00 jumps here; RCX allocation; dispatches allocator slot2, ignores caller size"
+    }
+  }
+}
