@@ -19,9 +19,11 @@ Topなどが必要とするGUI・ローカル整数コマンド用CommandRegistr
 
 ### 1.26.60.5の今回の更新
 
-- HitBox: UUID一覧を起動必須条件から外し、新EXEのLevelRenderer/Tessellator/Material定義を追加。描画・状態復元は実機確認待ち。
+FreecamのInsideBlockEffectに新EXEの対象型・呼出箇所を追加。飛行中の対象エフェクトだけを除外し、実機の見た目は確認待ちです。
+
+- HitBox: LocalPlayer取得を正確な関数へ変更。新EXEの描画定義とPlayerList位置を追加。対象取得・描画は更新後の実機確認待ち。
 - SpeedBuilder: 共通`Packet::read` HookとID 88でタイトルを観測。現時点ではタイトル観測モードで、自動記録・設置は未対応。ホットバー選択・配置状態計算・HitResultのABI確認が必要。
-- TabList: 受領ログでは起動、DXGI描画、行キャッシュとTab切替を確認。全機能の動作確認を意味しません。
+- TabList: 受領ログでは起動とTab入力のみ確認。GUIは表示されなかったとの報告を受領。旧固定PlayerList位置を版別定義へ置換し、空一覧の診断を追加。更新後の表示確認待ち。
 - 共有Hook runtimeは4.7.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
 
 ## CheckSig：JSONを置いて調査

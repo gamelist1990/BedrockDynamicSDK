@@ -131,3 +131,11 @@ Actor枠・地下表示の追加処理はoptionalグループへ分けていま�
 HitBoxの枠が表示されるか、表示を切り替えた後やワールド退出後に異常がないかも確認してください。
 SpeedBuilderは現在タイトル観測モードです。`SpeedBuilder.log`のPacket read countersとtitle receivedを渡してください。
 自動記録・設置にはPlayerInventory選択、BlockType配置状態、HitResultのABI確認が残ります。
+
+### 描画結果の再調査
+
+受領した60-world-render結果は`definition missing`でobserveがスキップされ、watch値は未観測でした。
+CheckSigのlayouts内関数展開を修正したDLLへ更新して、同じJSONを再実行してください。
+HitBoxのframes_no_boxesは描画Hookへの到達を示しますが、対象取得・表示成功は示しません。
+TabListのrow cache readyも空一覧で出ていたため、表示確認済みとは扱いません。
+Freecamは受領ログでanchored=100、movement rejected=0を観測。ブロック内表示は未解決という報告を記録し、InsideBlockEffectの2系統を新EXEへ移植しました。

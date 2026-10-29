@@ -2252,6 +2252,32 @@
         "source": "Fake完全に機能してるOk!",
         "scope": "Fake command registration and request/response flow after d5c42df",
         "manual_checks_confirmed": true
+      },
+      "render_follow_up_2026_10_29": {
+        "source": "user-supplied logs and 60-world-render.result.json",
+        "report_sha256": "19037d3389174ea73d39411b9324cd272f153b2d4d7c129292e6f8eb0000d306",
+        "Freecam": {
+          "status": "core_observed_visual_failure_reported",
+          "anchored_packets": 100,
+          "movement_rejected": 0,
+          "missing": "block-inside appearance; culler/create_view remain unresolved; InsideBlockEffect variants statically ported, runtime pending"
+        },
+        "HitBox": {
+          "status": "startup_only_no_targets",
+          "render_hook_reached": true,
+          "boxes": 0,
+          "next": "exact LocalPlayer getter and new PlayerList definition; observe capture and render"
+        },
+        "TabList": {
+          "status": "gui_not_visible_user_report",
+          "startup_and_tab_input": true,
+          "rows_ready_log_does_not_prove_nonempty": true,
+          "next": "replace fixed Level+4E0 with versioned4E8; observe actual nonempty row submission"
+        },
+        "CheckSig": {
+          "status": "render_observe_skipped",
+          "reason": "native_world_render definition missing from flattened symbols; watches waiting; no render layout values verified"
+        }
       }
     }
   },
@@ -2569,7 +2595,7 @@
       },
       "visual": {
         "schema": 1,
-        "revision": 9,
+        "revision": 10,
         "status": "candidate",
         "runtime_verified": false,
         "game_type_component_hash": "0x88D3EDDF",
@@ -2662,8 +2688,33 @@
             "runtime_verified": false,
             "candidate_evidence": "analysis.native_function_candidates: old 0x5308990 -> new 0x56887b0"
           },
-          "variants": [],
-          "evidence": "Predicate function has a 1.26.60.5 static candidate. Callable table/caller variants were not identified in the new build, so variant list is empty and filtering is unavailable."
+          "variants": [
+            {
+              "callable_vtable_rva": "0xf25ac10",
+              "type_getter_check": {
+                "rva": "0x5699d10",
+                "entry_check": "48 8D 05 99 52 E6 0C C3"
+              },
+              "caller_check": {
+                "rva": "0x562511b",
+                "entry_check": "FF 15 4F 9E 37 0A 90 84 C0 74 BA 48 8B 8D 88 26"
+              },
+              "return_rva": "0x5625121"
+            },
+            {
+              "callable_vtable_rva": "0xf43f580",
+              "type_getter_check": {
+                "rva": "0xbc36600",
+                "entry_check": "48 8D 05 59 83 B7 06 C3"
+              },
+              "caller_check": {
+                "rva": "0xbbb5b5b",
+                "entry_check": "FF 15 0F 94 DE 03 90 84 C0 74 BA 48 8B 8D F0 09"
+              },
+              "return_rva": "0xbbb5b61"
+            }
+          ],
+          "evidence": "Exact-build PE RTTI names extractAndDrawWithExclusion<InsideBlockEffect,...> identify callable tables F25AC10/F43F580, shared slot2 predicate56887B0 and slot3 type getters5699D10/BC36600. REA/Ghidra bounded caller fragments at5625081/BBB5AC2: slot2 false advances the 0xC8 render entry; true enters extraction5699D20. Only tag and exact caller pairs may be suppressed. Runtime reachability and visual result remain unverified."
         },
         "evidence": "Candidate schema retained from 1.26.52.3; component fields and visual offsets are still old-build candidates. Functions are updated only where 1.26.60.5 has a unique .pdata-bounded static candidate.",
         "notes": "Only 1.26.60.5 function-start candidates are callable. Missing culler, caller, and view-factory candidates remain unresolved; no old-build vtable RVAs or runtime observations are reused.",
@@ -3077,6 +3128,18 @@
         "entry_check": "55 41 56 56 57 53 48 81 EC B0 01 00 00 48 8D AC 24 80 00 00 00 48 C7 85"
       },
       "evidence": "Exact-build REA/Ghidra: shared Packet slot 8 calls slot 15, validates stream cursor/overflow, returns hidden Result pointer; receive coverage requires runtime observation. Common stream ABI only, no SetTitlePacket object fields."
+    },
+    "LocalPlayer": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "level_player_list_offset": 1256,
+      "entry_size": 168,
+      "actor_unique_id_offset": 0,
+      "uuid_offset": 8,
+      "name_offset": 24,
+      "evidence": "Exact-build REA/Ghidra getter 0x232F0B0 reads Level+0x4E8. It occupies slot319 (six before Level::getRuntimeActorList) in three new Level vtables, matching old getter0x117C430. UUID/map entry size and fields remain versioned candidates; bounded runtime reads required.",
+      "runtime_verified": false
     }
   }
 }

@@ -1,3 +1,4 @@
+#include <bedrock/profile_json.hpp>
 #include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -1684,8 +1685,17 @@ private:
                          std::string& error) {
         try {
             auto document = checksig::parseProfile(text);
+            // Expand named Minecraft layouts into observer symbols as well.
+            // Keep the persisted profile canonical; native_* aliases are local.
+            const auto expanded=bedrock::parseNativeProfile(text);
+            for(auto [name,entry]:sourceDefinitions(expanded)){
+                if(document["symbols"].contains(name))continue;
+                if(!entry.contains("signature"))entry["signature"]="";
+                if(entry.value("signature",std::string{}).empty())entry["cross_version_signature_available"]=false;
+                document["symbols"][name]=std::move(entry);
+            }
             auto resolver = std::make_unique<bedrock::Resolver>();
-            if (!resolver->loadJson(text, error)) return false;
+            if (!resolver->loadJson(document.dump(), error)) return false;
             if (identity_.fileSha256.size() != 64 ||
                 lower(document["target"]["sha256"].get<std::string>()) != lower(identity_.fileSha256)) {
                 error = "profile file SHA-256 does not match the loaded executable";

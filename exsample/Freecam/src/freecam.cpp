@@ -50,6 +50,7 @@ struct Capture {std::uint64_t epoch{};Clock::time_point made{};std::array<Box,12
 struct Mesh {std::uint64_t epoch{};Clock::time_point made{};unsigned count{};std::array<Vec,128*24> vertices{},fromVertices{};};
 std::atomic<bool> stop{},desired{},active{},gameplay{},restoreRequested{};
 std::atomic<unsigned> status{};
+unsigned visualRevision=9;std::string profileGameVersion,profileExeSha;
 std::atomic<void*> client{},local{};
 std::atomic<std::uint64_t> epoch{1};
 std::array<std::atomic<bool>,256> keys{};
@@ -637,6 +638,8 @@ void prepareProfile(const std::string& profile){
     hurtHash=number(f.at("hurt_time_component_hash"));hurtOffset=number(f.at("hurt_time_value_offset"));
     if(hurtOffset>4096||f.at("hurt_time_value_size")!=4)throw std::runtime_error("invalid camera/hurt layout");
     const auto& visual=f.at("visual");
+    if(j.at("target").value("version",std::string{})=="1.26.60.5"&&visual.value("revision",0)<10)
+        throw std::runtime_error("Freecam visual definition predates InsideBlockEffect port; exact embedded profile required");
     if(visual.at("schema")!=1)throw std::runtime_error("unsupported camera visual schema");
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
@@ -685,8 +688,8 @@ void worker(const std::filesystem::path& path){
         if(config.load()->visibilityDiagnostics&&observed){
             if(!observations.is_open())observations.open(path.parent_path()/L"visibility.jsonl",std::ios::app);
             if(observations){auto vector=[](Vec v){return nlohmann::json::array({v.x,v.y,v.z});};
-                observations<<nlohmann::json{{"schema",1},{"build","1.26.52.3"},{"visual_revision",9},
-                    {"exe_sha256","4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4"},
+                observations<<nlohmann::json{{"schema",1},{"build",profileGameVersion},{"visual_revision",visualRevision},
+                    {"exe_sha256",profileExeSha},
                     {"monotonic_ms",sample.milliseconds},{"epoch",sample.epoch},{"freecam",sample.flying},{"actor_game_type",sample.gameType},
                     {"valid_camera_read",sample.valid},{"candidate_camera_654",vector(sample.camera654)},
                     {"render_origin",vector(sample.origin)},{"raw_camera_970_976",sample.fogFlags},{"culler_type",sample.cullerType},
@@ -720,16 +723,16 @@ void worker(const std::filesystem::path& path){
                 " churn_guard="+std::to_string(terrainRejected.load())+" [native selector mode5; underground view needs live confirmation]");
             log("Freecam view factory: ready="+std::to_string(createViewReady.load())+" created="+std::to_string(viewCreated.exchange(0))+
                 " changed="+std::to_string(viewChanged.exchange(0))+" failed="+std::to_string(viewWriteFailed.exchange(0))+
-                " camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+" [fresh output only; 5s; visual_revision=9]");
+                " camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+" [fresh output only; 5s; visual_revision="+std::to_string(visualRevision)+"]");
             log("Freecam RenderDragon inside effect: ready="+std::to_string(effectReady.load())+" calls="+std::to_string(effectCalls.exchange(0))+
                 " eligible="+std::to_string(effectEligible.exchange(0))+" skipped="+std::to_string(effectSkipped.exchange(0))+
-                " other_caller="+std::to_string(effectOtherCaller.exchange(0))+" caller_rva="+std::to_string(effectLastCaller.load())+" [5s; visual_revision=9]");
+                " other_caller="+std::to_string(effectOtherCaller.exchange(0))+" caller_rva="+std::to_string(effectLastCaller.load())+" [5s; visual_revision="+std::to_string(visualRevision)+"]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
         if(bits&Activated){log("Freecam active [Borion local Player proxy; packet positions anchored; interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c=config.load();log(std::string("Freecam view: spectator_mode=")+(c->spectatorMode?"on":"off")+
-                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision=9 full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
+                " spectator_culler="+(terrainReady.load()?"mode5 ready":"unavailable")+" visual_revision="+std::to_string(visualRevision)+" full_bright="+(c->fullBright?(gammaReady.load()?"gamma 25":"unavailable"):"off"));
         }
         if(bits&Waiting && now>=nextWaitingLog){log("Freecam waiting: sender hook / fresh exact-build movement packet pose required before native writes");nextWaitingLog=now+std::chrono::seconds(5);}
         if(bits&Disabled)log("Freecam disabled");if(bits&Damage)log("Freecam disabled: local Player hurt");
@@ -760,6 +763,7 @@ DWORD WINAPI start(void*){
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
+        visualRevision=f.at("visual").value("revision",9);profileGameVersion=selected->choice().version;profileExeSha=j.at("target").at("sha256").get<std::string>();
         log("Freecam profile source="+std::string(bedrock::profileSourceName(selected->choice().source))+
             " version="+selected->choice().version+" path="+selected->choice().path);
         // Include selection/load errors even when an old owner's capabilities
@@ -822,7 +826,7 @@ DWORD WINAPI start(void*){
                     throw std::runtime_error("InsideBlockEffect callable identity mismatch");
             }
             effectReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&effectPredicateDetour),reinterpret_cast<void**>(&originalEffectPredicate),&effectToken)!=0);
-            log(effectReady.load()?"Freecam RenderDragon InsideBlockEffect filter ready [tag + exact extraction caller; visual revision9]":"Freecam RenderDragon InsideBlockEffect filter unavailable: hook conflict");
+            log(effectReady.load()?"Freecam RenderDragon InsideBlockEffect filter ready [tag + exact extraction caller; versioned visual profile]":"Freecam RenderDragon InsideBlockEffect filter unavailable: hook conflict");
         }catch(const std::exception& e){log(std::string("Freecam RenderDragon InsideBlockEffect filter unavailable: ")+e.what());}
         log("Freecam legacy inside-cube bypass retired [revision7 did not resolve underground display]");
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);

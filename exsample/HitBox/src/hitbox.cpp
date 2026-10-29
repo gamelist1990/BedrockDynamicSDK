@@ -1,5 +1,6 @@
 #include <bedrock/profile_json.hpp>
 #ifdef _WIN32
+#include <bedrock/native_local_player.hpp>
 #if !defined(_MSC_VER)
 #error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
 #endif
@@ -404,6 +405,7 @@ public:
         actorLayout_ = std::move(actors);
         actorTypeValueOffset_=actorTypeOffset; playerTypeId_=playerType;
     }
+    void loadLocalGetter(const nlohmann::json& root){localGetter_.load(root);}
     void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
     void* clientIdentity() const noexcept { return client_.load(std::memory_order_acquire); }
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
@@ -437,12 +439,7 @@ public:
             safeRead(cached.actor, context + actorLayout_.contextEntityIdOffset, entity) &&
             entity == cached.entity) return cached.actor;
         cached = {};
-        void** vtable = nullptr;
-        void* target = nullptr;
-        if (!safeRead(client, 0, vtable) || !safeRead(vtable,
-                itemLayout_.localPlayerVtableSlot * sizeof(void*), target) || !isExecutable(target))
-            return nullptr;
-        void* actor = callLocalPlayer(target, client);
+        void* actor = localGetter_.get(client,itemLayout_.localPlayerVtableSlot);
         if (actor && safeRead(actor, context + actorLayout_.contextRegistryOffset, registry) && registry &&
             safeRead(actor, context + actorLayout_.contextEntityIdOffset, entity))
             cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(50)};
@@ -597,6 +594,7 @@ private:
         return copied;
     }
     mutable std::uint64_t poseEpoch_{};
+    bedrock::NativeLocalPlayerGetter localGetter_;
     mutable std::size_t poseCount_{};
     mutable std::array<hitbox::Sample,hitbox::TrackingBudget::maximumActors> poseHandles_{},poseCopies_{};
     static bool captureRegistryBatch(void* registry, void* local, const bedrock::NativeActorLayout& layout,
@@ -1241,6 +1239,9 @@ void refreshGameTickSnapshot() {
     std::uint32_t entity=0;
     const bool identityReady=local && registry && access.copyNameEntityId(local,entity);
     if (!identityReady) {
+        if(now>=nextFailureReport){nextFailureReport=now+std::chrono::seconds(5);
+            log("local Actor unavailable: client=",access.clientIdentity()," actor=",local," registry=",reinterpret_cast<void*>(registry)," [exact-build getter; Actor context required]");}
+
         localActorIdentity.store(0,std::memory_order_release);
         if(snapshotRegistry) {
             worldEpoch.fetch_add(1,std::memory_order_acq_rel);
@@ -1767,6 +1768,8 @@ DWORD WINAPI startClient(void*) {
         hitbox::WorldRenderProfile candidateRender;
         if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
         if (!bedrock::parseNativeWorldEventsLayout(candidate, error)) return false;
+        try{access.loadLocalGetter(bedrock::parseNativeProfile(candidate));}
+        catch(const std::exception& ex){error=ex.what();return false;}
         worldRenderProfile = std::move(candidateRender);
         resolver = std::move(candidateResolver);
         itemLayout = std::move(candidateItems);
