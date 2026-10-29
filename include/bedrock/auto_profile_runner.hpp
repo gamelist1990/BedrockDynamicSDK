@@ -43,7 +43,7 @@ public:
                 if(cancel_.load())throw std::runtime_error("auto-dev cancelled");
                 result.report["identity"]={{"file_sha256",image.identity.fileSha256},{"text_sha256",image.identity.textSha256}};
                 result.report["profile_has_functions"]=!result.profile["symbols"].empty();
-                result.report["run"]=lastRevision_;
+                result.report["run"]=lastRevision_;result.profile["generation"]["run"]=lastRevision_;
                 const auto dir=directory/L"auto-dev";std::filesystem::create_directories(dir);
                 save(dir/L"windows-x64.json",result.profile.dump(2)+"\n");
                 save(dir/L"report.json",result.report.dump(2)+"\n");
@@ -56,7 +56,12 @@ public:
                 set({{"state",result.report["status"]},{"run",lastRevision_},{"generated_functions",result.profile["symbols"].size()},
                     {"unresolved",result.report["unresolved"].size()},{"vtables",result.report["vtables"].size()},
                     {"profile",utf8(dir/L"windows-x64.json")},{"report",utf8(dir/L"report.json")},{"auto_apply",false},{"game_memory_writes",false}});
-            }catch(const std::exception& e){set({{"state",cancel_.load()?"cancelled":"error"},{"error",e.what()},{"auto_apply",false}});}
+            }catch(const std::exception& e){
+                Json error={{"state",cancel_.load()?"cancelled":"error"},{"run",lastRevision_},{"error",e.what()},{"auto_apply",false},
+                    {"file_sha256",identity.fileSha256},{"previous_successful_outputs_retained",true}};
+                try{const auto dir=directory/L"auto-dev";std::filesystem::create_directories(dir);save(dir/L"error.json",error.dump(2)+"\n");}catch(...){}
+                set(std::move(error));
+            }
             done_.store(true);
         });
     }

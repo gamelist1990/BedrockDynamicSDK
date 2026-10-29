@@ -200,7 +200,7 @@ public:
                 }
                 Json generated=exact?def.value:Json{{"status","candidate"},{"abi_verified",false},{"runtime_verified",false},{"source_abi",def.value.value("abi",def.value.value("source_abi",std::string{}))}};
                 generated["rva"]=hex(*chosen);generated["entry_check"]=bytes(image,*chosen,function&&function->begin==*chosen?std::min<std::size_t>(24,function->end-*chosen):8);
-                generated["signature"]="";generated["cross_version_signature_available"]=false;
+                generated["signature"]="";generated["signature_length"]=0;generated["cross_version_signature_available"]=false;
                 generated["auto_dev_evidence"]=evidence;generated["source"]=exact?def.value.value("source",std::string("exact-build source")):"CheckSig auto-dev; candidate identity; ABI and behavior unverified";
                 if(function&&function->begin==*chosen&&decoder){
                     Json fresh=Json::array();std::size_t lastEnd{};
@@ -216,11 +216,13 @@ public:
                         // end of an already decoded window, never arbitrary bytes.
                         if(p.empty()||!facts||facts({input,p.size()}).value("terminal",false))break;offset+=p.size();if(offset>512)break;
                     }
-                    if(!fresh.empty()){generated["signature_anchors"]=fresh;generated["signature"]=fresh[0]["pattern"];generated["cross_version_signature_available"]=true;}
+                    if(!fresh.empty()){generated["signature_anchors"]=fresh;generated["signature"]=fresh[0]["pattern"];generated["signature_length"]=pattern(fresh[0]["pattern"].get<std::string>()).size();generated["cross_version_signature_available"]=true;}
                 }
                 if(accepted.contains(def.name)&&number(accepted.at(def.name).at("rva"))!=*chosen){conflicts.insert(def.name);evidence["status"]="conflict";evidence["reasons"].push_back("reference versions disagree on the target function");}
                 else{accepted[def.name]=std::move(generated);evidence["status"]=exact?"exact-build-reused":"candidate-function-found";evidence["rva"]=hex(*chosen);}
             }
+            evidence["abi_review_required"]=!exact||!def.value.value("abi_verified",false);
+            evidence["runtime_review_required"]=!exact||!def.value.value("runtime_verified",false);
             auto& recorded=result.report["functions"][def.name];
             if(recorded.is_object()&&recorded.contains("status")&&!chosen&&accepted.contains(def.name))recorded["other_source_attempts"].push_back(std::move(evidence));
             else recorded=std::move(evidence);
@@ -272,7 +274,8 @@ private:
             std::uint64_t col{};if(!word(begin-8,col)||col<image.pointerBase||col-image.pointerBase>UINT32_MAX)continue;
             const auto colRva=static_cast<std::uint32_t>(col-image.pointerBase);std::uint32_t signature{},type{},self{};
             if(!dword(colRva,signature)||signature!=1||!dword(colRva+12,type)||!dword(colRva+20,self)||self!=colRva||type>image.identity.imageSize-17)continue;
-            std::string name;for(unsigned i=0;i<1024;++i){const auto* c=image.read(type+16+i,1);if(!c){name.clear();break;}if(*c==std::byte{})break;name+=static_cast<char>(*c);}
+            std::string name;bool terminated=false;for(unsigned i=0;i<1024;++i){const auto* c=image.read(type+16+i,1);if(!c)break;const auto value=std::to_integer<unsigned>(*c);if(!value){terminated=true;break;}if(value<32||value>126)break;name+=static_cast<char>(*c);}
+            if(!terminated)continue;
             if(!name.starts_with(".?AV")&&!name.starts_with(".?AU"))continue;
             Json methods=Json::array();for(unsigned slot=0;slot<512;++slot){std::uint64_t target{};if(!word(begin+slot*8,target)||target<image.pointerBase+image.text.rva||target>=image.pointerBase+image.text.rva+image.text.bytes.size())break;
                 if(known.contains(target)){methods.push_back({{"slot",slot},{"symbol",known.at(target)},{"rva",hex(target-image.pointerBase)}});slots[known.at(target)].insert(slot);}}
@@ -293,6 +296,7 @@ private:
                     else if(found)definition=&result.profile.at(pointer);
                     if(definition&&definition->contains("symbol")&&!definition->contains("rva"))definition=&result.profile["symbols"].at(definition->at("symbol").get<std::string>());
                     found=definition&&definition->contains("rva")&&definition->contains("entry_check");
+                    if(found&&!definition->value("abi_verified",false))result.report["unresolved"].push_back({{"path",path},{"symbol",symbol},{"kind","native-ABI-review"},{"reason","function identity/guard is available but calling convention, argument types and hidden return are not independently verified"}});
                     if(found){const auto p=pattern(definition->at("entry_check").get<std::string>());const auto* entry=image.read(number(definition->at("rva")),p.size());found=entry&&!p.empty();
                         for(std::size_t i=0;found&&i<p.size();++i)found=p[i]<0||std::to_integer<unsigned>(entry[i])==static_cast<unsigned>(p[i]);}
                 }

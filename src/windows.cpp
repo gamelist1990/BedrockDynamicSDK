@@ -210,6 +210,7 @@ bool copyLive(const void* source,void* output,std::size_t count) noexcept {
 }
 }
 Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
+    if(identity.fileSha256.size()!=64)throw std::runtime_error("auto-dev cannot emit an SDK profile without the loaded EXE file SHA256; obtain the exact executable identity first");
     Image result;result.identity=identity;
     const auto module=GetModuleHandleW(nullptr);const auto loaded=reinterpret_cast<std::uintptr_t>(module);
     std::array<wchar_t,32768> path{};const auto pathLength=GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
