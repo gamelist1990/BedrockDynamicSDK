@@ -1,0 +1,56 @@
+{
+  "layouts": {
+    "ItemStack": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "actor_context": {
+        "actor_offset": "0x0",
+        "entt_registry_offset": "0x10",
+        "entity_id_offset": "0x18",
+        "status": "candidate",
+        "evidence": "Absolute offsets follow the exact-build Actor context candidate reads at +0x10/+0x18; interpreting them as registry/entity id on Actor* remains inferred."
+      },
+      "equipment": {
+        "component_hash": "0xB06141A9",
+        "hand_container_offset": "0x0",
+        "armor_container_offset": "0x8",
+        "slots": {
+          "main_hand": 0,
+          "offhand": 1,
+          "head": 0,
+          "chest": 1,
+          "legs": 2,
+          "feet": 3
+        },
+        "evidence": "Equipment component hash 0xB06141A9 occurs 16 times in the exact-build .text. Container offsets and slot mapping are carried from 1.26.52.3; runtime layout is unverified."
+      },
+      "inventory": {
+        "get_item_vtable_slot": 7,
+        "local_slot_count": 36,
+        "hotbar_slot_count": 9
+      },
+      "local_player": {
+        "get_local_player_vtable_slot": 34,
+        "supplies_offset": "0x5B8",
+        "selected_slot_offset": "0x10",
+        "inventory_offset": "0xB8",
+        "evidence": "Candidate slot 34 from exact-build ClientInstance table analysis (table RVA 0xF2B9310, getter RVA 0x659E470); returned pointer identity and lifetime are unverified. Other supplies/inventory offsets are carried from 1.26.52.3.",
+        "getter_symbol": "ClientInstance::getLocalPlayer"
+      },
+      "item_stack": {
+        "item_reference_offset": "0x8",
+        "count_offset": "0x22",
+        "namespaced_id_string_offset": "0x128",
+        "translation_key_string_offset": "0xB0",
+        "string_size_offset": "0x10",
+        "string_capacity_offset": "0x18",
+        "max_string_bytes": 256,
+        "hover_name_abi_verified": false,
+        "evidence": "ItemStack fields and string layout are carried forward from 1.26.52.3 and remain candidate-only; hover-name ABI is unverified."
+      },
+      "evidence": "Candidate layout for exact 1.26.60.5 executable. New-build evidence: Equipment hash byte pattern appears 16 times in .text; ClientInstance local-player getter candidate is table slot 34 / RVA 0x659E470. Actor context absolute offsets are supported only by candidate static reads. Remaining inventory, supplies, equipment, slot, and ItemStack offsets are carried forward from 1.26.52.3. runtime_verified=false.",
+      "runtime_verified": false
+    }
+  }
+}

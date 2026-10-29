@@ -1,0 +1,46 @@
+{
+  "layouts": {
+    "PacketSender": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "sender": {
+        "sender_send_to_server_slot": 2,
+        "packet_id_slot": 1,
+        "path": "MinecraftCommands::client->getPacketSender",
+        "command_request_path": {
+          "rva": "0x577a6f0",
+          "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 90 01 00 00 48 8D AC 24 80 00 00",
+          "status": "candidate",
+          "runtime_verified": false,
+          "source": "Native request route: client+0x1D0 -> Minecraft+0xC8 -> Commands+8 -> virtual+8 -> client virtual+0xA40 -> sender virtual+0x10; exact executable SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra bounded function evidence"
+        },
+        "runtime_verified": true,
+        "note": "ClientInstance+0x1E0 slot2 is RET at RVA0x768F0 in the supplied runtime; rejected as a PacketSender path.",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-28",
+          "scope": "Fake custom registration, nonempty text, native version/origin request and response round trip",
+          "limitations": [
+            "Other Mods and arbitrary origin numbers are not covered by this confirmation"
+          ]
+        }
+      },
+      "command_request": {
+        "vtable_rva": "0xF1D6260",
+        "command_offset": "0x30",
+        "get_id": {
+          "rva": "0x4198be0",
+          "entry_check": "B8 4D 00 00 00 C3 CC CC",
+          "abi": "unsigned __fastcall(Packet const*)",
+          "status": "candidate",
+          "runtime_verified": false
+        }
+      },
+      "evidence": "REA/Ghidra ev_f023356f27adb325f3a07f9386a17729b25492b1328ef5bad28ce9a5c448999a; exact getter RVA0x8AB680 reads ClientInstance+0x1E0. Adjacent0x8AB690 is a different function and is NOT used.",
+      "limitations": "The getter is statically identified. The concrete sender object and virtual send slot still require runtime observation."
+    }
+  }
+}

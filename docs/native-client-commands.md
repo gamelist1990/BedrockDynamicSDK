@@ -1,6 +1,6 @@
 # SDK native client commands
 
-`bedrock/native_client_commands.hpp` の `NativeClientCommands` は、Topにあった
+`bedrock/native/client_commands.hpp` の `NativeClientCommands` は、Topにあった
 本体CommandRegistry登録処理をSDKへ移したものです。`bedrock::sdk`で利用できます。
 EnTTやWorld APIへの依存はありません。Windows x64 / MSVC Release向けです。
 
@@ -12,7 +12,7 @@ ProfileManagerを使用してください。以下の文字列/boolを使う入�
 ## 互換APIの使用例
 
 ```cpp
-#include <bedrock/native_client_commands.hpp>
+#include <bedrock/native/client_commands.hpp>
 
 bedrock::NativeClientCommands commands; // 登録中・実行中に生存させる
 

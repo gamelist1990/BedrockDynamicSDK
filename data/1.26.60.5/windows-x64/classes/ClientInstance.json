@@ -1,0 +1,364 @@
+{
+  "layouts": {
+    "ClientInstance": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "exit_client_offset": 136,
+      "available_events": [
+        "onLevelExit",
+        "onDimensionChangedEvent"
+      ],
+      "scope": "exit and dimension boundaries only; player-loaded and join-cancelled callbacks unresolved",
+      "evidence": "Native onLevelExit adjusts GameCallbacks subobject RCX by -0x88; supplied runtime self differs from ClientInstance by0x88. onDimensionChangedEvent retains guarded SDK callback ABI."
+    }
+  },
+  "symbols": {
+    "ClientInstance::grabCursor": {
+      "rva": "0x65BB0A0",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 38 04 00 00",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 B8 3E 3E 09",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(ClientInstance*)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 16,
+        "observed_calls": 536,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 533,
+          "self": "0x2F124225010",
+          "symbol": "ClientInstance::grabCursor",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 536,
+          "type": "hook-observation"
+        }
+      }
+    },
+    "ClientInstance::releaseCursor": {
+      "rva": "0x65BB0F0",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 40 04 00 00",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 68 3E 3E 09",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(ClientInstance*)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 5,
+        "observed_calls": 36,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 35,
+          "self": "0x2F124225010",
+          "symbol": "ClientInstance::releaseCursor",
+          "time_utc": "2026-10-28T12:37:15Z",
+          "total_calls": 36,
+          "type": "hook-observation"
+        }
+      }
+    },
+    "ClientInstance::onPlayerLoaded": {
+      "rva": "0x65BD050",
+      "signature": "49 89 D0 48 89 CA 48 8B 89 C8 01 00 00 48 8B 01",
+      "entry_check": "49 89 D0 48 89 CA 48 8B 89 C8 01 00",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": false,
+      "signature_anchors": [],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": false
+      },
+      "verification_scope": "entry-guard"
+    },
+    "ClientInstance::onDimensionChangedEvent": {
+      "rva": "0x65AC680",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 68",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 89 CE 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 8B 44 24 ??",
+          "bytes": 34,
+          "fixed_bytes": 22,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 80,
+          "pattern": "4C 8B 02 49 C1 E0 05 4A 8D 14 01 42 81 7C 01 ?? 16 38 99 AF 75 ?? 49 8B 4C 08 ?? 89 C2 81 E2 00 F8 03 00",
+          "bytes": 35,
+          "fixed_bytes": 32,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 153,
+          "pattern": "83 E0 7F 83 3C 81 01 0F 85 ?? ?? ?? ?? 48 8B 06 48 8B 80 ?? ?? ?? ?? 48 89 F1 FF 15 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 302,
+          "pattern": "FF 15 ?? ?? ?? ?? 48 8B 08 48 8B 91 ?? ?? ?? ?? 48 89 C1 48 89 D0 FF 15 ?? ?? ?? ?? B9 50 03 00 00",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard"
+    },
+    "ClientInstance::getRegion": {
+      "rva": "0x659E2F0",
+      "signature": "56 57 48 83 EC ?? 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "entry_check": "56 57 48 83 EC 48 48 8D 91 68 02 00",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 48 83 EC ?? 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? 80 7C 24 ?? 00 0F 84 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 19,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_world.get_region",
+      "source_rva": "0x5DAEBB0",
+      "source_abi": "BlockSource* __fastcall(ClientInstance*)",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred",
+      "runtime_observation": {
+        "samples": 26,
+        "observed_calls": 120596,
+        "source_sha256": {
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 120411,
+          "client_instance": "0x2F124225010",
+          "return_block_source": "0x2F1246D7E10",
+          "source_vtable_candidate": "0x7FF6B9778A20",
+          "source_vtable_readable": true,
+          "symbol": "ClientInstance::getRegion",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 120596,
+          "type": "hook-observation"
+        }
+      }
+    },
+    "ClientInstance::getLocalPlayer": {
+      "rva": "0x659E470",
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
+      "entry_check": "48 83 EC 48 48 8B 05 45 9C D6 0B 48",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 ?? ?? ?? ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 21,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 41,
+          "pattern": "75 ?? 48 8D 4C 24 ?? B2 01 E8 ?? ?? ?? ?? EB ?? 31 C0 48 8B 4C 24 ?? 48 31 E1 48 8B 15 ?? ?? ?? ??",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_camera.local_player",
+      "source_rva": "0x5DAED30",
+      "source_abi": "Actor* __fastcall(ClientInstance*)",
+      "source_status": "candidate",
+      "source_description": "IClientInstance vtable 31; native_items.local_player vtable corroboration",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred",
+      "runtime_observation": {
+        "samples": 40,
+        "observed_calls": 4834453,
+        "source_sha256": {
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "actor_object_readable": true,
+          "actor_vtable_candidate": "0x7FF6B98CEF10",
+          "call_number": 4828283,
+          "client_instance": "0x2F124225010",
+          "return_actor": "0x2F25188A000",
+          "symbol": "ClientInstance::getLocalPlayer",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 4834453,
+          "type": "hook-observation"
+        }
+      }
+    },
+    "ClientInstance::onLevelExit": {
+      "rva": "0x65A3350",
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CF 48 8D B1 78 FF FF FF",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 CF 48 8D B1 ?? ?? ?? ?? C7 45 ?? 00 00 00 00",
+          "bytes": 38,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 59,
+          "pattern": "FF 15 ?? ?? ?? ?? 48 8B 8F ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 48 8B 40 ?? 31 D2 FF 15 ?? ?? ?? ??",
+          "bytes": 33,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "ClientInstance::onLevelExit",
+      "source_rva": "0x5DB42F0",
+      "source_abi": "void __fastcall(GameCallbacks* client_plus_0x88)",
+      "source_status": "candidate",
+      "source_description": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable GameCallbacks 0xE973F20 slot 7; REA/Ghidra ev_7b03e9eeb4ba609550569d2e257d863ae29dc50167edbb751b29fcc757acc096. Native runtime invocation remains unverified.",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 5,
+        "observed_calls": 5,
+        "source_sha256": {
+          "40-world-events.result.json": "32c0583e632d725c533a53984841ba5deefc10f5d019a4df79a17d277c71a155"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 5,
+          "self": "0x2F124225098",
+          "symbol": "ClientInstance::onLevelExit",
+          "time_utc": "2026-10-28T12:36:57Z",
+          "total_calls": 5,
+          "type": "hook-observation"
+        }
+      }
+    }
+  }
+}

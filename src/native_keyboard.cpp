@@ -1,5 +1,5 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/native_keyboard.hpp>
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/native/keyboard.hpp>
 #include <nlohmann/json.hpp>
 #include <cstring>
 #include <stdexcept>

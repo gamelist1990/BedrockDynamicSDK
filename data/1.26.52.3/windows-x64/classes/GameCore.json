@@ -1,0 +1,82 @@
+{
+  "layouts": {
+    "GameCore": {
+      "schema": 1,
+      "pointer_size": 8,
+      "callback_symbol": "GameCore::keyboardEvent",
+      "owner_offset": 0,
+      "processor_offset": 64,
+      "message_offset": 16,
+      "key_offset": 24,
+      "key_down_vtable_slot": 1,
+      "key_up_vtable_slot": 2,
+      "hardware_origin": 1
+    }
+  },
+  "symbols": {
+    "GameCore::keyboardEvent": {
+      "status": "verified",
+      "rva": "0x98FA0",
+      "signature": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 41 8B 58 10",
+      "entry_check": "56 57 53 48 83 EC ?? 4C 89 C7 48 89 D6",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(void* callback, void* result, void* context)",
+      "signature_anchors": [
+        {
+          "offset": 42,
+          "pattern": "0F 94 C2 41 0F B6 48 ?? E8 ?? ?? ?? ?? 84 C0 75 ?? 83 CB 04 81 FB 04 01 00 00 75 ?? 48 8D 4C 24 ??",
+          "bytes": 33,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 84,
+          "pattern": "85 C0 74 ?? 83 7C 24 ?? 01 75 ?? 8B 44 24 ?? 45 31 C0 83 F8 02 41 0F 94 C0 45 01 C0 83 F8 01 44 0F 44 C0",
+          "bytes": 35,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 126,
+          "pattern": "8B 57 ?? 48 8B 01 48 8B 40 ?? FF 15 ?? ?? ?? ?? EB ?? 48 8B 07 48 8B 48 ?? 8B 57 ?? 48 8B 01 48 8B 40 ??",
+          "bytes": 35,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "Minecraft.Windows.exe 1.26.52.3 native keyboard callback: prefilter at 0x98FD2, HIDController key-down/key-up at 0x99017/0x99030"
+    },
+    "GameCore::handleMouseInput": {
+      "status": "verified",
+      "rva": "0x8A880",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 BD 80 02 00 00 44 0F 29 B5 70 02 00 00 44 0F 29 AD 60 02 00 00 44 0F 29 A5 50 02 00 00 44 0F 29 9D 40 02 00 00 44 0F 29 95 30 02 00 00 44 0F 29 8D 20 02 00 00 44 0F 29 85 10 02 00 00 0F 29 BD 00 02 00 00 0F 29 B5 F0 01 00 00 48 C7 85 E8 01 00 00 FE FF FF FF 48 89 CE",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(GameCore*)",
+      "signature_anchors": [
+        {
+          "offset": 4548,
+          "pattern": "74 ?? EB ?? 0F 1F 84 00 ?? ?? ?? ?? 48 89 C8 48 8B 09 80 79 ?? 00 74 ?? 0F 1F 40 ?? 48 8B 4E ??",
+          "bytes": 32,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 6830,
+          "pattern": "49 8B 45 ?? 48 8B 80 ?? ?? ?? ?? 4C 89 E9 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 85 ?? ?? ?? ?? 80 78 ?? 01",
+          "bytes": 35,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x8A880; .pdata records exact function range 0x8A880-0x8D4EA; native x64 prologue and body use GameCore in RCX as the sole incoming argument"
+    }
+  }
+}

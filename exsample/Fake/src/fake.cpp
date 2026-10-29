@@ -1,6 +1,6 @@
-#include <bedrock/game_hooks.hpp>
-#include <bedrock/native_command_requests.hpp>
-#include <bedrock/native_message_commands.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/native/command_requests.hpp>
+#include <bedrock/native/message_commands.hpp>
 #include <fake_command.hpp>
 #include <knownfolders.h>
 #include <shlobj.h>

@@ -1,0 +1,7 @@
+{
+  "analysis": {
+    "runtime_verified_symbols": [
+      "Keyboard::feed"
+    ]
+  }
+}

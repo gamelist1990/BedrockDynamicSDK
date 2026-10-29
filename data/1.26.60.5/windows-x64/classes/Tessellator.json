@@ -1,0 +1,45 @@
+{
+  "symbols": {
+    "Tessellator::vertex": {
+      "rva": "0x54175E0",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 0F 29 4C 24 ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 8B 81 98 02 00 00",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 696,
+          "pattern": "31 D2 66 0F 1F 44 00 ?? F3 0F 10 44 15 ?? F3 0F 11 44 11 ?? F3 0F 10 44 15 ?? F3 0F 11 44 11 ??",
+          "bytes": 32,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 2778,
+          "pattern": "0F 57 C0 F3 0F 2A C0 F3 44 0F 10 05 ?? ?? ?? ?? F3 44 0F 5E C0 F3 41 0F 59 F0 45 0F C6 C0 00 44 0F 59 C7",
+          "bytes": 35,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    }
+  }
+}

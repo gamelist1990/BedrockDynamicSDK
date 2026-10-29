@@ -1,0 +1,56 @@
+{
+  "symbols": {
+    "MouseDevice::feed": {
+      "status": "verified",
+      "rva": "0x361AD0",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ??",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 31,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 102,
+          "pattern": "66 44 89 6C 24 ?? 66 44 89 64 24 ?? C7 44 24 ?? 00 00 00 00 88 44 24 ?? 48 8B 56 ?? 48 3B 56 ??",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 202,
+          "pattern": "66 89 7C 24 ?? C7 44 24 ?? 00 00 00 00 C7 44 24 ?? 00 00 00 00 C6 44 24 ?? 01 48 8B 56 ?? 48 3B 56 ??",
+          "bytes": 34,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 303,
+          "pattern": "88 5E ?? E9 ?? ?? ?? ?? 4C 8D 44 24 ?? 4C 89 F1 E8 ?? ?? ?? ?? 40 84 ED 0F 85 ?? ?? ?? ?? 0F B7 46 ??",
+          "bytes": 34,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 400,
+          "pattern": "C7 46 ?? FF FF FF FF EB ?? 4C 8D 44 24 ?? 4C 89 F1 E8 ?? ?? ?? ?? 66 81 7E ?? F1 D8 0F 84 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "Minecraft.Windows.exe 1.26.52.3 native raw-input callsites"
+    }
+  }
+}

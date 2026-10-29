@@ -1,0 +1,40 @@
+{
+  "symbols": {
+    "MultiPlayerLevel::_subTick": {
+      "status": "verified",
+      "rva": "0x12F4B70",
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 6D 40",
+      "entry_check": "55 56 57 53 48 81 EC D8 00 00 00 48",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(MultiPlayerLevel*)",
+      "signature_anchors": [
+        {
+          "offset": 513,
+          "pattern": "0F 28 0D ?? ?? ?? ?? 0F 57 D2 0F 1F 44 00 ?? F3 41 0F 10 59 ?? F3 41 0F 10 61 ?? 0F 14 DC F3 41 0F 10 61 ??",
+          "bytes": 36,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 767,
+          "pattern": "0F 28 35 ?? ?? ?? ?? 0F 57 FF 49 89 CA 0F 1F 40 ?? 45 0F 10 09 45 0F 10 41 ?? 45 0F 10 51 ?? 45 0F 28 DA",
+          "bytes": 35,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1020,
+          "pattern": "0F 57 ED F3 0F 10 35 ?? ?? ?? ?? 66 0F 1F 84 00 ?? ?? 00 00 F3 0F 10 38 44 0F 28 C1 F3 44 0F 5C C7",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x12F4B70; .pdata records exact function range 0x12F4B70-0x12F5068; native x64 prologue and body use MultiPlayerLevel in RCX as the sole incoming argument"
+    }
+  }
+}

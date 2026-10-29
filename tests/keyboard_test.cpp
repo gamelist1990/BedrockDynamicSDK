@@ -1,4 +1,4 @@
-#include "bedrock/keyboard.hpp"
+#include "bedrock/api/keyboard.hpp"
 #include <cassert>
 #include <iostream>
 

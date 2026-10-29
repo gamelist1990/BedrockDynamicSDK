@@ -1,5 +1,5 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/native_world_events.hpp>
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/native/world_events.hpp>
 #include <cstdint>
 #include <nlohmann/json.hpp>
 #include <stdexcept>

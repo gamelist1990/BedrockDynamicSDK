@@ -1,0 +1,37 @@
+{
+  "symbols": {
+    "GuiData::displayClientMessage": {
+      "rva": "0xE94410",
+      "signature": "55 41 57 41 56 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 00 02 00 00 FE FF FF FF 4D 89 CE",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 248,
+          "pattern": "48 8D 85 ?? ?? ?? ?? 48 89 44 24 ?? 4C 89 74 24 ?? 48 89 5C 24 ?? F3 0F 11 44 24 ?? C6 44 24 ?? 01",
+          "bytes": 33,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    }
+  }
+}

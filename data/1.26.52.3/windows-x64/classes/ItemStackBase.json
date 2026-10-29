@@ -1,0 +1,33 @@
+{
+  "symbols": {
+    "ItemStackBase::getHoverName": {
+      "status": "verified",
+      "rva": "0x24901E0",
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 89 D6 48 8D 55 B0",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83 EC",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "std::string* __fastcall(ItemStackBase*, std::string*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 57 41 56 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 D6 48 8D 55 ??",
+          "bytes": 34,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 67,
+          "pattern": "72 ?? 48 8B 5C 05 ?? EB ?? 48 8D 1C 28 48 83 C3 B0 48 85 FF 0F 88 ?? ?? ?? ?? 48 83 FF 0F 77 ??",
+          "bytes": 32,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "signature_length": 34,
+      "source": "Minecraft.Windows.exe 1.26.52.3 disassembly: RCX is ItemStackBase, RDX is the std::string sret buffer, and RAX returns that buffer"
+    }
+  }
+}

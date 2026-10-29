@@ -8,7 +8,7 @@
 #include <dxgi1_5.h>
 #include <wrl/client.h>
 #include <imgui.h>
-#include <bedrock/gui_overlay.hpp>
+#include <bedrock/render/gui_overlay.hpp>
 #include <atomic>
 #include <iostream>
 #include <string>

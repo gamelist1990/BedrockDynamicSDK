@@ -1,4 +1,4 @@
-#include <bedrock/hook_runtime.h>
+#include <bedrock/runtime/hook_runtime.h>
 
 extern "C" __declspec(dllexport) int Client_SubscribePoint(BDS_HookPoint point,
     void* target, BDS_HookCallback callback, void* user, BDS_HookToken* token) {

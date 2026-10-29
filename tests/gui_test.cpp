@@ -1,4 +1,4 @@
-#include <bedrock/gui.hpp>
+#include <bedrock/render/gui.hpp>
 #include <cassert>
 #include <cmath>
 int main() {

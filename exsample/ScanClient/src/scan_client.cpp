@@ -8,7 +8,7 @@
 #include <windows.h>
 #include <winver.h>
 #include <bcrypt.h>
-#include <bedrock/remote_catalog.hpp>
+#include <bedrock/profiles/remote_catalog.hpp>
 #include <nlohmann/json.hpp>
 #include "ghidra_import_script.hpp"
 #define hde64_disasm scanclient_hde64_disasm

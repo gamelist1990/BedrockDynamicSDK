@@ -1,6 +1,6 @@
 # CommandRequest / CommandOutput API
 
-`<bedrock/command_requests.hpp>` は通信方式に依存しない要求・応答APIです。
+`<bedrock/commands/command_requests.hpp>` は通信方式に依存しない要求・応答APIです。
 Windows x64 MSVC Release向けの `<bedrock/layouts.CommandRequestPacket.hpp>` が
 ゲームのPacketSenderとCommandOutputPacketに接続します。
 `bedrock::sdk` と `bedrock::hook_runtime` をリンクしてください。
@@ -88,7 +88,7 @@ ClientInstanceのsenderと送信経路の対応、実サーバーでの応答は
 
 ## Minecraftへのメッセージコマンド登録
 
-`<bedrock/native_message_commands.hpp>` の `NativeMessageCommands` は、
+`<bedrock/native/message_commands.hpp>` の `NativeMessageCommands` は、
 対象ビルドの本物のCommandRegistryへメッセージ引数付きの名前を登録します。
 
 ```cpp

@@ -1,11 +1,11 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/profile_manager.hpp>
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/profiles/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #ifdef _WIN32
-#include <bedrock/hook_runtime.h>
+#include <bedrock/runtime/hook_runtime.h>
 #endif
 #ifdef _WIN32
-#include <bedrock/generated_symbols.hpp>
+#include <bedrock/generated/symbols.hpp>
 #endif
 namespace bedrock {
 namespace {

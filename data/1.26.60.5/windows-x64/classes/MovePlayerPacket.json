@@ -1,0 +1,69 @@
+{
+  "symbols": {
+    "MovePlayerPacket::isValid": {
+      "rva": "0x3401F20",
+      "signature": "48 83 EC ?? F3 0F 10 49 38 0F 28 05 ?? ?? ?? ??",
+      "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? F3 0F 10 49 ?? 0F 28 05 ?? ?? ?? ?? 0F 28 D1 0F 54 D0 0F 2E 15 ?? ?? ?? ?? 73 ?? 0F 2E C9",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 51,
+          "pattern": "0F 2E C9 7A ?? 0F 54 D0 0F 2E 15 ?? ?? ?? ?? 73 ?? 0F 54 C8 0F 2E 0D ?? ?? ?? ?? 73 ?? B8 FF FF FF 7F",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 101,
+          "pattern": "3D 00 00 80 7F 7C ?? 48 83 C1 44 48 8D 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? EB ?? 48 83 C1 38 48 8D 15 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 149,
+          "pattern": "66 0F 6E 41 ?? 66 0F 7E C0 66 0F 6F 0D ?? ?? AE 0B 66 0F DB C8 25 FF FF FF 7F 3D 00 00 80 7F 0F 9C C0",
+          "bytes": 34,
+          "fixed_bytes": 31,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 201,
+          "pattern": "31 C0 83 FA 02 72 ?? 74 ?? 83 FA 03 75 ?? 0F B6 41 ?? 34 01 48 83 C4 ?? C3 48 8D 15 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    }
+  }
+}

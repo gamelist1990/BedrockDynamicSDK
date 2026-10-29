@@ -1,0 +1,148 @@
+{
+  "layouts": {
+    "Actor": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "actor_context": {
+        "actor_offset": "0x0",
+        "registry_offset": "0x10",
+        "entity_id_offset": "0x18",
+        "status": "candidate",
+        "evidence": "1.26.60.5 exact-build static candidate: function RVA 0xB94CA0 reads [RCX+0x10] and [RCX+0x18] while resolving ActorTypeComponent. Interpreting RCX as Actor* and the values as registry/entity id is inferred; relation to Level::getRuntimeActorList elements is unverified."
+      },
+      "actor_owner": {
+        "component_hash": "0x85B93800",
+        "component_hash_alternate": "0x0",
+        "actor_pointer_offset": "0x0"
+      },
+      "actor_type": {
+        "component_hash": "0x4F6BA419",
+        "value_offset": "0x0",
+        "value_size": 4,
+        "player_type_id": 319,
+        "evidence": "1.26.60.5 exact-build Ghidra/objdump evidence: RVA 0xB94CA0 resolves hash 0x4F6BA419, reads a 32-bit value at component offset 0, and compares it with 319. Component owner identity remains a candidate; no runtime validation."
+      },
+      "actor_unique_id": {
+        "component_hash": "0x18F957AF",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "runtime_id": {
+        "component_hash": "0xFC0DBBB5",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "aabb_shape": {
+        "component_hash": "0xBAC1B3CF",
+        "component_hash_alternate": "0x0",
+        "minimum_offset": "0x0",
+        "maximum_offset": "0xC"
+      },
+      "state_vector": {
+        "component_hash": "0x1B5D5238",
+        "component_hash_alternate": "0x0",
+        "position_offset": "0x0"
+      },
+      "actor_rotation": {
+        "component_hash": "0x75DF36B7",
+        "component_hash_alternate": "0x0",
+        "pitch_offset": "0x0",
+        "yaw_offset": "0x4"
+      },
+      "evidence": "Candidate layout for exact 1.26.60.5 executable. Static code at RVA 0x3A11540 references RuntimeID 0xFC0DBBB5, UniqueID 0x18F957AF, ActorType 0x4F6BA419, StateVector 0x1B5D5238, AABB 0xBAC1B3CF, and Rotation 0x75DF36B7. Actor context candidate function at RVA 0xB94CA0 reads argument offsets +0x10/+0x18; Actor* interpretation and actor-list element identity are inferred. All remaining component storage/value offsets are carried forward from 1.26.52.3 and remain unverified. runtime_verified=false.",
+      "runtime_verified": false,
+      "component_hash_observations": [
+        {
+          "component": "ActorOwner",
+          "hash": "0x85B93800",
+          "target_text_occurrences": 1674,
+          "evidence": "Exact-build .text byte scan; occurrence alone does not establish component layout."
+        },
+        {
+          "component": "ActorType",
+          "hash": "0x4F6BA419",
+          "target_text_occurrences": 73,
+          "evidence": "Also referenced by candidate function RVA 0xB94CA0."
+        },
+        {
+          "component": "UniqueID",
+          "hash": "0x18F957AF",
+          "target_text_occurrences": 84
+        },
+        {
+          "component": "RuntimeID",
+          "hash": "0xFC0DBBB5",
+          "target_text_occurrences": 35
+        },
+        {
+          "component": "AABB",
+          "hash": "0xBAC1B3CF",
+          "target_text_occurrences": 207
+        },
+        {
+          "component": "StateVector",
+          "hash": "0x1B5D5238",
+          "target_text_occurrences": 527
+        },
+        {
+          "component": "Rotation",
+          "hash": "0x75DF36B7",
+          "target_text_occurrences": 181
+        }
+      ]
+    }
+  },
+  "symbols": {
+    "Actor::getNameTag": {
+      "rva": "0xBBE500",
+      "signature": "56 48 83 EC ?? 48 8B 81 50 01 00 00 48 85 C0 74 ?? 8B 50 08 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
+      "entry_check": "56 48 83 EC 20 48 8B 81 50 01 00 00 48 85 C0 74 4A 8B 50 08 48 8B 08 29",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 8B 81 ?? ?? ?? ?? 48 85 C0 74 ?? 8B 50 ?? 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
+          "bytes": 38,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "const std::string& __fastcall(Actor*)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 12,
+        "observed_calls": 143,
+        "source_sha256": {
+          "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "actor": "0x2F2439F8700",
+          "call_number": 143,
+          "name_tag_pointer": "0x2F242855B30",
+          "symbol": "Actor::getNameTag",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 143,
+          "type": "hook-observation"
+        }
+      }
+    }
+  }
+}

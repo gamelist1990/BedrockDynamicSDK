@@ -1,6 +1,6 @@
-#include <bedrock/camera.hpp>
-#include <bedrock/brightness.hpp>
-#include <bedrock/game_type.hpp>
+#include <bedrock/api/camera.hpp>
+#include <bedrock/api/brightness.hpp>
+#include <bedrock/api/game_type.hpp>
 
 std::optional<bedrock::CameraFrame> moveCopiedCamera(bedrock::CameraRig& camera,
     bedrock::Yaw yaw, bedrock::CameraInput input, std::uint64_t runtime, std::uint64_t epoch) {
@@ -9,9 +9,9 @@ std::optional<bedrock::CameraFrame> moveCopiedCamera(bedrock::CameraRig& camera,
 }
 
 #ifdef _WIN32
-#include <bedrock/native_camera.hpp>
-#include <bedrock/native_game_type.hpp>
-#include <bedrock/native_brightness.hpp>
+#include <bedrock/native/camera.hpp>
+#include <bedrock/native/game_type.hpp>
+#include <bedrock/native/brightness.hpp>
 
 // Prepare these objects from RuntimeProfile first; install the brightness hook
 // after every adapter has passed prepare(). Keep them alive for the Mod lifetime.

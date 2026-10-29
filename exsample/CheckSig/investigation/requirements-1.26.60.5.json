@@ -65,8 +65,8 @@
   "sources": [
     "src/profile_manager.cpp",
     "include/bedrock/detail/native_world_access.hpp",
-    "include/bedrock/native_client_commands.hpp",
-    "include/bedrock/native_world_render.hpp",
+    "include/bedrock/native/client_commands.hpp",
+    "include/bedrock/native/world_render.hpp",
     "exsample/*/src"
   ],
   "groups": [
@@ -1661,6 +1661,28 @@
       "reference_only": {
         "version": "1.26.52.3",
         "value": "0x8D17B01"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/predicate_vtable_slot",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/predicate_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Camera/visual/render_dragon_inside_effect/type_getter_vtable_slot",
+      "group": "camera",
+      "kind": "layout",
+      "path": "/layouts/Camera/visual/render_dragon_inside_effect/type_getter_vtable_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 3
       },
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },

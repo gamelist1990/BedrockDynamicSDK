@@ -1,10 +1,10 @@
 #ifdef _WIN32
-#include <bedrock/game_api.hpp>
-#include <bedrock/game_hooks.hpp>
-#include <bedrock/generated_symbols.hpp>
-#include <bedrock/remote_catalog.hpp>
-#include <bedrock/profile_manager.hpp>
-#include <bedrock/packet_read_events.hpp>
+#include <bedrock/api/game_api.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/generated/symbols.hpp>
+#include <bedrock/profiles/remote_catalog.hpp>
+#include <bedrock/profiles/profile_manager.hpp>
+#include <bedrock/packets/packet_read_events.hpp>
 #include "native.hpp"
 #include "speed_builder/config.hpp"
 #include <knownfolders.h>

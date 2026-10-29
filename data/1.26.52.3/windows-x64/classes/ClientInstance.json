@@ -1,0 +1,95 @@
+{
+  "layouts": {
+    "ClientInstance": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "exit_client_offset": 136,
+      "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+    }
+  },
+  "symbols": {
+    "ClientInstance::grabCursor": {
+      "status": "verified",
+      "rva": "0x5DCE3C0",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 10 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E A8 01 00 00 48 8B 01 48 8B 80 38 04 00 00",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature_anchors": [],
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x5DCE3C0; .pdata records exact function range 0x5DCE3C0-0x5DCE403; disassembly uses ClientInstance in RCX and tail-dispatches the cursor-grab vtable slot 0x87"
+    },
+    "ClientInstance::releaseCursor": {
+      "status": "verified",
+      "rva": "0x5DCE410",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 10 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E A8 01 00 00 48 8B 01 48 8B 80 40 04 00 00",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature_anchors": [],
+      "source": "ScanClient 1.26.52.3 capture: full signature uniquely matches RVA 0x5DCE410; .pdata records exact function range 0x5DCE410-0x5DCE453; disassembly uses ClientInstance in RCX and tail-dispatches the cursor-release vtable slot 0x88"
+    },
+    "ClientInstance::onPlayerLoaded": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "rva": "0x5DD06F0",
+      "signature": "49 89 D0 48 89 CA 48 8B 89 A8 01 00 00 48 8B 01 48 8B 80 70 04 00 00 4C",
+      "entry_check": "49 89 D0 48 89 CA 48 8B 89 A8 01 00 00 48 8B 01 48 8B 80 70 04 00 00 4C",
+      "cross_version_signature_available": false,
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*, Player*)",
+      "source": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 327; REA/Ghidra ev_622de34172a5e3a8e479640ebd3f302fb6d37c7ea8c46c381aa827812dd01962. Native runtime invocation remains unverified."
+    },
+    "ClientInstance::onLevelExit": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "rva": "0x5DB42F0",
+      "signature": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 CF",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 CF",
+      "cross_version_signature_available": false,
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "abi": "void __fastcall(GameCallbacks* client_plus_0x88)",
+      "source": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable GameCallbacks 0xE973F20 slot 7; REA/Ghidra ev_7b03e9eeb4ba609550569d2e257d863ae29dc50167edbb751b29fcc757acc096. Native runtime invocation remains unverified."
+    },
+    "ClientInstance::onDimensionChangedEvent": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "rva": "0x5DBE5D0",
+      "signature": "56 48 83 EC 40 48 89 CE 48 8D 91 48 02 00 00 48 8D 4C 24 20 E8 97 1D 80",
+      "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 48 02 00 00 48 8D 4C 24 20 E8 97 1D 80",
+      "cross_version_signature_available": false,
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "source": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 134; REA/Ghidra ev_27d5015c85c5e0c8b4740f32926e7512c8c43ad585d894bb64cff23b06ec5e7a. Native runtime invocation remains unverified."
+    },
+    "ClientInstance::onCancelJoinGame": {
+      "status": "candidate",
+      "runtime_verified": false,
+      "rva": "0x5DA38F0",
+      "signature": "56 57 48 83 EC 28 48 89 CE C6 81 D7 06 00 00 01 48 8B 89 A8 01 00 00 48",
+      "entry_check": "56 57 48 83 EC 28 48 89 CE C6 81 D7 06 00 00 01 48 8B 89 A8 01 00 00 48",
+      "cross_version_signature_available": false,
+      "abi_verified": false,
+      "static_abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "source": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 13; REA/Ghidra ev_f412fe40a7569c670e78130b19f4765c0f2712608162e58b2c70cf46426e0cf3. Native runtime invocation remains unverified."
+    },
+    "ClientInstance::getLocalPlayer": {
+      "rva": "0x5DAED30",
+      "entry_check": "48 83 EC 48 48 8B 05 45 B3 A2 0B 48 31 E0 48 89 44 24 40 48 8D 91 48 02",
+      "abi": "Actor* __fastcall(ClientInstance*)",
+      "source": "IClientInstance vtable 31; native_items.local_player vtable corroboration",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false
+    }
+  }
+}

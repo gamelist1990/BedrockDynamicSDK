@@ -1,0 +1,84 @@
+{
+  "layouts": {
+    "LevelRenderer": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "functions": {
+        "render_level": {
+          "rva": "0x535f980",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC F8 01 00 00 48 8D AC 24 80",
+          "abi": "void __fastcall(LevelRenderer*, ScreenContext*, FrameRenderObject const*)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "begin": {
+          "rva": "0x5417230",
+          "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 81 0E EF 0C 48 31 E0 48 89 44 24 30 80",
+          "abi": "void __fastcall(Tessellator*, int unused, unsigned char mode, int vertices, bool reserve)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "vertex": {
+          "rva": "0x54175e0",
+          "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 78 44 0F 29 4C 24 60 44 0F",
+          "abi": "void __fastcall(Tessellator*, float, float, float)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "color": {
+          "rva": "0x5417520",
+          "entry_check": "80 B9 54 02 00 00 00 0F 85 AD 00 00 00 F3 0F 10 05 23 88 B2 09 F3 0F 59",
+          "abi": "void __fastcall(Tessellator*, float, float, float, float)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "render_mesh": {
+          "rva": "0x5ad5f90",
+          "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 50 04 00 00 48 8D AC 24 80 00 00",
+          "abi": "void __fastcall(ScreenContext*, Tessellator*, MaterialPtr const*, void* parameters)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "hashed_name_ctor": {
+          "rva": "0x76a710",
+          "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF FF 48 89 D7",
+          "abi": "HashedString* __fastcall(HashedString*, char const*)",
+          "status": "candidate",
+          "runtime_verified": false
+        },
+        "material_ctor": {
+          "rva": "0x4de7250",
+          "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50 0F 29 75 F0 48 C7 45 E8 FE FF FF FF",
+          "abi": "MaterialPtr* __fastcall(MaterialPtr*, RenderMaterialGroup*, HashedString const*)",
+          "status": "candidate",
+          "runtime_verified": false
+        }
+      },
+      "offsets": {
+        "level_renderer_player": 1152,
+        "render_origin": 1624,
+        "selection_material": 4232,
+        "screen_tessellator": 176,
+        "screen_shader_color": 48,
+        "tess_translation": 460,
+        "tess_building": 672,
+        "tess_special_mode": 597,
+        "shader_color_dirty": 16
+      },
+      "common_material_group_rva": "0x129C6290",
+      "evidence": [
+        "Exact executable SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra bounded functions and native callsite register inspection. Dossiers: PEXData/REA/1.26.6005.0/mod-port.",
+        "InGamePlayScreen::_renderLevel source-location cross-reference identifies caller0x4E0B490; three register arguments at its calls0x4E0B730/0x4E0B87C identify LevelRenderer::renderLevel0x535F980. The latter reads renderer+0x480 and player camera+0x658.",
+        "Native caller0x24E56D0 reads ScreenContext+0xB0, invokes begin0x5417230/vertex0x54175E0 and submits mesh0x5AD5F90. Caller0x539A550 writes color through ScreenContext+0x30 and dirty+0x10.",
+        "Tessellator begin/vertex/color preserve building+0x2A0, special+0x255, translation+0x1CC. begin uses R8B topology, R9D vertex count and stack bool; vertex uses XMM1/XMM2/XMM3.",
+        "LevelRendererPlayer constructor0x5386C00 constructs selection_overlay material at+0x1088 with group0x129C6290 through0x4DE7250. HashedString constructor0x76A710 initializes 48-byte layout and FNV hash."
+      ],
+      "limitations": [
+        "Static candidate; native boxes, names, materials and world transitions require runtime observation.",
+        "Old LevelRendererPlayer, origin and ScreenContext tessellator offsets are not reused."
+      ]
+    }
+  }
+}

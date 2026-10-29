@@ -1,0 +1,59 @@
+{
+  "symbols": {
+    "GameMode::buildBlock": {
+      "rva": "0x376B290",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 D0 00 00 00 FE FF FF FF 44 89 CB 45 89 C6",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 250,
+          "pattern": "BA 10 01 00 00 FF 15 ?? ?? ?? ?? 48 85 C0 0F 84 ?? ?? ?? ?? 48 89 85 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 503,
+          "pattern": "41 0F 11 81 ?? ?? ?? ?? 41 0F 11 81 ?? ?? ?? ?? 4C 89 8D ?? ?? ?? ?? 48 8B 7E ?? 48 8B 8F ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 17,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 747,
+          "pattern": "48 8D 05 ?? ?? ?? ?? 48 89 45 ?? 48 89 75 ?? 48 89 4D ?? 88 5D ?? 84 DB 74 ?? 41 83 FC 01 74 ??",
+          "bytes": 32,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_world.build_block",
+      "source_rva": "0x259BC60",
+      "source_abi": "bool __fastcall(GameMode*, BlockPos const*, unsigned char face, unsigned char HandSlot=0, bool isSimTick=false)",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    }
+  }
+}

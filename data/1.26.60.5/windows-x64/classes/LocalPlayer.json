@@ -1,0 +1,35 @@
+{
+  "layouts": {
+    "LocalPlayer": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "level_player_list_offset": 1256,
+      "entry_size": 168,
+      "actor_unique_id_offset": 0,
+      "uuid_offset": 8,
+      "name_offset": 24,
+      "evidence": "Exact-build REA/Ghidra getter 0x232F0B0 reads Level+0x4E8. It occupies slot319 (six before Level::getRuntimeActorList) in three new Level vtables, matching old getter0x117C430. UUID/map entry size and fields remain versioned candidates; bounded runtime reads required.",
+      "runtime_verified": false,
+      "revision": 2,
+      "map_abi": "msvc_release_unordered_map_uuid_value_align8",
+      "maximum_entries": 512,
+      "maximum_name_bytes": 4096,
+      "get_list": {
+        "symbol": "Level::getPlayerList"
+      },
+      "skin": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "entry_pointer_offset": 128,
+        "image_offset": 160,
+        "width_offset": 4,
+        "height_offset": 8,
+        "data_offset": 32,
+        "size_offset": 40,
+        "note": "Existing release MSVC skin reader moved into SDK. New-build skin fields remain candidates; a readable image alone does not verify lifetime."
+      },
+      "update_hint": "Level getter and all entry/skin offsets belong here. Offset fallback is explicit metadata, never a Mod constant. See docs/profile-maintenance.md#playerlist."
+    }
+  }
+}

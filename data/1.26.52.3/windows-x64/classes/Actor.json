@@ -1,0 +1,76 @@
+{
+  "layouts": {
+    "Actor": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "actor_context": {
+        "actor_offset": "0x8",
+        "registry_offset": "0x8",
+        "entity_id_offset": "0x10"
+      },
+      "actor_owner": {
+        "component_hash": "0x85B93800",
+        "component_hash_alternate": "0x0",
+        "actor_pointer_offset": "0x0"
+      },
+      "actor_type": {
+        "component_hash": "0x4F6BA419",
+        "value_offset": "0x0",
+        "value_size": 4,
+        "player_type_id": 319,
+        "evidence": "reference client ActorTypeComponent and Actor::isPlayer (319); exact EXE REA ev_99841f6e319e9010c0bada1df21a8d6c49d2983fcb5b4b8b4c1eeb4aeea120aa: RVA 0x019e9580 resolves 0x4F6BA419 and compares the four-byte component at offset 0 to 0x13F. Runtime layout remains candidate."
+      },
+      "actor_unique_id": {
+        "component_hash": "0x18F957AF",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "runtime_id": {
+        "component_hash": "0xFC0DBBB5",
+        "value_offset": "0x0",
+        "value_size": 8
+      },
+      "aabb_shape": {
+        "component_hash": "0xBAC1B3CF",
+        "component_hash_alternate": "0x0",
+        "minimum_offset": "0x0",
+        "maximum_offset": "0xC"
+      },
+      "state_vector": {
+        "component_hash": "0x1B5D5238",
+        "component_hash_alternate": "0x0",
+        "position_offset": "0x0"
+      },
+      "actor_rotation": {
+        "component_hash": "0x75DF36B7",
+        "component_hash_alternate": "0x0",
+        "pitch_offset": "0x0",
+        "yaw_offset": "0x4"
+      },
+      "evidence": "Exact 1.26.52.3 executable .text contains the FNV-1a identifiers for ActorOwnerComponent (0x85B93800), ActorTypeComponent (0x4F6BA419), ActorUniqueIDComponent (0x18F957AF), RuntimeIDComponent (0xFC0DBBB5), AABBShapeComponent (0xBAC1B3CF), StateVectorComponent (0x1B5D5238), and ActorRotationComponent (0x75DF36B7). Disassembly shows ActorUniqueIDComponent resolved through the entity registry and writes an eight-byte value at component offset 0; RuntimeIDComponent is also provisionally read as a 64-bit scalar at offset 0. Native storage ABI and live values still require runtime validation."
+    }
+  },
+  "symbols": {
+    "Actor::getNameTag": {
+      "status": "verified",
+      "rva": "0x1A14AC0",
+      "signature": "56 48 83 EC ?? 48 8B 81 28 01 00 00 48 85 C0 74 ?? 8B 50 08 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
+      "entry_check": "56 48 83 EC 20 48 8B 81 28 01 00 00",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "const std::string& __fastcall(Actor*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 8B 81 ?? ?? ?? ?? 48 85 C0 74 ?? 8B 50 ?? 48 8B 08 29 CA 81 E2 F8 FF 07 00 48 8D 05 ?? ?? ?? ??",
+          "bytes": 38,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "Minecraft.Windows.exe 1.26.52.3 live Actor::getNameTag hook; observed §-formatted names returned without disrupting the game"
+    }
+  }
+}

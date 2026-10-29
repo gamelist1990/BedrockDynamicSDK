@@ -1,5 +1,5 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/native_actors.hpp>
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/native/actors.hpp>
 
 #include <nlohmann/json.hpp>
 

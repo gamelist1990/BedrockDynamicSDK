@@ -1,5 +1,5 @@
-#include <bedrock/console.hpp>
-#include <bedrock/logger.hpp>
+#include <bedrock/logging/console.hpp>
+#include <bedrock/logging/logger.hpp>
 #include <cassert>
 #include <filesystem>
 #include <fstream>

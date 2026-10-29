@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "target": {
+    "product": "minecraft-bedrock",
+    "kind": "client",
+    "platform": "windows",
+    "arch": "x64",
+    "version": "1.26.52.3",
+    "sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
+    "text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
+    "image_base": "0x140000000",
+    "size_of_image": 314576896,
+    "text_rva": "0x1000",
+    "text_size": 240802816
+  },
+  "protocol": {
+    "path": "data/protocols/1.26.51/protocol.json",
+    "version_path": "data/protocols/1.26.51/version.json",
+    "sha256": "14fc38412ca259ab28c764b2d540d378e1bd65d23e059c1da2c61ec6843f7403",
+    "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+    "wire_roster_available": false
+  },
+  "format": "bedrock-profile-parts",
+  "parts": [
+    {
+      "path": "classes/Actor.json",
+      "sha256": "ee3d40b05b80a233142c7d325ce04c6d8bb6b99d0dbd6194aaeda9e0a3a8a86c"
+    },
+    {
+      "path": "classes/BlockSource.json",
+      "sha256": "b243bbf046f5f405d17e67f110d1c9ca842d836b5570aaa6235f3790b48cc115"
+    },
+    {
+      "path": "classes/Camera.json",
+      "sha256": "6a78bef7d2ee90d6848fce3f36540830f118ef53e33833bc607ff145d8fb0c43"
+    },
+    {
+      "path": "classes/ClientInstance.json",
+      "sha256": "09c6e919289ff3dc16947b599a59213a53b31cbfdcc0d663d661679ba78187f5"
+    },
+    {
+      "path": "classes/CommandRegistry.json",
+      "sha256": "d0b4f995a53080567e16c38e154b391f80f9a0ac9cda618bc4e88c0de0b620d0"
+    },
+    {
+      "path": "classes/GameCore.json",
+      "sha256": "d68e6ecf14c465325bf19d2f0f5573b71f512e55b3746cc62a7f933e208bdc3b"
+    },
+    {
+      "path": "classes/GuiData.json",
+      "sha256": "cd0e0066aadaccf0f37824118f9227d0e559e684d9d0bf9f0c8d4426a309d8f8"
+    },
+    {
+      "path": "classes/ItemStack.json",
+      "sha256": "1165f976efd616cdc82f6b5f6cc2142ce8314d5b3d4f379c32dae37638ae6349"
+    },
+    {
+      "path": "classes/ItemStackBase.json",
+      "sha256": "ca0e3347cd6968ce31129c004af743e62099fb9b99c1e8d072480ffc9cfaa7fc"
+    },
+    {
+      "path": "classes/Keyboard.json",
+      "sha256": "f61475b99ed26fc71b8730186ec6688a15e813c8473df6d97273d6d8397d5e85"
+    },
+    {
+      "path": "classes/Level.json",
+      "sha256": "d8ef0df84e9d34e26b2237d530fec5102fe94333edc657d9ddb908b3f75e4c8d"
+    },
+    {
+      "path": "classes/LevelRenderer.json",
+      "sha256": "e59294b33bd6e85cce9ab4deb0cadfb62b0a0efe2c3cdb9239f02acc5fcf376b"
+    },
+    {
+      "path": "classes/LevelRendererPlayer.json",
+      "sha256": "82c18c8d2fe1f9a0645d1648326edf59710d75d3c7b9e3d78d1c76a0007709e3"
+    },
+    {
+      "path": "classes/LocalPlayer.json",
+      "sha256": "41f519e392a157e3dd056f6a76d4430d8f45682d965e06640bc6613dd6901d1f"
+    },
+    {
+      "path": "classes/MouseDevice.json",
+      "sha256": "8f5da330df078cad41e4b3bdd98750aefe29aaa9c5ec04208fc34c2c00aa0875"
+    },
+    {
+      "path": "classes/MultiPlayerLevel.json",
+      "sha256": "8e04c0f9bf8a31513f284afe424dd0d1d2253cfc4c49594f4298fb937c565a9c"
+    },
+    {
+      "path": "classes/Packet.json",
+      "sha256": "cb94a4f875680b8be9566b1ffb714ea733885687054fa2688777ef8173f9ba71"
+    },
+    {
+      "path": "classes/PacketSender.json",
+      "sha256": "9ec876406a205b6285c73695c9e8ec7d59ab1993dc6eab1b1e9888c1dd1e0037"
+    },
+    {
+      "path": "classes/PacketWire.json",
+      "sha256": "200c87198661e828dd288b94c6138c9cc9604483d44d1a8e16020e8eac1292cd"
+    },
+    {
+      "path": "classes/RuntimeActorList.json",
+      "sha256": "51620e54cee463e67d22233ce9e77a2c59b1157aa2b80f7756ee8a6ce6a6f2a6"
+    },
+    {
+      "path": "classes/StateVectorComponent.json",
+      "sha256": "8002df04f5736b0a855acf66d3e1ff68b52272d82a76091869a37b4bbb1f6f87"
+    },
+    {
+      "path": "metadata/maintenance.json",
+      "sha256": "c0506e800ac150771a47556236c4f83da7732d21be5f8918925b2bf145bd2e09"
+    }
+  ]
+}

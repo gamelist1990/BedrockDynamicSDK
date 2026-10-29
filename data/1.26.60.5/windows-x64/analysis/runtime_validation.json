@@ -1,0 +1,32 @@
+{
+  "analysis": {
+    "runtime_validation": {
+      "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+      "capture_kind": "user-supplied CheckSig report and JSONL events",
+      "source_sha256": {
+        "events.jsonl": "8b30003132edbff45aa2e8548d01fad3d0c36d9dbf7ba5f0a8f67e168449f481",
+        "result.json": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "result.txt": "7f0568e0d61115eea29cddad5313e9bcf92d82a08b65fb45613d2d7414b589cc"
+      },
+      "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+      "text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
+      "profile_loading": {
+        "status": "complete",
+        "exact_build": true
+      },
+      "entry_guards": {
+        "status": "complete",
+        "readable": 43,
+        "matched": 43,
+        "total": 43
+      },
+      "hook_execution": {
+        "complete": [
+          "Keyboard::feed"
+        ],
+        "runtime_unverified_symbol_count": 42
+      },
+      "whole_profile_runtime_verified": false
+    }
+  }
+}

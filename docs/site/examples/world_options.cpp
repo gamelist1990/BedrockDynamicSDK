@@ -1,4 +1,4 @@
-#include <bedrock/game_api.hpp>
+#include <bedrock/api/game_api.hpp>
 
 bedrock::PlacementResult placeStone(bedrock::World world, bedrock::BlockPos target) {
     const bedrock::BlockSetOptions options = bedrock::BlockSetBuilder{}

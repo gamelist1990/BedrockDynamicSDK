@@ -1,4 +1,4 @@
-#include "bedrock/remote_catalog.hpp"
+#include "bedrock/profiles/remote_catalog.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -58,7 +58,8 @@ std::optional<ProfileChoice> chooseProfile(
             const auto expectedPath = "data/" + version + "/windows-x64.json";
             const std::string path = row.at("path").get<std::string>();
             const std::string checksum = lower(row.at("sha256").get<std::string>());
-            if (path != expectedPath || !validHash(checksum)) continue;
+            const auto modularPath = "data/" + version + "/windows-x64/manifest.json";
+            if ((path != expectedPath && path != modularPath) || !validHash(checksum)) continue;
             std::string reject;
             if (matchingIdentity(row, identity, reject)) {
                 error.clear();

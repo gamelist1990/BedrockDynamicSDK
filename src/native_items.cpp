@@ -1,5 +1,5 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/native_items.hpp>
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/native/items.hpp>
 
 #include <nlohmann/json.hpp>
 

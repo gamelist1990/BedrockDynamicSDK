@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/profile_json.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 // Windows x64 native adapter. Call only on the owning game tick after exact
 // Resolver identity validation. Prefer NativeWorld tick-scoped public API.
 #if !defined(_WIN32) || !defined(_MSC_VER) || !defined(_WIN64)
@@ -8,12 +8,12 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <bedrock/game_api.hpp>
-#include <bedrock/native_actors.hpp>
-#include <bedrock/native_items.hpp>
+#include <bedrock/api/game_api.hpp>
+#include <bedrock/native/actors.hpp>
+#include <bedrock/native/items.hpp>
 #include <entt/entt.hpp>
 #include <nlohmann/json.hpp>
-#include <bedrock/blocks.hpp>
+#include <bedrock/api/blocks.hpp>
 #include <array>
 #include <algorithm>
 #include <cmath>

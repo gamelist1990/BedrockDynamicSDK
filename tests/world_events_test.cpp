@@ -1,7 +1,7 @@
-#include <bedrock/game_api.hpp>
-#include <bedrock/generated_symbols.hpp>
-#include <bedrock/native_world_events.hpp>
-#include <bedrock/packet_ids.hpp>
+#include <bedrock/api/game_api.hpp>
+#include <bedrock/generated/symbols.hpp>
+#include <bedrock/native/world_events.hpp>
+#include <bedrock/enums/packet_id.hpp>
 #include <cassert>
 #include <stdexcept>
 

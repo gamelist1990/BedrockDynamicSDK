@@ -25,3 +25,6 @@ third_party/minhook/
 
 # Local GUI and diagnostics build directories
 /build-*/
+
+# Assembled compatibility profiles are build artifacts; edit class parts instead.
+/data/*/windows-x64.json

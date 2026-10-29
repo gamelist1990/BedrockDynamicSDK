@@ -10,7 +10,7 @@
 #include "hitbox/name_mesh_win32.hpp"
 #endif
 #include "hitbox/world_render_profile.hpp"
-#include <bedrock/generated_symbols.hpp>
+#include <bedrock/generated/symbols.hpp>
 #include <cassert>
 #include <limits>
 

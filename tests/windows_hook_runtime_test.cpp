@@ -1,4 +1,4 @@
-#include <bedrock/hook_runtime.h>
+#include <bedrock/runtime/hook_runtime.h>
 #include <cassert>
 #include <string>
 

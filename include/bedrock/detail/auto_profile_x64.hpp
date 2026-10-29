@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/auto_profile.hpp>
+#include <bedrock/analysis/auto_profile.hpp>
 #include <hde64.h>
 #include <array>
 

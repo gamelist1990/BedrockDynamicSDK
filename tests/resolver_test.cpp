@@ -1,5 +1,5 @@
-#include "bedrock/resolver.hpp"
-#include "bedrock/hook_runtime.h"
+#include "bedrock/profiles/resolver.hpp"
+#include "bedrock/runtime/hook_runtime.h"
 #include <array>
 #include <cassert>
 #include <iostream>

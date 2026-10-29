@@ -1,6 +1,6 @@
 #pragma once
 
-#include <bedrock/blocks.hpp>
+#include <bedrock/api/blocks.hpp>
 #include <algorithm>
 #include <atomic>
 #include <array>

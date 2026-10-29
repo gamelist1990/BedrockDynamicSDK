@@ -1,7 +1,7 @@
-#include <bedrock/profile_json.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 #ifdef _WIN32
-#include <bedrock/native_local_player.hpp>
-#include <bedrock/native_player_list.hpp>
+#include <bedrock/native/local_player.hpp>
+#include <bedrock/native/player_list.hpp>
 #if !defined(_MSC_VER)
 #error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
 #endif
@@ -11,15 +11,15 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 
-#include <bedrock/game_api.hpp>
-#include <bedrock/game_hooks.hpp>
-#include <bedrock/hook_runtime.h>
-#include <bedrock/logger.hpp>
-#include <bedrock/native_actors.hpp>
-#include <bedrock/native_items.hpp>
-#include <bedrock/remote_catalog.hpp>
-#include <bedrock/resolver.hpp>
-#include <bedrock/generated_symbols.hpp>
+#include <bedrock/api/game_api.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/runtime/hook_runtime.h>
+#include <bedrock/logging/logger.hpp>
+#include <bedrock/native/actors.hpp>
+#include <bedrock/native/items.hpp>
+#include <bedrock/profiles/remote_catalog.hpp>
+#include <bedrock/profiles/resolver.hpp>
+#include <bedrock/generated/symbols.hpp>
 #include <entt/entt.hpp>
 #if _ITERATOR_DEBUG_LEVEL != 0
 #error "HitBox must use the release STL layout: build Release with iterator debugging disabled."

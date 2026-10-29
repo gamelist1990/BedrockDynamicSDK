@@ -1,13 +1,13 @@
-#include <bedrock/profile_json.hpp>
-#include <bedrock/auto_profile_runner.hpp>
-#include "checksig_auto_sources.hpp"
+#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/analysis/auto_profile_runner.hpp>
+#include <bedrock/generated/profile_sources.hpp>
 #include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
 
-#include <bedrock/hook_runtime.h>
-#include <bedrock/remote_catalog.hpp>
-#include <bedrock/resolver.hpp>
+#include <bedrock/runtime/hook_runtime.h>
+#include <bedrock/profiles/remote_catalog.hpp>
+#include <bedrock/profiles/resolver.hpp>
 #include <nlohmann/json.hpp>
 #include <hde64.h>
 #include "check_sig_core.hpp"
@@ -697,8 +697,7 @@ public:
                     processCommands();
                     std::vector<json> autoSources;
                     if(autoDeveloper_.needsSources(output_/L"status.json")){
-                        autoSources.push_back(json::parse(checksig::autoSourceNew));
-                        autoSources.push_back(json::parse(checksig::autoSourceOld));
+                        for(const auto source:bedrock::generated::profileSources)autoSources.push_back(json::parse(source));
                         if(targetProfile_.is_object())autoSources.push_back(targetProfile_);
                         if(sourceProfile_.is_object())autoSources.push_back(sourceProfile_);
                     }

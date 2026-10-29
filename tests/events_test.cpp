@@ -1,4 +1,4 @@
-#include <bedrock/events.hpp>
+#include <bedrock/api/events.hpp>
 #include <cassert>
 #include <stdexcept>
 #include <vector>

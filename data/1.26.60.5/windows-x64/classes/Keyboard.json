@@ -1,0 +1,117 @@
+{
+  "symbols": {
+    "Keyboard::feed": {
+      "rva": "0x331C20",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D3 89 CE",
+      "entry_check": "55 41 56 56 57 53 48 83 EC 50 48 8D 6C 24 50 48 C7 45 F8 FE FF FF FF 89",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig runtime hook observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 89 D3 89 CE 4C 8D 35 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 237,
+          "pattern": "41 89 D8 4C 89 C8 FF 15 ?? ?? ?? ?? 90 89 C6 EB ?? 31 F6 48 8D 45 ?? 0F 57 C0 0F 11 00 48 85 FF",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "static-and-runtime-observed",
+      "abi_verified": true,
+      "runtime_verified": true,
+      "abi": "bool __fastcall(int inputKey, bool down)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "evidence_kind": "user-supplied CheckSig runtime log correlated with prior REA/Ghidra ABI evidence",
+        "static_evidence_ids": [
+          "ev_38db00997e90d1466923a9ea98b5e209bf90c11e105abb39b743b8d4a771abd1"
+        ],
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
+        "rva": "0x331C20",
+        "abi": "bool __fastcall(int inputKey, bool down)",
+        "hook_runtime": "4.4.0",
+        "hook_runtime_abi": 4,
+        "hook_installed_utc": "2026-10-28T09:26:47Z",
+        "first_observation_utc": "2026-10-28T09:26:51Z",
+        "last_observation_utc": "2026-10-28T09:27:20Z",
+        "scope": [
+          "transparent hook installation",
+          "original function returned through observer",
+          "key argument observation",
+          "down=0 and down=1 observation",
+          "return value 0 observation"
+        ],
+        "observation_samples": 10,
+        "minimum_observed_calls": 97,
+        "observed_keys": [
+          8,
+          18,
+          32,
+          65,
+          68,
+          79,
+          84,
+          87
+        ],
+        "observed_down_values": [
+          0,
+          1
+        ],
+        "observed_return_values": [
+          0
+        ],
+        "source_sha256": {
+          "events.jsonl": "8b30003132edbff45aa2e8548d01fad3d0c36d9dbf7ba5f0a8f67e168449f481",
+          "result.json": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+          "result.txt": "7f0568e0d61115eea29cddad5313e9bcf92d82a08b65fb45613d2d7414b589cc"
+        },
+        "limitations": [
+          "Only this exact executable and the captured session are covered.",
+          "Return value 1 was not observed; its semantics are not established by this capture.",
+          "No hook-removed event, long-duration stability or later session coverage was supplied.",
+          "GameCore::keyboardEvent and native_keyboard object layout / synthetic input delivery remain unverified."
+        ]
+      },
+      "verification_scope": "runtime-hook",
+      "runtime_observation": {
+        "samples": 17,
+        "observed_calls": 318,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 318,
+          "down": 1,
+          "key": 18,
+          "result": 0,
+          "symbol": "Keyboard::feed",
+          "time_utc": "2026-10-28T12:37:08Z",
+          "total_calls": 318,
+          "type": "hook-observation"
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
-#include <bedrock/remote_catalog.hpp>
+#include <bedrock/profiles/remote_catalog.hpp>
 #include "check_sig_core.hpp"
 #include <iomanip>
 #include <iostream>

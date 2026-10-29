@@ -1,4 +1,3 @@
 #pragma once
-
-// Convenience include for the SDK's optional, startup-truncating file sink.
-#include "bedrock/logger.hpp"
+// Compatibility include; new code should use bedrock/logging/file_log_sink.hpp.
+#include <bedrock/logging/file_log_sink.hpp>

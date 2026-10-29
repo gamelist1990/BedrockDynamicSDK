@@ -1,0 +1,77 @@
+{
+  "symbols": {
+    "MultiPlayerLevel::_subTick": {
+      "rva": "0x6B8D550",
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 6D 40",
+      "entry_check": "55 56 57 53 48 81 EC D8 00 00 00 48 8D AC 24 80 00 00 00 44 0F 29 6D 40",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 6D ?? 44 0F 29 65 ?? 66 44 0F 7F 5D ??",
+          "bytes": 35,
+          "fixed_bytes": 24,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 514,
+          "pattern": "0F 57 D2 66 66 2E 0F 1F 84 00 ?? ?? 00 00 F3 41 0F 10 59 ?? F3 41 0F 10 61 ?? 0F 14 DC F3 41 0F 10 61 ??",
+          "bytes": 35,
+          "fixed_bytes": 30,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 767,
+          "pattern": "0F 28 35 ?? ?? ?? ?? 0F 57 FF 49 89 CA 0F 1F 40 ?? 45 0F 10 09 45 0F 10 41 ?? 45 0F 10 51 ?? 45 0F 28 DA",
+          "bytes": 35,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1020,
+          "pattern": "0F 57 ED F3 0F 10 35 ?? ?? ?? ?? 66 0F 1F 84 00 ?? ?? 00 00 F3 0F 10 38 44 0F 28 C1 F3 44 0F 5C C7",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(MultiPlayerLevel*)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 31,
+        "observed_calls": 1472,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 1469,
+          "level": "0x2F25565F000",
+          "symbol": "MultiPlayerLevel::_subTick",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 1472,
+          "type": "hook-observation"
+        }
+      }
+    }
+  }
+}

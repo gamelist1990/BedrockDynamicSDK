@@ -3,9 +3,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <bcrypt.h>
-#include "bedrock/resolver.hpp"
-#include "bedrock/remote_catalog.hpp"
-#include <bedrock/auto_profile.hpp>
+#include "bedrock/profiles/resolver.hpp"
+#include "bedrock/profiles/remote_catalog.hpp"
+#include <bedrock/analysis/auto_profile.hpp>
 #include <algorithm>
 #include <array>
 #include <filesystem>

@@ -1,9 +1,9 @@
 #pragma once
-#include <bedrock/profile_json.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 // Guarded owner-tick adapter used by NativeSafeTeleport. No placement or inventory writes.
-#include <bedrock/native_world.hpp>
-#include <bedrock/native_motion.hpp>
-#include <bedrock/safe_teleport.hpp>
+#include <bedrock/native/world.hpp>
+#include <bedrock/native/motion.hpp>
+#include <bedrock/api/safe_teleport.hpp>
 namespace bedrock::teleport_native {
 namespace n=bedrock::world_native;
 using Vec=bedrock::Vec3;using Pos=bedrock::BlockPos;

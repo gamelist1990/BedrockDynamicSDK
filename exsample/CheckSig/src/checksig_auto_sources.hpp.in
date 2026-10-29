@@ -1,5 +1,0 @@
-#pragma once
-namespace checksig {
-inline constexpr const char* autoSourceOld=R"BDAUTO52(@CHECKSIG_AUTO_SOURCE_OLD@)BDAUTO52";
-inline constexpr const char* autoSourceNew=R"BDAUTO60(@CHECKSIG_AUTO_SOURCE_NEW@)BDAUTO60";
-}

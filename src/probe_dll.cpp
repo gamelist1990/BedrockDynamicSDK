@@ -5,8 +5,8 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include "bedrock/resolver.hpp"
-#include "bedrock/generated_symbols.hpp"
+#include "bedrock/profiles/resolver.hpp"
+#include "bedrock/generated/symbols.hpp"
 #include <cstdio>
 #include <string>
 #include <string_view>

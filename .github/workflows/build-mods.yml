@@ -53,6 +53,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Verify data and Python
         run: |
+          python tools/profile_parts.py assemble-all data
           uv sync --extra dev
           uv run --extra dev pytest -q
           uv run bedrock-symbols index data --output /tmp/manifest-generated.json
@@ -116,20 +117,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Embed exact game profile
-        shell: pwsh
-        env:
-          GAME_VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE/tools"
-          python -c "import os; from pathlib import Path; from bedrock_symbols.embed import make_header; make_header(Path('data') / os.environ['GAME_VERSION'] / 'windows-x64.json', Path('include/bedrock/generated_symbols.hpp'))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assemble diagnostic compatibility inputs
+        run: python tools/profile_parts.py assemble-all data
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
           $extraArgs = @()
           if ("${{ matrix.mod }}" -eq "CheckSig") { $extraArgs += "-DCHECKSIG_BUILD_TESTS=ON" }
-          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} @extraArgs
+          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} -DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }} @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2

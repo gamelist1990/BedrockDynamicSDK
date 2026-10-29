@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/profile_json.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <atomic>

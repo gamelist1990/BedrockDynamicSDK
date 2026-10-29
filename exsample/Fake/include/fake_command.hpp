@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/command_requests.hpp>
+#include <bedrock/commands/command_requests.hpp>
 #include <charconv>
 #include <string>
 #include <string_view>

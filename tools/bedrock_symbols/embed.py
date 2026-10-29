@@ -2,10 +2,11 @@
 from __future__ import annotations
 from pathlib import Path
 import json
+from .profile_parts import load_profile
 
 
 def make_header(source: Path, destination: Path) -> None:
-    value = json.loads(source.read_text(encoding="utf-8"))
+    value = load_profile(source)
     if value.get("schema") != 1 or "symbols" not in value:
         raise ValueError("expected a Bedrock symbol database schema 1")
     # Runtime resolution only needs target identity and symbols. The unified

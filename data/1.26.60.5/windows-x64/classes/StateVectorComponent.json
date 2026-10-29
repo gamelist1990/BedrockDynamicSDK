@@ -1,0 +1,19 @@
+{
+  "layouts": {
+    "StateVectorComponent": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "state_vector": {
+        "state_position_offset": 0,
+        "state_previous_position_offset": 12,
+        "state_velocity_offset": 24,
+        "fall_distance_component_hash": "0xce6b34f6",
+        "fall_distance_value_offset": 0,
+        "evidence": "StateVector hash 0x1B5D5238 is referenced by exact-build candidate function RVA 0x3A11540. Position/previous/velocity offsets and FallDistance layout are carried forward from 1.26.52.3; runtime values and writes are unverified."
+      },
+      "evidence": "Candidate layout for exact 1.26.60.5 executable. StateVector component hash has exact-build static references; state field offsets and FallDistance hash/value offset are carried forward from 1.26.52.3. No runtime validation."
+    }
+  }
+}

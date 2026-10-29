@@ -1,6 +1,6 @@
-#include <bedrock/native_keyboard.hpp>
-#include <bedrock/generated_symbols.hpp>
-#include <bedrock/hook_runtime.h>
+#include <bedrock/native/keyboard.hpp>
+#include <bedrock/generated/symbols.hpp>
+#include <bedrock/runtime/hook_runtime.h>
 #include <nlohmann/json.hpp>
 #include <array>
 #include <cassert>

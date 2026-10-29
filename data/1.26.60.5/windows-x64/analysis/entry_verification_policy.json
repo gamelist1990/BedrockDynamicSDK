@@ -1,0 +1,5 @@
+{
+  "analysis": {
+    "entry_verification_policy": "User-approved: a readable exact-build entry guard match is sufficient for symbol status=verified; this status does not imply ABI or runtime verification."
+  }
+}

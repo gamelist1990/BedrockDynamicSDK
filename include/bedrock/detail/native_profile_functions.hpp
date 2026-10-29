@@ -9,7 +9,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <bedrock/profile_manager.hpp>
+#include <bedrock/profiles/profile_manager.hpp>
 #include <nlohmann/json.hpp>
 #include <cstring>
 #include <cstddef>
@@ -26,6 +26,17 @@ inline std::uint32_t number(const nlohmann::json& value) {
     const auto result = value.is_string() ? std::stoull(value.get<std::string>(), nullptr, 0) : value.get<std::uint64_t>();
     if (result > UINT32_MAX) throw std::runtime_error("native profile integer overflow");
     return static_cast<std::uint32_t>(result);
+}
+// Fill a missing adapter layout only from an identical executable definition.
+inline std::string_view layoutProfile(std::string_view selected,std::string_view embedded,const char* layout) {
+    const auto root=nlohmann::json::parse(selected);
+    if(root.contains("layouts")&&root.at("layouts").contains(layout))return selected;
+    const auto fallback=nlohmann::json::parse(embedded);
+    for(const auto* field:{"sha256","text_sha256","size_of_image","text_rva","text_size"})
+        if(root.at("target").at(field)!=fallback.at("target").at(field))
+            throw std::runtime_error("embedded adapter belongs to another executable");
+    if(!fallback.at("layouts").contains(layout))throw std::runtime_error(std::string("missing SDK layout: ")+layout);
+    return embedded;
 }
 inline const nlohmann::json& functionDefinition(const nlohmann::json& root,const nlohmann::json& reference) {
     if(reference.contains("symbol")&&!reference.contains("rva"))return root.at("symbols").at(reference.at("symbol").get<std::string>());

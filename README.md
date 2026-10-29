@@ -83,3 +83,7 @@ DLLはGitHubのWindows RunnerでMSVC x64 Releaseとして作成します。
 
 プロファイルはGitHub取得とローカル取得に対応します。
 SHA-256・PE範囲・入口ガードを照合し、別バージョンのアドレスを代用しません。
+
+## SDKと定義の構成
+
+[フォルダ構造と更新手順](docs/sdk-structure.md) · [パケットAPI](docs/packet-events.md)

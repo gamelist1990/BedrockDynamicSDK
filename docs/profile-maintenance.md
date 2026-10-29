@@ -1,5 +1,8 @@
 # Windows x64定義とSDKの更新
 
+編集元は`data/<version>/windows-x64/classes/*.json`です。`manifest.json`でパスとSHAを管理します。詳細は[構成ガイド](sdk-structure.md)を参照してください。
+単一の`windows-x64.json`はCheckSigへの受け渡し・旧形式向けの生成物です。
+
 ## 責務
 
 | 場所 | 管理するもの |

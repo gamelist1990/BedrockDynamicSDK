@@ -8,8 +8,8 @@
 #include <imgui.h>
 #include <backends/imgui_impl_win32.h>
 #include <backends/imgui_impl_dx11.h>
-#include "bedrock/gui_host.hpp"
-#include "bedrock/gui.hpp"
+#include "bedrock/render/gui_host.hpp"
+#include "bedrock/render/gui.hpp"
 #include <algorithm>
 #include <exception>
 #include <string>

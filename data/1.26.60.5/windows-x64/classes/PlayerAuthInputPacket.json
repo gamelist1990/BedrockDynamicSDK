@@ -1,0 +1,100 @@
+{
+  "symbols": {
+    "PlayerAuthInputPacket::isValid": {
+      "rva": "0x401C670",
+      "signature": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F",
+      "entry_check": "56 57 48 83 EC 38 48 8B 05 43 BA 2E",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F 8B 51 ?? 21 C2 81 FA FF FF 7F 7F",
+          "bytes": 37,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 217,
+          "pattern": "0F 9C C0 0F 2E 0D ?? ?? ?? ?? 0F 96 C2 84 C2 74 ?? 66 0F 6E 41 ?? 66 0F 7E C0 25 FF FF FF 7F 3D FF FF 7F 7F",
+          "bytes": 36,
+          "fixed_bytes": 30,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 652,
+          "pattern": "84 C0 0F 84 ?? ?? ?? ?? 48 8B BE ?? ?? ?? ?? 48 89 F9 48 C1 E9 22 83 E1 01 48 83 BE ?? ?? ?? ?? 00",
+          "bytes": 33,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 874,
+          "pattern": "48 8B 86 ?? ?? ?? ?? 8B 88 ?? ?? ?? ?? 89 4C 24 ?? 48 8B 80 ?? ?? ?? ?? 48 89 44 24 ?? 48 8D 15 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    },
+    "PlayerAuthInputPacket::getId": {
+      "rva": "0x16D57E0",
+      "signature": "41 57 41 56 41 54 56 57 53 48 83 EC ?? 89 D7 48 89 CE 48 8D 05 ?? ?? ?? ?? 48 89 01 48 8B 59 08 48 85 DB 74 ??",
+      "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 45,
+          "pattern": "4C 39 E3 74 ?? 4C 8D 74 24 ?? 66 0F 1F 84 00 ?? ?? 00 00 4C 8D 43 ?? 48 0F BE 4B ?? 48 FF C1 4C 89 F2",
+          "bytes": 34,
+          "fixed_bytes": 28,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_packets.motion.auth_input.get_id",
+      "source_rva": "0xB26A00",
+      "source_abi": "",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "inferred"
+    }
+  }
+}

@@ -4,9 +4,10 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
-#include "bedrock/generated_symbols.hpp"
-#include "bedrock/remote_catalog.hpp"
-#include "bedrock/resolver.hpp"
+#include "bedrock/generated/symbols.hpp"
+#include "bedrock/profiles/remote_catalog.hpp"
+#include <bedrock/profiles/profile_parts.hpp>
+#include "bedrock/profiles/resolver.hpp"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <chrono>
@@ -202,6 +203,15 @@ bool fetchRemoteProfile(const GameIdentity& identity,
         error = "profile checksum mismatch";
         return false;
     }
+    try {
+        downloaded=assembleProfileParts(downloaded,selected->path,[&](const std::string& path,const std::string& hash){
+            std::wstring url=L"/gamelist1990/BedrockDynamicSDK/main/";for(char ch:path)url.push_back(static_cast<wchar_t>(ch));
+            std::string part,actual;
+            if(!httpsGet(url,kProfileLimit,part,error))throw std::runtime_error(error+": "+path);
+            if(!sha256(part,actual)||actual!=hash)throw std::runtime_error("profile part checksum mismatch: "+path);
+            return part;
+        });
+    }catch(const std::exception& e){error=e.what();return false;}
     if (!validateDownloadedProfile(downloaded, *selected, identity, error)) return false;
     Resolver resolver;
     if (!resolver.loadJson(downloaded, error) ||

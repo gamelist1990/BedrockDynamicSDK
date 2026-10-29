@@ -4,7 +4,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <MinHook.h>
-#include <bedrock/hook_runtime.h>
+#include <bedrock/runtime/hook_runtime.h>
 
 #include <array>
 #include <atomic>

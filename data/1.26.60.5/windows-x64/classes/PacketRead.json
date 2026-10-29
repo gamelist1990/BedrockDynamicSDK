@@ -1,0 +1,20 @@
+{
+  "layouts": {
+    "PacketRead": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi": "Result*(Packet*, Result*, ReadOnlyBinaryStream*, context*)",
+      "stream_view_offset": 40,
+      "stream_size_offset": 48,
+      "stream_cursor_offset": 56,
+      "result_success_offset": 64,
+      "read": {
+        "rva": "0x2395750",
+        "entry_check": "55 41 56 56 57 53 48 81 EC B0 01 00 00 48 8D AC 24 80 00 00 00 48 C7 85"
+      },
+      "evidence": "Exact-build REA/Ghidra: shared Packet slot 8 calls slot 15, validates stream cursor/overflow, returns hidden Result pointer; receive coverage requires runtime observation. Common stream ABI only, no SetTitlePacket object fields."
+    }
+  }
+}

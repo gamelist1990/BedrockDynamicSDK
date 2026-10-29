@@ -1,0 +1,32 @@
+{
+  "symbols": {
+    "Keyboard::feed": {
+      "status": "verified",
+      "rva": "0x2D18D0",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D3 89 CE",
+      "entry_check": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ??",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "bool __fastcall(int inputKey, bool down)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 89 D3 89 CE 4C 8D 35 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 236,
+          "pattern": "41 89 D8 4C 89 C8 FF 15 ?? ?? ?? ?? 89 C6 EB ?? 31 F6 48 8D 45 ?? 0F 57 C0 0F 11 00 48 85 FF 0F 84 ?? ?? ?? ??",
+          "bytes": 37,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "Minecraft.Windows.exe 1.26.52.3 native key-event callback and KeyboardManager callsite"
+    }
+  }
+}

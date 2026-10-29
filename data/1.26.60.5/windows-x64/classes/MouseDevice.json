@@ -1,0 +1,92 @@
+{
+  "symbols": {
+    "MouseDevice::feed": {
+      "rva": "0x427650",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 48 44 89 CF 44 89 C3 89 D5",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 31,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 102,
+          "pattern": "66 44 89 6C 24 ?? 66 44 89 64 24 ?? C7 44 24 ?? 00 00 00 00 88 44 24 ?? 48 8B 56 ?? 48 3B 56 ??",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 200,
+          "pattern": "48 89 44 24 ?? C7 44 24 ?? 00 00 00 00 C6 44 24 ?? 01 48 8B 56 ?? 48 3B 56 ?? 0F 84 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 301,
+          "pattern": "4C 8D 44 24 ?? 4C 89 F1 E8 ?? ?? ?? ?? 40 84 ED 0F 85 ?? ?? ?? ?? 0F B7 46 ?? 31 C9 3D F1 D8 00 00",
+          "bytes": 33,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 404,
+          "pattern": "4C 89 F1 E8 ?? ?? ?? ?? 66 81 7E ?? F1 D8 0F 84 ?? ?? ?? ?? E9 ?? ?? ?? ?? C7 46 ?? 01 00 00 00",
+          "bytes": 32,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "runtime_observation": {
+        "samples": 12,
+        "observed_calls": 6647,
+        "source_sha256": {
+          "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "action": 0,
+          "call_number": 6622,
+          "dx": 0,
+          "dy": 0,
+          "force_motionless_pointer": 0,
+          "self": "0x7FF6BCEBE010",
+          "state": 0,
+          "symbol": "MouseDevice::feed",
+          "time_utc": "2026-10-28T12:37:13Z",
+          "total_calls": 6647,
+          "type": "hook-observation",
+          "x": 362,
+          "y": 961
+        }
+      }
+    }
+  }
+}

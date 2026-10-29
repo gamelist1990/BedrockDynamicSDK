@@ -1,0 +1,43 @@
+{
+  "analysis": {
+    "runtime_follow_up": {
+      "date": "2026-10-28",
+      "sources": {
+        "1.26.60.5-all-mods.result.json": "ce7b5de1a1163dd95e678a894206e375f2ec5a0e6b51c0aa0dc8b6a9567d4ecf",
+        "10-input.result.json": "5447fe5174cfe916d79cb74298a9df288498332cb75d5778e61d8cf1225adf29",
+        "20-actors-world.result.json": "d94cbf1d15783720463939ca5090b5d0c18c2e7268d549ce9adcc2ae16f6eace",
+        "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245",
+        "40-world-events.result.json": "32c0583e632d725c533a53984841ba5deefc10f5d019a4df79a17d277c71a155",
+        "50-command-output.result.json": "929e3b72414638d650eef978b4564ea5c788ebb7a4f036885a771339e76535ef",
+        "90-port-old.result.json": "3194ffd86117b08558b77586b81eaf607790cc17e59761254a50411f1657b519"
+      },
+      "observed_symbols": [
+        "Actor::getNameTag",
+        "BlockSource::getBlock",
+        "BlockSource::getChunk",
+        "ClientInstance::getLocalPlayer",
+        "ClientInstance::getRegion",
+        "ClientInstance::grabCursor",
+        "ClientInstance::onLevelExit",
+        "ClientInstance::releaseCursor",
+        "CommandRegistry::findCommand",
+        "CommandRegistry::registerCommand",
+        "GameCore::keyboardEvent",
+        "Keyboard::feed",
+        "LevelRendererPlayer::getFov",
+        "MouseDevice::feed",
+        "MultiPlayerLevel::_subTick",
+        "sub_5376690"
+      ],
+      "scope": "actual calls recorded; ABI/lifetime flags retained independently",
+      "rejected_assumptions": [
+        "ClientInstance+0x1E0 is not the CommandRequest sender in this run: slot2 RVA0x768F0 is RET",
+        "Server /me signature cannot be assumed to contain the static native MeCommand factory"
+      ],
+      "pending": [
+        "CommandOutputPacket::read installed with no decode observation",
+        "90-port-old still uses a stale external-source job; replace commands/90-port-old.json with the embedded-source job"
+      ]
+    }
+  }
+}

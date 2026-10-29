@@ -38,13 +38,54 @@ bool prepared = packets.dispatch(args, [](bedrock::PacketWireSendEvent& event) {
 未編集のパケットは元の引数を渡します。編集時は一時文字列を同期的に渡し、ゲーム側が
 新しい長さを書いてコピーします。圧縮・暗号化・送信自体はゲームが処理します。
 
+## Mod用API
+
+```cpp
+#include <bedrock/packets/packet_api.hpp>
+#include <bedrock/packets/protocol_codec.hpp>
+
+// Modの寿命を通して保持し、停止時はDllMain外でstop()する。
+bedrock::PacketApi packets;
+bedrock::ProtocolCodec codec;
+auto incoming = packets.onReceive(bedrock::PacketId::PlayerList,
+    [&](const bedrock::PacketReadEvent& event) {
+        auto records = codec.decode(event.id(), event.payload());
+        // recordsは所有コピー。必要ならworkerへ渡せる。
+    });
+auto outgoing = packets.onSend(bedrock::PacketId::Text,
+    [&](bedrock::PacketWireSendEvent& event) {
+        auto fields = codec.decode(event.id(), event.packet().payload());
+        fields["message"] = "replacement";
+        event.packet().replacePayload(codec.encode(event.id(), fields));
+        // event.cancel(); で送信をキャンセルできる。
+    });
+std::string error;
+packets.installReceive(selectedProfileJson, error);
+packets.installSend(selectedProfileJson, error);
+// packets.unsubscribe(outgoing); // 1件だけ解除
+// packets.stop();                // 全購読を解除
+```
+
+受信はゲームのdecode成功後の観測APIです。受信済みのゲームオブジェクトを書き換えるAPIではありません。
+送信はbatch/compression前にコピーを書き換えます。コールバックはnetwork threadの可能性があるため、Actorを直接読まずコピーしたデータを使います。
+ID別購読では不要なパケットpayloadをコピーしません。購読追加・解除はcallback一覧のコピーを公開します。
+
 ## 通信定義
 
-[PrismarineJS/minecraft-data 1.26.60](https://github.com/PrismarineJS/minecraft-data/tree/9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60)
-のcommitを固定しています。`data/protocols/bedrock-1.26.60.json` にID、選択した4パケットの
-通信定義、InputData、ソースSHA256を保存しています。
-再生成は `python3 tools/import_bedrock_protocol.py`。
-1.26.51ソースのMovePlayer / PlayerAuthInput / InputData定義も同一で、1.26.52.3の共通Hook候補を別EXEから取得しています。
+[PrismarineJSのprotocol.json](https://raw.githubusercontent.com/PrismarineJS/minecraft-data/9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60/protocol.json)
+を加工せず`data/protocols/<protocol-version>/protocol.json`へ保存します。
+参照するソースは版別manifestの`protocol.path`、`version_path`、`sha256`で選択します。
+CMakeが選択版をビルド時に組み込み、SDKは共通名の生成ヘッダーを使います。
+PlayerList専用JSONや版名付きのC++ヘッダーは作りません。
+
+`ProtocolCodec`は同じ完全なschemaを直接参照してdecode/encodeします。
+container、array、mapper、switch、string/buffer、UUID、整数、zigzag、lf32等に対応します。
+NBT、bitflags等の未対応の特殊型は名前付きエラーになり、推測して書き込みません。
+未対応部分は`WireReader` / `WireWriter`で生payloadを扱えます。wire enumと完全なschemaは同じdataから生成します。
+
+`PlayerListPackets`はPlayerListとPlayerSkinを解析し、UUIDをキーに追加・削除・顔画像更新を保持します。
+StartGame／Disconnectでクリアします。途中ロード前の初回名簿は再現できないため、受信できていなければワールドへ入り直してください。
+不正なpacketは以前の名簿を保持し、拒否件数と理由を診断へ残します。
 
 `MovementPackets` は通信上の順序で読みます。InputDataはzigzag32 enumの配列です。
 位置・移動ベクトル・delta・analog/raw入力を編集し、teleport ackなどの非移動フラグを保持します。

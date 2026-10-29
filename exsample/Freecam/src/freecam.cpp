@@ -1,4 +1,4 @@
-#include <bedrock/profile_json.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -6,21 +6,23 @@
 #include <intrin.h>
 #include <knownfolders.h>
 #include <shlobj.h>
-#include <bedrock/game_api.hpp>
-#include <bedrock/native_motion.hpp>
-#include <bedrock/native_packet_sender.hpp>
-#include <bedrock/wire_packet_events.hpp>
-#include <bedrock/movement_packets.hpp>
-#include <bedrock/native_brightness.hpp>
-#include <bedrock/native_camera.hpp>
-#include <bedrock/native_game_type.hpp>
-#include <bedrock/game_hooks.hpp>
-#include <bedrock/generated_symbols.hpp>
-#include <bedrock/native_actors.hpp>
-#include <bedrock/native_items.hpp>
-#include <bedrock/native_world_render.hpp>
-#include <bedrock/remote_catalog.hpp>
-#include <bedrock/profile_manager.hpp>
+#include <bedrock/api/game_api.hpp>
+#include <bedrock/native/motion.hpp>
+#include <bedrock/native/packet_sender.hpp>
+#include <bedrock/packets/wire_packet_events.hpp>
+#include <bedrock/packets/movement_packets.hpp>
+#include <bedrock/native/brightness.hpp>
+#include <bedrock/native/inside_block_effect.hpp>
+#include <bedrock/runtime/module_identity.hpp>
+#include <bedrock/native/camera.hpp>
+#include <bedrock/native/game_type.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/generated/symbols.hpp>
+#include <bedrock/native/actors.hpp>
+#include <bedrock/native/items.hpp>
+#include <bedrock/native/world_render.hpp>
+#include <bedrock/profiles/remote_catalog.hpp>
+#include <bedrock/profiles/profile_manager.hpp>
 #include <entt/entt.hpp>
 #include "freecam/config.hpp"
 #include <array>
@@ -64,11 +66,7 @@ using CameraRenderFn=void(__fastcall*)(void*,void*,void*,void*);CameraRenderFn o
 BDS_HookToken cameraRenderToken{};std::atomic<bool> cameraRenderReady{};
 using CreateViewFn=void*(__fastcall*)(void*,void*,void*,unsigned char);CreateViewFn originalCreateView{};
 BDS_HookToken createViewToken{};std::atomic<bool> createViewReady{};
-using EffectPredicateFn=bool(__fastcall*)(void*,void*);EffectPredicateFn originalEffectPredicate{};
-BDS_HookToken effectToken{};std::atomic<bool> effectReady{};
-std::array<std::uintptr_t,2> effectTables{},effectCallers{};
-std::atomic<unsigned> effectCalls{},effectEligible{},effectSkipped{},effectOtherCaller{};
-std::atomic<std::uintptr_t> effectLastCaller{};
+bedrock::NativeInsideBlockEffect insideBlockEffect;
 std::atomic<unsigned> cameraRenderCalls{},viewCreated{},viewChanged{},viewWriteFailed{};
 
 // All culler ownership bookkeeping below belongs to the native render callback.
@@ -159,28 +157,9 @@ void __fastcall cameraRenderDetour(void* camera,void* context,void* view,void* i
     }
     originalCameraRender(camera,context,view,instance);
 }
-// RenderDragon extraction predicate. This shared native implementation serves
-// many tags, so require BOTH the InsideBlockEffect callable table and its exact
-// extraction call site. No frame/entity/terrain data is mutated.
-bool __fastcall effectPredicateDetour(void* predicate,void* arguments){
-    const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    std::uintptr_t table{};
-    if(!read(predicate,0,table))return originalEffectPredicate(predicate,arguments);
-    const bool tagged=table==effectTables[0]||table==effectTables[1];
-    if(!tagged)return originalEffectPredicate(predicate,arguments);
-    const bool permitted=originalEffectPredicate(predicate,arguments);
-    effectCalls.fetch_add(1,std::memory_order_relaxed);
-    const auto image=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    if(caller>=image&&caller-image<0x20000000)effectLastCaller.store(caller-image);
-    if(caller!=effectCallers[0]&&caller!=effectCallers[1]){
-        effectOtherCaller.fetch_add(1,std::memory_order_relaxed);return permitted;
-    }
-    if(permitted)effectEligible.fetch_add(1,std::memory_order_relaxed);
-    if(permitted&&effectReady.load(std::memory_order_relaxed)&&active.load()&&!stop.load()&&gameplay.load()&&
-       primaryCameraEpoch.load()==epoch.load()&&config.load()->spectatorMode){
-        effectSkipped.fetch_add(1,std::memory_order_relaxed);return false;
-    }
-    return permitted;
+bool insideBlockEffectPolicy() noexcept {
+    return active.load()&&!stop.load()&&gameplay.load()&&
+        primaryCameraEpoch.load()==epoch.load()&&config.load()->spectatorMode;
 }
 // Intercept the native selector BEFORE its update. Repeated native requests
 // then see an already selected mode5 and do not rebuild the async culler each frame.
@@ -724,9 +703,10 @@ void worker(const std::filesystem::path& path){
             log("Freecam view factory: ready="+std::to_string(createViewReady.load())+" created="+std::to_string(viewCreated.exchange(0))+
                 " changed="+std::to_string(viewChanged.exchange(0))+" failed="+std::to_string(viewWriteFailed.exchange(0))+
                 " camera_calls="+std::to_string(cameraRenderCalls.exchange(0))+" [fresh output only; 5s; visual_revision="+std::to_string(visualRevision)+"]");
-            log("Freecam RenderDragon inside effect: ready="+std::to_string(effectReady.load())+" calls="+std::to_string(effectCalls.exchange(0))+
-                " eligible="+std::to_string(effectEligible.exchange(0))+" skipped="+std::to_string(effectSkipped.exchange(0))+
-                " other_caller="+std::to_string(effectOtherCaller.exchange(0))+" caller_rva="+std::to_string(effectLastCaller.load())+" [5s; visual_revision="+std::to_string(visualRevision)+"]");
+            const auto effectStats=insideBlockEffect.takeStatistics();
+            log("Freecam RenderDragon inside effect: ready="+std::to_string(insideBlockEffect.ready())+" calls="+std::to_string(effectStats.calls)+
+                " eligible="+std::to_string(effectStats.eligible)+" skipped="+std::to_string(effectStats.skipped)+
+                " other_caller="+std::to_string(effectStats.otherCaller)+" caller_rva="+std::to_string(effectStats.callerRva)+" [SDK tag/caller pairs; 5s; visual_revision="+std::to_string(visualRevision)+"]");
             log("Freecam packet flow: anchored="+std::to_string(anchoredPackets.exchange(0))+" item_inputs="+std::to_string(interactionPackets.exchange(0))+" rejected="+std::to_string(blockedPackets.exchange(0)));
         }
         const auto bits=logBits.exchange(0);
@@ -751,6 +731,7 @@ DWORD WINAPI start(void*){
     try{
         const auto dir=directory();std::filesystem::create_directories(dir);logFile.open(dir/L"Freecam.log",std::ios::trunc);
         const auto path=dir/L"config.json";if(!std::filesystem::exists(path)){std::ofstream out(path);out<<freecam::configJson(freecam::Config{}).dump(2)<<'\n';}
+        log(bedrock::moduleIdentity(reinterpret_cast<const void*>(&start)));
         if(!loadConfig(path))throw std::runtime_error("initial config invalid");
         std::string error;bedrock::ProfileManager profiles;
         const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::Camera,bedrock::Feature::Motion,
@@ -763,9 +744,9 @@ DWORD WINAPI start(void*){
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
-        visualRevision=f.at("visual").value("revision",9);profileGameVersion=selected->choice().version;profileExeSha=j.at("target").at("sha256").get<std::string>();
+        visualRevision=f.at("visual").value("revision",9);profileGameVersion=j.at("target").at("version").get<std::string>();profileExeSha=j.at("target").at("sha256").get<std::string>();
         log("Freecam profile source="+std::string(bedrock::profileSourceName(selected->choice().source))+
-            " version="+selected->choice().version+" path="+selected->choice().path);
+            " version="+selected->choice().version+" path="+selected->choice().path+" exe_sha256="+profileExeSha+" visual_revision="+std::to_string(visualRevision));
         // Include selection/load errors even when an old owner's capabilities
         // stop startup before the normal ready message.
         log(BDS_HookRuntimeDiagnostic());
@@ -813,21 +794,9 @@ DWORD WINAPI start(void*){
             createViewReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&createViewDetour),reinterpret_cast<void**>(&originalCreateView),&createViewToken)!=0);
             log(createViewReady.load()?"Freecam view factory ready [new output draw_inside_cubes=false; no game-mode/ability writes; visual revision9]":"Freecam view factory unavailable: hook conflict");
         }catch(const std::exception& e){log(std::string("Freecam view factory unavailable: ")+e.what());}
-        try{
-            const auto& effect=f.at("visual").at("render_dragon_inside_effect");
-            if(effect.at("variants").size()!=2)throw std::runtime_error("unsupported InsideBlockEffect variants");
-            void* target=checkedFunction(effect.at("predicate"));
-            for(unsigned i=0;i<2;++i){const auto& v=effect.at("variants").at(i);
-                checkedFunction(v.at("caller_check"));const auto typeGetter=checkedFunction(v.at("type_getter_check"));
-                effectTables[i]=base+number(v.at("callable_vtable_rva"));effectCallers[i]=base+number(v.at("return_rva"));
-                void *call{},*type{};
-                if(!read(reinterpret_cast<void*>(effectTables[i]),0x10,call)||call!=target||
-                   !read(reinterpret_cast<void*>(effectTables[i]),0x18,type)||type!=typeGetter)
-                    throw std::runtime_error("InsideBlockEffect callable identity mismatch");
-            }
-            effectReady.store(BDS_HookDirectInstall(target,reinterpret_cast<void*>(&effectPredicateDetour),reinterpret_cast<void**>(&originalEffectPredicate),&effectToken)!=0);
-            log(effectReady.load()?"Freecam RenderDragon InsideBlockEffect filter ready [tag + exact extraction caller; versioned visual profile]":"Freecam RenderDragon InsideBlockEffect filter unavailable: hook conflict");
-        }catch(const std::exception& e){log(std::string("Freecam RenderDragon InsideBlockEffect filter unavailable: ")+e.what());}
+        if(insideBlockEffect.install(*selected,bedrock::generated::kSymbolDatabase,&insideBlockEffectPolicy,error))
+            log("Freecam RenderDragon InsideBlockEffect filter ready [SDK tag + paired extraction caller; versioned visual profile]");
+        else log("Freecam RenderDragon InsideBlockEffect filter unavailable: "+error);
         log("Freecam legacy inside-cube bypass retired [revision7 did not resolve underground display]");
         api.Event.Enum.Keyboard.then(keyEvent);api.Event.Enum.Mouse.then(mouseEvent);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& e){api.setWorldEventClient(e.clientInstance);client.store(e.clientInstance);gameplay.store(e.active);if(!e.active){disable();for(auto& key:keys)key.store(false);}});

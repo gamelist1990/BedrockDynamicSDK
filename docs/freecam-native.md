@@ -60,7 +60,7 @@ new Freecam and updated HitBox can use the same native render method. All
 co-loaded mods must be rebuilt with runtime 4; old runtime owners require a
 complete game restart. HitBox now subscribes rather than installing a
 competing direct detour. The reusable native render profile parser lives in
-`include/bedrock/native_world_render.hpp`.
+`include/bedrock/native/world_render.hpp`.
 
 Exact executable fingerprint and entry bytes are checked before installation.
 All new Freecam offsets and targets remain `candidate`, `runtime_verified:false`.

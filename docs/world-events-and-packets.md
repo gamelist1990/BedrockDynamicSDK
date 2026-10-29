@@ -6,8 +6,8 @@ Link `bedrock::game_hooks`, load and attach the exact-build profile as usual,
 and keep `GameApi` and `GameHooks` alive while subscribed:
 
 ```cpp
-#include <bedrock/game_hooks.hpp>
-#include <bedrock/packet_ids.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/enums/packet_id.hpp>
 
 bedrock::GameApi api{access};
 bedrock::GameHooks hooks{api};

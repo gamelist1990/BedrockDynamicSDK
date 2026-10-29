@@ -1,0 +1,61 @@
+{
+  "symbols": {
+    "Level::getRuntimeActorList": {
+      "status": "verified",
+      "rva": "0x117C640",
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 8B B1 B0 04 00 00",
+      "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(Level*, std::vector<Actor*>* hidden_return_buffer)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 8B B1 ?? ?? ?? ?? 0F 57 C0",
+          "bytes": 33,
+          "fixed_bytes": 26,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 33,
+          "pattern": "0F 11 02 48 89 55 ?? 48 C7 42 ?? 00 00 00 00 48 8B 5E ?? 4C 8B 33 49 39 DE 74 ?? 48 8D 7D ?? EB ??",
+          "bytes": 33,
+          "fixed_bytes": 27,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 96,
+          "pattern": "49 8B 56 ?? 48 89 F1 45 31 C0 E8 ?? ?? ?? ?? 48 89 45 ?? 48 85 C0 74 ?? 48 8B 4D ?? 48 8B 51 ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "signature_length": 30,
+      "source": "Minecraft.Windows.exe 1.26.52.3 Level vftable slot 0x145 and native vector construction/Actor pointer loop"
+    },
+    "Level::getPlayerList": {
+      "rva": "0x117c430",
+      "entry_check": "48 8B 81 E0 04 00 00 C3",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi": "PlayerList* __fastcall(Level*)",
+      "source": "REA/Ghidra player-list.json; exact PE vtable correlation: slot319, six slots before Level::getRuntimeActorList. Leaf getter; no guessed pattern.",
+      "update_hint": "Keep this identifier stable. Re-identify via Level vtable slot correlation, then inspect the getter and return/container ABI. See docs/profile-maintenance.md.",
+      "abi_verified": false
+    }
+  },
+  "virtual_methods": {
+    "Level::getRuntimeActorList": {
+      "status": "verified",
+      "slot": 325,
+      "abi": "void(__fastcall*)(Level*, std::vector<Actor*>*)",
+      "source": "reference client Level vftable signature matched uniquely in the exact 1.26.52.3 PE; slot 0x145 points to RVA 0x117C640"
+    }
+  }
+}

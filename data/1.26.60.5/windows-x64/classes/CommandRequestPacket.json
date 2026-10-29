@@ -1,0 +1,59 @@
+{
+  "layouts": {
+    "CommandRequestPacket": {
+      "schema": 1,
+      "layout_revision": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": true,
+      "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+      "request_vtable_rva": "0xF1D6260",
+      "output_vtable_rva": "0xF1D61D0",
+      "request_constructor": {
+        "rva": "0x41989a0",
+        "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 48 48 8D 6C 24",
+        "abi": "CommandRequestPacket* __fastcall(CommandRequestPacket*, Payload*)",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "request_get_id": {
+        "rva": "0x4198be0",
+        "entry_check": "B8 4D 00 00 00 C3 CC CC",
+        "abi": "unsigned __fastcall(Packet const*)",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "output_get_id": {
+        "rva": "0x4195e30",
+        "entry_check": "B8 4F 00 00 00 C3 CC CC",
+        "abi": "unsigned __fastcall(Packet const*)",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "output_read": {
+        "rva": "0x4196e10",
+        "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58",
+        "abi": "Result<void>* __fastcall(CommandOutputPacket*, Result<void>*, ReadOnlyBinaryStream*, Context*)",
+        "status": "candidate",
+        "runtime_verified": false
+      },
+      "evidence": {
+        "request_constructor": "REA/Ghidra ev_b53b228b67d10f66d08c875a3c62709b0aee8c5a11a104ed46c40ebb780f0ee0; payload at packet+0x30, origin+0x50, version+0x90, internal+0x94, serialization version+0x98=5, size0xA0.",
+        "sender_getter": "REA/Ghidra ev_f023356f27adb325f3a07f9386a17729b25492b1328ef5bad28ce9a5c448999a; exact getter RVA0x8AB680 reads ClientInstance+0x1E0. Adjacent0x8AB690 is a different function and is NOT used.",
+        "borrowed_send": "REA/Ghidra ev_2ad50b1cc97ec19a9e25499fe3b755f555d0a2e0d63731693240e5a923d0d08a; native command execution0x577A6F0 constructs request on stack, calls sender vtable+0x10 (slot2), immediately destroys packet. ClientInstance getter-to-sender relation remains static inference; dynamic target must be in .text at .pdata entry.",
+        "output_decode": "REA/Ghidra output slot16; Result<void> hidden return RDX, stream R8, context R9; success byte result+0x40=1. Slot15 delegates to slot16, so only slot16 is hooked.",
+        "output_layout": "REA/Ghidra ev_e60650a219db38b266ab26a5ede9c1e6c5d6502ce3fc47d6c32e6920b756138c and ev_714774f3207f7daacf5e4a1988a455a25003d1106e9a4841eb33769b50728cb0. Origin0x30, Output0x70, type+0, PropertyBag*+8, vector+0x10 stride0x40, successCount+0x28; message flag dword+0,id string+8,params vector+0x28.",
+        "limitations": "Bounded .pdata raw fragments imported with REA/Ghidra x86_64; GCC decompiler signatures are not MSVC ABI evidence. ABI uses RCX/RDX/R8/R9 assembly. PacketSender relation, send route and server response correlation require actual-game runtime validation. Optional PropertyBag is reported only as hasDataSet."
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-28",
+        "scope": "Fake custom registration, nonempty text, native version/origin request and response round trip",
+        "limitations": [
+          "Other Mods and arbitrary origin numbers are not covered by this confirmation"
+        ]
+      }
+    }
+  }
+}

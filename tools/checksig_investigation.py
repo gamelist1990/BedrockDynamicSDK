@@ -1,4 +1,5 @@
 """Generate the source-backed investigation catalog and x64 CheckSig handoff files."""
+from bedrock_symbols.profile_parts import load_profile
 from pathlib import Path
 import argparse,json,re,shutil,zipfile
 ROOT=Path(__file__).resolve().parents[1]
@@ -6,8 +7,8 @@ VERSION='1.26.60.5'
 OLD='1.26.52.3'
 
 def generate_catalog():
- old=json.loads((ROOT/f'data/{OLD}/windows-x64.json').read_text(encoding='utf-8'))
- new=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text(encoding='utf-8'))
+ old=load_profile(ROOT/f'data/{OLD}/windows-x64.json')
+ new=load_profile(ROOT/f'data/{VERSION}/windows-x64.json')
  aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/CheckSig/src/check_sig.cpp').read_text(encoding='utf-8')))
  inverse={v:k for k,v in aliases.items()}
  legacy={'GameCore':'native_keyboard','Actor':'native_actors','ItemStack':'native_items','LocalPlayer':'native_player_identity','BlockSource':'native_world','StateVectorComponent':'native_motion','Camera':'native_camera','PacketSender':'native_packets','CommandRegistry':'native_client_commands','GuiData':'native_gui','LevelRenderer':'native_world_render','ClientInstance':'native_world_events'}
@@ -117,11 +118,11 @@ def generate_catalog():
  {'id':'world-render-abi','status':'candidate-implemented-runtime-check-required','mods':['Freecam','HitBox'],'action':'新EXEのLevelRenderer/Tessellator/Material関数と配置を対応。60-world-renderで描画引数と原点・Tessellator・shaderを観測し、枠・名前・状態復元・ワールド切替を実機確認。'},
  {'id':'freecam-layout-assertions','status':'core-updated-runtime-check-required','mods':['Freecam'],'action':'共通pre-batch PacketHookと通信定義のみで、sender帰属・ID19/144・位置固定・InputData配列・条件付きペイロード保持・解除復帰を実機確認。描画追加処理は別途確認。'},
  {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
- {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
+ {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native/client_commands.hpp','include/bedrock/native/world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
 
 def make_bundle(out):
  out.mkdir(parents=True,exist_ok=True)
- profile=json.loads((ROOT/f'data/{VERSION}/windows-x64.json').read_text(encoding='utf-8'))
+ profile=load_profile(ROOT/f'data/{VERSION}/windows-x64.json')
  catalog=json.loads((ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json').read_text(encoding='utf-8'))
  output=profile['layouts']['CommandRequestPacket']['output_read'].copy()
  output.update(signature='',cross_version_signature_available=False)
@@ -164,7 +165,7 @@ def make_bundle(out):
    watch('Tessellator building',symbol,'screen',[offsets['screen_tessellator'],offsets['tess_building']],'u8')
    watch('Tessellator special mode',symbol,'screen',[offsets['screen_tessellator'],offsets['tess_special_mode']],'u8')
   job('optional/'+name+'.json',[{'op':'observe','symbols':symbols},{'op':'audit'}],watches)
- source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/f'data/{OLD}/windows-x64.json',source)
+ source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);source.write_text(json.dumps(load_profile(ROOT/f'data/{OLD}/windows-x64.json'),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text(encoding='utf-8'));doc['source']=json.loads(source.read_text(encoding='utf-8'));port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  shutil.copy2(ROOT/'docs/checksig-126605.md',out/'README_ja.md')
  return audit

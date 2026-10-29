@@ -3,10 +3,17 @@
   "versions": {
     "1.26.52.3": {
       "windows-x64": {
-        "path": "data/1.26.52.3/windows-x64.json",
-        "sha256": "ea6e6453bf56a1c3c7d6c8be60e72b4274bf501a71f93c39aea2b2f5855ea12c",
+        "path": "data/1.26.52.3/windows-x64/manifest.json",
+        "sha256": "523c7ec1c7bbff5f1ae27c766c49039c39aef5ff5d58ce2158782143d1ca57c7",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
         "symbols": 17,
+        "protocol": {
+          "path": "data/protocols/1.26.51/protocol.json",
+          "version_path": "data/protocols/1.26.51/version.json",
+          "sha256": "14fc38412ca259ab28c764b2d540d378e1bd65d23e059c1da2c61ec6843f7403",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": false
+        },
         "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
         "size_of_image": 314576896,
         "text_rva": "0x1000",
@@ -16,10 +23,17 @@
     },
     "1.26.60.5": {
       "windows-x64": {
-        "path": "data/1.26.60.5/windows-x64.json",
-        "sha256": "841f7196b080ae2eafcc6d1b1d44142dca1cf1f42aef694a1ce45072e6d5a2a2",
+        "path": "data/1.26.60.5/windows-x64/manifest.json",
+        "sha256": "376bbbfe2422c97c667fa865328653d051946a4ac9cce95d047ab462bde5cd7e",
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
         "symbols": 41,
+        "protocol": {
+          "path": "data/protocols/1.26.60/protocol.json",
+          "version_path": "data/protocols/1.26.60/version.json",
+          "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": true
+        },
         "module_text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
         "size_of_image": 327397376,
         "text_rva": "0x1000",
@@ -27,5 +41,6 @@
         "rtti_types": 0
       }
     }
-  }
+  },
+  "default_version": "1.26.52.3"
 }

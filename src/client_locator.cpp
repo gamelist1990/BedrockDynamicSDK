@@ -5,10 +5,10 @@
 #define NOMINMAX
 #include <windows.h>
 #include <MinHook.h>
-#include "bedrock/client_locator.hpp"
-#include "bedrock/client_instance_tracker.hpp"
-#include "bedrock/generated_symbols.hpp"
-#include "bedrock/resolver.hpp"
+#include "bedrock/runtime/client_locator.hpp"
+#include "bedrock/runtime/client_instance_tracker.hpp"
+#include "bedrock/generated/symbols.hpp"
+#include "bedrock/profiles/resolver.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstring>

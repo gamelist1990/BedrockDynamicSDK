@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "target": {
+    "product": "minecraft-bedrock",
+    "kind": "client",
+    "platform": "windows",
+    "arch": "x64",
+    "version": "1.26.60.5",
+    "sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+    "text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
+    "image_base": "0x140000000",
+    "size_of_image": 327397376,
+    "text_rva": "0x1000",
+    "text_size": 250370560,
+    "file_version": "1.26.60.5"
+  },
+  "protocol": {
+    "path": "data/protocols/1.26.60/protocol.json",
+    "version_path": "data/protocols/1.26.60/version.json",
+    "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+    "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+    "wire_roster_available": true
+  },
+  "format": "bedrock-profile-parts",
+  "parts": [
+    {
+      "path": "analysis/entry_verification_policy.json",
+      "sha256": "5ffc0e2bd543e1612c8f305fb0cfc8abb0a65532f03b89c7c9d2bf6636249a10"
+    },
+    {
+      "path": "analysis/historical_entry_definition_count.json",
+      "sha256": "a27e68395f89872a90a7ef49b503df9a38e889d3b9a3b126b1211d7b3b3a5e15"
+    },
+    {
+      "path": "analysis/mod_runtime_validation.json",
+      "sha256": "3b97fc4c0f97273a3e31ffef984b592d2ebefa88f243ec9eda4f8bab05e2d165"
+    },
+    {
+      "path": "analysis/runtime_follow_up.json",
+      "sha256": "71671c0103d572937b99f403641b5d63c798514ed9f2859538a840a9023ce19d"
+    },
+    {
+      "path": "analysis/runtime_validation.json",
+      "sha256": "cea760940e23ff0b3ae9b11e56f0e5ea6ef98567b58b29bf34f2af5ab7cbd36f"
+    },
+    {
+      "path": "analysis/runtime_verified.json",
+      "sha256": "e44f54fadf7f96b16a96645b5e1736d4ccc3be24bb2bd09529f5eb763c5d9c95"
+    },
+    {
+      "path": "analysis/runtime_verified_symbols.json",
+      "sha256": "b1d5a2075ab0fd2a3db994952847d3fdf749922a57fb6a9ce60033118316c621"
+    },
+    {
+      "path": "analysis/status.json",
+      "sha256": "ad2d8094af4f7fa7d878123552108d4271f352a0b434668059ce5d1fe49e9461"
+    },
+    {
+      "path": "classes/Actor.json",
+      "sha256": "0fe022ff559562dd2a4dca46748ab9685d377bcd88878855a2f5a733fc63175e"
+    },
+    {
+      "path": "classes/BlockSource.json",
+      "sha256": "e1228380062e737543c0c704fb16de891b8439a0e67dc213879010c28f363193"
+    },
+    {
+      "path": "classes/Camera.json",
+      "sha256": "0dc9ffaa6f2b63d57eaee88103d10442fc6e4cfe22abc3d2bb29efc9d249cc11"
+    },
+    {
+      "path": "classes/ClientInstance.json",
+      "sha256": "2e3536330cfefd3965a152246637c6c0ab836e53c10a0ed7b3fb843039b53aaa"
+    },
+    {
+      "path": "classes/CommandRegistry.json",
+      "sha256": "b10516825c318a326ea9a5114a666244e690dcece3d150798ed65c9215d18075"
+    },
+    {
+      "path": "classes/CommandRequestPacket.json",
+      "sha256": "f53037df785fd15bfcc352123e72cca6101a6e4ddc43a52919d13a97fa9e94bb"
+    },
+    {
+      "path": "classes/GameCore.json",
+      "sha256": "05bda0adbbcecadf5869f7cd0ab98b36dca23128a1960673eb2185210e5534d1"
+    },
+    {
+      "path": "classes/GameMode.json",
+      "sha256": "7a4c03e35418bc4f1b8e6395b57cca6d1fbb34c82973f891259a1591a1dcb3b2"
+    },
+    {
+      "path": "classes/GuiData.json",
+      "sha256": "116b2df321390c1f600c1cd07652531d3fb2bf87e7b798bbb458268ac1cde7b2"
+    },
+    {
+      "path": "classes/Internal.json",
+      "sha256": "5050a16903f6a7f49054fb3d67088a02ea44e0c03b0a107006f25d9749181ff7"
+    },
+    {
+      "path": "classes/ItemStack.json",
+      "sha256": "b6534b940a3a5a6ddba2533f63878be925ca8774ddf014402d34fafca35717c8"
+    },
+    {
+      "path": "classes/ItemStackBase.json",
+      "sha256": "dc7e25c0784608d1c5b454d3687bf900ddc8d0d60cdce937e53059535b92ff0d"
+    },
+    {
+      "path": "classes/Keyboard.json",
+      "sha256": "5618218da432795449aeea11a38c57dc510aafc79fd320e6fb6a74b453a24973"
+    },
+    {
+      "path": "classes/Level.json",
+      "sha256": "b7d06db8feb73a8cc4b1d513a6a8d842c8cd3fc1b6e5269f4b55cd51e7016c05"
+    },
+    {
+      "path": "classes/LevelRenderer.json",
+      "sha256": "a350ca31f87ebee2122ceeefd36ff7f8e221e0486541ee45bfdf40bfb0504741"
+    },
+    {
+      "path": "classes/LevelRendererPlayer.json",
+      "sha256": "d712bb55a2b18ff443638166a972468c3b0f6d0a2d3338b77428f9c48ee335ba"
+    },
+    {
+      "path": "classes/LocalPlayer.json",
+      "sha256": "0c27c34e821e1c1c5aa32f4bdcd8fd3624772a2f81d0ba7ad6484e75b6eb8f38"
+    },
+    {
+      "path": "classes/MouseDevice.json",
+      "sha256": "036cf3d26290c73c03d4a5ba2525f4c4c1403592483e52275043070b54fb18e9"
+    },
+    {
+      "path": "classes/MovePlayerPacket.json",
+      "sha256": "216e6584efe44eec37085a11c771dbd2f33352ee2b05be5a3f537f1804f627b5"
+    },
+    {
+      "path": "classes/MultiPlayerLevel.json",
+      "sha256": "6ee7eb2520035a80158be69ecb88d20eafabc58693dbb4af1c6e7770b05b0039"
+    },
+    {
+      "path": "classes/Packet.json",
+      "sha256": "5d694239392ef29edf327d6ec5c49feccb34290ed3d5cb476c40ce11d81da391"
+    },
+    {
+      "path": "classes/PacketRead.json",
+      "sha256": "fd06cde4528eb3d2b3c855d723d03491dc44f65c437381ab9999d8b05c0d208d"
+    },
+    {
+      "path": "classes/PacketSender.json",
+      "sha256": "427f00bb72dad603d318bb8d78a0eeaf4402ff24bf1910b08144da27c37ca405"
+    },
+    {
+      "path": "classes/PacketWire.json",
+      "sha256": "cfb88951dfae6148a8e3f3ff32ae0ce661f9f31b59c1a55cf0aee203afd7b4b8"
+    },
+    {
+      "path": "classes/Player.json",
+      "sha256": "6d661124449c1d1b18754227f7e86de58f16e3da89efed73cf0605951677c1f2"
+    },
+    {
+      "path": "classes/PlayerAuthInputPacket.json",
+      "sha256": "6ce1aeb35cb217267bacf76ae19ee9b978a0acc2ea443d5f9d545485a007a5fb"
+    },
+    {
+      "path": "classes/RuntimeActorList.json",
+      "sha256": "055a8939ddf790a421ee738514cfaefb2657f79e8852ec2b13f2339e3c96a3a7"
+    },
+    {
+      "path": "classes/StateVectorComponent.json",
+      "sha256": "1675c7d97d556fea1a046b9bc51f6f0d0964d9c79c3ce0c1d76cb4aa117d3e75"
+    },
+    {
+      "path": "classes/Tessellator.json",
+      "sha256": "d58e98c2c2f041b1fdb0ab45ae97ebc0250a8df6b4abdfd92a52f7a9d664beef"
+    },
+    {
+      "path": "metadata/maintenance.json",
+      "sha256": "c0506e800ac150771a47556236c4f83da7732d21be5f8918925b2bf145bd2e09"
+    }
+  ]
+}

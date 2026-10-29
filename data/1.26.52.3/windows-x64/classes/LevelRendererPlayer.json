@@ -1,0 +1,56 @@
+{
+  "symbols": {
+    "LevelRendererPlayer::getFov": {
+      "status": "verified",
+      "rva": "0x46BD250",
+      "signature": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1",
+      "entry_check": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ??",
+      "cross_version_signature_available": true,
+      "abi_verified": true,
+      "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)",
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 57 53 48 83 EC ?? 44 0F 29 44 24 ?? 0F 29 7C 24 ?? 0F 29 74 24 ?? 44 89 C3 0F 28 F1 48 89 CE",
+          "bytes": 32,
+          "fixed_bytes": 28,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 152,
+          "pattern": "0F 1F 84 00 ?? ?? ?? ?? 48 89 C1 48 8B 40 ?? 48 8B 80 ?? ?? ?? ?? 48 85 C0 75 ?? 0F 28 D1 F3 0F C2 D0 01",
+          "bytes": 35,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 306,
+          "pattern": "74 ?? F3 0F 59 3D ?? ?? ?? ?? F3 0F 5E 3D ?? ?? ?? ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 35,
+          "fixed_bytes": 18,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 459,
+          "pattern": "48 8B 0C CA 3B 81 ?? ?? ?? ?? 0F 8F ?? ?? ?? ?? F3 0F 5E 35 ?? ?? ?? ?? 0F 57 C0 F3 44 0F 10 05 ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 617,
+          "pattern": "0F 28 F1 F3 0F C2 F7 01 0F 54 CE 0F 55 F0 0F 56 F1 84 DB 74 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 38,
+          "fixed_bytes": 29,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "source": "Minecraft.Windows.exe 1.26.52.3 FOV callsites and return-value flow"
+    }
+  }
+}

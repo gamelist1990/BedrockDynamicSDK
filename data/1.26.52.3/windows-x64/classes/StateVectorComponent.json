@@ -1,0 +1,18 @@
+{
+  "layouts": {
+    "StateVectorComponent": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "state_vector": {
+        "state_position_offset": 0,
+        "state_previous_position_offset": 12,
+        "state_velocity_offset": 24,
+        "fall_distance_component_hash": "0xce6b34f6",
+        "fall_distance_value_offset": 0
+      },
+      "evidence": "local actor proxy detached camera + Hooks::LoopbackPacketSender_sendToServer; current IClientInstance slot 293 getter returns [ClientInstance+0x1D0]; current PacketSender declaration has sendToServer at slot4; Packet::getId at slot1. StateVector layout from exact-build component hash and reference declarations declaration; runtime writes pending validation. REA getter ev_e12438785166ca79cf685b1ba8f4f3e8331a288338a9d20d765b284e9cf0d336; FallDistance type descriptor ev_eb6be23724ba01a4b27aead0d65421d15d6da91c08fe93b8b6c121c1c26e308c (hash only; does not verify field writes)."
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "analysis": {
+    "mod_runtime_validation": {
+      "Fake": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-28",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "source": "Fake完全に機能してるOk!",
+        "scope": "Fake command registration and request/response flow after d5c42df",
+        "manual_checks_confirmed": true
+      },
+      "render_follow_up_2026_10_29": {
+        "source": "user-supplied logs and 60-world-render.result.json",
+        "report_sha256": "19037d3389174ea73d39411b9324cd272f153b2d4d7c129292e6f8eb0000d306",
+        "Freecam": {
+          "status": "core_observed_visual_failure_reported",
+          "anchored_packets": 100,
+          "movement_rejected": 0,
+          "missing": "block-inside appearance; culler/create_view remain unresolved; InsideBlockEffect variants statically ported, runtime pending"
+        },
+        "HitBox": {
+          "status": "startup_only_no_targets",
+          "render_hook_reached": true,
+          "boxes": 0,
+          "next": "exact LocalPlayer getter and new PlayerList definition; observe capture and render"
+        },
+        "TabList": {
+          "status": "gui_not_visible_user_report",
+          "startup_and_tab_input": true,
+          "rows_ready_log_does_not_prove_nonempty": true,
+          "next": "replace fixed Level+4E0 with versioned4E8; observe actual nonempty row submission"
+        },
+        "CheckSig": {
+          "status": "render_observe_skipped",
+          "reason": "native_world_render definition missing from flattened symbols; watches waiting; no render layout values verified"
+        }
+      }
+    }
+  }
+}

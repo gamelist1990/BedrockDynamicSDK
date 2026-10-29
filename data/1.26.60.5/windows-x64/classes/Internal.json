@@ -1,0 +1,611 @@
+{
+  "symbols": {
+    "sub_6F313F0": {
+      "rva": "0x6F313F0",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 430,
+          "pattern": "47 8B 14 AA 45 89 D3 45 31 E3 41 81 FB FE FF 03 00 0F 87 ?? ?? ?? ?? 4D 8B 49 ?? 45 89 D3 41 C1 EB 04",
+          "bytes": 34,
+          "fixed_bytes": 29,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1285,
+          "pattern": "F3 0F 58 35 ?? ?? ?? ?? 0F 28 C7 41 0F 28 C8 41 FF D4 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 44 24 ??",
+          "bytes": 32,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 1706,
+          "pattern": "F3 0F 11 44 D0 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??",
+          "bytes": 36,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_5AFB520": {
+      "rva": "0x5AFB520",
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00",
+      "entry_check": "48 83 EC 38 48 8B 05 95 CB 80 0C 48",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 ?? 48 8D 54 24 ?? 41 B8 32 00 00 00",
+          "bytes": 37,
+          "fixed_bytes": 29,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_56887B0": {
+      "rva": "0x56887B0",
+      "signature": "56 48 83 EC ?? 48 8B 71 08 4C 8B 02 4C 8B 4A 08",
+      "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "56 48 83 EC ?? 48 8B 71 ?? 4C 8B 02 4C 8B 4A ?? 48 8B 0E 48 8B 56 ?? 48 39 D1 0F 94 C0 4D 85 C0",
+          "bytes": 32,
+          "fixed_bytes": 28,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 39,
+          "pattern": "41 0F 94 C3 45 08 D3 41 08 C3 B0 01 75 ?? 41 F6 00 01 74 ?? 4D 8B 89 ?? ?? ?? ?? 4D 85 C9 74 ??",
+          "bytes": 32,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_5417230": {
+      "rva": "0x5417230",
+      "signature": "56 57 55 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 80 B9 A0 02 00 00 00",
+      "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 81",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 239,
+          "pattern": "48 89 86 ?? ?? ?? ?? 85 C0 0F 9E C0 40 80 F5 01 40 08 C5 75 ?? 80 FB 01 74 ?? 0F B6 C3 83 F8 04",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 323,
+          "pattern": "48 29 CA 48 C1 FA 04 48 39 C2 77 ?? 48 81 C6 E8 01 00 00 48 8D 54 24 ?? 48 89 F1 E8 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_76A710": {
+      "rva": "0x76A710",
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 08",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 ?? 0F 57 C0",
+          "bytes": 34,
+          "fixed_bytes": 30,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 148,
+          "pattern": "48 89 D9 48 89 FA 49 89 C0 48 89 C3 E8 ?? ?? ?? ?? C6 44 1E ?? 00 80 3F 00 75 ?? 31 D2 E9 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_4DE7250": {
+      "rva": "0x4DE7250",
+      "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 F0 48 C7 45 E8 FE FF FF FF 49 89 D1",
+      "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 ?? 48 C7 45 ?? FE FF FF FF 49 89 D1 0F 57 F6 48 89 4D ??",
+          "bytes": 34,
+          "fixed_bytes": 29,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 40,
+          "pattern": "48 8B 40 ?? 48 8D 55 ?? 4C 89 C9 FF 15 ?? ?? ?? ?? 90 0F 28 45 ?? 0F 29 75 ?? 48 8B 7D ?? 48 8B 77 ??",
+          "bytes": 34,
+          "fixed_bytes": 24,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_B94CA0": {
+      "rva": "0xB94CA0",
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 00 FE FF FF FF 48 8B 81 90 02 00 00",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 115,
+          "pattern": "74 ?? F0 FF 42 ?? 48 8B B0 ?? ?? ?? ?? EB ?? 31 F6 48 8B 98 ?? ?? ?? ?? 48 89 5D ?? 48 89 75 ??",
+          "bytes": 32,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 460,
+          "pattern": "48 3B 83 ?? ?? ?? ?? 75 ?? EB ?? 31 F6 48 89 5D ?? 48 89 75 ?? 4C 8D 45 ?? 4C 8D 4D ?? 48 89 C1",
+          "bytes": 32,
+          "fixed_bytes": 22,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_65BD080": {
+      "rva": "0x65BD080",
+      "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D6 48 8B 01",
+      "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 89 D6 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 32,
+          "fixed_bytes": 25,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 60,
+          "pattern": "C7 04 25 ?? ?? ?? ?? DE C0 AD DE 48 8B 7D ?? 48 8B 87 ?? ?? ?? ?? 48 85 C0 74 ?? 48 8B 48 ?? 48 8B 01",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 121,
+          "pattern": "89 F2 4C 89 C0 FF 15 ?? ?? ?? ?? 90 48 8B 4F ?? 48 8B 01 48 8B 40 ?? FF 15 ?? ?? ?? ?? 90 0F 57 C0",
+          "bytes": 33,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "ClientInstance::onPlayerLoaded",
+      "source_rva": "0x5DD06F0",
+      "source_abi": "void __fastcall(ClientInstance*, Player*)",
+      "source_status": "candidate",
+      "source_description": "reference declarations@7c0f7d125a80274f406c0be8a9a17e4d9cbb7801 declarations + exact 1.26.52.3 ScanClient vtable IClientInstance 0xE9731B0 slot 327; REA/Ghidra ev_622de34172a5e3a8e479640ebd3f302fb6d37c7ea8c46c381aa827812dd01962. Native runtime invocation remains unverified.",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_8AB690": {
+      "rva": "0x8AB690",
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CE 48 8B B9 D0 09 00 00",
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 0,
+          "pattern": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 ?? FE FF FF FF 48 89 CE 48 8B B9 ?? ?? ?? ?? 48 8B 1F",
+          "bytes": 34,
+          "fixed_bytes": 27,
+          "kind": "entry",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 116,
+          "pattern": "48 85 C0 75 ?? E9 ?? ?? ?? ?? 66 90 48 89 C3 48 39 F8 74 ?? 48 8B 4B ?? 48 8B 01 48 8B 80 ?? ?? ?? ??",
+          "bytes": 34,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 231,
+          "pattern": "48 8B 48 ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 90 84 C0 0F 84 ?? ?? ?? ?? B3 01 48 8B 7D ??",
+          "bytes": 35,
+          "fixed_bytes": 21,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_packets.sender.packet_sender_getter",
+      "source_rva": "0x80B340",
+      "source_abi": "PacketSender& __fastcall(ClientInstance*)",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_65A8500": {
+      "rva": "0x65A8500",
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 10 FE FF FF FF 48 89 CE 48 8B 89 D0 01 00 00",
+      "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 196,
+          "pattern": "48 89 7A ?? 48 8D 05 ?? ?? ?? ?? 48 89 02 0F 11 42 ?? 48 8B 45 ?? 48 85 C0 74 ?? F0 FF 40 ?? 48 8B 7D ??",
+          "bytes": 35,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 395,
+          "pattern": "48 89 F9 FF 15 ?? ?? ?? ?? 48 8B 86 ?? ?? ?? ?? 48 8B 88 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 89 45 ??",
+          "bytes": 34,
+          "fixed_bytes": 17,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_client_commands.client_commands_anchor",
+      "source_rva": "0x5DB9F00",
+      "source_abi": "void __fastcall(ClientInstance*); reads Minecraft+0xC0 Commands, writes Commands+0x18 output sender",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": "ev_fc0c0ccbd2548e064fedb0c1b353b63b7139c76603ba192004677516b3613ba3",
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_537E6E0": {
+      "rva": "0x537E6E0",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 4D 89 C5 48 89 CE 80 FA 05",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 1855,
+          "pattern": "E9 ?? ?? ?? ?? 0F 57 C0 0F 11 43 ?? 48 89 7B ?? 48 8D 05 ?? ?? ?? ?? 48 89 43 ?? 0F 11 43 ?? 48 C7 43 ?? 00 00 00 00",
+          "bytes": 39,
+          "fixed_bytes": 26,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 2472,
+          "pattern": "48 8B 5D ?? 48 8D 83 ?? ?? ?? ?? 48 C7 47 ?? 00 00 00 00 48 89 BB ?? ?? ?? ?? 48 89 07 C7 83 ?? ?? ?? ?? 00 00 00 00",
+          "bytes": 39,
+          "fixed_bytes": 25,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_camera.visual.terrain_culling.factory_check",
+      "source_rva": "0x4690B80",
+      "source_abi": "std::shared_ptr<LevelCullerBase>* __fastcall(hidden_return*, unsigned char cullerType, weak coordinator*, context*)",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    },
+    "sub_5376690": {
+      "rva": "0x5376690",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 85 E0 0B 00 00",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 4148,
+          "pattern": "40 84 F6 75 ?? 48 8B 83 ?? ?? ?? ?? 4C 8B B8 ?? ?? ?? ?? 49 8B 07 48 8B 80 ?? ?? ?? ?? 4C 89 F9",
+          "bytes": 32,
+          "fixed_bytes": 19,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 16582,
+          "pattern": "88 4E ?? 48 83 C6 08 48 83 C2 08 4C 39 FA 75 ?? 0F 57 C0 0F 29 85 ?? ?? ?? ?? 4C 8B A3 ?? ?? ?? ??",
+          "bytes": 33,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_camera.visual.camera_render_observe",
+      "source_rva": "0x4686F20",
+      "source_abi": "void __fastcall(LevelRendererCamera* RCX, BaseActorRenderContext* RDX, ViewRenderObject const* R8, IClientInstance* R9)",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": "REA/Ghidra ev_24a5319a529362441bb8a5489e37fbf08add19d082c53ad8a75f846cbf6c26ac: four register arguments preserved; ViewRenderObject R8 saved then read at+0x80 at0x4688F92 before inside-cube call0x468908E. Observe only; leave flags and original arguments unchanged.",
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved",
+      "runtime_observation": {
+        "samples": 51,
+        "observed_calls": 18006,
+        "source_sha256": {
+          "30-camera-gui.result.json": "c7fc6a6ca54b4151fb85221b0e8120f5933ab7b336142139687aa0ad95dad245"
+        },
+        "scope": "pass-through hook execution and bounded argument/return observations; lifetime and full Mod behavior not verified",
+        "last_sample": {
+          "call_number": 17950,
+          "client_instance": "0x2F124225010",
+          "render_context": "0xB3C88FB2E8",
+          "renderer": "0x2F21BDA7810",
+          "symbol": "sub_5376690",
+          "time_utc": "2026-10-28T12:37:28Z",
+          "total_calls": 18006,
+          "type": "hook-observation",
+          "view_prefix_bytes": "00 00 00 3F 72 3D AB 42 00 00 00 3F 00 00 00 3F 72 3D AB 42 00 00 00 3F BE 6B 3C 3E D1 64 67 3E 96 58 98 3E 00 00 80 3F 6A F6 D6 3D B5 44 1C 3E AC A7 69 3E AC A7 69 3E AC A7 69 3E AC A7 69 3E",
+          "view_prefix_readable": true,
+          "view_prefix_size": 64,
+          "view_render_object": "0x2F23DEF7000"
+        }
+      }
+    },
+    "sub_5AD5F90": {
+      "rva": "0x5AD5F90",
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 C8 03 00 00 FE FF FF FF",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81",
+      "cross_version_signature_available": true,
+      "status": "verified",
+      "source": "REA/Ghidra; CheckSig exact-build entry observation",
+      "function_boundary": true,
+      "signature_anchors": [
+        {
+          "offset": 73,
+          "pattern": "48 89 8D ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? 15 00 00 00 66 89 44 24 ?? 4C 8D BD ?? ?? ?? ?? 4C 8D 8D ?? ?? ?? ??",
+          "bytes": 37,
+          "fixed_bytes": 20,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        },
+        {
+          "offset": 138,
+          "pattern": "4C 8D 65 ?? 41 B8 48 01 00 00 4C 89 E1 31 D2 E8 ?? ?? ?? ?? 90 48 8D 85 ?? ?? ?? ?? 48 89 44 24 ??",
+          "bytes": 33,
+          "fixed_bytes": 23,
+          "kind": "body",
+          "uniqueness": "unique-in-source-text"
+        }
+      ],
+      "confidence": "exact-build-entry-verified",
+      "abi_verified": false,
+      "source_definition_path": "native_world_render.functions.render_mesh",
+      "source_rva": "0x467EE50",
+      "source_abi": "",
+      "source_status": "candidate",
+      "source_description": "",
+      "source_evidence": null,
+      "runtime_verified": false,
+      "entry_validation": {
+        "status": "complete",
+        "evidence_id": "checksig-user-runtime-8b30003132edbff4",
+        "report_sha256": "e1dcfd516a327cc4f95d98a8de51a4f5be25cc58cf3a05b324cee27ba6fc6b0a",
+        "observed_utc": "2026-10-28T09:24:21Z",
+        "readable": true,
+        "entry_guard_hit": true,
+        "pdata_function_entry": true
+      },
+      "verification_scope": "entry-guard",
+      "name_status": "unresolved"
+    }
+  }
+}

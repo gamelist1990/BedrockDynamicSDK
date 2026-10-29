@@ -6,7 +6,7 @@ adapter implements `GameAccess` using only validated accessors; an unavailable
 operation returns `false`/`std::nullopt` instead of guessing a layout.
 
 ```cpp
-#include <bedrock/game_api.hpp>
+#include <bedrock/api/game_api.hpp>
 
 bedrock::GameApi game(access);
 auto self = game.localPlayer();
@@ -175,7 +175,7 @@ The exact-build profile at `data/<version>/windows-x64.json` contains only the
 symbols/layout data needed by the SDK and shipped examples. Keep
 `native_items` offsets and ABI status version-specific; do not carry them to a
 new build without validation. The generated
-`include/bedrock/generated_symbols.hpp` and `data/manifest.json` must be
+`include/bedrock/generated/symbols.hpp` and `data/manifest.json` must be
 regenerated with the repository's `bedrock_symbols` CLI after profile edits.
 Keep signatures, entry checks, ABI status, and provenance alongside each symbol.
 

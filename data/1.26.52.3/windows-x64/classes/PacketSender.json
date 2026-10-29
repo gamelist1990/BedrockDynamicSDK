@@ -1,0 +1,42 @@
+{
+  "layouts": {
+    "PacketSender": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "sender": {
+        "client_packet_sender_offset": 464,
+        "sender_send_to_server_slot": 4,
+        "packet_id_slot": 1,
+        "packet_sender_getter": {
+          "rva": "0x80B340",
+          "entry_check": "48 8B 81 D0 01 00 00 C3 CC CC CC CC CC CC CC CC",
+          "abi": "PacketSender& __fastcall(ClientInstance*)"
+        }
+      },
+      "command_request": {
+        "vtable_rva": "0xE897420",
+        "command_offset": "0x30",
+        "get_id": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x38E6CB0",
+          "entry_check": "B8 4D 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC 48 89 D0 48 8D 0D FD 3A",
+          "abi": "int __fastcall(CommandRequestPacket const*)",
+          "evidence": "Constant leaf EAX=77; adjacent getName returns CommandRequestPacket; table0xE897420. Packet payload+0x30 in ev_4097a24c921f54e8a8fcb9e61281a0c41e9fbcd465af646f8e7f2760c404f7f5."
+        }
+      },
+      "title": {
+        "vtable_rva": "0xE89D5E0",
+        "read": {
+          "status": "candidate",
+          "runtime_verified": false,
+          "rva": "0x3A83770",
+          "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 01 00 00 48 8D AC 24 80 00 00",
+          "abi": "void* __fastcall(SetTitlePacket*, Result<void>* hidden_result, ReadOnlyBinaryStream*)"
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 #ifdef _WIN32
-#include <bedrock/native_command_service.hpp>
-#include <bedrock/native_safe_teleport.hpp>
-#include <bedrock/game_hooks.hpp>
+#include <bedrock/native/command_service.hpp>
+#include <bedrock/native/safe_teleport.hpp>
+#include <bedrock/runtime/game_hooks.hpp>
 #include <atomic>
 
 // Own this object for the DLL lifetime. Definitions precede hooks; native

@@ -1,4 +1,4 @@
-#include "bedrock/client_instance_tracker.hpp"
+#include "bedrock/runtime/client_instance_tracker.hpp"
 #include <cassert>
 #include <iostream>
 

@@ -1,4 +1,4 @@
-#include "bedrock/resolver.hpp"
+#include "bedrock/profiles/resolver.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstddef>

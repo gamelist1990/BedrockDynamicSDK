@@ -37,13 +37,13 @@ target_link_libraries(MyMod PRIVATE bedrock::world)
 ```
 
 EnTTの互換バージョンもこのターゲットが提供します。
-純粋な値型は `bedrock/blocks.hpp`、カメラ計算は `bedrock/camera.hpp` にあります。
+純粋な値型は `bedrock/api/blocks.hpp`、カメラ計算は `bedrock/api/camera.hpp` にあります。
 これらだけを使用する場合、EnTTやWindows専用アダプターは不要です。
 
 ## 最小例
 
 ```cpp
-#include <bedrock/native_world.hpp>
+#include <bedrock/native/world.hpp>
 
 bedrock::NativeWorld world;
 std::string error;

@@ -1,4 +1,4 @@
-#include <bedrock/native_actors.hpp>
+#include <bedrock/native/actors.hpp>
 
 #include <cassert>
 #include <nlohmann/json.hpp>
