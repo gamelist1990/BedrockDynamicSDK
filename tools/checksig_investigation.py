@@ -94,22 +94,19 @@ def generate_catalog():
   'TabList':['input','fov','gameplay'],
   'HitBox':['actors','items','render','gameplay','world_events'],
   'Freecam':['input','gameplay','actors','motion','freecam_camera','request_sender','movement_packets','freecam_boundaries'],
-  'BlockOutline':['gameplay','actors','items','world','subchunks','render','world_events'],
   'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
   'Fake':['gameplay','request_sender','command_packets','message_commands'],
-  'GuiDemo':[], 'ScanClient':[], 'CheckSig':[]}
+  'ScanClient':[], 'CheckSig':[]}
  checks={
   'AutoSprint':['Wキーで走る・離すと解除・画面切替後にキーが残らない'],
   'Zoom':['押下でFOV変更・離すと復帰・メニューでは無効'],
   'TabList':['一覧の名前・UUID・Actor対応・装備表示・退出後の消去'],
   'HitBox':['対象プレイヤー判別・AABB位置・移動追従・ワールド切替で旧ポインタを使わない'],
   'Freecam':['カメラだけ移動・送信するプレイヤー位置を維持・無効化時に復帰・再接続後に復帰'],
-  'BlockOutline':['対象ブロックの場所・SubChunk境界・描画位置と色・未ロードチャンクの扱い'],
   'SpeedBuilder':['タイトル検知・記録・設置・インベントリ復帰・キャンセルとワールド切替'],
   'Top':['コマンド候補・整数引数・安全な移動先・位置/AABB/速度・落下状態と高さ・結果表示'],
   'Fake':['/fake候補とメッセージ・Origin省略5/指定0..255・requestId/UUIDと応答・timeout・接続切替'],
-  'GuiDemo':['DX11/DX12の描画・入力・フォント・リサイズ・フルスクリーン切替'],
   'ScanClient':['EXE識別・read-onlyスキャン・出力ファイルの完結'],
   'CheckSig':['JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新']}
  optional={'Freecam':['render','camera','world_events'],'HitBox':['identity'],'TabList':['actors','items','identity'],'ScanClient':[]}
@@ -117,9 +114,9 @@ def generate_catalog():
  return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'implementation_work':[
  {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
  {'id':'placement-abi','status':'needs-review-after-observation','mods':['SpeedBuilder'],'action':'GameMode/HitResult/設置状態の新レイアウトと呼出規約を対応させ、設置・取消・インベントリ復帰を確認する。'},
- {'id':'world-render-abi','status':'candidate-implemented-runtime-check-required','mods':['Freecam','BlockOutline','HitBox'],'action':'新EXEのLevelRenderer/Tessellator/Material関数と配置を対応。60-world-renderで描画引数と原点・Tessellator・shaderを観測し、枠・名前・状態復元・ワールド切替を実機確認。'},
+ {'id':'world-render-abi','status':'candidate-implemented-runtime-check-required','mods':['Freecam','HitBox'],'action':'新EXEのLevelRenderer/Tessellator/Material関数と配置を対応。60-world-renderで描画引数と原点・Tessellator・shaderを観測し、枠・名前・状態復元・ワールド切替を実機確認。'},
  {'id':'freecam-layout-assertions','status':'core-updated-runtime-check-required','mods':['Freecam'],'action':'共通pre-batch PacketHookと通信定義のみで、sender帰属・ID19/144・位置固定・InputData配列・条件付きペイロード保持・解除復帰を実機確認。描画追加処理は別途確認。'},
- {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','BlockOutline','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
+ {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
  {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
 
 def make_bundle(out):

@@ -29,6 +29,9 @@ if(WIN32)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/investigation/requirements-1.26.60.5.json" CHECKSIG_REQUIREMENTS)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
     configure_file(src/checksig_catalog.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/checksig_catalog.hpp" @ONLY)
+    file(READ "${CHECKSIG_SDK_ROOT}/data/1.26.52.3/windows-x64.json" CHECKSIG_AUTO_SOURCE_OLD)
+    file(READ "${CHECKSIG_SDK_ROOT}/data/1.26.60.5/windows-x64.json" CHECKSIG_AUTO_SOURCE_NEW)
+    configure_file(src/checksig_auto_sources.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/checksig_auto_sources.hpp" @ONLY)
     add_library(CheckSig SHARED src/check_sig.cpp)
     target_include_directories(CheckSig PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated"

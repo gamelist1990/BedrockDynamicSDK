@@ -5,6 +5,7 @@
 #include <bcrypt.h>
 #include "bedrock/resolver.hpp"
 #include "bedrock/remote_catalog.hpp"
+#include <bedrock/auto_profile.hpp>
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -201,5 +202,92 @@ bool Resolver::attachWindowsMainModule(const GameIdentity& identity,
     return attachImageByTextHash(base, identity.imageSize, identity.textSha256,
                                  identity.textRva, identity.textSize, error);
 }
+
+namespace auto_profile {
+namespace {
+bool copyLive(const void* source,void* output,std::size_t count) noexcept {
+    __try{std::memcpy(output,source,count);return true;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+}
+Image captureImage(const GameIdentity& identity,const std::atomic<bool>& stop) {
+    Image result;result.identity=identity;
+    const auto module=GetModuleHandleW(nullptr);const auto loaded=reinterpret_cast<std::uintptr_t>(module);
+    std::array<wchar_t,32768> path{};const auto pathLength=GetModuleFileNameW(module,path.data(),static_cast<DWORD>(path.size()));
+    if(!pathLength||pathLength>=path.size())throw std::runtime_error("auto-dev cannot locate loaded EXE");
+    const std::filesystem::path filePath(path.data());std::error_code ec;
+    const auto fileSize=std::filesystem::file_size(filePath,ec);
+    std::ifstream file;std::string digest;
+    bool disk=!ec&&fileSize<=1024ull*1024*1024&&hashFile(filePath,digest)&&digest==identity.fileSha256;
+    if(disk)file.open(filePath,std::ios::binary);
+    disk=disk&&file.good();
+    const auto read=[&](bool fromDisk,std::uint64_t offset,void* output,std::size_t count){
+        if(stop.load())throw std::runtime_error("auto-dev cancelled");
+        if(fromDisk){if(offset>fileSize||count>fileSize-offset)return false;
+            file.clear();file.seekg(static_cast<std::streamoff>(offset));file.read(static_cast<char*>(output),static_cast<std::streamsize>(count));return file.good();}
+        return offset<=identity.imageSize&&count<=identity.imageSize-offset&&copyLive(reinterpret_cast<const void*>(loaded+offset),output,count);
+    };
+    IMAGE_DOS_HEADER dos{};IMAGE_NT_HEADERS64 nt{};
+    const auto headers=[&](bool fromDisk){
+        return read(fromDisk,0,&dos,sizeof(dos))&&dos.e_magic==IMAGE_DOS_SIGNATURE&&dos.e_lfanew>0&&dos.e_lfanew<0x100000&&
+            read(fromDisk,static_cast<unsigned>(dos.e_lfanew),&nt,sizeof(nt))&&nt.Signature==IMAGE_NT_SIGNATURE&&
+            nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64&&nt.OptionalHeader.Magic==IMAGE_NT_OPTIONAL_HDR64_MAGIC&&
+            nt.OptionalHeader.SizeOfImage==identity.imageSize&&nt.FileHeader.NumberOfSections>0&&nt.FileHeader.NumberOfSections<=96;
+    };
+    if(disk&&!headers(true))disk=false;
+    if(!disk&&!headers(false))throw std::runtime_error("auto-dev cannot validate loaded PE geometry");
+    const auto table=std::uint64_t(dos.e_lfanew)+sizeof(DWORD)+sizeof(IMAGE_FILE_HEADER)+nt.FileHeader.SizeOfOptionalHeader;
+    std::vector<IMAGE_SECTION_HEADER> sections(nt.FileHeader.NumberOfSections);
+    if(!read(disk,table,sections.data(),sections.size()*sizeof(IMAGE_SECTION_HEADER)))throw std::runtime_error("auto-dev section table unreadable");
+    Section pdata;
+    for(const auto& section:sections){
+        char name[9]{};std::memcpy(name,section.Name,8);Section* destination{};
+        if(std::string_view(name)==".text")destination=&result.text;
+        else if(std::string_view(name)==".rdata")destination=&result.rdata;
+        else if(std::string_view(name)==".data")destination=&result.data;
+        else if(std::string_view(name)==".pdata")destination=&pdata;
+        if(!destination)continue;
+        const auto size=section.SizeOfRawData;
+        const auto limit=destination==&result.text?512u*1024*1024:128u*1024*1024;
+        if(section.VirtualAddress>=identity.imageSize||size>identity.imageSize-section.VirtualAddress||size>limit)throw std::runtime_error("auto-dev section exceeds bounds");
+        destination->rva=section.VirtualAddress;destination->bytes.resize(size);
+        for(std::size_t offset=0;offset<size;offset+=1024*1024){
+            const auto count=std::min<std::size_t>(1024*1024,size-offset);
+            const auto source=std::uint64_t(disk?section.PointerToRawData:section.VirtualAddress)+offset;
+            if(!read(disk,source,destination->bytes.data()+offset,count))throw std::runtime_error("auto-dev section snapshot failed; retry after input/executable stabilizes");
+        }
+    }
+    if(result.text.rva!=identity.textRva||result.text.bytes.size()!=identity.textSize||pdata.bytes.empty())throw std::runtime_error("auto-dev section metadata differs from loaded module");
+    if(disk&&(!hashFile(filePath,digest)||digest!=identity.fileSha256))throw std::runtime_error("EXE changed during auto-dev snapshot");
+    if(!hashMemory(result.text.bytes.data(),result.text.bytes.size(),result.identity.textSha256))throw std::runtime_error("auto-dev text hashing failed");
+    result.pointerBase=disk?nt.OptionalHeader.ImageBase:loaded;
+    result.provenance=disk?"loaded EXE path; file SHA256 checked before and after snapshot; clean file code":"guarded live module snapshot; disk code inaccessible/encrypted; patched entries are not accepted as new guards";
+    if(pdata.bytes.size()/12>1000000)throw std::runtime_error("auto-dev pdata exceeds function limit");
+    for(std::size_t i=0;i+12<=pdata.bytes.size();i+=12){
+        std::uint32_t begin{},end{};std::memcpy(&begin,pdata.bytes.data()+i,4);std::memcpy(&end,pdata.bytes.data()+i+4,4);
+        if(begin>=result.text.rva&&end>begin&&std::uint64_t(end)<=std::uint64_t(result.text.rva)+result.text.bytes.size())result.functions.push_back({begin,end});
+    }
+    std::sort(result.functions.begin(),result.functions.end(),[](const auto& a,const auto& b){return a.begin<b.begin;});
+    if(result.functions.empty())throw std::runtime_error("auto-dev has no validated pdata functions");
+    return result;
+}
+
+Json inspectLive(const Json& profile){
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));const auto size=number(profile.at("target").at("size_of_image"));
+    Json report={{"scope","read-only live entry guards; patches are observations, not newly inferred functions"},{"tick_ms",GetTickCount64()},
+        {"matched",0},{"changed",0},{"unreadable",0},{"differences",Json::array()}};
+    std::size_t processed{};
+    for(const auto& [name,definition]:profile.at("symbols").items()){
+        if(++processed>2048)break;
+        const auto rva=number(definition.at("rva"));const auto p=pattern(definition.at("entry_check").get<std::string>());
+        std::vector<std::byte> data(p.size());
+        if(p.empty()||rva>=size||p.size()>size-rva||!copyLive(reinterpret_cast<const void*>(base+rva),data.data(),data.size())){report["unreadable"]=report["unreadable"].get<unsigned>()+1;continue;}
+        bool equal=true;for(std::size_t i=0;i<p.size();++i)if(p[i]>=0&&std::to_integer<unsigned>(data[i])!=static_cast<unsigned>(p[i]))equal=false;
+        const char* key=equal?"matched":"changed";report[key]=report[key].get<unsigned>()+1;
+        if(!equal&&report["differences"].size()<64)report["differences"].push_back({{"symbol",name},{"rva",hex(rva)},
+            {"jump_stub",data[0]==std::byte{0xE9}||data[0]==std::byte{0xEB}},{"reason","entry differs; an SDK/third-party hook may be installed; no automatic rebinding"}});
+    }
+    return report;
+}
+} // namespace auto_profile
 } // namespace bedrock
 #endif

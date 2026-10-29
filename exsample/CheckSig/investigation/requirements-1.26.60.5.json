@@ -29,7 +29,6 @@
       "status": "candidate-implemented-runtime-check-required",
       "mods": [
         "Freecam",
-        "BlockOutline",
         "HitBox"
       ],
       "action": "新EXEのLevelRenderer/Tessellator/Material関数と配置を対応。60-world-renderで描画引数と原点・Tessellator・shaderを観測し、枠・名前・状態復元・ワールド切替を実機確認。"
@@ -48,7 +47,6 @@
       "mods": [
         "Top",
         "Freecam",
-        "BlockOutline",
         "SpeedBuilder",
         "HitBox"
       ],
@@ -255,22 +253,6 @@
       ]
     },
     {
-      "name": "BlockOutline",
-      "required_groups": [
-        "gameplay",
-        "actors",
-        "items",
-        "world",
-        "subchunks",
-        "render",
-        "world_events"
-      ],
-      "optional_groups": [],
-      "manual_checks": [
-        "対象ブロックの場所・SubChunk境界・描画位置と色・未ロードチャンクの扱い"
-      ]
-    },
-    {
       "name": "SpeedBuilder",
       "required_groups": [
         "input",
@@ -317,14 +299,6 @@
       "optional_groups": [],
       "manual_checks": [
         "/fake候補とメッセージ・Origin省略5/指定0..255・requestId/UUIDと応答・timeout・接続切替"
-      ]
-    },
-    {
-      "name": "GuiDemo",
-      "required_groups": [],
-      "optional_groups": [],
-      "manual_checks": [
-        "DX11/DX12の描画・入力・フォント・リサイズ・フルスクリーン切替"
       ]
     },
     {

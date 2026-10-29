@@ -108,6 +108,10 @@ if (auto rows = roster.snapshot(level)) {
 LocalPlayer取得も`NativeLocalPlayerGetter::load(profile)` / `get(client)`を使います。
 関数は`ClientInstance::getLocalPlayer`で識別し、旧vtable slotを使う必要がある場合もSDKが定義から読みます。Modからslotやoffsetを指定しません。
 
+## 自動探索
+
+[CheckSig auto-dev](checksig-auto-dev.md)で関数・vtable・命令の根拠を生成できます。未解決のABIや構造体を旧版の値で埋める機能ではありません。
+
 ## 残存する旧実装
 
 今回のPlayerList/skin/LocalPlayer移行で全Modのネイティブ処理が消えたわけではありません。次をSDK境界へ移す必要があります。

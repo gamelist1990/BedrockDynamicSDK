@@ -39,7 +39,7 @@ jobs:
           import os, json
           version = os.environ['GAME_VERSION']
           if version not in ('1.26.52.3', '1.26.60.5'): raise SystemExit('Unsupported version')
-          available = ['BlockOutline','Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','GuiDemo','ScanClient','CheckSig']
+          available = ['Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','ScanClient','CheckSig']
           if version == '1.26.60.5': available.append('Fake')
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
           if not selected or any(x not in available for x in selected): raise SystemExit('Unknown Mod or Mod unavailable for this version')
@@ -155,6 +155,7 @@ jobs:
           Copy-Item exsample/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
           Copy-Item docs/checksig-jobs.md build-mod/Release/
           Copy-Item docs/checksig-126605.md build-mod/Release/
+          Copy-Item docs/checksig-auto-dev.md build-mod/Release/
           if ("${{ needs.plan.outputs.version }}" -eq "1.26.60.5") {
             python tools/checksig_investigation.py --bundle build-investigation
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

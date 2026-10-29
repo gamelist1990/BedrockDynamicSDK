@@ -47,10 +47,16 @@ PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Mo
 - [調査JSONの書き方](docs/checksig-jobs.md)
 - [プロファイルの構造](docs/native-profile-layout.md)
 
+## CheckSig auto-dev（実験）
+
+`Documents/PEXData/CheckSig/status.json`の`"auto-dev"`を`true`にすると、SDKの探索処理が現在のEXEから定義候補を生成します。
+結果は`auto-dev/windows-x64.json`と`report.json` / `report.txt`。未解決項目には理由を残し、自動適用はしません。
+[使い方・探索条件・生成できない項目](docs/checksig-auto-dev.md)を参照してください。
+
 ## Mod
 
-`BlockOutline` / `Freecam` / `SpeedBuilder` / `Top` / `HitBox` / `TabList` /
-`Zoom` / `AutoSprint` / `GuiDemo` / `ScanClient` / `CheckSig` / `Fake`
+`Freecam` / `SpeedBuilder` / `Top` / `HitBox` / `TabList` /
+`Zoom` / `AutoSprint` / `ScanClient` / `CheckSig` / `Fake`
 
 [Fake](exsample/Fake/README_ja.md) は1.26.60.5向けの調査版です。
 `/fake メッセージ` で `/me メッセージ` をOrigin=5で要求し、

@@ -2,10 +2,6 @@
 	path = exsample/AutoSprint
 	url = https://github.com/gamelist1990/BedrockAutoSprint.git
 	branch = main
-[submodule "exsample/GuiDemo"]
-	path = exsample/GuiDemo
-	url = https://github.com/gamelist1990/BedrockGuiDemo.git
-	branch = main
 [submodule "exsample/Zoom"]
 	path = exsample/Zoom
 	url = https://github.com/gamelist1990/BedrockZoom.git

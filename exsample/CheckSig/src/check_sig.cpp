@@ -1,4 +1,6 @@
 #include <bedrock/profile_json.hpp>
+#include <bedrock/auto_profile_runner.hpp>
+#include "checksig_auto_sources.hpp"
 #include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -682,7 +684,7 @@ public:
                 throw std::runtime_error("loaded PE .text metadata disagrees with the SDK fingerprint");
             writeEvent("started", {
                 {"identity", moduleIdentityJson(*image_, identity_)},
-                {"checksig_features_revision",3},
+                {"checksig_features_revision",4},
                 {"hook_runtime", BDS_HookRuntimeVersion()},
                 {"hook_runtime_abi", BDS_HookRuntimeAbi()}
             });
@@ -693,6 +695,14 @@ public:
             while (!stopping_.load()) {
                 try {
                     processCommands();
+                    std::vector<json> autoSources;
+                    if(autoDeveloper_.needsSources(output_/L"status.json")){
+                        autoSources.push_back(json::parse(checksig::autoSourceNew));
+                        autoSources.push_back(json::parse(checksig::autoSourceOld));
+                        if(targetProfile_.is_object())autoSources.push_back(targetProfile_);
+                        if(sourceProfile_.is_object())autoSources.push_back(sourceProfile_);
+                    }
+                    autoDeveloper_.poll(output_,identity_,std::move(autoSources),defaultSupportCatalog());
                     if (detectionReportsDirty_) writeDetectionReports();
                     const auto now = std::chrono::steady_clock::now();
                     if (now - lastStatus >= std::chrono::seconds(1)) {
@@ -709,6 +719,7 @@ public:
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
+            autoDeveloper_.shutdown();
             unsubscribeAll();
             flushHookState();
             writeStatus("stopped");
@@ -727,7 +738,7 @@ public:
         }
     }
 
-    void requestStop() noexcept { stopping_.store(true); }
+    void requestStop() noexcept { stopping_.store(true);autoDeveloper_.requestStop(); }
 
 private:
     fs::path output_;
@@ -746,6 +757,7 @@ private:
     std::map<std::string, json> jobResults_;
     std::map<std::string, std::string> hookJobs_;
     std::string currentJob_;
+    bedrock::auto_profile::Developer autoDeveloper_;
 #include "checksig_support_runtime.inc"
 
     fs::path resultPath(const std::string& source) const {
@@ -770,7 +782,7 @@ private:
         for(auto it=watchCalls_.begin();it!=watchCalls_.end();) {
             if(it->first.starts_with(source+":")) it=watchCalls_.erase(it); else ++it;
         }
-        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",3}, {"arch", "x64"},
+        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",4}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
         bool investigation = false, recorded = false;
@@ -788,7 +800,7 @@ private:
             } else {
                 if (document.value("schema", 0) != 1 || document.value("arch", std::string{}) != "x64")
                     throw std::runtime_error("checksig-job requires schema=1 and arch=x64");
-                if(document.value("minimum_checksig_features",1)>3) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
+                if(document.value("minimum_checksig_features",1)>4) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
                 const auto resolveInput = [&](const std::string& name) {
                     auto path = fromUtf8(name);
                     return path.is_relative() ? file.path.parent_path() / path : path;
@@ -973,7 +985,7 @@ private:
 
     void writeStatus(std::string_view state, std::string_view error = {}) {
         json status = {
-            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",3}, {"state", state},
+            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",4}, {"state", state},
             {"pid", GetCurrentProcessId()}, {"time_utc", timestampUtc()}
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);
@@ -1000,6 +1012,7 @@ private:
                 status["hooks"].push_back(std::move(entry));
             }
         }
+        if(!autoDeveloper_.decorate(status,output_/L"status.json"))return;
         std::lock_guard lock(fileMutex_);
         atomicWrite(output_ / L"status.json", status.dump(2) + "\n");
     }
@@ -2983,7 +2996,7 @@ DWORD WINAPI worker(void*) {
 }
 } // namespace
 
-extern "C" __declspec(dllexport) unsigned CheckSig_FeaturesRevision() noexcept { return 3; }
+extern "C" __declspec(dllexport) unsigned CheckSig_FeaturesRevision() noexcept { return 4; }
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

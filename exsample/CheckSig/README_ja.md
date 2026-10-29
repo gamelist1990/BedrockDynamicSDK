@@ -91,3 +91,10 @@ readは `u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64/bytes:N`、最大64バイト�
 未知のABIはprobeまでで、JSONにABIを書くだけで任意関数を実行する機能はありません。
 専用Observerのunhookは観測を止め、detourを元処理へ通す状態で保持する場合があります。
 DLLもゲーム終了まで保持します。
+
+## auto-dev（実験機能）
+
+`Documents/PEXData/CheckSig/status.json`で`"auto-dev": true`にすると、SDKがバックグラウンドでEXEを探索します。
+`auto-dev/windows-x64.json`と`report.json` / `report.txt`に候補・根拠・未解決理由を出します。
+`"auto-dev": false`で停止、`"auto-dev-run"`を増やすと再探索。完了後は`live.json`で入口を監視します。
+詳しくはZIP内の`checksig-auto-dev.md`を参照してください。生成結果は自動適用しません。
