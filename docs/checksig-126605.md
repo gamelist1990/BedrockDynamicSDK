@@ -27,7 +27,7 @@ result/remaining-work.txt
 JSONの`support_report.mods`がModごとの状態、`implementation_work`がアダプターの残作業、`support_report.items`が関数・レイアウトごとの残作業です。
 `definition_blockers`は定義不足・不一致など、`remaining_requirements`は観測やレビューも含む件数です。
 Hookの観測が増えると結果を更新します。Mod全体の動作を確認したことにはしません。
-通常のwindows-x64.jsonを置いた場合も、detectの結果に残作業を付けます。
+通常のprofile.jsonを置いた場合も、detectの結果に残作業を付けます。
 
 ## 主な残作業
 
@@ -48,7 +48,7 @@ Hookの観測が増えると結果を更新します。Mod全体の動作を確�
 
 Zoom / AutoSprintも最終的なゲーム内動作確認が必要です。
 GuiDemoはMinecraftの関数定義に依存しませんが、DX11/DX12・入力・描画切替を確認します。
-ScanClientとCheckSigも出力完結・スキャン・観測を確認します。
+CheckSigも出力完結・スキャン・観測を確認します。
 結果には12種類すべての確認シナリオを出します。
 
 ## Hookによる観測を進める

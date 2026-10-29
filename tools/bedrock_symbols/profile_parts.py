@@ -1,4 +1,4 @@
-"""Canonical class-based profiles and deterministic compatibility assembly."""
+"""Canonical class profiles and deterministic explicit exports."""
 from pathlib import Path
 import hashlib,json,re
 
@@ -17,7 +17,6 @@ def merge(root,part):
 
 def load_profile(path:Path):
     path=Path(path)
-    if not path.exists() and path.name=='windows-x64.json':path=path.with_name('windows-x64')/'manifest.json'
     value=json.loads(path.read_text(encoding='utf-8'))
     if value.get('format')!=FORMAT:return value
     root={key:value[key] for key in ['schema','target','protocol'] if key in value}

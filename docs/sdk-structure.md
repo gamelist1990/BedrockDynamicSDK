@@ -16,7 +16,7 @@
 | `logging/` | ログ・コンソール |
 | `detail/` | SDK内部の共有処理。Modから直接使用しない |
 
-旧includeパスには転送ヘッダーだけを残しています。実装の編集場所は上表のフォルダです。
+旧includeの転送ヘッダーは削除しました。SDKと各Modは上表の新パスを使用します。
 新しいModでは例えば`<bedrock/packets/packet_api.hpp>`を使用します。
 クラス内部だけで使う状態Enumは、そのクラス内部に置きます。
 
@@ -55,8 +55,7 @@ ModにRVA・オフセット・vtable位置を追加しません。
 3. `bedrock-symbols index data --output data/manifest.json`で全体indexを更新する。
 4. GitHub Runnerで対象版をビルドする。
 
-`tools/profile_parts.py assemble <manifest> --output <path>`で、CheckSigや旧形式の利用者に渡す単一JSONを生成できます。
-`assemble-all data`は診断用の互換ファイルを作ります。これらの`windows-x64.json`はビルド生成物で、リポジトリの編集元ではありません。
+`tools/profile_parts.py assemble <manifest> --output profile.json`で、CheckSigへ明示的に渡す調査用JSONを出力できます。通常の配布とビルドはmanifestとクラス別JSONを直接使い、旧windows-x64.jsonを生成しません。
 SDKキャッシュ・CheckSigの結果JSONも単一JSONを使用できます。
 
 ## ビルド時の埋め込み

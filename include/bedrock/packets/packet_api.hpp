@@ -7,6 +7,8 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <map>
+#include <set>
 
 namespace bedrock {
 // Mod-facing filtered packet subscriptions. Receive runs after successful game
@@ -37,28 +39,40 @@ class PacketApi {
         handlers_.store(std::move(next));
     }
     bool installReceive(std::string_view selected, std::string_view embedded, std::string &error) {
+        if (receiveReady_)
+            return true;
         try {
-            return installReceive(native_profile::layoutProfile(selected, embedded, "PacketRead"),
-                                  error);
+            reads_.load(selected, embedded);
+            refreshReceiveRoutes();
+            receiveReady_ = true;
+            error.clear();
+            return true;
         } catch (const std::exception &e) {
+            clearReceiveHooks();
             error = e.what();
             return false;
         }
     }
     bool installReceive(std::string_view profile, std::string &error) {
-        if (receiveToken_)
+        if (receiveReady_)
             return true;
         try {
             reads_.load(parseNativeProfile(profile));
-            if (!reads_.subscribe(&receive, this, &receiveToken_))
-                throw std::runtime_error("Packet receive subscription failed");
-            receiveReady_.store(true);
+            refreshReceiveRoutes();
+            receiveReady_ = true;
             error.clear();
             return true;
         } catch (const std::exception &e) {
+            clearReceiveHooks();
             error = e.what();
             return false;
         }
+    }
+    PacketReadEvents::Statistics receiveStatistics() const noexcept {
+        return reads_.statistics();
+    }
+    std::size_t receiveTargetCount() const noexcept {
+        return receiveTargetCount_.load();
     }
     bool installSend(std::string_view profile, std::string &error) {
         if (sendToken_)
@@ -85,9 +99,7 @@ class PacketApi {
             std::lock_guard lock(mutex_);
             handlers_.store(std::make_shared<const std::vector<Entry>>());
         }
-        if (receiveToken_)
-            BDS_HookUnsubscribe(receiveToken_);
-        receiveToken_ = nullptr;
+        clearReceiveHooks();
         if (sendToken_)
             BDS_HookUnsubscribe(sendToken_);
         sendToken_ = nullptr;
@@ -101,12 +113,70 @@ class PacketApi {
         SendHandler send;
     };
     Subscription add(int id, ReceiveHandler receive, SendHandler send) {
-        std::lock_guard lock(mutex_);
-        auto next = std::make_shared<std::vector<Entry>>(*handlers_.load());
-        const auto token = ++serial_;
-        next->push_back({token, id, std::move(receive), std::move(send)});
-        handlers_.store(std::move(next));
+        const bool needsReceive = static_cast<bool>(receive);
+        Subscription token{};
+        {
+            std::lock_guard lock(mutex_);
+            auto next = std::make_shared<std::vector<Entry>>(*handlers_.load());
+            token = ++serial_;
+            next->push_back({token, id, std::move(receive), std::move(send)});
+            handlers_.store(std::move(next));
+        }
+        if (needsReceive && receiveReady_)
+            try {
+                refreshReceiveRoutes();
+            } catch (...) {
+                unsubscribe(token);
+                throw;
+            }
         return token;
+    }
+    void refreshReceiveRoutes() {
+        std::lock_guard lock(receiveMutex_);
+        if (!reads_.routed()) {
+            if (!receiveToken_ && !reads_.subscribe(&receive, this, &receiveToken_))
+                throw std::runtime_error("common Packet receiver subscription failed");
+            receiveTargetCount_ = 1;
+            return;
+        }
+        std::set<void *> targets;
+        const auto handlers = handlers_.load();
+        for (const auto &handler : *handlers) {
+            if (!handler.receive)
+                continue;
+            if (handler.id < 0) {
+                for (const auto &[id, route] : reads_.routes())
+                    targets.insert(route.targets.begin(), route.targets.end());
+            } else {
+                const auto route = reads_.routes().find(static_cast<unsigned>(handler.id));
+                if (route == reads_.routes().end())
+                    throw std::runtime_error(
+                        "Packet decoder vtable unavailable or ambiguous for ID " +
+                        std::to_string(handler.id));
+                targets.insert(route->second.targets.begin(), route->second.targets.end());
+            }
+        }
+        if (targets.empty())
+            throw std::runtime_error("register receive handlers before installing PacketApi");
+        for (auto *target : targets)
+            if (!receiveRoutes_.contains(target)) {
+                BDS_HookToken token{};
+                if (!reads_.subscribeTarget(target, &receive, this, &token))
+                    throw std::runtime_error("Packet decoder subscription conflict or route limit");
+                receiveRoutes_[target] = token;
+            }
+        receiveTargetCount_ = receiveRoutes_.size();
+    }
+    void clearReceiveHooks() {
+        std::lock_guard lock(receiveMutex_);
+        receiveReady_ = false;
+        if (receiveToken_)
+            BDS_HookUnsubscribe(receiveToken_);
+        receiveToken_ = nullptr;
+        for (const auto &[target, token] : receiveRoutes_)
+            BDS_HookUnsubscribe(token);
+        receiveRoutes_.clear();
+        receiveTargetCount_ = 0;
     }
     static void BDS_HOOK_CALL receive(void *user, void *raw, BDS_HookNext next, void *frame) {
         auto &self = *static_cast<PacketApi *>(user);
@@ -151,6 +221,9 @@ class PacketApi {
     PacketWireEvents sends_;
     BDS_HookToken receiveToken_{}, sendToken_{};
     std::atomic<bool> receiveReady_{};
+    std::atomic<std::size_t> receiveTargetCount_{};
+    std::mutex receiveMutex_;
+    std::map<void *, BDS_HookToken> receiveRoutes_;
     std::mutex mutex_;
     Subscription serial_{};
     std::atomic<std::shared_ptr<const std::vector<Entry>>> handlers_{

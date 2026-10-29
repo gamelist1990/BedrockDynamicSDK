@@ -14,7 +14,7 @@ Treat REA findings and decompiler output as evidence-backed hypotheses. Verify
 function RVA, ABI, object layout, and runtime behavior against the exact game
 build before promoting any result into the SDK's verified symbol profile.
 
-Use ScanClient for runtime observations and REA/Ghidra for static analysis.
+Use CheckSig JSON jobs for runtime observations and REA/Ghidra for static analysis.
 Correlate both by executable fingerprint, RVA, and observed values; a runtime
 observation alone does not establish a function signature or ABI.
 
@@ -33,5 +33,5 @@ Read `docs/profile-maintenance.md` for resolution order, ABI constraints and
 version migration evidence. Existing legacy native code is not permission to
 add more: migrate the touched native operation behind an SDK adapter.
 
-Canonical profiles are class parts indexed by `data/<version>/windows-x64/manifest.json`; refresh part hashes before updating `data/manifest.json`. Flat windows-x64.json files are generated interoperability artifacts, not editing sources.
-All protocol data and version selection come from data manifests. CMake embeds the complete selected protocol.json; do not add version-specific C++ protocol headers. Place public enums under include/bedrock/enums and implementations under the categorized SDK directories. Root header paths are compatibility forwards only.
+Canonical profiles are class parts indexed by `data/<version>/windows-x64/manifest.json`; refresh part hashes before updating `data/manifest.json`. Use explicit profile exports only for interchange; do not generate flat data/windows-x64.json files.
+All protocol data and version selection come from data manifests. CMake embeds the complete selected protocol.json; do not add version-specific C++ protocol headers. Place public enums under include/bedrock/enums and implementations under the categorized SDK directories. Do not create root compatibility forwarding headers; update callers to the categorized API paths.

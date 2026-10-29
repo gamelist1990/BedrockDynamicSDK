@@ -67,7 +67,7 @@ To port old SDK symbol candidates using both exact builds:
 
 ```sh
 .venv/bin/python -m bedrock_symbols.cli port NEW-Minecraft.Windows.exe \
-  --old data/1.26.52.3/windows-x64.json \
+  --old data/1.26.52.3/windows-x64/manifest.json \
   --source-binary OLD-Minecraft.Windows.exe --version NEW_VERSION \
   --base-profile data/NEW_VERSION/windows-x64.json \
   --output /tmp/windows-x64-candidates.json

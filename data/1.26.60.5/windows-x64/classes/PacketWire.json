@@ -3,24 +3,51 @@
     "PacketWire": {
       "schema": 1,
       "pointer_size": 8,
-      "status": "candidate",
-      "runtime_verified": false,
+      "status": "verified",
+      "runtime_verified": true,
       "format": "bedrock_packet_header_and_payload",
       "abi": "void(stage*, const std::string&, uintptr_t, int)",
       "batch_append": {
         "rva": "0x4bf1d0",
         "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 48 C7 45",
-        "status": "candidate",
-        "runtime_verified": false
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-mod-operation",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "mods": [
+            "Freecam"
+          ],
+          "scope": "Pre-batch send hook used during Freecam",
+          "limitations": [
+            "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+          ]
+        }
       },
       "protocol_schema": "movement_array_options_v1",
       "source": "PrismarineJS/minecraft-data@9c97fe50a82feb2c0f2be1cff35ce19c891bfb35/data/bedrock/1.26.60/protocol.json",
       "evidence": "REA/Ghidra: common pre-batch append reads an MSVC string, writes varuint byte count, copies the entire packet into BinaryStream, then compression staging. Native symbol name is unknown; batch_append is an SDK bridge role, not a Minecraft symbol. Exact executable identity is target.file_sha256.",
       "limitations": [
-        "Static candidate; requires observation of Packet ID and client sender attribution at runtime.",
-        "Sender attribution is scoped to synchronous sendToServer; deferred/foreign/server sends are not edited.",
-        "No per-packet C++ fields or per-packet function bindings are used by this bridge."
-      ]
+        "Synchronous client sender attribution only; deferred/foreign sends remain outside the edit scope.",
+        "Confirmation is Freecam movement behavior, not every packet schema."
+      ],
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Pre-batch movement payload read/write and anchored outgoing positions",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     }
   }
 }

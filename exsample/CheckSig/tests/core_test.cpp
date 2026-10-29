@@ -1,5 +1,6 @@
 #include "check_sig_core.hpp"
 #include <iostream>
+#include <bedrock/profiles/profile_parts.hpp>
 
 namespace {
 using namespace checksig;
@@ -58,7 +59,10 @@ void profiles(const fs::path& repository) {
     rejects([&]{ readU32(-1); }, "negative RVA accepted");
     for (const auto& version : {"1.26.52.3", "1.26.60.5"}) {
         std::string text, error;
-        require(readBounded(repository / "data" / version / "windows-x64.json", text, maxProfileBytes, error), "repo profile read failed");
+        const auto path=repository / "data" / version / "windows-x64" / "manifest.json";
+        require(readBounded(path,text,maxProfileBytes,error),"repo profile manifest read failed");
+        text=bedrock::assembleProfileParts(text,path.generic_string(),[&](const std::string& part,const std::string&){
+            std::string bytes;require(readBounded(part,bytes,maxProfileBytes,error),"repo profile part read failed");return bytes;});
         require(parseProfile(text).is_object(), "shipped profile validation failed");
     }
 }

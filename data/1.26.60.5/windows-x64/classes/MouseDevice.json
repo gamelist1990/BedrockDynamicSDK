@@ -51,8 +51,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
       "entry_validation": {
         "status": "complete",
@@ -63,7 +63,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "runtime_observation": {
         "samples": 12,
         "observed_calls": 6647,
@@ -86,6 +86,20 @@
           "x": 362,
           "y": 961
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam",
+          "Zoom"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     }
   }

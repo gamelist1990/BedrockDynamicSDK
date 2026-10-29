@@ -2,7 +2,7 @@
 
 この文書は、新しい `Minecraft.Windows.exe` を受け取った後に、Ghidra、
 Bedrock Lens、`bedrock-symbols` を使ってシンボル候補を移植し、
-`data/<version>/windows-x64.json` と `data/manifest.json` を安全に更新する手順です。
+`data/<version>/windows-x64/manifest.json` と `data/manifest.json` を安全に更新する手順です。
 
 ## 自動化できる範囲
 
@@ -109,7 +109,7 @@ manifest schema v1は1バージョン／1プラットフォームにつき1つ�
 ```bash
 cd "$SDK_ROOT"
 uv run bedrock-symbols port "$NEW_EXE" \
-  --old "data/$OLD_VERSION/windows-x64.json" \
+  --old "data/$OLD_VERSION/windows-x64/manifest.json" \
   --version "$NEW_VERSION" \
   --output "$UPDATE_WORK/ported.json"
 ```
@@ -240,7 +240,7 @@ Ghidraが `FUN_...` とした匿名関数は標準では除外されます。BSi
 最終ファイルは次のパスです。
 
 ```text
-data/<NEW_VERSION>/windows-x64.json
+data/<NEW_VERSION>/windows-x64/manifest.json
 ```
 
 `ported.json` を基本に、LatiteとLensで補完した結果を統合します。各シンボルには最低限、
@@ -310,7 +310,7 @@ TabListのコード更新とDLL再ビルドが必要です。
 cd "$SDK_ROOT"
 
 uv run python -m json.tool \
-  "data/$NEW_VERSION/windows-x64.json" >/dev/null
+  "data/$NEW_VERSION/windows-x64/manifest.json" >/dev/null
 
 uv run --extra dev pytest -q
 
@@ -318,7 +318,7 @@ uv run bedrock-symbols index data \
   --output data/manifest.json
 
 git diff --check
-git diff -- data/manifest.json "data/$NEW_VERSION/windows-x64.json"
+git diff -- data/manifest.json "data/$NEW_VERSION/windows-x64/manifest.json"
 ```
 
 manifestにはJSON自体のSHA-256、EXE全体と `.text` のSHA-256、PE構造が入ります。

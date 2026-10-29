@@ -1,114 +1,99 @@
-# 1.26.60.5 Windows x64 — 調査中
+# 1.26.60.5 · Windows x64
 
-`windows-x64.json` はEXE識別情報と43件の診断エントリーを収録した定義です。
-旧版アンカーで移植したトップレベル/native内関数と、既存の手調査候補を
-`symbols` からCheckSigで個別に確認できます。31件の移植候補のうち20件は既存RVAと一致し、
-10件を追加しました。`ClientInstance::onPlayerLoaded` はRVA候補が異なるため、
-既存定義を保ったまま `candidate::cross_version_port::` に別候補を保存しています。
-旧版アンカーからの生の候補一覧は `windows-x64.candidate.json` です。
-2026-10-28提供のCheckSig実機ログにより、`Keyboard::feed`（RVA `0x331C20`）を
-`verified` / `abi_verified:true` / `runtime_verified:true` へ更新しました。
-静的REA/GhidraのABI比較に加えてHook設置、キー引数、押下/解放、戻り値0の観測を確認しています。
-10件の観測サンプルと累計97回以上の呼び出しが記録されています。戻り値1の意味、解除、長時間安定性は未確認です。
-43件すべての入口読み取り・ガード一致を確認し、ユーザー指定の入口一致基準で全43件を `status:verified` に更新しました。
-`verification_scope` はKeyboard::feedが `runtime-hook`、ほか42件が `entry-guard` です。
-ほか42件の `abi_verified` / `runtime_verified` はfalseのまま保持します。`entry_validation` に確認根拠を残しています。
-証跡のSHA-256と範囲はJSONの `analysis.runtime_validation` と `Keyboard::feed.runtime_validation` に保存しています。
-native keyboardのイベントレイアウトもcandidateとして登録しています。全Modに必要な
-nativeレイアウトは未完成なので、この定義だけで全SDK機能が使える状態ではありません。
-Actor / Item / Motionのnative layoutは1.26.52.3から候補として移し、このEXEに対する
-静的証拠と旧版由来の値をプロフィール内で区別しています。値は `candidate` /
-`runtime_verified:false` のままです。CheckSigやAllowCandidates対応Modから試行できますが、
-実ゲームでの値・寿命・ABIは確認できていません。
+更新日：2026-10-29。対象EXE SHA-256：
+`988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`
 
-`native_world` は読み取り専用アクセス向けの候補ルートを追加しています。新版の
-ClientInstance region getter (slot 33 / RVA `0x659E2F0`)、BlockSource::getBlock
-(RVA `0x32CE440`)、getChunk (RVA `0x32CD550`) と、read-only `.rdata`で一致した
-3つのBlockSource vtable候補を登録しました。`NativeWorld` はRegion getterの戻り値が
-これらのvtableのいずれかを持つ場合だけBlockSourceとして処理し、各呼び出しでもslot 2と41の
-関数ポインタが候補RVAに一致するか確認します。明示的な `CandidatePolicy::AllowCandidates`
-または `NativeWorld::load(..., true, ...)` が必要です。BlockType / ItemStack / Actor等の
-オブジェクトレイアウトは旧版由来のcandidateを含み、読み取り結果は未検証です。
-新版でWorldのブロック配置関数とGameMode vtableは未解決のため、配置機能は無効です。
+## 動作状況
 
-Windows上で現在のEXEへ旧signatureを当て、ヒット関数・周辺参照・読み取り値を調べる場合は
-[CheckSig](../../exsample/CheckSig/README_ja.md) を使います。`list` で全候補の入口ガード、
-`.pdata` 関数開始、HookPoint対応を一覧し、`probe <symbol>` で周辺情報を確認します。
-`Level::getRuntimeActorList`を含むABI既知候補は、正確なEXE一致・入口ガード・`.pdata`境界を確認したうえで
-`hook <symbol>` を明示すると、元処理を通す観測フックを試せます。`onPlayerLoaded` は
-`.pdata`関数開始が見つかっていないため、CheckSigはフックを拒否します。
-観測結果であっても自動で `verified` へ昇格させません。
+- [x] **Freecam**：正常動作のユーザー確認済み。カメラ更新・移動状態・送信PacketHook・senderの使用範囲をverifiedへ反映。
+- [x] **Zoom**：正常動作のユーザー確認済み。入力・FOVの使用経路をverifiedへ反映。
+- [x] **Fake**：正常動作のユーザー確認済み。`/fake`登録・本文取得・`/me`要求・応答処理を反映。
+- [ ] **TabList**：旧ログは受信0件・行0件。パケット別デコーダーへのHookと専用解析ワーカーを実装。実機で受信・表示を再確認する。
+- [ ] **HitBox**：起動と描画Hook到達の記録あり。実際の対象取得・box表示は未確認。
+- [ ] **SpeedBuilder**：タイトル受信経路を共通PacketApiへ移行。新しい受信経路と設置処理の実機確認が必要。
+- [ ] **Top / AutoSprint / CheckSig**：入口特定と調査記録あり。この版の全機能の正常動作確認とは分けて扱う。Topの追加修正は後回し。
 
-1.26.60.5では、上記HookPointに加え、静的なABI候補がある
-`native_camera.update_player`、`native_camera.visual.gamma`、
-`native_camera.visual.render_dragon_inside_effect.predicate`、
-`native_camera.visual.set_player_game_type`、
-`native_client_commands.register_command`、`native_client_commands.find_command`、
-`native_gui.display_message` にも専用の透過Observerを用意しています。
-各Observerは元関数を呼び出してから引数ポインタや戻り値を記録します。`update_player`の
-第3引数はActor候補として読み取りコマンドに使えます。EXE SHA・RVA・ABI候補・入口ガード・
-`.pdata`境界・Hook Runtime対応が一致したときに限り、明示的な`hook`で試行します。
-実機での呼び出しや引数の意味、寿命は未確認で、解析結果は候補のままです。
+## 関数の確認範囲
 
-- 元のパッケージ表記: `1.26.6005.0`
-- EXE VERSIONINFOのFileVersion/ProductVersion: `1.26.60.5`
-- EXE SHA-256: `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`
-- `.text` SHA-256: `7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe`
-- 旧版アンカー移植とカーソル関数の構造比較によるシンボル候補: 11件
-- ワールド遷移・ローカルPlayer・BlockSource取得関数のvtable候補を4件記録（実行時の動作は未確認）
-- ActorTypeComponentの識別子を参照する関数の旧版・新版比較を記録（構造全体は未確認）
-- ワールド描画のvertex候補を比較。色設定では旧SDKのポインタ渡しと異なる引数形式の候補が見つかり、互換性は未確定
-- 他のネイティブ関数候補: `analysis.native_function_candidates` に記録
-- ScanClientで同じEXEの静的セクションを取得し、BlockSource候補のvtableポインタを照合済み
-- 旧版の未確認ネイティブ構造、vtable位置、オフセットは引き継いでいません。
+`verified`は各定義の`verification_scope`と合わせて読む。入口特定とMod動作確認は別の根拠。
+数値のオフセットが読めるだけでは、オブジェクト全体のABIや寿命は確認済みにしない。
 
-Ghidraで `Level::getRuntimeActorList` 候補を旧版と比較すると、返却バッファと
-ポインタ列挙の流れは似ていますが、所有オブジェクト内の参照位置は旧版の
-`+0x4B0` から `+0x4B8` に変化しています。新しいvtableとActor型の確定、
-動作時の検証は未完了です。`MultiPlayerLevel::_subTick` 候補も旧版と制御フローを
-比較していますが、実行時の呼び出しは確認していません。
+| 範囲 | 件数 | 状態 |
+| --- | ---: | --- |
+| 実行・Mod動作の確認あり | 9 | [x] runtime_verified |
+| 入口ガードの確認まで | 31 | [x] 入口特定 / [ ] 動作全体 |
+| 関数確認待ち | 1 | [ ] 未検証 |
 
-`candidate::ActorTypeComponent` のGhidra証拠（`actor-type-candidate-ghidra.json`）は、
-RVA `0xB94CA0` の関数がActorTypeComponent hash `0x4F6BA419` を解決し、32-bit値を
-offset `0` から読み、319と比較することを示します。同じコードはActor+`0x10`からregistry、
-Actor+`0x18`からentity idを読みます。関数引数をActor*とみなすこと、およびそのActorが
-`Level::getRuntimeActorList`の要素と同じ型であることは推定です。CheckSigはこの2値を
-読み取り専用で記録しますが、registryやコンポーネントの内部には触れません。
-プロファイル上もcandidateのままで、runtime verificationはありません。
+### 実行・Mod動作の確認あり
 
-`native_actors`では新版EXEのActorType候補関数 (RVA `0xB94CA0`) が
-`0x4F6BA419`を解決してoffset `0`の32-bit値を319と比較し、別の新版関数
-(RVA `0x3A11540`) はRuntimeID / UniqueID / ActorType / StateVector / AABB /
-Rotationのcomponent hashを参照します。新版`.text`内でそれらのhashを確認しています。
-Actor contextについても候補関数が引数+`0x10`と+`0x18`を読むコードを示しますが、
-引数がActor*であること、およびActor一覧の要素との同一性は推定です。
-残りのcomponent storage/value offsetsは1.26.52.3から移した未検証候補です。
+- [x] `ClientInstance::getLocalPlayer`
+- [x] `ClientInstance::grabCursor`
+- [x] `ClientInstance::releaseCursor`
+- [x] `CommandRegistry::findCommand`
+- [x] `CommandRegistry::registerCommand`
+- [x] `Keyboard::feed`
+- [x] `LevelRendererPlayer::getFov`
+- [x] `MouseDevice::feed`
+- [x] `MultiPlayerLevel::_subTick`
 
-`native_items`はEquipment hashの新版`.text`内出現と、ClientInstanceのlocal-player
-getter候補 (table slot 34) を静的証拠として記録し、その他のItemStack / Inventory /
-Supplies offsetsは旧プロフィール由来の候補として保持しています。`native_motion`の
-StateVector / FallDistance offsetsも旧版由来です。どの項目も動作時のread/writeを
-検証していません。候補を有効にするとModが処理を試しますが、実行できる保証にはなりません。
+### 入口特定済み、実行・用途別確認待ち
 
-`native_camera`にも新版のlocal-player / update-player / gamma / game-type setter候補を
-接続しました。Camera object offsetsは旧版由来の候補です。新しい関数開始位置が見つからない
-culler setter、inside-cube renderer、view factory、spectator predicateは呼び出し先として
-登録せず、CheckSigのsymbol候補と解析記録だけに残しています。描画・Camera機能全体は未完成です。
+- [x] `Actor::getNameTag`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `BlockSource::getBlock`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `BlockSource::getChunk`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `ClientInstance::getRegion`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `ClientInstance::onDimensionChangedEvent`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `ClientInstance::onLevelExit`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `ClientInstance::onPlayerLoaded`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `GameCore::handleMouseInput`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `GameCore::keyboardEvent`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `GameMode::buildBlock`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `GuiData::displayClientMessage`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `ItemStackBase::getHoverName`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `Level::getRuntimeActorList`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `MovePlayerPacket::isValid`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `Player::setPlayerGameType`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `PlayerAuthInputPacket::getId`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `PlayerAuthInputPacket::isValid`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `Tessellator::vertex`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_4DE7250`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_5376690`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_537E6E0`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_5417230`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_56887B0`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_5AD5F90`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_5AFB520`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_65A8500`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_65BD080`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_6F313F0`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_76A710`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_8AB690`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
+- [x] `sub_B94CA0`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 
-BlockSourceのgetBlock候補は `0x32CE440`、getChunk候補は `0x32CD550`です。関連vtableの
-slot 2 / slot 41と3つのtable RVAを、新EXEおよびScanClientの読み込み済み.rdataで照合しました。
-SubChunk配列の開始・終了参照は旧版の `+0x140/+0x148` から新版の
-`+0x1C8/+0x1D0` へ変わっています。ただしstorage getterの関数先とABIは特定できていないため、
-新版のSubChunk直接走査は無効です。`scanBlock`は候補vtableとslot 2/41を照合するgetBlock経由で
-読みます。実オブジェクト、Region getterの戻り値、呼び出し、thread/lifetimeは未確認です。
-候補vtableと異なる場合、SDKはBlockSourceアクセスを拒否します。
+### 未検証・残作業
 
-カーソル操作、ワールド遷移、ActorとPlayerの各コンポーネント、アイテム、
-ブロック／SubChunk、ワールド描画、パケット、コマンド、カメラなどには、
-このEXEに対する追加検証が必要です。提供済みの1.26.52.3向けMod DLLが
-そのまま動作することは確認されていません。
+- [ ] `Level::getPlayerList`：候補。
+- [ ] `Camera.visual.terrain_culling`：selector・spectator vtable・updateの対応を未確定。Freecam全体の正常動作から推定で埋めない。
+- [ ] `Camera.visual.create_view` / `inside_cube_render`：新ビルドの一意な関数入口が未特定。
+- [ ] `PacketRead` revision2：ID別vtableでslot15/16を探索し、共通ラッパーの受信0件を修正。静的解析済み、実機での受信確認待ち。
+- [ ] `LocalPlayer`のネイティブPlayerListコンテナ・skin配置：`Level+0x4E8`は版別定義済み。TabListは通信PlayerListを使うため、このコンテナの推測値に依存しない。
+- [ ] `BlockSource`の設置・SubChunk関連：未解決のABI・ゲートは定義中の理由を確認。
 
-解析記録のEXEハッシュと関数範囲・REA/GhidraのEvidenceはローカルの
-`Documents/PEXData/REA/1.26.6005.0/` に保存しています。ゲーム中のScanClient
-出力のEXEハッシュと読み込み済み.rdataは照合済みです。候補の意味・寿命・呼び出し経路を
-確認してから、候補を更新またはverifiedへ昇格します。
+## 定義の場所と更新順序
+
+| 場所 | 役割 |
+| --- | --- |
+| [windows-x64/manifest.json](windows-x64/manifest.json) | EXE識別、protocol参照、各ファイルのパスとSHA |
+| [classes/](windows-x64/classes/) | Minecraftクラスごとの関数・offset・vtable・ABI |
+| [analysis/](windows-x64/analysis/) | CheckSig観測、静的解析、ユーザー確認の根拠 |
+| [metadata/maintenance.json](windows-x64/metadata/maintenance.json) | 探索・更新方針 |
+
+1. 同じEXEのSHA・PE範囲を確認する。
+2. 共通の`Class::function`名を維持し、入口ガード・一意なsignature・vtable相関・呼出元の順で根拠を照合する。
+3. 変更は該当クラスJSONとSDKアダプターに入れる。ModにRVA・offsetを追加しない。
+4. manifestの各part SHAをrefreshし、`data/manifest.json`を更新する。
+5. CheckSigで不足範囲を観測し、GitHubのWindows RunnerでDLLをビルドする。
+
+旧`windows-x64.json`とScanClientは廃止。CheckSigへ単一ファイルで渡す場合は明示的に`profile.json`へexportする。
+メモリ範囲調査は[CheckSigのJSONジョブ](../../docs/checksig-jobs.md#メモリ範囲を読む)を使う。
+[保守手順](../../docs/profile-maintenance.md) · [パケットAPI](../../docs/packet-events.md)

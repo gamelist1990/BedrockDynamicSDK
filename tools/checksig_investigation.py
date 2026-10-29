@@ -7,8 +7,8 @@ VERSION='1.26.60.5'
 OLD='1.26.52.3'
 
 def generate_catalog():
- old=load_profile(ROOT/f'data/{OLD}/windows-x64.json')
- new=load_profile(ROOT/f'data/{VERSION}/windows-x64.json')
+ old=load_profile(ROOT/f'data/{OLD}/windows-x64/manifest.json')
+ new=load_profile(ROOT/f'data/{VERSION}/windows-x64/manifest.json')
  aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/CheckSig/src/check_sig.cpp').read_text(encoding='utf-8')))
  inverse={v:k for k,v in aliases.items()}
  legacy={'GameCore':'native_keyboard','Actor':'native_actors','ItemStack':'native_items','LocalPlayer':'native_player_identity','BlockSource':'native_world','StateVectorComponent':'native_motion','Camera':'native_camera','PacketSender':'native_packets','CommandRegistry':'native_client_commands','GuiData':'native_gui','LevelRenderer':'native_world_render','ClientInstance':'native_world_events'}
@@ -98,7 +98,7 @@ def generate_catalog():
   'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
   'Fake':['gameplay','request_sender','command_packets','message_commands'],
-  'ScanClient':[], 'CheckSig':[]}
+  'CheckSig':[]}
  checks={
   'AutoSprint':['Wキーで走る・離すと解除・画面切替後にキーが残らない'],
   'Zoom':['押下でFOV変更・離すと復帰・メニューでは無効'],
@@ -108,9 +108,8 @@ def generate_catalog():
   'SpeedBuilder':['タイトル検知・記録・設置・インベントリ復帰・キャンセルとワールド切替'],
   'Top':['コマンド候補・整数引数・安全な移動先・位置/AABB/速度・落下状態と高さ・結果表示'],
   'Fake':['/fake候補とメッセージ・Origin省略5/指定0..255・requestId/UUIDと応答・timeout・接続切替'],
-  'ScanClient':['EXE識別・read-onlyスキャン・出力ファイルの完結'],
   'CheckSig':['JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新']}
- optional={'Freecam':['render','camera','world_events'],'HitBox':['identity'],'TabList':['actors','items','identity'],'ScanClient':[]}
+ optional={'Freecam':['render','camera','world_events'],'HitBox':['identity'],'TabList':['actors','items','identity']}
  mods=[{'name':name,'required_groups':deps,'optional_groups':optional.get(name,[]),'manual_checks':checks[name]} for name,deps in required.items()]
  return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'implementation_work':[
  {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
@@ -122,7 +121,7 @@ def generate_catalog():
 
 def make_bundle(out):
  out.mkdir(parents=True,exist_ok=True)
- profile=load_profile(ROOT/f'data/{VERSION}/windows-x64.json')
+ profile=load_profile(ROOT/f'data/{VERSION}/windows-x64/manifest.json')
  catalog=json.loads((ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json').read_text(encoding='utf-8'))
  output=profile['layouts']['CommandRequestPacket']['output_read'].copy()
  output.update(signature='',cross_version_signature_available=False)
@@ -165,7 +164,7 @@ def make_bundle(out):
    watch('Tessellator building',symbol,'screen',[offsets['screen_tessellator'],offsets['tess_building']],'u8')
    watch('Tessellator special mode',symbol,'screen',[offsets['screen_tessellator'],offsets['tess_special_mode']],'u8')
   job('optional/'+name+'.json',[{'op':'observe','symbols':symbols},{'op':'audit'}],watches)
- source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);source.write_text(json.dumps(load_profile(ROOT/f'data/{OLD}/windows-x64.json'),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+ source=out/'reference'/f'windows-x64-{OLD}.json';source.parent.mkdir(parents=True,exist_ok=True);source.write_text(json.dumps(load_profile(ROOT/f'data/{OLD}/windows-x64/manifest.json'),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  port=job('optional/90-port-old.json',[{'op':'port'},{'op':'audit'}]);doc=json.loads(port.read_text(encoding='utf-8'));doc['source']=json.loads(source.read_text(encoding='utf-8'));port.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  shutil.copy2(ROOT/'docs/checksig-126605.md',out/'README_ja.md')
  return audit

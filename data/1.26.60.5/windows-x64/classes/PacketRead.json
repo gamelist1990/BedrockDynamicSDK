@@ -14,7 +14,22 @@
         "rva": "0x2395750",
         "entry_check": "55 41 56 56 57 53 48 81 EC B0 01 00 00 48 8D AC 24 80 00 00 00 48 C7 85"
       },
-      "evidence": "Exact-build REA/Ghidra: shared Packet slot 8 calls slot 15, validates stream cursor/overflow, returns hidden Result pointer; receive coverage requires runtime observation. Common stream ABI only, no SetTitlePacket object fields."
+      "evidence": "Exact Packet vtables identify getID slot1 and shared Packet::read slot8. PlayerList ID63 table0xF115810: decoders slot15=0x403FA60, slot16=0x403FD00. PlayerSkin ID93 table0xF134A70: slot15=0x404BE30, slot16=0x404C0D0. REA/Ghidra ev_8c56509a4f42e71930224b967d6d2d9b255d56bb49cbb5095208a62a150064e8 confirms PlayerList decoder RCX Packet, RDX hidden result, R8 stream, R9 context; result+0x40 status and RAX hidden result. Generic slot8 hook had no PlayerList observations in user log; use actual derived decode routes. Live reception still requires confirmation.",
+      "revision": 2,
+      "vtable_anchor_slot": 8,
+      "decode_slots": [
+        15,
+        16
+      ],
+      "receive_strategy": "packet_id_vtable_decoder_routes",
+      "minimum_runtime": "4.8.0",
+      "runtime_observation": {
+        "authority": "user-reported",
+        "generic_read_hook_ready": true,
+        "player_list_packets": 0,
+        "decode_rejections": 0,
+        "result": "generic hook installation does not establish receive coverage"
+      }
     }
   }
 }

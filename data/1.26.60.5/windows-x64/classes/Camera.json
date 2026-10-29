@@ -3,16 +3,30 @@
     "Camera": {
       "schema": 1,
       "pointer_size": 8,
-      "status": "candidate",
-      "runtime_verified": false,
+      "status": "verified",
+      "runtime_verified": true,
       "update_player": {
         "rva": "0x6F313F0",
         "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
         "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
         "abi": "void __fastcall(CameraComponent*, UpdatePlayerFromCameraComponent*, Actor*)",
-        "status": "candidate",
-        "runtime_verified": false,
-        "candidate_evidence": "analysis.native_function_candidates: old 0x6733360 -> new 0x6f313f0"
+        "status": "verified",
+        "runtime_verified": true,
+        "candidate_evidence": "analysis.native_function_candidates: old 0x6733360 -> new 0x6f313f0",
+        "verification_scope": "user-reported-mod-operation",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "mods": [
+            "Freecam"
+          ],
+          "scope": "Camera update hook used by local Freecam",
+          "limitations": [
+            "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+          ]
+        }
       },
       "camera_position_offset": 64,
       "camera_orientation_offset": 48,
@@ -44,10 +58,24 @@
           "rva": "0x5AFB520",
           "entry_check": "48 83 EC 38 48 8B 05 95 CB 80 0C 48",
           "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00",
-          "status": "candidate",
-          "runtime_verified": false,
+          "status": "verified",
+          "runtime_verified": true,
           "candidate_evidence": "analysis.native_function_candidates: old 0xfb7880 -> new 0x5afb520",
-          "abi": "float __fastcall(Options*)"
+          "abi": "float __fastcall(Options*)",
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Freecam"
+            ],
+            "scope": "Owner-scoped gamma override in normal Freecam operation",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "gamma_abi": "float __fastcall(Options*)",
         "legacy_game_type_fields_unused": true,
@@ -110,16 +138,30 @@
         },
         "render_dragon_inside_effect": {
           "schema": 1,
-          "status": "candidate",
-          "runtime_verified": false,
+          "status": "verified",
+          "runtime_verified": true,
           "predicate": {
             "rva": "0x56887B0",
             "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
             "abi": "bool __fastcall(void* callable RCX, void* render_argument_pair RDX)",
             "signature": "56 48 83 EC ?? 48 8B 71 08 4C 8B 02 4C 8B 4A 08",
-            "status": "candidate",
-            "runtime_verified": false,
-            "candidate_evidence": "analysis.native_function_candidates: old 0x5308990 -> new 0x56887b0"
+            "status": "verified",
+            "runtime_verified": true,
+            "candidate_evidence": "analysis.native_function_candidates: old 0x5308990 -> new 0x56887b0",
+            "verification_scope": "user-reported-mod-operation",
+            "runtime_validation": {
+              "status": "complete",
+              "authority": "user-reported",
+              "date": "2026-10-29",
+              "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+              "mods": [
+                "Freecam"
+              ],
+              "scope": "Predicate hook in Freecam visual filter; individual variant reachability not counted",
+              "limitations": [
+                "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+              ]
+            }
           },
           "variants": [
             {
@@ -149,7 +191,21 @@
           ],
           "evidence": "Exact-build PE RTTI names extractAndDrawWithExclusion<InsideBlockEffect,...> identify callable tables F25AC10/F43F580, shared slot2 predicate56887B0 and slot3 type getters5699D10/BC36600. REA/Ghidra bounded caller fragments at5625081/BBB5AC2: slot2 false advances the 0xC8 render entry; true enters extraction5699D20. Only tag and exact caller pairs may be suppressed. Runtime reachability and visual result remain unverified.",
           "predicate_vtable_slot": 2,
-          "type_getter_vtable_slot": 3
+          "type_getter_vtable_slot": 3,
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Freecam"
+            ],
+            "scope": "InsideBlockEffect filtering integrated into reported working Freecam",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "evidence": "Candidate schema retained from 1.26.52.3; component fields and visual offsets are still old-build candidates. Functions are updated only where 1.26.60.5 has a unique .pdata-bounded static candidate.",
         "notes": "Only 1.26.60.5 function-start candidates are callable. Missing culler, caller, and view-factory candidates remain unresolved; no old-build vtable RVAs or runtime observations are reused.",
@@ -168,7 +224,21 @@
           "candidate_evidence": "analysis.native_function_candidates: old 0x1e1570 -> new 0x2b9ab0"
         }
       },
-      "evidence": "1.26.60.5 candidate root. New-build function RVAs/guards are taken only from profile symbols with static candidate evidence. Camera object/component offsets are carried from 1.26.52.3 and remain unverified. Rendering/culler functions without a new-build function-start candidate are marked unresolved; old-build vtable RVAs and runtime observations are not reused."
+      "evidence": "Exact EXE static candidates plus user-reported Freecam operation on 2026-10-29. Verification scope is recorded per sub-feature; unresolved optional culler/create_view fields remain unresolved.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Local camera movement and camera position/orientation fields",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     }
   }
 }

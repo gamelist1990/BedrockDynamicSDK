@@ -15,25 +15,67 @@
           "rva": "0x55AA1E0",
           "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 08",
           "abi": "void __fastcall(CommandRegistry*, string const*, char const*, uint8, uint16, uint16)",
-          "status": "candidate",
+          "status": "verified",
           "abi_verified": false,
-          "runtime_verified": false
+          "runtime_verified": true,
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Fake"
+            ],
+            "scope": "Custom command registration/message execution path",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "find_command": {
           "rva": "0x558A650",
           "entry_check": "55 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45",
           "abi": "Signature* __fastcall(CommandRegistry*, string const*)",
-          "status": "candidate",
+          "status": "verified",
           "abi_verified": false,
-          "runtime_verified": false
+          "runtime_verified": true,
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Fake"
+            ],
+            "scope": "Custom command registration/message execution path",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "register_overload": {
           "rva": "0x57B3D90",
           "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC A0 00 00",
           "abi": "Overload* __fastcall(CommandRegistry*, char const*, uint64 version, callable64*, CommandParameterData const*)",
-          "status": "candidate",
+          "status": "verified",
           "abi_verified": false,
-          "runtime_verified": false
+          "runtime_verified": true,
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Fake"
+            ],
+            "scope": "Custom command registration/message execution path",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "client_commands_anchor": {
           "rva": "0x65A8500",
@@ -84,24 +126,52 @@
           "REA/Ghidra ev_60dafac016a378a6aabef8ef2648414380e2d8456420db49ca03df8911a94b0d: signature overload vector +0x40, overload stride0x80, callable+8, parameter vector+0x48 and stride0x78; native helper copies parameter and consumes callable.",
           "REA/Ghidra ev_6ecc9843d47a9f4e8723f2dee7dd4591428551ff642df84b427ba9e88709c3c8: ClientInstance+0x1D0 to Minecraft+0xC8 commands; command send ev_2ad50b1cc97ec19a9e25499fe3b755f555d0a2e0d63731693240e5a923d0d08a reads registry at commands+0x10."
         ],
-        "limitations": "Static candidate. Registration, suggestion refresh and forwarding need exact-build runtime confirmation. This defines server-bound message metadata only, not the local integer Command ABI.",
+        "limitations": "Arbitrary command overloads, all Origin values and unused native helper anchors are outside the confirmed scope.",
         "message_type_rva": "0x129C73C0",
         "message_rule_rva": "0x129C73B0",
         "resolve_message": {
           "rva": "0x5563b10",
           "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC C8 01 00 00 48 8D AC 24 80",
-          "status": "candidate",
-          "runtime_verified": false,
+          "status": "verified",
+          "runtime_verified": true,
           "source": "CommandMessage native optional string resolver: RCX message, RDX result, R8 origin, R9 limit; exact executable SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra bounded function evidence",
-          "evidence_id": "ev_c595f837247be8101e32315767ced647bb0eac41bb6a63071ec077eba46a1b1f"
+          "evidence_id": "ev_c595f837247be8101e32315767ced647bb0eac41bb6a63071ec077eba46a1b1f",
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Fake"
+            ],
+            "scope": "Custom command registration/message execution path",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "destroy_message": {
           "rva": "0x55d8180",
           "entry_check": "41 56 56 57 53 48 83 EC 28 48 8B 39 48 85 FF 0F 84 D2 00 00 00 48 89 CE",
-          "status": "candidate",
-          "runtime_verified": false,
+          "status": "verified",
+          "runtime_verified": true,
           "source": "CommandMessage destructor used by MeCommand at +0x28; exact executable SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra bounded function evidence",
-          "evidence_id": "ev_5e31536dea7e72a7e55fdadcfb5c1ea9a0a11f12b7c00c07c74ab496dde64081"
+          "evidence_id": "ev_5e31536dea7e72a7e55fdadcfb5c1ea9a0a11f12b7c00c07c74ab496dde64081",
+          "verification_scope": "user-reported-mod-operation",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "user-reported",
+            "date": "2026-10-29",
+            "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+            "mods": [
+              "Fake"
+            ],
+            "scope": "Custom command registration/message execution path",
+            "limitations": [
+              "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+            ]
+          }
         },
         "free_memory": {
           "rva": "0xe934b00",
@@ -113,7 +183,7 @@
         "registration_flags": "0x10",
         "registration_flags2": "0x80",
         "command_message_offset": "0x28",
-        "scope": "SyncLocal SDK command; native context version and origin capture; transport correction pending runtime confirmation",
+        "scope": "User-confirmed SyncLocal /fake message command with request/response transport",
         "native_request_data_constructor": {
           "rva": "0x419cbc0",
           "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45",
@@ -142,18 +212,25 @@
           "limitations": [
             "CommandOutput response not received",
             "host disconnect reported; transport completion not verified"
-          ]
+          ],
+          "superseded_by": "runtime_validation: successful operation reported after transport correction"
         },
         "runtime_verified": true,
         "runtime_validation": {
           "status": "complete",
           "authority": "user-reported",
-          "date": "2026-10-28",
-          "scope": "Fake custom registration, nonempty text, native version/origin request and response round trip",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "mods": [
+            "Fake"
+          ],
+          "scope": "Native /fake registration, suggestions and nonempty message callback",
           "limitations": [
-            "Other Mods and arbitrary origin numbers are not covered by this confirmation"
+            "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
           ]
-        }
+        },
+        "status": "verified",
+        "verification_scope": "user-reported-mod-operation"
       }
     }
   },
@@ -193,8 +270,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -204,7 +281,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "name_status": "inferred",
       "runtime_observation": {
         "samples": 14,
@@ -226,6 +303,19 @@
           "total_calls": 457,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Fake"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     },
     "CommandRegistry::findCommand": {
@@ -271,8 +361,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -282,7 +372,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "name_status": "inferred",
       "runtime_observation": {
         "samples": 58,
@@ -301,6 +391,19 @@
           "total_calls": 1616,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Fake"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     }
   }

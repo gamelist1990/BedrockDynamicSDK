@@ -51,8 +51,8 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "abi": "float __fastcall(LevelRendererPlayer*, float, void*, void*)",
       "entry_validation": {
         "status": "complete",
@@ -63,7 +63,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "runtime_observation": {
         "samples": 30,
         "observed_calls": 36289,
@@ -81,6 +81,19 @@
           "total_calls": 36289,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Zoom"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     }
   }

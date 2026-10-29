@@ -95,6 +95,7 @@ BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookDispatch(BDS_HookPoint point, void*
 BDS_HOOK_API uintptr_t BDS_HOOK_CALL BDS_HookCallOriginal(BDS_HookPoint point, void* args);
 BDS_HOOK_API const char* BDS_HOOK_CALL BDS_HookRuntimeVersion(void);
 // Returns owner capabilities, not the version embedded in the calling DLL.
+BDS_HOOK_API int BDS_HOOK_CALL BDS_HookRuntimeSupportsPacketRoutes(void);
 BDS_HOOK_API int BDS_HOOK_CALL BDS_HookRuntimeSupports(BDS_HookPoint point);
 BDS_HOOK_API unsigned BDS_HOOK_CALL BDS_HookRuntimeAbi(void);
 // Initializes discovery if needed; UTF-8 snapshot valid until this thread's

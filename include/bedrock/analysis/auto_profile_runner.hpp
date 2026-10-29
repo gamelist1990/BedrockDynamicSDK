@@ -45,7 +45,7 @@ public:
                 result.report["profile_has_functions"]=!result.profile["symbols"].empty();
                 result.report["run"]=lastRevision_;result.profile["generation"]["run"]=lastRevision_;
                 const auto dir=directory/L"auto-dev";std::filesystem::create_directories(dir);
-                save(dir/L"windows-x64.json",result.profile.dump(2)+"\n");
+                save(dir/L"profile.json",result.profile.dump(2)+"\n");
                 save(dir/L"report.json",result.report.dump(2)+"\n");
                 std::ostringstream text;text<<"CheckSig auto-dev (experimental)\n"<<result.report["status"].get<std::string>()<<"\nGenerated functions: "<<result.profile["symbols"].size()<<"\n";
                 for(const auto& [name,item]:result.report["functions"].items())if(item.value("status",std::string{})=="unresolved"||item.value("status",std::string{})=="conflict")text<<name<<": "<<item.value("reasons",Json::array()).dump()<<"\n";
@@ -55,7 +55,7 @@ public:
                 {std::lock_guard lock(mutex_);generated_=result.profile;}
                 set({{"state",result.report["status"]},{"run",lastRevision_},{"generated_functions",result.profile["symbols"].size()},
                     {"unresolved",result.report["unresolved"].size()},{"vtables",result.report["vtables"].size()},
-                    {"profile",utf8(dir/L"windows-x64.json")},{"report",utf8(dir/L"report.json")},{"auto_apply",false},{"game_memory_writes",false}});
+                    {"profile",utf8(dir/L"profile.json")},{"report",utf8(dir/L"report.json")},{"auto_apply",false},{"game_memory_writes",false}});
             }catch(const std::exception& e){
                 Json error={{"state",cancel_.load()?"cancelled":"error"},{"run",lastRevision_},{"error",e.what()},{"auto_apply",false},
                     {"file_sha256",identity.fileSha256},{"previous_successful_outputs_retained",true}};

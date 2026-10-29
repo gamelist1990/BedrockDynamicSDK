@@ -3,8 +3,8 @@
     "StateVectorComponent": {
       "schema": 1,
       "pointer_size": 8,
-      "status": "candidate",
-      "runtime_verified": false,
+      "status": "verified",
+      "runtime_verified": true,
       "state_vector": {
         "state_position_offset": 0,
         "state_previous_position_offset": 12,
@@ -13,7 +13,21 @@
         "fall_distance_value_offset": 0,
         "evidence": "StateVector hash 0x1B5D5238 is referenced by exact-build candidate function RVA 0x3A11540. Position/previous/velocity offsets and FallDistance layout are carried forward from 1.26.52.3; runtime values and writes are unverified."
       },
-      "evidence": "Candidate layout for exact 1.26.60.5 executable. StateVector component hash has exact-build static references; state field offsets and FallDistance hash/value offset are carried forward from 1.26.52.3. No runtime validation."
+      "evidence": "Candidate layout for exact 1.26.60.5 executable. StateVector component hash has exact-build static references; state field offsets and FallDistance hash/value offset are carried forward from 1.26.52.3. No runtime validation.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Position/previous position/velocity state used by local camera proxy; optional fall-distance branches not individually observed",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     }
   }
 }

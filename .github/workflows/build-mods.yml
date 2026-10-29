@@ -39,7 +39,7 @@ jobs:
           import os, json
           version = os.environ['GAME_VERSION']
           if version not in ('1.26.52.3', '1.26.60.5'): raise SystemExit('Unsupported version')
-          available = ['Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','ScanClient','CheckSig']
+          available = ['Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','CheckSig']
           if version == '1.26.60.5': available.append('Fake')
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
           if not selected or any(x not in available for x in selected): raise SystemExit('Unknown Mod or Mod unavailable for this version')
@@ -53,7 +53,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Verify data and Python
         run: |
-          python tools/profile_parts.py assemble-all data
           uv sync --extra dev
           uv run --extra dev pytest -q
           uv run bedrock-symbols index data --output /tmp/manifest-generated.json
@@ -117,8 +116,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Assemble diagnostic compatibility inputs
-        run: python tools/profile_parts.py assemble-all data
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
@@ -182,10 +179,10 @@ jobs:
           GAME_VERSION: ${{ needs.plan.outputs.version }}
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item "data/$env:GAME_VERSION/windows-x64.json" build-mod/Release/
+          Copy-Item "data/$env:GAME_VERSION/windows-x64" build-mod/Release/profile -Recurse
           @{ mod = $env:MOD; game_version = $env:GAME_VERSION; source_sha = "${{ github.sha }}"; architecture = "windows-x64" } | ConvertTo-Json | Set-Content -Encoding utf8 build-mod/Release/build-info.json
           $files = Get-ChildItem build-mod/Release -File | Where-Object { $_.Extension -in '.dll', '.exe', '.md', '.ps1', '.json' }
-          Compress-Archive -Path $files.FullName -DestinationPath "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
+          Compress-Archive -Path ($files.FullName + @((Join-Path $PWD "build-mod/Release/profile"))) -DestinationPath "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.mod }}-${{ needs.plan.outputs.version }}

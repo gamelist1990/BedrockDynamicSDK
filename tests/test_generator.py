@@ -184,10 +184,11 @@ def test_historical_latite_parser_and_category(tmp_path):
 
 def test_real_profile_marks_only_disassembled_abi_verified():
     here = Path(__file__).resolve().parents[1]
-    path = here / "data/1.26.52.3/windows-x64.json"
+    path = here / "data/1.26.52.3/windows-x64/manifest.json"
     if not path.exists():
         pytest.skip("Generated project profile not checked in")
-    data = json.loads(path.read_text())
+    from bedrock_symbols.profile_parts import load_profile
+    data = load_profile(path)
     # Keep this exact-build profile focused on symbols currently consumed by
     # the SDK and public examples; historical/unused signatures live in the
     # analysis archive, not the active symbol table.

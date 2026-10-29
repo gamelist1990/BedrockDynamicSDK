@@ -12,12 +12,13 @@ function Assert-Rejected([scriptblock]$Action, [string]$Message) {
 }
 try {
     $destination = Join-Path $temporary "command"
-    $local = Join-Path $repositoryRoot "data/1.26.60.5/windows-x64.json"
+    $local = Join-Path $repositoryRoot "data/1.26.60.5/windows-x64/manifest.json"
     $expected = Join-Path $destination "1.26.60.5-windows-x64.json"
     $messages = & $installer -Source Local -LocalPath $local -CommandDirectory $destination
     Assert-True (Test-Path -LiteralPath $expected) "Local JSON was not installed into command/"
-    Assert-True ((Get-FileHash $expected).Hash -eq (Get-FileHash $local).Hash) "Installed JSON differs from source"
-    $expectedCount = @((Get-Content -LiteralPath $local -Raw -Encoding UTF8 | ConvertFrom-Json).symbols.PSObject.Properties).Count
+    $localDocument = Get-Content -LiteralPath $expected -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($localDocument.target.version -eq "1.26.60.5" -and $null -ne $localDocument.layouts) "Installed profile parts were not assembled"
+    $expectedCount = @($localDocument.symbols.PSObject.Properties).Count
     Assert-True (($messages -join "`n") -match "with $expectedCount symbols") "Symbol count was not a scalar"
     Assert-Rejected { & $installer -Source Local -LocalPath $local -CommandsDirectory $destination } "Existing JSON was replaced without -Force"
     & $installer -Source Local -LocalPath $local -CommandsDirectory $destination -Force | Out-Null
@@ -33,7 +34,6 @@ try {
     # The transport authenticates the manifest and each part; installed output
     # is the assembled profile, not the manifest's original byte stream.
     $remoteDocument = Get-Content -LiteralPath (Join-Path $remote "1.26.60.5-windows-x64.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    $localDocument = Get-Content -LiteralPath $local -Raw -Encoding UTF8 | ConvertFrom-Json
     $remoteCanonical = $remoteDocument | ConvertTo-Json -Depth 100 -Compress
     $expectedCanonical = $localDocument | ConvertTo-Json -Depth 100 -Compress
     Assert-True ($remoteCanonical -ceq $expectedCanonical) "Assembled GitHub profile differs from class definitions"

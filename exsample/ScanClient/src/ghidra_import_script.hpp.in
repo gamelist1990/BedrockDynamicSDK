@@ -1,4 +1,0 @@
-#pragma once
-static constexpr const char kGhidraImportScript[] = R"SCGHIDRA(
-@SCANCLIENT_GHIDRA_SCRIPT@
-)SCGHIDRA";

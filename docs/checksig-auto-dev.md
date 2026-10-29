@@ -18,7 +18,7 @@ CheckSig起動後、`Documents/PEXData/CheckSig/status.json`の既存JSONに次�
 
 - 停止：`"auto-dev": false`。走査の区切りでキャンセルします。
 - 再実行：false→trueに切り替えるか、`"auto-dev-run": 1`を追加し、次は2、3と増やします。
-- 任意の参照定義：`"auto-dev-source": "reference/old-windows-x64.json"`。絶対パスも使用できます。
+- 任意の参照定義：`"auto-dev-source": "reference/old-profile.json"`。絶対パスも使用できます。
 - 新版のバージョン表示：`"auto-dev-version": "1.27.x.y"`。SHAによるEXE識別とは別のラベルです。未知の版のラベルは推測しません。
 
 参照は、明示したsource、内蔵の1.26.60.5/1.26.52.3、ロード済み定義・sourceです。同一EXEの内蔵定義を優先します。
@@ -31,14 +31,14 @@ sourceは上限16MiB、statusは4MiBです。通常は追加設定なしで開�
 
 | ファイル | 内容 |
 | --- | --- |
-| `windows-x64.json` | 生成できた部分の定義。対象SHA、関数、生成シグネチャ、合意したslot等 |
+| `profile.json` | 生成できた部分の定義。対象SHA、関数、生成シグネチャ、合意したslot等 |
 | `report.json` | 参照版、各anchorのHit位置・一意性、採否、命令の実値、RIP参照、直接call、RTTI/vtable、導出したフィールド、未解決理由 |
 | `report.txt` | 未解決・解析が必要な項目の読みやすい一覧 |
 | `error.json` | 中断・失敗の理由とrun。以前の成功出力があっても、今回の成功とは扱わない |
 | `live.json` | 完了後、約5秒ごとの実メモリの入口ガード観測 |
 
 必要項目は同梱SDKの調査カタログから列挙します。新しいSDK機能を追加したときはカタログも更新します。
-関数が一つも見つからない場合も途中結果は残りますが、その`windows-x64.json`は使用可能なSDKプロファイルではありません。
+関数が一つも見つからない場合も途中結果は残りますが、その`profile.json`は使用可能なSDKプロファイルではありません。
 `profile_has_functions`だけで全機能が揃ったと判断せず、`unresolved`と各layoutの検証状態を確認してください。
 file SHA256が取得できない場合は、有効なSDKプロファイルの生成を中止して理由を残します。
 3ファイルの書き込みは各ファイル単位で原子的です。全ファイル同時のトランザクションではないため、statusで完了してから取得します。

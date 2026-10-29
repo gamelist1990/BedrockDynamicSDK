@@ -3,12 +3,27 @@
     "Packet": {
       "schema": 1,
       "pointer_size": 8,
-      "status": "candidate",
-      "runtime_verified": false,
+      "status": "verified",
+      "runtime_verified": true,
       "get_id_slot": 1,
       "is_valid_slot": 11,
       "scope": "native virtual ABI, independent of the wire protocol field ordering",
-      "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor. See REA freecam/auth-valid-evidence.json and move-valid-evidence.json; Windows RCX and AL checked in exact PE disassembly."
+      "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor. See REA freecam/auth-valid-evidence.json and move-valid-evidence.json; Windows RCX and AL checked in exact PE disassembly.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam",
+          "Fake"
+        ],
+        "scope": "getID slot1 used for packet routing; isValid slot11 remains a static ABI candidate",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      }
     }
   }
 }

@@ -302,14 +302,6 @@
       ]
     },
     {
-      "name": "ScanClient",
-      "required_groups": [],
-      "optional_groups": [],
-      "manual_checks": [
-        "EXE識別・read-onlyスキャン・出力ファイルの完結"
-      ]
-    },
-    {
       "name": "CheckSig",
       "required_groups": [],
       "optional_groups": [],
@@ -2821,6 +2813,13 @@
       "kind": "function",
       "path": "/layouts/PacketRead/read",
       "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
+    },
+    {
+      "id": "/layouts/PacketRead/vtable_anchor_slot",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketRead/vtable_anchor_slot",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketSender/sender/command_request_path",

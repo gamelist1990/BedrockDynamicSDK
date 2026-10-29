@@ -1,29 +1,14 @@
-# Windows x64プロファイル
+# ネイティブ定義の構造
 
-`data/<version>/windows-x64.json` が唯一の配布プロファイルです。
+編集元は`data/<version>/windows-x64/manifest.json`と、その`parts`が参照するクラス別JSONです。
+旧windows-x64.jsonは廃止しました。
 
-| 項目 | 内容 |
-| --- | --- |
-| schema | ファイル形式。現在1 |
-| target | バージョン、SHA-256、PEの範囲 |
-| symbols | Minecraft関数名ごとのRVA・シグネチャ・入口ガード |
-| layouts | Minecraftクラス名ごとのオブジェクトレイアウト |
-| analysis | 確認の範囲・出典の要約（存在する場合） |
+- `symbols`：安定した`Class::function`識別名、版別RVA・signature・入口ガード・ABI・検証範囲。
+- `layouts`：Minecraftクラスのoffset・vtable・構造体の制約。
+- `analysis`：入口照合、実機観測、未解決理由。実行時の取得対象外。
+- `protocol`：data内の完全なupstream protocol.jsonのパス・commit・SHA。
 
-`layouts` には `Actor`、`ItemStack`、`BlockSource`、`PacketSender`、
-`CommandRegistry`、`GuiData`、`ClientInstance`、`CommandRequestPacket` などを置きます。
-各クラスの内容は既存アダプターで使うフィールドです。
-共有パケット経路はPacketSender、要求・応答の組み立てはCommandRequestPacketにまとめます。
-互換読み込みのため、SDK内部では従来の区分へ変換します。
-既存のschema 1ファイルの `native_*` 形式も引き続き読み込めます。
-同じレイアウトを新旧の両形式で重複定義するとエラーになります。
+ModはSDKの型付きAPIを使い、アドレスやoffsetを保持しません。
+バージョン選択と生成ヘッダーはCMakeがdataから作ります。
 
-`status: verified` の意味は `verification_scope` と合わせて確認してください。
-`entry-guard` は入口一致、`runtime-hook` は観測Hookまで確認した状態です。
-`abi_verified`・`runtime_verified` は独立しています。
-関数入口の一致だけでオブジェクトのオフセットや仮想関数スロットを確定しません。
-
-1.26.60.5には未完成のレイアウトがあります。必要なクラスがない場合、
-SDKは `missing Minecraft layout: <クラス・関数名>` を返します。
-古いプロファイルのオフセットを新しいEXEに代用する処理はありません。
-重複していた候補履歴の原本はPEXData/REAの解析スナップショットに保存しています。
+[構造と更新コマンド](sdk-structure.md) · [探索順序と検証](profile-maintenance.md) · [現状](../data/1.26.60.5/README.md)

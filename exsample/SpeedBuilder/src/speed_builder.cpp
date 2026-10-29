@@ -4,7 +4,7 @@
 #include <bedrock/generated/symbols.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
-#include <bedrock/packets/packet_read_events.hpp>
+#include <bedrock/packets/packet_api.hpp>
 #include "native.hpp"
 #include "speed_builder/config.hpp"
 #include <knownfolders.h>
@@ -34,11 +34,11 @@ std::mutex logMutex;std::deque<std::string> logs;std::atomic<unsigned> lostLogs{
 void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}value+=" at_ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());logs.emplace_back(std::move(value));}
 struct TitleCopy{std::uint64_t epoch{};int type{};native::StringCopy text;};
 std::mutex titleMutex;std::deque<TitleCopy> titles;
-bedrock::PacketReadEvents packetReads;bool wireTitles{},titleOnlyMode{};
+bedrock::PacketApi packetReads;bool wireTitles{},titleOnlyMode{};
 std::string gameVersion;
 std::atomic<unsigned> packetsRead{},titlesRead{},titleDecodeFailures{};
-void BDS_HOOK_CALL receivePacket(void*,void* raw,BDS_HookNext next,void* frame){
-    ++packetsRead;packetReads.dispatch(*static_cast<BDS_PacketReadArgs*>(raw),[](const bedrock::PacketReadEvent& event){
+void receivePacket(const bedrock::PacketReadEvent& event){
+    ++packetsRead;
         if(stopped.load()||event.rawId()!=88)return;
         ++titlesRead;
         try{
@@ -52,7 +52,7 @@ void BDS_HOOK_CALL receivePacket(void*,void* raw,BDS_HookNext next,void* frame){
                 if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
             }
         }catch(...){++titleDecodeFailures;}
-    },next,frame,88);
+
 }
 using TitleReadFn=void*(__fastcall*)(void*,void*,void*);TitleReadFn originalTitleRead{};BDS_HookToken titleToken{};
 bool captureTitle(void* packet,void* result,TitleCopy* out)noexcept{
@@ -495,7 +495,7 @@ DWORD WINAPI start(void*){
                 const auto root=bedrock::parseNativeProfile(selected.json());
                 wireTitles=root.contains("layouts")&&root.at("layouts").contains("PacketRead");
                 if(wireTitles){
-                    packetReads.load(root);
+
                     // A title observer never reads old world/inventory offsets.
                     // Full placement is enabled only by a complete native adapter.
                     titleOnlyMode=true;
@@ -510,7 +510,7 @@ DWORD WINAPI start(void*){
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         gameVersion=bedrock::parseNativeProfile(profile).at("target").value("version",std::string("unknown"));
         reader.states.reserve(4096);reader.names.reserve(512);
-        if(wireTitles){if(!packetReads.subscribe(&receivePacket,nullptr,&titleToken))throw std::runtime_error("common Packet read hook conflict");}
+        if(wireTitles){packetReads.onReceive(bedrock::PacketId::SetTitle,receivePacket);if(!packetReads.installReceive(profile,bedrock::generated::kSymbolDatabase,error))throw std::runtime_error(error);}
         else if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});

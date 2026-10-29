@@ -4,11 +4,9 @@
       "Fake": {
         "status": "complete",
         "authority": "user-reported",
-        "date": "2026-10-28",
+        "date": "2026-10-29",
         "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
-        "source": "Fake完全に機能してるOk!",
-        "scope": "Fake command registration and request/response flow after d5c42df",
-        "manual_checks_confirmed": true
+        "scope": "User reports normal operation; only consumed bindings are promoted, optional unresolved branches retained"
       },
       "render_follow_up_2026_10_29": {
         "source": "user-supplied logs and 60-world-render.result.json",
@@ -35,6 +33,26 @@
           "status": "render_observe_skipped",
           "reason": "native_world_render definition missing from flattened symbols; watches waiting; no render layout values verified"
         }
+      },
+      "Freecam": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "scope": "User reports normal operation; only consumed bindings are promoted, optional unresolved branches retained"
+      },
+      "Zoom": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "scope": "User reports normal operation; only consumed bindings are promoted, optional unresolved branches retained"
+      },
+      "TabList": {
+        "status": "awaiting-runtime-confirmation",
+        "previous_observation": "receive_ready=1, roster_packets=0, rows=0",
+        "change": "Per-ID virtual decoder routing; owned packet queue; dedicated roster worker",
+        "next": "Confirm native_calls, copied, published, roster_packets and nonempty visible rows after rejoining"
       }
     }
   }

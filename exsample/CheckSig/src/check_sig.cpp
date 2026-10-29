@@ -1,3 +1,4 @@
+#include <bedrock/analysis/memory_inspector.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/analysis/auto_profile_runner.hpp>
 #include <bedrock/generated/profile_sources.hpp>
@@ -799,7 +800,7 @@ private:
             } else {
                 if (document.value("schema", 0) != 1 || document.value("arch", std::string{}) != "x64")
                     throw std::runtime_error("checksig-job requires schema=1 and arch=x64");
-                if(document.value("minimum_checksig_features",1)>4) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
+                if(document.value("minimum_checksig_features",1)>5) throw std::runtime_error("this investigation requires a newer CheckSig DLL");
                 const auto resolveInput = [&](const std::string& name) {
                     auto path = fromUtf8(name);
                     return path.is_relative() ? file.path.parent_path() / path : path;
@@ -862,6 +863,12 @@ private:
                             throw std::runtime_error("invalid symbol name");
                         line += " " + symbol;
                     } else if (op == "scan") line += " " + action.at("pattern").get<std::string>();
+                    else if (op == "memory") {
+                        (void)action.at("address").get<std::string>();
+                        const auto length=checksig::readU32(action.at("length"));
+                        const auto rows=action.contains("row_bytes")?checksig::readU32(action.at("row_bytes")):256;
+                        if(!length||length>1024*1024||!rows||rows>4096)throw std::runtime_error("memory requires length 1..1048576, row_bytes 1..4096");
+                    }
                     else if (op == "read") line += " " + action.at("address").get<std::string>() + " " + action.at("type").get<std::string>();
                     else if (op != "identity" && op != "detect" && op != "list" && op != "port")
                         throw std::runtime_error("unsupported job operation: " + op);
@@ -871,7 +878,19 @@ private:
                 }
                 for (std::size_t i = 0; i < lines.size(); ++i) {
                     const auto& action = actions.at(i);
-                    if(action.at("op")=="observe") observeSymbols(action,source);
+                    if(action.at("op")=="memory") {
+                        json provenance=json::object();
+                        const auto address=resolveMemoryAddress(action.at("address").get<std::string>(),provenance);
+                        const auto length=checksig::readU32(action.at("length"));
+                        const auto rows=action.contains("row_bytes")?checksig::readU32(action.at("row_bytes")):256;
+                        if(action.at("address").get<std::string>().starts_with("rva:")&&length>image_->imageSize-(address-image_->base))throw std::runtime_error("memory range exceeds loaded image");
+                        auto result=bedrock::MemoryInspector::inspect({address,length},rows);
+                        result["label"]=action.value("label",std::string("memory-"+std::to_string(i)));
+                        result["source"]=std::move(provenance);
+                        jobResults_[source]["memory"].push_back(result);
+                        writeEvent("memory-range",std::move(result));
+                    }
+                    else if(action.at("op")=="observe") observeSymbols(action,source);
                     else if(action.at("op")=="audit") {
                         if(!resolver_) throw std::runtime_error("audit requires a matching profile");
                         const auto catalog=document.value("requirements",defaultSupportCatalog());
@@ -1818,7 +1837,7 @@ private:
         json profiles = json::array();
         std::ostringstream readable;
         readable << "CheckSig - Windows x64 profile detection\n"
-                 << "Put windows-x64.json in:\n  " << pathUtf8(command_) << "\n  "
+                 << "Put profile.json in:\n  " << pathUtf8(command_) << "\n  "
                  << pathUtf8(commands_) << "\n"
                  << "Loaded EXE SHA-256: " << identity_.fileSha256 << "\n"
                  << "Active profile: " << (resolver_ ? targetPath_ : "none") << "\n\n";
@@ -2901,9 +2920,9 @@ private:
         }
     }
 
-    void readValue(const std::string& addressToken, const std::string& type) {
+    std::uintptr_t resolveMemoryAddress(const std::string& addressToken,json& source) {
+        if(!image_)throw std::runtime_error("loaded executable identity unavailable");
         std::uintptr_t address{};
-        json source = json::object();
         if (addressToken.rfind("actor:", 0) == 0) {
             const std::string_view expression(addressToken);
             const auto plus = expression.find('+', 6);
@@ -2953,6 +2972,11 @@ private:
             if (value > UINTPTR_MAX) throw std::runtime_error("address exceeds x64 range");
             address = static_cast<std::uintptr_t>(value);
         }
+        return address;
+    }
+    void readValue(const std::string& addressToken, const std::string& type) {
+        json source=json::object();
+        const auto address=resolveMemoryAddress(addressToken,source);
         std::size_t size = 0;
         if (type == "u8" || type == "i8") size = 1;
         else if (type == "u16" || type == "i16") size = 2;

@@ -1,7 +1,15 @@
 {
   "analysis": {
     "runtime_verified_symbols": [
-      "Keyboard::feed"
+      "ClientInstance::getLocalPlayer",
+      "ClientInstance::grabCursor",
+      "ClientInstance::releaseCursor",
+      "CommandRegistry::findCommand",
+      "CommandRegistry::registerCommand",
+      "Keyboard::feed",
+      "LevelRendererPlayer::getFov",
+      "MouseDevice::feed",
+      "MultiPlayerLevel::_subTick"
     ]
   }
 }

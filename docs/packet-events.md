@@ -112,3 +112,34 @@ FreecamはsendToServerの同期呼出しに帰属するwireイベントだけを
 
 `movement_packet_kinds=0` の間はFreecamを有効化しません。
 Fake等の既存ネイティブAPIとActor/Cameraのレイアウトは移動パケットの通信codecとは別に残ります。
+
+## パケット別受信経路とワーカー
+
+runtime 4.8では`PacketRead` revision2のvtable情報から、Packet IDごとの実際の仮想デコーダーを共有Hookします。
+共通`Packet::read`ラッパーだけのHookは受信経路を網羅しません。
+探索ではgetIDの定数リーフ・共通readのvtableアンカー・`.text`範囲・`.pdata`入口の一致を要求します。
+異なるデコーダー集合が同じIDへ対応する場合は曖昧として失敗し、候補関数を呼び出して探索しません。
+この方針はLatiteのパケット別vtable経路を参考にしています。旧版のhandlerオフセットは流用していません。
+
+受信は観測専用です。ゲームのdecode成功後に、読み取り前のowned payloadを通知します。
+`event.ownedPayload()`はコールバック後も保持でき、送信は`onSend`から編集・キャンセルできます。
+`receiveTargetCount()`と`receiveStatistics()`でHook対象数、呼出回数、コピー失敗、ゲームdecode失敗、通知数を確認できます。
+
+PlayerListはSDKの`PlayerRosterService`で扱えます。
+
+```cpp
+bedrock::PacketApi packets;
+bedrock::PlayerRosterService roster;
+roster.start(packets); // schemaの準備、ID別購読、解析ワーカー開始
+std::string error;
+if (!packets.installReceive(profile, embeddedProfile, error)) { /* errorを表示 */ }
+auto copiedPlayers = roster.snapshot();
+// 停止はDllMain外。先にnative callbackをdrainする。
+packets.stop();
+roster.stop(packets);
+```
+
+解析キューは128件・32MiBまで。順序を保ってskinを解析し、超過は`dropped()`へ記録して不完全な名簿を破棄します。
+TabListはこの解析ワーカー、行生成ワーカー、MurderDetectのコピー処理を並行させます。
+ネイティブActorはSDKのruntime actor listからゲームtickで読み、ワーカーには渡しません。
+共有Hookの購読一覧は変更時だけコピーし、各callbackでの一覧生成と全体registryロックをなくしています。

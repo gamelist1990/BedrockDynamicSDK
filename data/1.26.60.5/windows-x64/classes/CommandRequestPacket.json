@@ -4,7 +4,7 @@
       "schema": 1,
       "layout_revision": 1,
       "pointer_size": 8,
-      "status": "candidate",
+      "status": "verified",
       "runtime_verified": true,
       "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
       "request_vtable_rva": "0xF1D6260",
@@ -13,29 +13,46 @@
         "rva": "0x41989a0",
         "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 48 48 8D 6C 24",
         "abi": "CommandRequestPacket* __fastcall(CommandRequestPacket*, Payload*)",
-        "status": "candidate",
-        "runtime_verified": false
+        "status": "verified",
+        "runtime_verified": false,
+        "verification_scope": "entry-guard-and-vtable-identity"
       },
       "request_get_id": {
         "rva": "0x4198be0",
         "entry_check": "B8 4D 00 00 00 C3 CC CC",
         "abi": "unsigned __fastcall(Packet const*)",
-        "status": "candidate",
-        "runtime_verified": false
+        "status": "verified",
+        "runtime_verified": false,
+        "verification_scope": "entry-guard-and-vtable-identity"
       },
       "output_get_id": {
         "rva": "0x4195e30",
         "entry_check": "B8 4F 00 00 00 C3 CC CC",
         "abi": "unsigned __fastcall(Packet const*)",
-        "status": "candidate",
-        "runtime_verified": false
+        "status": "verified",
+        "runtime_verified": false,
+        "verification_scope": "entry-guard-and-vtable-identity"
       },
       "output_read": {
         "rva": "0x4196e10",
         "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58",
         "abi": "Result<void>* __fastcall(CommandOutputPacket*, Result<void>*, ReadOnlyBinaryStream*, Context*)",
-        "status": "candidate",
-        "runtime_verified": false
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-mod-operation",
+        "runtime_validation": {
+          "status": "complete",
+          "authority": "user-reported",
+          "date": "2026-10-29",
+          "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+          "mods": [
+            "Fake"
+          ],
+          "scope": "CommandOutput decode hook and response correlation",
+          "limitations": [
+            "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+          ]
+        }
       },
       "evidence": {
         "request_constructor": "REA/Ghidra ev_b53b228b67d10f66d08c875a3c62709b0aee8c5a11a104ed46c40ebb780f0ee0; payload at packet+0x30, origin+0x50, version+0x90, internal+0x94, serialization version+0x98=5, size0xA0.",
@@ -48,12 +65,17 @@
       "runtime_validation": {
         "status": "complete",
         "authority": "user-reported",
-        "date": "2026-10-28",
-        "scope": "Fake custom registration, nonempty text, native version/origin request and response round trip",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Fake"
+        ],
+        "scope": "Request/output vtable identity, custom /fake request and response handling",
         "limitations": [
-          "Other Mods and arbitrary origin numbers are not covered by this confirmation"
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
-      }
+      },
+      "verification_scope": "user-reported-mod-operation"
     }
   }
 }

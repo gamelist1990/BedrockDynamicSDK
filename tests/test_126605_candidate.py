@@ -4,26 +4,27 @@ import json
 from pathlib import Path
 
 from bedrock_symbols.index import build_index
+from bedrock_symbols.profile_parts import load_profile
 
 
-def test_126605_entry_verified_symbols_keep_runtime_scope_to_keyboard():
+def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     root = Path(__file__).resolve().parents[1] / "data"
     directory = root / "1.26.60.5"
-    raw = (directory / "windows-x64.json").read_bytes()
-    profile = json.loads(raw)
+    profile = load_profile(directory / "windows-x64/manifest.json")
     assert not (directory / "windows-x64.candidate.json").exists()
     assert profile["target"]["version"] == "1.26.60.5"
     assert profile["analysis"]["status"] == "entry_verified_runtime_partial"
     assert profile["analysis"]["runtime_verified"] is False
-    assert profile["analysis"]["runtime_verified_symbols"] == ["Keyboard::feed"]
+    runtime_symbols = set(profile["analysis"]["runtime_verified_symbols"])
+    assert {"Keyboard::feed", "LevelRendererPlayer::getFov", "ClientInstance::getLocalPlayer"} <= runtime_symbols
     assert len(profile["symbols"]) == 41
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
     assert verified == set(profile["symbols"]) - {"Level::getPlayerList"}
     for name in verified:
         row = profile["symbols"][name]
-        assert row["abi_verified"] is (name == "Keyboard::feed")
-        assert row["runtime_verified"] is (name == "Keyboard::feed")
-        assert row["verification_scope"] == ("runtime-hook" if name == "Keyboard::feed" else "entry-guard")
+        assert row["abi_verified"] is (name in runtime_symbols)
+        assert row["runtime_verified"] is (name in runtime_symbols)
+        assert row["verification_scope"] == ("runtime-hook" if name == "Keyboard::feed" else "user-reported-mod-operation" if name in runtime_symbols else "entry-guard")
         assert row["entry_validation"]["status"] == "complete"
         assert row["entry_validation"]["entry_guard_hit"] is True
         assert row["entry_validation"]["readable"] is True

@@ -171,7 +171,7 @@ synchronously; do not block or perform long-running work there.
 
 ## Profile and log maintenance
 
-The exact-build profile at `data/<version>/windows-x64.json` contains only the
+The exact-build profile at `data/<version>/windows-x64/manifest.json` contains only the
 symbols/layout data needed by the SDK and shipped examples. Keep
 `native_items` offsets and ABI status version-specific; do not carry them to a
 new build without validation. The generated

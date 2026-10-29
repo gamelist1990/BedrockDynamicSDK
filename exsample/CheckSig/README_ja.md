@@ -13,7 +13,7 @@
 
 1. 対象ゲームバージョンのリリースからCheckSigのZIPを取得します。
 2. `CheckSig.dll` を既存Modと同じ方法でゲームへ読み込みます。
-3. `Documents/PEXData/CheckSig/commands/` に `windows-x64.json` を置きます。
+3. `Documents/PEXData/CheckSig/commands/` に `profile.json` を置きます。
 4. 自動でdetectし、`result/commands/windows-x64.result.json` に結果を出します。
 
 `commands/` は起動時に作成されます。DLL起動後の追加・修正も監視します。
@@ -26,7 +26,7 @@ UTF-8 BOMに対応します。従来の `command/` の結果は `result/command/
 
 ```powershell
 ./Get-CheckSigProfile.ps1 -Source GitHub -Version 1.26.60.5
-./Get-CheckSigProfile.ps1 -Source Local -LocalPath C:\profiles\windows-x64.json
+./Get-CheckSigProfile.ps1 -Source Local -LocalPath C:\profiles\profile.json
 ```
 
 ## 調査JSON
@@ -38,7 +38,7 @@ UTF-8 BOMに対応します。従来の `command/` の結果は `result/command/
   "schema": 1,
   "kind": "checksig-job",
   "arch": "x64",
-  "profile": "windows-x64.json",
+  "profile": "profile.json",
   "actions": [
     {"op": "probe", "symbol": "Keyboard::feed"},
     {"op": "hook", "symbol": "Keyboard::feed"}
@@ -95,6 +95,6 @@ DLLもゲーム終了まで保持します。
 ## auto-dev（実験機能）
 
 `Documents/PEXData/CheckSig/status.json`で`"auto-dev": true`にすると、SDKがバックグラウンドでEXEを探索します。
-`auto-dev/windows-x64.json`と`report.json` / `report.txt`に候補・根拠・未解決理由を出します。
+`auto-dev/profile.json`と`report.json` / `report.txt`に候補・根拠・未解決理由を出します。
 `"auto-dev": false`で停止、`"auto-dev-run"`を増やすと再探索。完了後は`live.json`で入口を監視します。
 詳しくはZIP内の`checksig-auto-dev.md`を参照してください。生成結果は自動適用しません。

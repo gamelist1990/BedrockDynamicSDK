@@ -25,8 +25,8 @@
       "function_boundary": true,
       "signature_anchors": [],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "abi": "void __fastcall(ClientInstance*)",
       "entry_validation": {
         "status": "complete",
@@ -37,7 +37,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "runtime_observation": {
         "samples": 16,
         "observed_calls": 536,
@@ -53,6 +53,21 @@
           "total_calls": 536,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam",
+          "Zoom",
+          "Fake"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     },
     "ClientInstance::releaseCursor": {
@@ -65,8 +80,8 @@
       "function_boundary": true,
       "signature_anchors": [],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
-      "runtime_verified": false,
+      "abi_verified": true,
+      "runtime_verified": true,
       "abi": "void __fastcall(ClientInstance*)",
       "entry_validation": {
         "status": "complete",
@@ -77,7 +92,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "runtime_observation": {
         "samples": 5,
         "observed_calls": 36,
@@ -93,6 +108,21 @@
           "total_calls": 36,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam",
+          "Zoom",
+          "Fake"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     },
     "ClientInstance::onPlayerLoaded": {
@@ -259,14 +289,14 @@
         }
       ],
       "confidence": "exact-build-entry-verified",
-      "abi_verified": false,
+      "abi_verified": true,
       "source_definition_path": "native_camera.local_player",
       "source_rva": "0x5DAED30",
       "source_abi": "Actor* __fastcall(ClientInstance*)",
       "source_status": "candidate",
       "source_description": "IClientInstance vtable 31; native_items.local_player vtable corroboration",
       "source_evidence": null,
-      "runtime_verified": false,
+      "runtime_verified": true,
       "entry_validation": {
         "status": "complete",
         "evidence_id": "checksig-user-runtime-8b30003132edbff4",
@@ -276,7 +306,7 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard",
+      "verification_scope": "user-reported-mod-operation",
       "name_status": "inferred",
       "runtime_observation": {
         "samples": 40,
@@ -296,6 +326,19 @@
           "total_calls": 4834453,
           "type": "hook-observation"
         }
+      },
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam"
+        ],
+        "scope": "Native entry/ABI exercised by reported normal Mod operation",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
       }
     },
     "ClientInstance::onLevelExit": {

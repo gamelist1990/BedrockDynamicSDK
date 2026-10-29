@@ -6,7 +6,7 @@ JSONはUTF-8で保存してください。UTF-8 BOMにも対応します。
 
 ## 対応するプロファイルを置く
 
-対象EXEと同じバージョンの `windows-x64.json` を置くだけでdetectします。
+対象EXEと同じバージョンの `profile.json` を置くだけでdetectします。
 結果は `result/commands/windows-x64.result.json` へ出ます。
 `detect/result.json` と `detect/result.txt` は全プロファイルの一覧です。
 
@@ -19,7 +19,7 @@ JSONはUTF-8で保存してください。UTF-8 BOMにも対応します。
   "schema": 1,
   "kind": "checksig-job",
   "arch": "x64",
-  "profile": "windows-x64.json",
+  "profile": "profile.json",
   "actions": [
     {"op": "probe", "symbol": "Keyboard::feed"},
     {"op": "hook", "symbol": "Keyboard::feed"}
@@ -58,7 +58,7 @@ JSONに任意のABIを書いて未対応関数を自動実行する機能はあ�
   "schema": 1,
   "kind": "checksig-job",
   "arch": "x64",
-  "source": "old-windows-x64.json",
+  "source": "old-profile.json",
   "actions": [{"op": "port"}]
 }
 ```
@@ -80,7 +80,7 @@ jobの `symbols` に、使用するプロファイルと同じ形式で関数を
   "schema": 1,
   "kind": "checksig-job",
   "arch": "x64",
-  "profile": "windows-x64.json",
+  "profile": "profile.json",
   "symbols": {
     "調査対象クラス::関数": {
       "rva": "0x123456",
@@ -110,3 +110,23 @@ RVAとバイト列は実際の調査対象に置き換えてください。
 - `{"op":"observe","symbols":["Keyboard::feed"]}` は設置できない対象を理由付きでスキップしながら観測します。
 - watchesで観測ポインタから最大64バイトの値を継続して読み取れます。
 - support_reportは観測後も更新し、Mod全体の操作確認が必要な項目を残します。
+
+## メモリ範囲を読む
+
+`commands/level-range.json`の例。ロード中のEXEを読み取るだけならprofile指定は不要です。
+
+```json
+{
+  "kind": "checksig-job",
+  "schema": 1,
+  "arch": "x64",
+  "actions": [
+    {"op": "memory", "label": "module-header", "address": "rva:0x0", "length": 512, "row_bytes": 64}
+  ]
+}
+```
+
+`address`は`rva:0x...`、絶対アドレス`0x...`、直近のActorサンプル`actor:0+0x...`。
+範囲は1バイト〜1MiB、行は1〜4096バイト。`PAGE_GUARD`や読めないページには触れず、保護属性を変更しません。
+`result/commands/level-range.result.json`の`memory`に、ラベル・アドレス・保護属性・実測バイト列・読めなかった理由を出します。
+Actorサンプルの寿命は保証されないため、結果には出所を残し、読み取れた値だけでABI検証済みにはしません。

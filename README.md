@@ -24,7 +24,7 @@ FreecamのInsideBlockEffectに新EXEの対象型・呼出箇所を追加。飛�
 - HitBox: LocalPlayer取得を正確な関数へ変更。新EXEの描画定義とPlayerList位置を追加。対象取得・描画は更新後の実機確認待ち。
 - SpeedBuilder: 共通`Packet::read` HookとID 88でタイトルを観測。現時点ではタイトル観測モードで、自動記録・設置は未対応。ホットバー選択・配置状態計算・HitResultのABI確認が必要。
 - TabList: 受領ログでは起動とTab入力のみ確認。GUIは表示されなかったとの報告を受領。旧固定PlayerList位置を版別定義へ置換し、空一覧の診断を追加。更新後の表示確認待ち。
-- 共有Hook runtimeは4.7.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
+- 共有Hook runtimeは4.8.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
 
 ## SDKと版別定義の更新
 
@@ -36,10 +36,10 @@ PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Mo
 ## CheckSig：JSONを置いて調査
 
 1. `CheckSig.dll` を対象ゲームへロードします。
-2. `Documents/PEXData/CheckSig/commands/` に `windows-x64.json` を置きます。
-3. 自動detectの結果を `result/commands/windows-x64.result.json` で確認します。
+2. `Documents/PEXData/CheckSig/commands/` に `profile.json` を置きます。
+3. 自動detectの結果を `result/commands/profile.result.json` で確認します。
 
-調査用JSONではscan・read・probe・hook・unhook・旧定義からのportを指定できます。
+調査用JSONではscan・read・範囲memory・probe・hook・unhook・旧定義からのportを指定できます。
 入力ごとに別の結果ファイルを出力し、Hookの観測値も更新します。
 
 - [CheckSigの使い方](exsample/CheckSig/README_ja.md)
@@ -50,13 +50,13 @@ PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Mo
 ## CheckSig auto-dev（実験）
 
 `Documents/PEXData/CheckSig/status.json`の`"auto-dev"`を`true`にすると、SDKの探索処理が現在のEXEから定義候補を生成します。
-結果は`auto-dev/windows-x64.json`と`report.json` / `report.txt`。未解決項目には理由を残し、自動適用はしません。
+結果は`auto-dev/profile.json`と`report.json` / `report.txt`。未解決項目には理由を残し、自動適用はしません。
 [使い方・探索条件・生成できない項目](docs/checksig-auto-dev.md)を参照してください。
 
 ## Mod
 
 `Freecam` / `SpeedBuilder` / `Top` / `HitBox` / `TabList` /
-`Zoom` / `AutoSprint` / `ScanClient` / `CheckSig` / `Fake`
+`Zoom` / `AutoSprint` / `CheckSig` / `Fake`
 
 [Fake](exsample/Fake/README_ja.md) は1.26.60.5向けの調査版です。
 `/fake メッセージ` で `/me メッセージ` をOrigin=5で要求し、
