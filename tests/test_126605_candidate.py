@@ -52,6 +52,6 @@ def test_126605_entry_verified_symbols_keep_runtime_scope_to_keyboard():
     assert (native_keyboard["key_down_vtable_slot"], native_keyboard["key_up_vtable_slot"]) == (1, 2)
     entry = build_index(root)["versions"]["1.26.60.5"]["windows-x64"]
     assert entry["symbols"] == 41
-    assert entry["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert entry["sha256"] == hashlib.sha256((root.parent / entry["path"]).read_bytes()).hexdigest()
     assert entry["module_sha256"] == profile["target"]["sha256"]
     assert json.loads((root / "manifest.json").read_text())["versions"]["1.26.60.5"]["windows-x64"] == entry
