@@ -11,6 +11,7 @@
 #include <bedrock/detail/owned_native_callback.hpp>
 #include <memory>
 #include <intrin.h>
+#include <bedrock/detail/pending_terrain_refresh.hpp>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
 #error NativeResourcePacks requires the Release MSVC STL ABI (_ITERATOR_DEBUG_LEVEL=0)
@@ -28,19 +29,30 @@ struct NativeResourcePacks::Binding {
     using ScreenName = void *(__fastcall *)(void *, void *);
     using LocalPlayer = void *(__fastcall *)(void *);
     using ClientGame = void *(__fastcall *)(void *);
+    using AtlasUpdate = void(__fastcall *)(void *, const void *, bool);
     using Deallocate = void(__fastcall *)(void *);
     void *initTarget{};
     void *ctorTarget{};
     void *preGameTarget{};
-    void *exitTarget{}, *eventTarget{}, *composeTarget{}, *reloadTarget{}, *finalizeTarget{};
+    void *exitTarget{}, *eventTarget{}, *composeTarget{}, *reloadTarget{}, *languageTarget{};
     void *navigateTarget{}, *eventDestroyTarget{};
+    void *atlasTarget{}, *atlasCaller{}, *localPlayerTarget{};
+    AtlasUpdate atlasUpdate{};
+    ClientGame clientLevel{}, levelData{}, gamePacks{};
+    Event refreshClient{};
+    std::size_t experimentsOffset{}, terrainAtlasOffset{};
+    std::mutex refreshMutex;
+    detail::PendingTerrainRefresh pendingRefresh;
+    std::atomic<bool> refreshPending{};
+    std::atomic<std::uint64_t> terrainCompleted{}, blockTexturesReloaded{}, clientsRefreshed{}, refreshCancelled{};
+    Event reloadBlockTextures{};
     Event navigate{};
     DestroyCallback eventDestroy{};
     detail::NativeCallbackLayout callbackLayout{};
     Exit exit{};
     Event event{};
     Compose compose{};
-    Initialize reload{}, finalize{};
+    Initialize reload{}, languageUpdate{};
     Initialize initialize{};
     Construct construct{};
     Predicate preGame{};
@@ -53,11 +65,11 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 10> tokens{};
+    std::array<BDS_HookToken, 12> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
-    std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, finalized{}, globalIncluded{};
+    std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, languageUpdates{}, globalIncluded{};
     std::atomic<std::uint64_t> navigations{}, liveApplications{}, inWorldEvents{};
     std::atomic<std::uint64_t> gameGateOverrides{};
     std::mutex policyMutex;
@@ -104,6 +116,53 @@ struct NativeResourcePacks::Binding {
             return false;
         }
         return original;
+    }
+    static void __fastcall onAtlasUpdate(void *game, const void *atlas, bool terrain) {
+        const auto caller = _ReturnAddress();
+        auto &state = *active().load(std::memory_order_acquire);
+        state.atlasUpdate(game, atlas, terrain);
+        if (!state.enabled.load(std::memory_order_acquire) || !terrain || caller != state.atlasCaller)
+            return;
+        void *currentAtlas{};
+        if (!native_profile::read(game, state.terrainAtlasOffset, currentAtlas) || currentAtlas != atlas)
+            return;
+        std::lock_guard lock(state.refreshMutex);
+        if (state.pendingRefresh.complete(game))
+            ++state.terrainCompleted;
+    }
+    static void *__fastcall onLocalPlayer(void *client) {
+        auto &state = *active().load(std::memory_order_acquire);
+        auto *player = state.localPlayer(client);
+        if (!state.enabled.load(std::memory_order_acquire) ||
+            !state.refreshPending.load(std::memory_order_acquire))
+            return player;
+        auto *game = state.clientGame(client);
+        auto *level = player ? state.clientLevel(client) : nullptr;
+        void *manager{};
+        bool cancelled{};
+        {
+            std::lock_guard lock(state.refreshMutex);
+            manager = state.pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled);
+            state.refreshPending.store(state.pendingRefresh.pending(), std::memory_order_release);
+        }
+        if (cancelled)
+            ++state.refreshCancelled;
+        if (manager) {
+            // We are back on the apply thread, with a currently live client and
+            // the same level. No client/player pointer survives the async load.
+            auto *data = state.levelData(level);
+            if (!data || state.gamePacks(game) != manager) {
+                ++state.failures;
+                return player;
+            }
+            state.reloadBlockTextures(manager, static_cast<std::byte *>(data) + state.experimentsOffset);
+            ++state.blockTexturesReloaded;
+            // The game's stateless hot-reload callback clears the client render
+            // cache and marks all its render chunk coordinators dirty.
+            state.refreshClient(nullptr, client);
+            ++state.clientsRefreshed;
+        }
+        return player;
     }
     static bool claimCallback(void *function, std::size_t offset, void *expected) noexcept {
         __try {
@@ -181,11 +240,11 @@ struct NativeResourcePacks::Binding {
             ++state.reloads;
         state.reload(self);
     }
-    static void __fastcall onFinalize(void *self) {
+    static void __fastcall onLanguageUpdate(void *self) {
         auto &state = *active().load(std::memory_order_acquire);
-        state.finalize(self);
+        state.languageUpdate(self);
         if (state.enabled.load(std::memory_order_acquire))
-            ++state.finalized;
+            ++state.languageUpdates;
     }
     static std::uint64_t __fastcall onCompose(void *self, void *full, void *global, void *level) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -211,6 +270,17 @@ struct NativeResourcePacks::Binding {
         } restore{state, self, changed, previous};
         if (changed)
             ++state.globalIncluded;
+        if (changed) {
+            auto *game = state.clientGame(client);
+            auto *clientLevel = state.clientLevel(client);
+            if (game && clientLevel && state.gamePacks(game) == self) {
+                std::lock_guard lock(state.refreshMutex);
+                state.pendingRefresh.begin(game, clientLevel, self, GetCurrentThreadId());
+                state.refreshPending.store(true, std::memory_order_release);
+            } else {
+                ++state.failures;
+            }
+        }
         return state.compose(self, full, global, level);
     }
 
@@ -321,7 +391,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v4")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v5")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -359,7 +429,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->composeTarget = get("compose_full_stack",
                                    "uint64_t __fastcall(ResourcePackManager*, void*, void*, void*)");
         next->reloadTarget = get("reload_stack", "void __fastcall(ResourcePackManager*)");
-        next->finalizeTarget = get("finalize_reload", "void __fastcall(ResourcePackManager*)");
+        next->languageTarget = get("update_language_subpacks", "void __fastcall(ResourcePackManager*)");
         next->closureOwnerOffset = native_profile::number(layout.at("exit_closure_owner_offset"));
         next->settingsModelOffset = native_profile::number(layout.at("settings_model_offset"));
         next->modelClientOffset = native_profile::number(layout.at("model_client_offset"));
@@ -370,8 +440,19 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
                 throw std::runtime_error("invalid resource pack apply layout");
         next->screenName = reinterpret_cast<Binding::ScreenName>(
             get("top_screen_name", "void* __fastcall(ClientInstance*, void* stringResult)"));
-        next->localPlayer = reinterpret_cast<Binding::LocalPlayer>(
-            get("local_player", "LocalPlayer* __fastcall(ClientInstance*)"));
+        next->localPlayerTarget = get("local_player", "LocalPlayer* __fastcall(ClientInstance*)");
+        next->clientLevel = reinterpret_cast<Binding::ClientGame>(get("client_level", "void* __fastcall(ClientInstance*)"));
+        next->levelData = reinterpret_cast<Binding::ClientGame>(get("level_data", "void* __fastcall(Level*)"));
+        next->gamePacks = reinterpret_cast<Binding::ClientGame>(get("game_packs", "void* __fastcall(MinecraftGame*)"));
+        next->reloadBlockTextures = reinterpret_cast<Binding::Event>(get("reload_block_textures", "void __fastcall(ResourcePackManager*, const void* experiments)"));
+        next->refreshClient = reinterpret_cast<Binding::Event>(get("refresh_client", "void __fastcall(void* unused, ClientInstance*)"));
+        next->atlasTarget = get("update_atlas_pbr", "void __fastcall(MinecraftGame*, const void* atlas, bool terrain)");
+        next->atlasCaller = native_profile::checked(root, layout.at("terrain_completion_caller"));
+        next->experimentsOffset = native_profile::number(layout.at("level_data_experiments_offset"));
+        next->terrainAtlasOffset = native_profile::number(layout.at("terrain_atlas_offset"));
+        if (!next->experimentsOffset || next->experimentsOffset > 0x10000 ||
+            !next->terrainAtlasOffset || next->terrainAtlasOffset > 0x10000)
+            throw std::runtime_error("invalid terrain refresh layout");
         next->deallocate =
             reinterpret_cast<Binding::Deallocate>(get("deallocate", "void __fastcall(void*)"));
         next->reloadOffset = native_profile::number(layout.at("reload_on_exit_offset"));
@@ -406,11 +487,13 @@ bool NativeResourcePacks::install(std::string &error) {
         return true;
     }
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
-        !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
+        !binding_->screenName || !binding_->localPlayerTarget || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
-        !binding_->reloadTarget || !binding_->finalizeTarget ||
+        !binding_->reloadTarget || !binding_->languageTarget ||
         !binding_->navigateTarget || !binding_->eventDestroy ||
-        !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller) {
+        !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
+        !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
+        !binding_->levelData || !binding_->gamePacks || !binding_->reloadBlockTextures || !binding_->refreshClient) {
         error = "resource pack profile has not been loaded";
         return false;
     }
@@ -444,14 +527,18 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->compose), &binding_->tokens[5]) &&
         BDS_HookDirectInstall(binding_->reloadTarget, reinterpret_cast<void *>(&Binding::onReload),
                               reinterpret_cast<void **>(&binding_->reload), &binding_->tokens[6]) &&
-        BDS_HookDirectInstall(binding_->finalizeTarget, reinterpret_cast<void *>(&Binding::onFinalize),
-                              reinterpret_cast<void **>(&binding_->finalize), &binding_->tokens[7]) &&
+        BDS_HookDirectInstall(binding_->languageTarget, reinterpret_cast<void *>(&Binding::onLanguageUpdate),
+                              reinterpret_cast<void **>(&binding_->languageUpdate), &binding_->tokens[7]) &&
         BDS_HookDirectInstall(binding_->navigateTarget,
                               reinterpret_cast<void *>(&Binding::onNavigateApply),
                               reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[8]) &&
         BDS_HookDirectInstall(binding_->gameInGameTarget,
                               reinterpret_cast<void *>(&Binding::onGameInGame),
-                              reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[9]);
+                              reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[9]) &&
+        BDS_HookDirectInstall(binding_->atlasTarget, reinterpret_cast<void *>(&Binding::onAtlasUpdate),
+                              reinterpret_cast<void **>(&binding_->atlasUpdate), &binding_->tokens[10]) &&
+        BDS_HookDirectInstall(binding_->localPlayerTarget, reinterpret_cast<void *>(&Binding::onLocalPlayer),
+                              reinterpret_cast<void **>(&binding_->localPlayer), &binding_->tokens[11]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -467,8 +554,10 @@ bool NativeResourcePacks::install(std::string &error) {
 NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),
             binding_->failures.load(), binding_->exits.load(), binding_->applyEvents.load(),
-            binding_->reloads.load(), binding_->compositions.load(), binding_->finalized.load(),
+            binding_->reloads.load(), binding_->compositions.load(), binding_->languageUpdates.load(),
             binding_->globalIncluded.load(), binding_->navigations.load(),
-            binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load()};
+            binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load(),
+            binding_->terrainCompleted.load(), binding_->blockTexturesReloaded.load(),
+            binding_->clientsRefreshed.load(), binding_->refreshCancelled.load()};
 }
 } // namespace bedrock

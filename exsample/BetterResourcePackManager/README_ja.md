@@ -1,13 +1,13 @@
-# BetterResourcePackManager（Windows プレイ中再読み込み v4）
+# BetterResourcePackManager（Windows プレイ中再読み込み v5）
 
 添付された Android ARM64 版 `BetterResourcePackManager v2.3.1` を解析し、
 BedrockDynamicSDK の API を使って Windows x64 向けに再実装するサンプルです。
-v3 の実機ログでは `live_applications=1` / `in_world_apply_events=1` まで進みましたが、
-リロード呼び出し後にスタック合成と終了通知が増えず、同じワールドの見た目も変わりませんでした。
-v4 は `MinecraftGame::onFullPackStackInvalid` 内の独立した `isInGame` 判定を対象にします。
-対応する適用処理の実行中、同じゲームインスタンスの特定の呼び出し元だけで判定を上書きします。
-他の呼び出し元と、ネイティブのロード準備・キャンセル・待機処理は元の動作を維持します。
-**v4 の実際の描画反映は実機検証待ちです。**
+v4 は同じワールドでのパック切替まで実機で動作しましたが、既存・新設ブロック両方の
+テクスチャが崩れる報告がありました。v5 は地形アトラス更新後に、ゲーム標準の
+`BlockGraphics::reloadBlockTextures` と描画キャッシュの破棄・全チャンクの再描画要求を追加します。
+ゲーム側の非同期テクスチャ更新完了を確認してから、適用を開始したゲームスレッド上で実行します。
+待機中にワールドが変わった場合は実行を取り消します。非同期待機にプレイヤーやクライアントの
+生ポインターを保持しません。**v5 の表示修復は実機確認待ちです。**
 
 対応プロファイルは **Minecraft 1.26.60.5 / Windows x64 / Release MSVC** のみ。
 EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`。
@@ -20,7 +20,7 @@ EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672
 - グローバルリソースのタブと一時画面に加え、設定終了およびゲーム側の遅延適用イベントの実行中も、該当クライアントのプレイ前判定を維持します。イベント終了時に状態を復元します。
 - 適用用進捗画面へ渡すコールバックが SDK 対応のパック適用処理と完全一致し、ローカルプレイヤーが存在する場合に限り、そのゲームスレッド上で適用します。コールバックの所有権を取得してから実行し、ゲーム側のデストラクターで一度だけ解放します。
 - 適用中のスタック合成ではグローバルパックを含めるフラグを一時的に有効にし、合成終了後に元に戻します。
-- 適用イベント、リロード呼び出し、スタック合成、終了通知までの通過回数をログに記録します。Hook 登録と実際の適用経路の実行を区別できます。
+- 適用イベント、リロード呼び出し、スタック合成、地形更新と描画参照の修復までの通過回数をログに記録します。Hook 登録と実際の適用経路の実行を区別できます。
 - 関数、ABI、フィールド位置、文字列形式は版別 JSON と SDK が管理します。Mod ソースにはネイティブアドレス・offset を置きません。
 - ゲームが確保した画面名の文字列はゲーム側で解放します。DLL の CRT でゲームの割当を解放しません。
 
@@ -30,9 +30,15 @@ EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672
 ## 未完了・未確認
 
 設定終了とスタック合成の Windows 経路は、対象 EXE の命令列と REA/Ghidra の解析に基づきます。
-元 Android 版の BlockGraphics 再初期化、雲テクスチャ・描画参照修復の Windows 相当処理は未実装です。
-プレイ中のテクスチャ反映、ブロック・雲・アイテムの描画更新、複数回切替、ワールド退出は実機確認が必要です。
-`reload_finalized` はゲームの終了通知関数が戻った回数で、描画更新成功を保証する値ではありません。
+Windows 標準のブロックテクスチャ更新処理で既存の BlockGraphics を更新し、
+オブジェクトを作り直す Android 版とは異なる経路で参照の有効性を維持します。
+サーバーパックを含む full stack をそのまま使用します。サーバーパック固有の原因かは未確定です。
+既存・新設ブロック、アイテム・雲、複数回切替、ワールド退出の実機確認が必要です。
+旧ログの `reload_finalized` は言語サブパック更新関数からの復帰回数でした。
+v5 では誤解を避けるため `language_subpacks_updated` に改名しました。
+`terrain_atlas_completed` は対象の地形テクスチャ更新コールバックの完了、
+`block_textures_reloaded` / `clients_refreshed` は追加した修復処理からの復帰回数です。
+これらも実際の表示が正しいことを保証するものではありません。
 プロファイルは `candidate` / `runtime_verified: false` を維持しています。
 
 ## ビルド
@@ -47,7 +53,7 @@ ctest --test-dir build-brpm -C Release --output-on-failure
 
 出力は `build-brpm/Release/BetterResourcePackManager.dll`。
 Windows CI でも MSVC Release のビルドと同じ単体テストを実行します。
-Linux では DLL は生成せず、画面判定・文字列・適用コールバックの所有権に関するテストを実行します。
+Linux では DLL は生成せず、画面判定・文字列・適用コールバックの所有権・地形更新待機のテストを実行します。
 
 ## 実機調査時の操作
 
@@ -57,7 +63,7 @@ Linux では DLL は生成せず、画面判定・文字列・適用コールバ
 4. 設定画面を閉じてワールドへ戻り、実際のテクスチャとログを照合します。
    `exits` は終了ボタン、`apply_events` は遅延適用、`reload_calls` はリロード入口、
    `stack_compositions` は実際の合成、`global_stack_included` は適用中のグローバルパック包含、
-   `reload_finalized` は終了通知からの復帰の回数です。
+   `language_subpacks_updated` は言語サブパック更新からの復帰回数です。
    `apply_navigations` は進捗画面への受け渡し要求、`live_applications` はその場で実行した適用処理、
    `in_world_apply_events` はローカルプレイヤーが存在する状態での適用イベントです。
    同じワールドで変更して戻り、`live_applications` / `in_world_apply_events` / `global_stack_included` と実際の表示を照合します。
@@ -65,6 +71,9 @@ Linux では DLL は生成せず、画面判定・文字列・適用コールバ
    v2/v3 の `level_stack_included` は表示名が誤っていました。対象フラグはグローバルパックの包含です。
    変更なしの場合は適用回数が増えないことがあります。
    `settings` と `pre_game_overrides` だけでは反映成功は分かりません。
+   v5 は `terrain_atlas_completed` → `block_textures_reloaded` / `clients_refreshed` の増加と、
+   既存ブロック・新しく置いたブロック両方の表示を確認します。
+   `refresh_cancelled` は待機中にワールドが変わり修復を取り消した回数です。
    反映しない場合は新しいログを確認します。
 5. 変更なしで閉じる、追加・削除・並替を繰り返す、ワールドを退出・再入場する操作も確認します。
 

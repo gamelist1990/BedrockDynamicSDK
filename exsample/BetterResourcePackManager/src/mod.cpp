@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v4 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v5 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -62,12 +62,16 @@ DWORD WINAPI start(void *) noexcept {
                 current.applyEvents != previous.applyEvents ||
                 current.reloadCalls != previous.reloadCalls ||
                 current.stackCompositions != previous.stackCompositions ||
-                current.reloadFinalized != previous.reloadFinalized ||
+                current.languageSubpacksUpdated != previous.languageSubpacksUpdated ||
                 current.globalStackIncluded != previous.globalStackIncluded ||
                 current.applyNavigations != previous.applyNavigations ||
                 current.liveApplications != previous.liveApplications ||
                 current.inWorldApplyEvents != previous.inWorldApplyEvents ||
-                current.gameGateOverrides != previous.gameGateOverrides) {
+                current.gameGateOverrides != previous.gameGateOverrides ||
+                current.terrainAtlasCompleted != previous.terrainAtlasCompleted ||
+                current.blockTexturesReloaded != previous.blockTexturesReloaded ||
+                current.clientsRefreshed != previous.clientsRefreshed ||
+                current.refreshCancelled != previous.refreshCancelled) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -75,11 +79,15 @@ DWORD WINAPI start(void *) noexcept {
                     << " reload_calls=" << current.reloadCalls
                     << " stack_compositions=" << current.stackCompositions
                     << " global_stack_included=" << current.globalStackIncluded
-                    << " reload_finalized=" << current.reloadFinalized
+                    << " language_subpacks_updated=" << current.languageSubpacksUpdated
                     << " apply_navigations=" << current.applyNavigations
                     << " live_applications=" << current.liveApplications
                     << " in_world_apply_events=" << current.inWorldApplyEvents
                     << " game_gate_overrides=" << current.gameGateOverrides
+                    << " terrain_atlas_completed=" << current.terrainAtlasCompleted
+                    << " block_textures_reloaded=" << current.blockTexturesReloaded
+                    << " clients_refreshed=" << current.clientsRefreshed
+                    << " refresh_cancelled=" << current.refreshCancelled
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;
