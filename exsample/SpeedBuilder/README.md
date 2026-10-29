@@ -1,6 +1,10 @@
 # SpeedBuilder (Windows x64 example)
 
-Hiveの記憶・再現ゲーム向けの候補実装です。対応EXEは **1.26.52.3**。
+Hiveの記憶・再現ゲーム向けの候補実装です。自動記録・配置の候補実装は **1.26.52.3**。
+**1.26.60.5はタイトル観測モードです。自動記録・自動配置はまだ動作しません。**
+共通`Packet::read` HookでID 88の通信データを読み、native SetTitlePacketのフィールドには依存しません。
+ログの`Packet read counters`と`title received [observer]`で受信を確認できます。
+ホットバー選択・配置状態計算・HitResultの新ABIは調査中です。
 Titleのお題が空でなく、Subtitleに `記憶しましょう` を含むと記録を始めます。
 ゲーム内での受信Hook・配置・向き・サーバー受理は実機未確認です。
 

@@ -17,6 +17,13 @@ Minecraft Bedrock **Windows x64** 向けのC++ SDKとMod DLLです。
 Topなどが必要とするGUI・ローカル整数コマンド用CommandRegistryのレイアウトは未完成です。
 起動ログの「missing Minecraft layout」に表示されたクラスの調査が必要です。
 
+### 1.26.60.5の今回の更新
+
+- HitBox: UUID一覧を起動必須条件から外し、新EXEのLevelRenderer/Tessellator/Material定義を追加。描画・状態復元は実機確認待ち。
+- SpeedBuilder: 共通`Packet::read` HookとID 88でタイトルを観測。現時点ではタイトル観測モードで、自動記録・設置は未対応。ホットバー選択・配置状態計算・HitResultのABI確認が必要。
+- TabList: 受領ログでは起動、DXGI描画、行キャッシュとTab切替を確認。全機能の動作確認を意味しません。
+- 共有Hook runtimeは4.7.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
+
 ## CheckSig：JSONを置いて調査
 
 1. `CheckSig.dll` を対象ゲームへロードします。

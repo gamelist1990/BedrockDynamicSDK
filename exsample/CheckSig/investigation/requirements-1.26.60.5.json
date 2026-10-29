@@ -26,13 +26,13 @@
     },
     {
       "id": "world-render-abi",
-      "status": "needs-review-after-observation",
+      "status": "candidate-implemented-runtime-check-required",
       "mods": [
         "Freecam",
         "BlockOutline",
         "HitBox"
       ],
-      "action": "LevelRenderer/Tessellator/Materialの新関数・状態保存復元・描画オフセットを対応させる。"
+      "action": "新EXEのLevelRenderer/Tessellator/Material関数と配置を対応。60-world-renderで描画引数と原点・Tessellator・shaderを観測し、枠・名前・状態復元・ワールド切替を実機確認。"
     },
     {
       "id": "freecam-layout-assertions",
@@ -138,7 +138,7 @@
     },
     {
       "id": "title_packets",
-      "label": "SetTitlePacket"
+      "label": "共通Packet::readとID88のタイトル読取"
     },
     {
       "id": "local_commands",
@@ -222,12 +222,13 @@
       "required_groups": [
         "actors",
         "items",
-        "identity",
         "render",
         "gameplay",
         "world_events"
       ],
-      "optional_groups": [],
+      "optional_groups": [
+        "identity"
+      ],
       "manual_checks": [
         "対象プレイヤー判別・AABB位置・移動追従・ワールド切替で旧ポインタを使わない"
       ]
@@ -2242,24 +2243,6 @@
       "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
     },
     {
-      "id": "/layouts/PacketSender/title/vtable_rva",
-      "group": "title_packets",
-      "kind": "layout",
-      "path": "/layouts/PacketSender/title/vtable_rva",
-      "reference_only": {
-        "version": "1.26.52.3",
-        "value": "0xE89D5E0"
-      },
-      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
-    },
-    {
-      "id": "/layouts/PacketSender/title/read",
-      "group": "title_packets",
-      "kind": "function",
-      "path": "/layouts/PacketSender/title/read",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
-    },
-    {
       "id": "/layouts/CommandRegistry/register_command",
       "group": "local_commands",
       "kind": "function",
@@ -2688,6 +2671,41 @@
         "value": 136
       },
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketRead/stream_view_offset",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketRead/stream_view_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/PacketRead/stream_size_offset",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketRead/stream_size_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/PacketRead/stream_cursor_offset",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketRead/stream_cursor_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/PacketRead/result_success_offset",
+      "group": "title_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketRead/result_success_offset",
+      "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
+    },
+    {
+      "id": "/layouts/PacketRead/read",
+      "group": "title_packets",
+      "kind": "function",
+      "path": "/layouts/PacketRead/read",
+      "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
     },
     {
       "id": "/layouts/PacketSender/sender/command_request_path",

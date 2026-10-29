@@ -39,7 +39,8 @@ typedef enum BDS_HookPoint {
     BDS_HOOK_PACKET_SEND_TO_SERVER = 14,
     BDS_HOOK_LEVEL_RUNTIME_ACTOR_LIST = 15,
     BDS_HOOK_COMMAND_OUTPUT_READ = 16,
-    BDS_HOOK_PACKET_WIRE_SEND = 17
+    BDS_HOOK_PACKET_WIRE_SEND = 17,
+    BDS_HOOK_PACKET_READ = 18
 } BDS_HookPoint;
 
 typedef struct BDS_KeyboardArgs { int key; int down; int result; } BDS_KeyboardArgs;
@@ -62,6 +63,8 @@ typedef struct BDS_PacketWireArgs {
 typedef struct BDS_CommandOutputReadArgs {
     void* packet; void* output; void* stream; void* context; void* result;
 } BDS_CommandOutputReadArgs;
+// Common Packet::read: hidden Result<void>*, ReadOnlyBinaryStream*, context.
+typedef BDS_CommandOutputReadArgs BDS_PacketReadArgs;
 typedef struct BDS_RenderLevelArgs { void* renderer; void* screen; void* context; } BDS_RenderLevelArgs;
 typedef struct BDS_LevelArgs { void* level; } BDS_LevelArgs;
 // output points to the MSVC x64 std::vector<Actor*> hidden return buffer.

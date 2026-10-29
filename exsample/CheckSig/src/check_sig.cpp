@@ -1596,6 +1596,12 @@ private:
                 }
                 break;
             }
+            case BDS_HOOK_RENDER_LEVEL: {
+                const auto* a=static_cast<const BDS_RenderLevelArgs*>(raw);
+                if(a) values={{"renderer",pointerString(a->renderer)},
+                    {"screen",pointerString(a->screen)},{"context",pointerString(a->context)}};
+                break;
+            }
             case BDS_HOOK_COMMAND_OUTPUT_READ: {
                 const auto* a=static_cast<const BDS_CommandOutputReadArgs*>(raw);
                 if(a) {

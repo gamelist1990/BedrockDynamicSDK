@@ -123,3 +123,11 @@ ClientInstance+0x1E0のslot2はRVA0x768F0のRETであり、送信先として使
 残作業一覧ではFakeを `user_confirmed_complete` とし、共有関数の個別レビューは別項目に残します。
 Freecamの基本飛行は、共有PacketSender・新しい移動パケット定義・退出/ディメンション境界へ対応しました。
 Actor枠・地下表示の追加処理はoptionalグループへ分けています。基本飛行の実機動作は未確認です。
+
+## 描画移植の確認（1.26.60.5）
+
+更新したCheckSigで`optional/60-world-render.json`をcommandsへコピーし、ワールドへ入って見回してください。
+`result/commands/60-world-render.result.json`のrender呼出しと原点・Tessellator・shader値を確認します。
+HitBoxの枠が表示されるか、表示を切り替えた後やワールド退出後に異常がないかも確認してください。
+SpeedBuilderは現在タイトル観測モードです。`SpeedBuilder.log`のPacket read countersとtitle receivedを渡してください。
+自動記録・設置にはPlayerInventory選択、BlockType配置状態、HitResultのABI確認が残ります。

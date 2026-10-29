@@ -9,8 +9,8 @@ def generate(protocol_bytes,version_bytes):
  types=json.loads(protocol_bytes)['types'];version=json.loads(version_bytes)
  ids={name:int(number) for number,name in types['mcpe_packet'][1][0]['type'][1]['mappings'].items()}
  flags={name:int(number) for number,name in types['InputData'][1]['mappings'].items()}
- names=['move_player','player_auth_input','command_request','command_output']
- expected={'move_player':19,'player_auth_input':144,'command_request':77,'command_output':79}
+ names=['move_player','player_auth_input','command_request','command_output','set_title']
+ expected={'move_player':19,'player_auth_input':144,'command_request':77,'command_output':79,'set_title':88}
  if {name:ids[name] for name in names}!=expected:raise ValueError('packet identity changed; review SDK consumers')
  if version['minecraftVersion']!='1.26.60':raise ValueError('wrong source version')
  data={'schema':1,'scope':'wire protocol metadata, not C++ object offsets','source':{'repository':'PrismarineJS/minecraft-data','commit':COMMIT,'url':BASE+'/protocol.json','sha256':hashlib.sha256(protocol_bytes).hexdigest()},'version':version,'packet_ids':ids,'packets':{name:{'id':ids[name],'wire_definition':types['packet_'+name]} for name in names},'input_data':flags}

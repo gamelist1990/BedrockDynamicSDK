@@ -633,6 +633,62 @@
           }
         ]
       ]
+    },
+    "set_title": {
+      "id": 88,
+      "wire_definition": [
+        "container",
+        [
+          {
+            "name": "type",
+            "type": [
+              "mapper",
+              {
+                "type": "zigzag32",
+                "mappings": {
+                  "0": "clear",
+                  "1": "reset",
+                  "2": "set_title",
+                  "3": "set_subtitle",
+                  "4": "action_bar_message",
+                  "5": "set_durations",
+                  "6": "set_title_json",
+                  "7": "set_subtitle_json",
+                  "8": "action_bar_message_json"
+                }
+              }
+            ]
+          },
+          {
+            "name": "text",
+            "type": "string"
+          },
+          {
+            "name": "fade_in_time",
+            "type": "zigzag32"
+          },
+          {
+            "name": "stay_time",
+            "type": "zigzag32"
+          },
+          {
+            "name": "fade_out_time",
+            "type": "zigzag32"
+          },
+          {
+            "name": "xuid",
+            "type": "string"
+          },
+          {
+            "name": "platform_online_id",
+            "type": "string"
+          },
+          {
+            "name": "filtered_message",
+            "type": "string"
+          }
+        ]
+      ]
     }
   },
   "input_data": {

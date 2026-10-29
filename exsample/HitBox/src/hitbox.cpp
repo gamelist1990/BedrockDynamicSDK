@@ -517,6 +517,7 @@ public:
         return captureRegistryBatch(registry, local, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
     }
     void capturePlayerNames(void* world,std::uint64_t epoch,int minutes) const noexcept {
+        if(!playerListOffset_)return;
         const auto now=Clock::now();
         if(now<nextRoster_ && rosterEpoch_==epoch)return;
         nextRoster_=now+std::chrono::seconds(1);rosterEpoch_=epoch;
@@ -1358,7 +1359,7 @@ using RenderLevelFn = void(__fastcall*)(void*, void*, void*);
 using BeginFn = void(__fastcall*)(void*, int, int, int, bool);
 using VertexFn = void(__fastcall*)(void*, float, float, float);
 struct FloatColor { float r,g,b,a; };
-using ColorFn = void(__fastcall*)(void*, const FloatColor*);
+using ColorFn = void(__fastcall*)(void*, float, float, float, float);
 using MeshFn = void(__fastcall*)(void*, void*, void*, void*);
 using HashedNameCtorFn = void*(__fastcall*)(void*, const char*);
 using MaterialCtorFn = void*(__fastcall*)(void*, void*, const void*);
@@ -1739,12 +1740,16 @@ DWORD WINAPI startClient(void*) {
         // before accepting it or installing any native hooks.
         bedrock::Resolver candidateResolver;
         try {
-            const auto data=bedrock::parseNativeProfile(candidate).at("native_player_identity");
-            if(data.at("schema")!=1 || data.at("pointer_size")!=8 || data.at("entry_size")!=0xA8 ||
-               data.at("actor_unique_id_offset")!=0 || data.at("uuid_offset")!=8 || data.at("name_offset")!=24)
-                throw std::runtime_error("unsupported native player identity layout");
-            playerListOffset=data.at("level_player_list_offset").get<std::size_t>();
-            if(!playerListOffset || playerListOffset>0x10000)throw std::runtime_error("invalid PlayerList offset");
+            playerListOffset=0;
+            const auto root=bedrock::parseNativeProfile(candidate);
+            if(root.contains("native_player_identity")) {
+                const auto& data=root.at("native_player_identity");
+                if(data.at("schema")!=1 || data.at("pointer_size")!=8 || data.at("entry_size")!=0xA8 ||
+                   data.at("actor_unique_id_offset")!=0 || data.at("uuid_offset")!=8 || data.at("name_offset")!=24)
+                    throw std::runtime_error("unsupported native player identity layout");
+                playerListOffset=data.at("level_player_list_offset").get<std::size_t>();
+                if(!playerListOffset || playerListOffset>0x10000)throw std::runtime_error("invalid PlayerList offset");
+            }
         } catch(const std::exception& ex){error=ex.what();return false;}
         bedrock::NativeItemLayout candidateItems;
         bedrock::NativeActorLayout candidateActors;
@@ -1798,6 +1803,7 @@ DWORD WINAPI startClient(void*) {
         return 1;
     }
     access.setPlayerListOffset(playerListOffset);
+    if(!playerListOffset)log("PlayerList UUID roster unavailable; ActorType/RuntimeID filtering and Actor NameTag capture remain active");
     access.setLayouts(std::move(itemLayout), std::move(actorLayout),
                       worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
     log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; ActorType + remembered RuntimeID player filter; no name filter; profile candidate]");

@@ -11,6 +11,7 @@ inline constexpr std::uint16_t MovePlayerId=19;
 inline constexpr std::uint16_t PlayerAuthInputId=144;
 inline constexpr std::uint16_t CommandRequestId=77;
 inline constexpr std::uint16_t CommandOutputId=79;
+inline constexpr std::uint16_t SetTitleId=88;
 enum class PacketType : std::uint16_t {
     Login=1,
     PlayStatus=2,
