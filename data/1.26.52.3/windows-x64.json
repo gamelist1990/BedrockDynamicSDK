@@ -895,7 +895,6 @@
         "status": "candidate",
         "runtime_verified": false,
         "auth_input": {
-          "vtable_rva": "0xE83A360",
           "position_offset": 56,
           "delta_offset": 72,
           "analog_move_offset": 92,
@@ -904,33 +903,22 @@
           "input_flags_offset": 136,
           "input_flags_size": 16,
           "vehicle_offset": 216,
-          "get_id": {
-            "rva": "0xB26A00",
-            "entry_check": "B8 90 00 00 00 C3 CC CC"
-          },
-          "is_valid": {
-            "rva": "0x3C8BA90",
-            "entry_check": "56 57 48 83 EC 38 48 8B 05 E3 E5 B4 0D 48 31 E0 48 89 44 24 30 B8 FF FF"
-          }
+          "input_flags_storage": "native_bitset128"
         },
         "move_player": {
-          "vtable_rva": "0xE85BFC0",
           "position_offset": 56,
           "vehicle_offset": 88,
-          "get_id": {
-            "rva": "0x2ECD950",
-            "entry_check": "B8 13 00 00 00 C3 CC CC"
-          },
-          "is_valid": {
-            "rva": "0x2ECE550",
-            "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05 20 7E 6F 0B 0F 28 D1 0F 54 D0 0F 2E"
-          }
+          "runtime_id_offset": 48,
+          "mode_offset": 80,
+          "on_ground_offset": 81
         },
         "evidence": [
           "REA/Ghidra ev_0b98d57e71d487b6113586c65b50b93de981c7c1a89563912ddc072c77a676f8: exact-build auth input validation + Validate PlayerAuthInputPacketPayload field-name strings; transaction flags34/35/36 paired with owning payloads at0xB0/0xC0/0xB8",
           "REA/Ghidra ev_9905a373c2eddd0de8ff5f3f373e0ad3cac2f2ab232817382ca317e5b25095e9: MovePlayer position at0x38 and mode at0x50; reference declarations payload declarations corroborate field names",
           "Static evidence only; packet serialization timing, transaction handling and live server acceptance remain unverified"
-        ]
+        ],
+        "dispatch": "packet_id",
+        "native_layout_revision": 2
       },
       "command_request": {
         "vtable_rva": "0xE897420",
@@ -1128,6 +1116,17 @@
       "runtime_verified": false,
       "exit_client_offset": 136,
       "evidence": "Exact IClientInstance table anchored by two independently named requestLeaveGame methods; GameCallbacks secondary table onLevelExit disassembly adjusts this by -0x88. docs/world-events-and-packets.md records source and REA limitations."
+    },
+    "Packet": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "get_id_slot": 1,
+      "is_valid_slot": 11,
+      "scope": "native virtual ABI, independent of the wire protocol field ordering",
+      "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor."
     }
-  }
+  },
+  "analysis": {}
 }

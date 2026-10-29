@@ -40,7 +40,7 @@
       "mods": [
         "Freecam"
       ],
-      "action": "移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。"
+      "action": "共通Packet IDイベントとSDK移動フィールドアクセスで、固定位置・入力フラグ・編集失敗時の復元を実機確認。描画追加処理は別途確認。"
     },
     {
       "id": "world-event-abi",
@@ -127,6 +127,10 @@
     {
       "id": "sender",
       "label": "PacketSender"
+    },
+    {
+      "id": "packet_interface",
+      "label": "Packetの共通仮想インターフェース"
     },
     {
       "id": "movement_packets",
@@ -237,6 +241,7 @@
         "motion",
         "freecam_camera",
         "request_sender",
+        "packet_interface",
         "movement_packets",
         "freecam_boundaries"
       ],
@@ -2198,13 +2203,35 @@
       "symbol": "sub_8AB690"
     },
     {
-      "id": "/layouts/PacketSender/motion/auth_input/vtable_rva",
-      "group": "movement_packets",
+      "id": "/layouts/Packet/get_id_slot",
+      "group": "packet_interface",
       "kind": "layout",
-      "path": "/layouts/PacketSender/motion/auth_input/vtable_rva",
+      "path": "/layouts/Packet/get_id_slot",
       "reference_only": {
         "version": "1.26.52.3",
-        "value": "0xE83A360"
+        "value": 1
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Packet/is_valid_slot",
+      "group": "packet_interface",
+      "kind": "layout",
+      "path": "/layouts/Packet/is_valid_slot",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 11
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/Packet/scope",
+      "group": "packet_interface",
+      "kind": "layout",
+      "path": "/layouts/Packet/scope",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "native virtual ABI, independent of the wire protocol field ordering"
       },
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
@@ -2297,29 +2324,13 @@
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
-      "id": "/layouts/PacketSender/motion/auth_input/get_id",
-      "group": "movement_packets",
-      "kind": "function",
-      "path": "/layouts/PacketSender/motion/auth_input/get_id",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
-      "symbol": "PlayerAuthInputPacket::getId"
-    },
-    {
-      "id": "/layouts/PacketSender/motion/auth_input/is_valid",
-      "group": "movement_packets",
-      "kind": "function",
-      "path": "/layouts/PacketSender/motion/auth_input/is_valid",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
-      "symbol": "PlayerAuthInputPacket::isValid"
-    },
-    {
-      "id": "/layouts/PacketSender/motion/move_player/vtable_rva",
+      "id": "/layouts/PacketSender/motion/auth_input/input_flags_storage",
       "group": "movement_packets",
       "kind": "layout",
-      "path": "/layouts/PacketSender/motion/move_player/vtable_rva",
+      "path": "/layouts/PacketSender/motion/auth_input/input_flags_storage",
       "reference_only": {
         "version": "1.26.52.3",
-        "value": "0xE85BFC0"
+        "value": "native_bitset128"
       },
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
@@ -2346,19 +2357,59 @@
       "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
-      "id": "/layouts/PacketSender/motion/move_player/get_id",
+      "id": "/layouts/PacketSender/motion/move_player/runtime_id_offset",
       "group": "movement_packets",
-      "kind": "function",
-      "path": "/layouts/PacketSender/motion/move_player/get_id",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。"
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/runtime_id_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 48
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
-      "id": "/layouts/PacketSender/motion/move_player/is_valid",
+      "id": "/layouts/PacketSender/motion/move_player/mode_offset",
       "group": "movement_packets",
-      "kind": "function",
-      "path": "/layouts/PacketSender/motion/move_player/is_valid",
-      "next_action": "候補をprobeして周辺・参照・関数境界を確認。対応Observerがあれば観測し、レイアウトへ関数を結び付ける。",
-      "symbol": "MovePlayerPacket::isValid"
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/mode_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 80
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/move_player/on_ground_offset",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/move_player/on_ground_offset",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 81
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/dispatch",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/dispatch",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": "packet_id"
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
+    },
+    {
+      "id": "/layouts/PacketSender/motion/native_layout_revision",
+      "group": "movement_packets",
+      "kind": "layout",
+      "path": "/layouts/PacketSender/motion/native_layout_revision",
+      "reference_only": {
+        "version": "1.26.52.3",
+        "value": 2
+      },
+      "next_action": "現在のオブジェクトの型・オフセット・値・寿命を検証。旧版の値をそのまま新定義へ転記しない。"
     },
     {
       "id": "/layouts/PacketSender/title/vtable_rva",

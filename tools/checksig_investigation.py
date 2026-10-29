@@ -52,6 +52,7 @@ def generate_catalog():
  group('subchunks','LevelChunk・SubChunk走査',['/layouts/BlockSource/subchunk_scan'])
  group('request_binding','CommandRequestPacketの送信バインド',['/layouts/PacketSender/command_request'])
  group('sender','PacketSender',['/layouts/PacketSender/sender'])
+ group('packet_interface','Packetの共通仮想インターフェース',['/layouts/Packet'])
  group('movement_packets','PlayerAuthInputPacket・MovePlayerPacket',['/layouts/PacketSender/motion'])
  group('title_packets','SetTitlePacket',['/layouts/PacketSender/title'])
  group('local_commands','CommandRegistryのローカル整数コマンド',['/layouts/CommandRegistry'])
@@ -87,7 +88,7 @@ def generate_catalog():
   'Zoom':['input','fov','gameplay'],
   'TabList':['input','fov','gameplay'],
   'HitBox':['actors','items','identity','render','gameplay','world_events'],
-  'Freecam':['input','gameplay','actors','motion','freecam_camera','request_sender','movement_packets','freecam_boundaries'],
+  'Freecam':['input','gameplay','actors','motion','freecam_camera','request_sender','packet_interface','movement_packets','freecam_boundaries'],
   'BlockOutline':['gameplay','actors','items','world','subchunks','render','world_events'],
   'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
@@ -112,7 +113,7 @@ def generate_catalog():
  {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
  {'id':'placement-abi','status':'needs-review-after-observation','mods':['SpeedBuilder'],'action':'GameMode/HitResult/設置状態の新レイアウトと呼出規約を対応させ、設置・取消・インベントリ復帰を確認する。'},
  {'id':'world-render-abi','status':'needs-review-after-observation','mods':['Freecam','BlockOutline','HitBox'],'action':'LevelRenderer/Tessellator/Materialの新関数・状態保存復元・描画オフセットを対応させる。'},
- {'id':'freecam-layout-assertions','status':'core-updated-runtime-check-required','mods':['Freecam'],'action':'移動パケット・カメラ・culler・InsideBlockEffectのハードコードされたABI条件も確認する。定義JSONの数値変更だけで対応完了としない。'},
+ {'id':'freecam-layout-assertions','status':'core-updated-runtime-check-required','mods':['Freecam'],'action':'共通Packet IDイベントとSDK移動フィールドアクセスで、固定位置・入力フラグ・編集失敗時の復元を実機確認。描画追加処理は別途確認。'},
  {'id':'world-event-abi','status':'needs-review-after-observation','mods':['Top','Freecam','BlockOutline','SpeedBuilder','HitBox'],'action':'ワールドイベントの真の入口・各引数を確定し、シーン切替時の破棄と再取得を対応させる。'},
  {'id':'additional-observers','status':'needs-review-after-observation','mods':['CheckSig'],'action':'未対応ABIの候補はまずprobeと静的解析で型を確定し、安全な専用Observerまたは呼出元からの観測を追加する。'}],'scope':'source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility','sources':['src/profile_manager.cpp','include/bedrock/detail/native_world_access.hpp','include/bedrock/native_client_commands.hpp','include/bedrock/native_world_render.hpp','exsample/*/src'], 'groups':groups,'mods':mods,'requirements':list({row['id']:row for row in requirements}.values())}
 

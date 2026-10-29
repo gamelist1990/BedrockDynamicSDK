@@ -1,0 +1,6 @@
+Protocol metadata source: PrismarineJS/minecraft-data
+https://github.com/PrismarineJS/minecraft-data
+Pinned commit: 9c97fe50a82feb2c0f2be1cff35ce19c891bfb35
+Path: data/bedrock/1.26.60/protocol.json
+Generated files retain packet IDs, field definitions and InputData enum values.
+Native C++ layouts and the SDK implementation are maintained separately.

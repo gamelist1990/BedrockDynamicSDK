@@ -9,6 +9,8 @@
 #include <bedrock/game_api.hpp>
 #include <bedrock/native_motion.hpp>
 #include <bedrock/native_packet_sender.hpp>
+#include <bedrock/packet_events.hpp>
+#include <bedrock/native_movement_packets.hpp>
 #include <bedrock/native_brightness.hpp>
 #include <bedrock/native_camera.hpp>
 #include <bedrock/native_game_type.hpp>
@@ -360,7 +362,7 @@ BDS_HookToken packetToken{};
 void* subscribedPacketTarget{};
 std::atomic<void*> capturedSender{},capturedSendTarget{};
 std::atomic<std::uint64_t> capturedSendEpoch{};
-std::size_t statePositionOffset{},statePreviousOffset{},stateVelocityOffset{},fallOffset{},packetIdSlot{};
+std::size_t statePositionOffset{},statePreviousOffset{},stateVelocityOffset{},fallOffset{};
 bedrock::NativePacketSender senderLayout;
 bool renderReady{};
 std::uint32_t fallHash{};
@@ -370,12 +372,8 @@ bool inText(void* pointer) noexcept {
     const auto p=reinterpret_cast<std::uintptr_t>(pointer);return p>=moduleTextBegin&&p+16>=p&&p+16<moduleTextEnd;
 }
 
-struct MotionPacketLayout {
-    std::uintptr_t vtable{};
-    void* isValid{};
-    std::size_t position{},delta{},analog{},move{},rawMove{},flags{},vehicle{};
-};
-MotionPacketLayout authPacket,movePacket;
+bedrock::NativePacketEvents packetEvents;
+bedrock::NativeMovementPackets movementPackets;
 struct PacketPose {Vec position{};Clock::time_point seen{};std::uint64_t runtime{};std::uint8_t onGround{};};
 struct MovementAnchor {std::uint64_t epoch{},runtime{};std::array<PacketPose,2> poses{};};
 // Serialize only scalar packet edits and activation/restoration phases. Never
@@ -385,19 +383,11 @@ MovementAnchor observedPacketPoses;
 std::atomic<std::shared_ptr<const MovementAnchor>> movementAnchor;
 std::atomic<unsigned> anchoredPackets{},interactionPackets{};
 
-bool packetMatches(void* packet,const MotionPacketLayout& layout) noexcept {
-    void* table{};return read(packet,0,table)&&reinterpret_cast<std::uintptr_t>(table)==layout.vtable;
-}
-void observeMotionPose(void* packet,bool auth) noexcept {
-    PacketPose pose;const auto& layout=auth?authPacket:movePacket;
-    if(!read(packet,layout.position,pose.position)||!finite(pose.position))return;
-    std::uint64_t vehicle{};
-    if(!read(packet,layout.vehicle,vehicle)||vehicle!=(auth?UINT64_MAX:0))return;
-    if(!auth){std::uint8_t mode{};
-        if(!read(packet,0x30,pose.runtime)||!read(packet,0x50,mode)||mode!=0||
-           !read(packet,0x51,pose.onGround)||pose.onGround>1)return;
-    }
-    pose.seen=Clock::now();const auto e=epoch.load();
+void observeMotionPose(bedrock::NativePacketView packet,bool auth) noexcept {
+    bedrock::MovementPacketPose value;
+    if(!movementPackets.pose(packet,value))return;
+    PacketPose pose{value.position,Clock::now(),value.runtimeId,value.onGround};
+    const auto e=epoch.load();
     std::unique_lock lock(packetPoseMutex,std::try_to_lock);if(!lock)return;
     if(observedPacketPoses.epoch!=e){observedPacketPoses={};observedPacketPoses.epoch=e;}
     observedPacketPoses.poses[auth?0:1]=pose;
@@ -417,64 +407,28 @@ bool prepareMovementAnchor(std::uint64_t runtime,Vec position) {
     if(!ready)return false;
     anchor.runtime=runtime;movementAnchor.store(std::make_shared<const MovementAnchor>(anchor));return true;
 }
-bool validMotionPacket(void* packet,const MotionPacketLayout& layout) noexcept {
-    __try{return reinterpret_cast<bool(__fastcall*)(const void*)>(layout.isValid)(packet);}
-    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
-}
-bool anchorMotionPacket(void* packet,bool auth,const MovementAnchor& anchor) noexcept {
-    const auto& layout=auth?authPacket:movePacket;const auto& pose=anchor.poses[auth?0:1];
-    if(anchor.epoch!=epoch.load()||pose.seen==Clock::time_point{})return false;
-    Vec position{};if(!read(packet,layout.position,position)||!finite(position))return false;
-    if(!auth){std::uint64_t runtime{},vehicle{};std::uint8_t mode{};
-        if(!read(packet,0x30,runtime)||runtime!=anchor.runtime||!read(packet,layout.vehicle,vehicle)||vehicle||
-           !read(packet,0x50,mode)||mode!=0)return false;
-        return write(packet,layout.position,pose.position)&&write(packet,0x51,pose.onGround)&&validMotionPacket(packet,layout);
+void packetEvent(bedrock::PacketSendEvent& event,const std::shared_ptr<const MovementAnchor>& enteringAnchor) noexcept {
+    const auto packet=event.packet();
+    if(packet.rawId()<0) {if(suppressMovement.load()){disable(ReadFailed);event.cancel();}return;}
+    if(!bedrock::NativeMovementPackets::handles(event.id()))return;
+    const bool auth=event.id()==bedrock::PacketId::PlayerAuthInput;
+    std::unique_lock phase(packetMotionMutex);
+    const auto anchor=enteringAnchor?enteringAnchor:movementAnchor.load();
+    if(!anchor){observeMotionPose(packet,auth);return;}
+    const auto& saved=anchor->poses[auth?0:1];
+    if(anchor->epoch!=epoch.load()||saved.seen==Clock::time_point{}) {
+        disable(ReadFailed);blockedPackets.fetch_add(1);event.cancel();return;
     }
-    std::array<std::uint64_t,2> flags{};std::uint64_t vehicle{};
-    if(!read(packet,layout.flags,flags)||!read(packet,layout.vehicle,vehicle)||vehicle!=UINT64_MAX)return false;
-    // Keep tick, acknowledgements, item/block actions and their owning payloads.
-    // Strip only movement controls. Flags 34/35/36 must remain paired with the
-    // transaction/request/action data checked by the game's isValid method.
-    std::uint64_t controls=(std::uint64_t{1}<<34)-1;
-    for(unsigned bit:{40u,41u,42u,43u,45u,46u,47u,51u,52u,54u,55u,56u,57u,59u,60u,61u,62u,63u})controls|=std::uint64_t{1}<<bit;
-    const bool interaction=(flags[0]&((std::uint64_t{7}<<34)|(std::uint64_t{1}<<53)))!=0;
-    flags[0]&=~controls;flags[1]&=~std::uint64_t{1}; // SneakCurrentRaw is bit 64.
-    const std::array<float,2> zero{};
-    if(!write(packet,layout.position,pose.position)||!write(packet,layout.delta,Vec{})||
-       !write(packet,layout.analog,zero)||!write(packet,layout.move,zero)||
-       !write(packet,layout.rawMove,zero)||!write(packet,layout.flags,flags))return false;
-    if(interaction)interactionPackets.fetch_add(1);
-    return validMotionPacket(packet,layout);
-}
-
-int packetId(void* packet) noexcept {
-    void* table{};void* getter{};
-    if(!read(packet,0,table)||!read(table,packetIdSlot*sizeof(void*),getter)||!inText(getter))return -1;
-    std::array<std::uint8_t,8> code{};if(!read(getter,0,code))return -1;
-    // Current getId getters are constant leafs. Do not invoke an unverified
-    // native ABI or guess a payload layout to identify movement traffic.
-    if(code[0]==0xb8&&code[5]==0xc3){unsigned id{};std::memcpy(&id,code.data()+1,4);return id<=65535?static_cast<int>(id):-1;}
-    return -1;
+    const auto result=movementPackets.anchor(packet,{saved.position,saved.runtime,saved.onGround},anchor->runtime);
+    if(!result.applied){disable(ReadFailed);blockedPackets.fetch_add(1);event.cancel();return;}
+    if(result.interaction)interactionPackets.fetch_add(1);
+    anchoredPackets.fetch_add(1);
 }
 void BDS_HOOK_CALL packetSubscriber(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
-    // Retain the entering flight session BEFORE waiting for restoration. A
-    // packet already constructed with proxy coordinates still needs anchoring
-    // even if restore clears the active session while this callback waits.
     const auto enteringAnchor=movementAnchor.load();
     auto& args=*static_cast<BDS_PacketSendArgs*>(raw);
     if(args.sender!=observedSender.load()){next(frame,raw);return;}
-    const bool auth=packetMatches(args.packet,authPacket),move=packetMatches(args.packet,movePacket);
-    if(!auth&&!move){
-        // Other traffic is unrelated to movement and must not wait for M.
-        const int id=packetId(args.packet);
-        if(suppressMovement.load()&&(id==19||id==144)){disable(ReadFailed);return;}
-        next(frame,raw);return;
-    }
-    std::unique_lock phase(packetMotionMutex);
-    const auto anchor=enteringAnchor?enteringAnchor:movementAnchor.load();
-    if(!anchor) {observeMotionPose(args.packet,auth);phase.unlock();next(frame,raw);return;}
-    if(!anchor||!anchorMotionPacket(args.packet,auth,*anchor)) {disable(ReadFailed);blockedPackets.fetch_add(1);return;}
-    anchoredPackets.fetch_add(1);phase.unlock();next(frame,raw);
+    packetEvents.dispatch(args,[&](bedrock::PacketSendEvent& event){packetEvent(event,enteringAnchor);},next,frame);
 }
 void observePacketSender(void* instance) noexcept {
     if(stop.load())return;
@@ -674,31 +628,12 @@ void prepareProfile(const std::string& profile){
     const auto& visual=f.at("visual");
     if(visual.at("schema")!=1||visual.at("spectator_mode_behavior")!="native_spectator_culler_mode5")
         throw std::runtime_error("unsupported view-only spectator profile");
-    const auto& b=j.at("native_packets").at("sender");
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
-    senderLayout.load(j);packetIdSlot=number(b.at("packet_id_slot"));
-    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0||packetIdSlot!=1)
-        throw std::runtime_error("unsupported Borion native layout");
-    const auto packetBase=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    const auto& motion=j.at("native_packets").at("motion");
-    if(motion.at("schema")!=1)throw std::runtime_error("unsupported packet motion schema");
-    const auto loadPacket=[&](const nlohmann::json& data,MotionPacketLayout& layout,bool auth){
-        layout.vtable=packetBase+number(data.at("vtable_rva"));layout.position=number(data.at("position_offset"));
-        layout.vehicle=number(data.at("vehicle_offset"));
-        if(layout.position!=0x38||layout.vehicle!=(auth?0xd8:0x58))throw std::runtime_error("unsupported movement packet layout");
-        void* getter{};
-        if(!read(reinterpret_cast<void*>(layout.vtable),sizeof(void*),getter)||getter!=checkedFunction(data.at("get_id")))
-            throw std::runtime_error("movement packet vtable mismatch");
-        layout.isValid=checkedFunction(data.at("is_valid"));
-        if(auth){layout.delta=number(data.at("delta_offset"));layout.analog=number(data.at("analog_move_offset"));
-            layout.move=number(data.at("move_offset"));layout.rawMove=number(data.at("raw_move_offset"));layout.flags=number(data.at("input_flags_offset"));
-            if(layout.delta!=0x48||layout.analog!=0x5c||layout.move!=0x64||layout.rawMove!=0x80||layout.flags!=0x88||data.at("input_flags_size")!=16)
-                throw std::runtime_error("unsupported auth input controls layout");
-        }
-    };
-    loadPacket(motion.at("auth_input"),authPacket,true);loadPacket(motion.at("move_player"),movePacket,false);
+    senderLayout.load(j);packetEvents.load(j);movementPackets.load(j);
+    if(statePositionOffset!=0||statePreviousOffset!=12||stateVelocityOffset!=24||fallOffset!=0)
+        throw std::runtime_error("unsupported Borion native actor layout");
 
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     moduleTextBegin=base+number(j.at("target").at("text_rva"));moduleTextEnd=moduleTextBegin+number(j.at("target").at("text_size"));
