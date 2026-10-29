@@ -142,6 +142,17 @@ bool ProfileManager::prepare(const ProfileRequirements& requirements,const Profi
             error.clear();return true;
         }catch(const std::exception& e){error=e.what();return false;}catch(...){error="profile adapter threw an unknown exception";return false;}
     };
+    bool embeddedTried=false;
+    std::string embeddedFailure;
+    const auto tryEmbedded=[&]{
+        embeddedTried=true;
+        try{
+            const std::string embedded=generated::kSymbolDatabase;const auto root=bedrock::parseNativeProfile(embedded);
+            ProfileChoice selected;selected.version=root.at("target").at("version").get<std::string>();selected.source=ProfileSource::Embedded;selected.path="embedded";
+            if(validateDownloadedProfile(embedded,selected,identity,error)&&attempt(embedded,std::move(selected)))return true;
+        }catch(const std::exception& e){error=e.what();}
+        embeddedFailure=error;return false;
+    };
     if(options.updates==UpdatePolicy::ForceRemote){
         if(!inspectLoadedGame(identity,error))return false;
         if(refreshSupportedProfile(identity,json,choice,error)&&attempt(json,choice))return true;
@@ -156,18 +167,17 @@ bool ProfileManager::prepare(const ProfileRequirements& requirements,const Profi
             error=fetchError;
         }
         failures="selected profile: "+error;
+        // A cache can match the EXE yet predate this Mod's required layouts.
+        // Prefer the bundled exact-build definition before a throttled fetch.
+        if(options.embeddedFallback&&choice.source!=ProfileSource::Embedded&&tryEmbedded())return true;
         if(options.updates==UpdatePolicy::RefreshIfNeeded){
             if(refreshSupportedProfile(identity,json,choice,error)&&attempt(json,choice))return true;
             failures+="; refresh: "+error;
         }
     }
     if(options.embeddedFallback){
-        try{
-            const std::string embedded=generated::kSymbolDatabase;const auto root=bedrock::parseNativeProfile(embedded);
-            ProfileChoice selected;selected.version=root.at("target").at("version").get<std::string>();selected.source=ProfileSource::Embedded;selected.path="embedded";
-            if(validateDownloadedProfile(embedded,selected,identity,error)&&attempt(embedded,std::move(selected)))return true;
-        }catch(const std::exception& e){error=e.what();}
-        failures+="; embedded: "+error;
+        if(!embeddedTried&&tryEmbedded())return true;
+        failures+="; embedded: "+embeddedFailure;
     }
     error=failures;return false;
 #else

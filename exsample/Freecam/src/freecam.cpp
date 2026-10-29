@@ -637,8 +637,7 @@ void prepareProfile(const std::string& profile){
     hurtHash=number(f.at("hurt_time_component_hash"));hurtOffset=number(f.at("hurt_time_value_offset"));
     if(hurtOffset>4096||f.at("hurt_time_value_size")!=4)throw std::runtime_error("invalid camera/hurt layout");
     const auto& visual=f.at("visual");
-    if(visual.at("schema")!=1||visual.at("spectator_mode_behavior")!="native_spectator_culler_mode5")
-        throw std::runtime_error("unsupported view-only spectator profile");
+    if(visual.at("schema")!=1)throw std::runtime_error("unsupported camera visual schema");
     motionLayout=bedrock::native_motion::Layout::fromProfile(profile);
     statePositionOffset=number(j.at("native_motion").at("state_vector").at("state_position_offset"));statePreviousOffset=motionLayout.previous;
     stateVelocityOffset=motionLayout.velocity;fallHash=motionLayout.fallHash;fallOffset=motionLayout.fall;
@@ -761,6 +760,8 @@ DWORD WINAPI start(void*){
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_camera");
+        log("Freecam profile source="+std::string(bedrock::profileSourceName(selected->choice().source))+
+            " version="+selected->choice().version+" path="+selected->choice().path);
         // Include selection/load errors even when an old owner's capabilities
         // stop startup before the normal ready message.
         log(BDS_HookRuntimeDiagnostic());
@@ -780,6 +781,8 @@ DWORD WINAPI start(void*){
             log("SDK brightness API ready [owner-scoped gamma override]");
         } catch(const std::exception& e){log(std::string("Freecam full brightness unavailable: ")+e.what());}
         try {
+            if(f.at("visual").value("spectator_mode_behavior",std::string{})!="native_spectator_culler_mode5")
+                throw std::runtime_error("spectator terrain profile is unresolved; basic Freecam remains available");
             if(!renderReady)throw std::runtime_error("exact-build renderer layout unavailable");
             const auto& culling=f.at("visual").at("terrain_culling");
             if(culling.at("schema")!=1||number(culling.at("spectator_mode"))!=spectatorCullerMode)throw std::runtime_error("unsupported terrain culler schema");

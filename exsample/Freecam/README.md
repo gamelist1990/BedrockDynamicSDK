@@ -177,12 +177,15 @@ Freecamの`spectator_mode`は従来どおり描画用で、GameTypeを変更し�
 
 GitHub Windows CIで対象プロファイルを埋め込んだDLLを配布します。
 Fakeで実機確認したMinecraftCommands経由のPacketSender取得をSDKで共有しています。
-PlayerAuthInputPacket / MovePlayerPacketのvtableと検証関数は対象EXEの静的解析で更新しました。
-移動座標を書き換えたパケットは、MinecraftのisValidに通った場合だけ送信します。
+PlayerAuthInputPacket / MovePlayerPacketは共通PacketHookの通信データで扱います。
+移動座標と入力はSDK所有のコピーで編集し、通信定義の検査に通った場合だけ送信します。
 LocalPlayerは所有Tick内で取得し、追加のLocalPlayer直接Hookは設置しません。
 
 基本の飛行と、Actor枠・地下表示の追加処理は別々に初期化します。
 1.26.60.5のActor枠・地下表示用の描画定義は未完了で、利用不可の理由をログへ出します。
+未解決のspectator地形プロファイルは基本起動の条件にしません。
+古いキャッシュに必須定義がなければ、同じEXEに対応する同梱定義をGitHub再取得より先に試します。
+選択された定義は `Freecam profile source=... version=... path=...` に出ます。
 ライフサイクルはonLevelExit / onDimensionChangedEventを使用します。
 onPlayerLoaded / onCancelJoinGameは未解決で、今回のプロファイルでは購読しません。
 

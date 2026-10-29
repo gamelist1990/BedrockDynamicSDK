@@ -43,7 +43,8 @@ class ProfileManager {
 public:
     // Adapter runs synchronously on this initialization thread. It must validate
     // its required layouts/entry guards before installing hooks. Failure triggers
-    // a throttled GitHub refresh and then an exact-build embedded fallback.
+    // an exact-build embedded fallback, then a throttled GitHub refresh.
+    // ForceRemote still attempts GitHub before the embedded fallback.
     using Adapter=std::function<bool(const RuntimeProfile&,std::string&)>;
     bool prepare(const ProfileRequirements& requirements,const ProfileOptions& options,const Adapter& adapter,std::string& error);
     bool open(const ProfileRequirements& requirements,const ProfileOptions& options,std::string& error){
