@@ -1,13 +1,17 @@
-# BetterResourcePackManager（Windows プレイ中再読み込み v5）
+# BetterResourcePackManager（Windows プレイ中再読み込み v6）
 
 添付された Android ARM64 版 `BetterResourcePackManager v2.3.1` を解析し、
 BedrockDynamicSDK の API を使って Windows x64 向けに再実装するサンプルです。
-v4 は同じワールドでのパック切替まで実機で動作しましたが、既存・新設ブロック両方の
-テクスチャが崩れる報告がありました。v5 は地形アトラス更新後に、ゲーム標準の
-`BlockGraphics::reloadBlockTextures` と描画キャッシュの破棄・全チャンクの再描画要求を追加します。
-ゲーム側の非同期テクスチャ更新完了を確認してから、適用を開始したゲームスレッド上で実行します。
-待機中にワールドが変わった場合は実行を取り消します。非同期待機にプレイヤーやクライアントの
-生ポインターを保持しません。**v5 の表示修復は実機確認待ちです。**
+v5 の実機ログでは地形更新とブロックテクスチャ更新が実行され、通常ブロックの表示は
+復旧しました。一方、プレイヤーモデルとサーバーのカスタムブロックに不具合が残りました。
+v6 はアトラス更新だけでなく、ネイティブローダーの準備完了・未完了タスクなしを待ちます。
+その後、`MinecraftGame::startFrame` の開始時に、ゲーム標準の同期モデル・アニメーション再読込、
+エンティティ描画の再構築、既存 ECS 描画データの更新、クライアントのリソース変更通知を実行し、
+最後にブロックテクスチャと全チャンクの描画を更新します。
+描画オブジェクトを破棄・再生成する処理をプレイヤー取得関数の途中で実行しません。
+待機中にワールドが変わった場合は取り消します。非同期待機にプレイヤー・クライアントの
+生ポインターを保持せず、フレーム開始時のゲーム所有クライアント表から借用します。
+**v6 のプレイヤー表示・カスタムブロック修復は実機確認待ちです。**
 
 対応プロファイルは **Minecraft 1.26.60.5 / Windows x64 / Release MSVC** のみ。
 EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`。
@@ -32,12 +36,15 @@ EXE SHA-256 は `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672
 設定終了とスタック合成の Windows 経路は、対象 EXE の命令列と REA/Ghidra の解析に基づきます。
 Windows 標準のブロックテクスチャ更新処理で既存の BlockGraphics を更新し、
 オブジェクトを作り直す Android 版とは異なる経路で参照の有効性を維持します。
-サーバーパックを含む full stack をそのまま使用します。サーバーパック固有の原因かは未確定です。
+サーバーパックを含む full stack をそのまま使用します。サーバーパック固有の原因かは未確定です。別のサーバー用マネージャーをクライアント用スタックへ混ぜる処理は追加していません。
 既存・新設ブロック、アイテム・雲、複数回切替、ワールド退出の実機確認が必要です。
 旧ログの `reload_finalized` は言語サブパック更新関数からの復帰回数でした。
 v5 では誤解を避けるため `language_subpacks_updated` に改名しました。
 `terrain_atlas_completed` は対象の地形テクスチャ更新コールバックの完了、
-`block_textures_reloaded` / `clients_refreshed` は追加した修復処理からの復帰回数です。
+`block_textures_reloaded` / `clients_refreshed` はブロック更新処理からの復帰回数です。
+v6 の `geometry_reloaded` は同期モデル・アニメーション読込と既存描画データの再接続、
+`client_definitions_reloaded` はクライアントへのリソース変更通知からの復帰回数です。
+`resource_wait_frames` は未完了リソースを待って修復を延期したフレーム数です。
 これらも実際の表示が正しいことを保証するものではありません。
 プロファイルは `candidate` / `runtime_verified: false` を維持しています。
 
@@ -71,8 +78,9 @@ Linux では DLL は生成せず、画面判定・文字列・適用コールバ
    v2/v3 の `level_stack_included` は表示名が誤っていました。対象フラグはグローバルパックの包含です。
    変更なしの場合は適用回数が増えないことがあります。
    `settings` と `pre_game_overrides` だけでは反映成功は分かりません。
-   v5 は `terrain_atlas_completed` → `block_textures_reloaded` / `clients_refreshed` の増加と、
-   既存ブロック・新しく置いたブロック両方の表示を確認します。
+   v6 は `terrain_atlas_completed` → `geometry_reloaded` / `client_definitions_reloaded` →
+   `block_textures_reloaded` / `clients_refreshed` の増加と、
+   既存・新設・カスタムブロック、三人称・インベントリのプレイヤー表示、他プレイヤー・動物を確認します。
    `refresh_cancelled` は待機中にワールドが変わり修復を取り消した回数です。
    反映しない場合は新しいログを確認します。
 5. 変更なしで閉じる、追加・削除・並替を繰り返す、ワールドを退出・再入場する操作も確認します。

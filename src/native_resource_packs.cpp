@@ -29,6 +29,7 @@ struct NativeResourcePacks::Binding {
     using ScreenName = void *(__fastcall *)(void *, void *);
     using LocalPlayer = void *(__fastcall *)(void *);
     using ClientGame = void *(__fastcall *)(void *);
+    using GeometryReload = void(__fastcall *)(void *, bool);
     using AtlasUpdate = void(__fastcall *)(void *, const void *, bool);
     using Deallocate = void(__fastcall *)(void *);
     void *initTarget{};
@@ -36,7 +37,13 @@ struct NativeResourcePacks::Binding {
     void *preGameTarget{};
     void *exitTarget{}, *eventTarget{}, *composeTarget{}, *reloadTarget{}, *languageTarget{};
     void *navigateTarget{}, *eventDestroyTarget{};
-    void *atlasTarget{}, *atlasCaller{}, *localPlayerTarget{};
+    void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
+    Initialize frame{};
+    GeometryReload geometryReload{};
+    Event notifyClientResources{};
+    std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
+    std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
+    std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{}, resourceWaitFrames{};
     AtlasUpdate atlasUpdate{};
     ClientGame clientLevel{}, levelData{}, gamePacks{};
     Event refreshClient{};
@@ -130,39 +137,75 @@ struct NativeResourcePacks::Binding {
         if (state.pendingRefresh.complete(game))
             ++state.terrainCompleted;
     }
-    static void *__fastcall onLocalPlayer(void *client) {
-        auto &state = *active().load(std::memory_order_acquire);
-        auto *player = state.localPlayer(client);
-        if (!state.enabled.load(std::memory_order_acquire) ||
-            !state.refreshPending.load(std::memory_order_acquire))
-            return player;
-        auto *game = state.clientGame(client);
-        auto *level = player ? state.clientLevel(client) : nullptr;
+    void *primaryClient(void *game) const noexcept {
+        // Borrow the primary map entry only during startFrame on its owning
+        // thread. This is the same key-zero lookup as the native App getter.
+        void *head{}, *node{}, *client{};
+        unsigned char nil{}, key{};
+        if (!native_profile::read(game, clientsOffset, head) || !head ||
+            !native_profile::read(head, nodeLeftOffset, node) || !node || node == head ||
+            !native_profile::read(node, nodeNilOffset, nil) || nil ||
+            !native_profile::read(node, nodeKeyOffset, key) || key != 0 ||
+            !native_profile::read(node, nodeClientOffset, client))
+            return nullptr;
+        return client;
+    }
+    bool resourcesReady(void *game) const noexcept {
+        void *loader{};
+        unsigned char ready{};
+        std::uint64_t outstanding{};
+        return native_profile::read(game, loaderOffset, loader) && loader &&
+               native_profile::read(loader, loaderReadyOffset, ready) && ready == 1 &&
+               native_profile::read(loader, loaderOutstandingOffset, outstanding) && outstanding == 0;
+    }
+    void refreshAtFrame(void *game) {
+        if (!enabled.load(std::memory_order_acquire) ||
+            !refreshPending.load(std::memory_order_acquire))
+            return;
+        auto *client = primaryClient(game);
+        auto *player = client ? localPlayer(client) : nullptr;
+        auto *level = player && clientGame(client) == game ? clientLevel(client) : nullptr;
         void *manager{};
         bool cancelled{};
+        const bool ready = resourcesReady(game);
         {
-            std::lock_guard lock(state.refreshMutex);
-            manager = state.pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled);
-            state.refreshPending.store(state.pendingRefresh.pending(), std::memory_order_release);
+            std::lock_guard lock(refreshMutex);
+            manager = pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled, ready);
+            refreshPending.store(pendingRefresh.pending(), std::memory_order_release);
         }
         if (cancelled)
-            ++state.refreshCancelled;
-        if (manager) {
-            // We are back on the apply thread, with a currently live client and
-            // the same level. No client/player pointer survives the async load.
-            auto *data = state.levelData(level);
-            if (!data || state.gamePacks(game) != manager) {
-                ++state.failures;
-                return player;
-            }
-            state.reloadBlockTextures(manager, static_cast<std::byte *>(data) + state.experimentsOffset);
-            ++state.blockTexturesReloaded;
-            // The game's stateless hot-reload callback clears the client render
-            // cache and marks all its render chunk coordinators dirty.
-            state.refreshClient(nullptr, client);
-            ++state.clientsRefreshed;
+            ++refreshCancelled;
+        if (!manager) {
+            if (!ready)
+                ++resourceWaitFrames;
+            return;
         }
-        return player;
+        auto *data = levelData(level);
+        if (!data || gamePacks(game) != manager) {
+            ++failures;
+            return;
+        }
+        // Full animation/geometry reload also rebuilds actor renderers, resumes
+        // client render resources, invalidates ECS render data, and rebinds
+        // each live LevelRenderer to the new resource definition groups.
+        geometryReload(game, true);
+        ++geometryReloaded;
+        // Native per-client callback obtains/releases the current nonowner
+        // definition-group reference itself. Its only capture is Game at +8.
+        std::array<void *, 2> closure{nullptr, game};
+        notifyClientResources(closure.data(), client);
+        ++clientDefinitionsReloaded;
+        reloadBlockTextures(manager, static_cast<std::byte *>(data) + experimentsOffset);
+        ++blockTexturesReloaded;
+        refreshClient(nullptr, client);
+        ++clientsRefreshed;
+    }
+    static void __fastcall onStartFrame(void *game) {
+        auto &state = *active().load(std::memory_order_acquire);
+        // No actor render call is on the stack here. Replacing renderer objects
+        // inside getLocalPlayer would invalidate its caller's borrowed objects.
+        state.refreshAtFrame(game);
+        state.frame(game);
     }
     static bool claimCallback(void *function, std::size_t offset, void *expected) noexcept {
         __try {
@@ -391,7 +434,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v5")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v6")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -440,7 +483,30 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
                 throw std::runtime_error("invalid resource pack apply layout");
         next->screenName = reinterpret_cast<Binding::ScreenName>(
             get("top_screen_name", "void* __fastcall(ClientInstance*, void* stringResult)"));
-        next->localPlayerTarget = get("local_player", "LocalPlayer* __fastcall(ClientInstance*)");
+        next->localPlayer = reinterpret_cast<Binding::LocalPlayer>(get("local_player", "LocalPlayer* __fastcall(ClientInstance*)"));
+        next->frameTarget = get("start_frame", "void __fastcall(MinecraftGame*)");
+        next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
+        next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
+        native_profile::checked(root, layout.at("primary_client_lookup_entry"));
+        const auto &clients = layout.at("primary_clients");
+        next->clientsOffset = native_profile::number(clients.at("map_offset"));
+        next->nodeLeftOffset = native_profile::number(clients.at("left_offset"));
+        next->nodeNilOffset = native_profile::number(clients.at("nil_offset"));
+        next->nodeKeyOffset = native_profile::number(clients.at("key_offset"));
+        next->nodeClientOffset = native_profile::number(clients.at("client_offset"));
+        const auto &loader = layout.at("resource_loader");
+        next->loaderOffset = native_profile::number(loader.at("game_offset"));
+        next->loaderReadyOffset = native_profile::number(loader.at("ready_offset"));
+        next->loaderOutstandingOffset = native_profile::number(loader.at("outstanding_offset"));
+        for (auto offset : {next->clientsOffset, next->nodeLeftOffset, next->nodeNilOffset,
+                            next->nodeKeyOffset, next->nodeClientOffset, next->loaderOffset,
+                            next->loaderReadyOffset, next->loaderOutstandingOffset})
+            if (offset > 0x10000)
+                throw std::runtime_error("invalid frame reload layout");
+        const auto &capture = layout.at("client_notification_capture");
+        if (native_profile::number(capture.at("object_bytes")) != 2 * sizeof(void *) ||
+            native_profile::number(capture.at("game_offset")) != sizeof(void *))
+            throw std::runtime_error("unsupported client notification capture ABI");
         next->clientLevel = reinterpret_cast<Binding::ClientGame>(get("client_level", "void* __fastcall(ClientInstance*)"));
         next->levelData = reinterpret_cast<Binding::ClientGame>(get("level_data", "void* __fastcall(Level*)"));
         next->gamePacks = reinterpret_cast<Binding::ClientGame>(get("game_packs", "void* __fastcall(MinecraftGame*)"));
@@ -487,12 +553,13 @@ bool NativeResourcePacks::install(std::string &error) {
         return true;
     }
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
-        !binding_->screenName || !binding_->localPlayerTarget || !binding_->deallocate ||
+        !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
         !binding_->reloadTarget || !binding_->languageTarget ||
         !binding_->navigateTarget || !binding_->eventDestroy ||
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
+        !binding_->frameTarget || !binding_->geometryReload || !binding_->notifyClientResources ||
         !binding_->levelData || !binding_->gamePacks || !binding_->reloadBlockTextures || !binding_->refreshClient) {
         error = "resource pack profile has not been loaded";
         return false;
@@ -537,8 +604,8 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->gameInGame), &binding_->tokens[9]) &&
         BDS_HookDirectInstall(binding_->atlasTarget, reinterpret_cast<void *>(&Binding::onAtlasUpdate),
                               reinterpret_cast<void **>(&binding_->atlasUpdate), &binding_->tokens[10]) &&
-        BDS_HookDirectInstall(binding_->localPlayerTarget, reinterpret_cast<void *>(&Binding::onLocalPlayer),
-                              reinterpret_cast<void **>(&binding_->localPlayer), &binding_->tokens[11]);
+        BDS_HookDirectInstall(binding_->frameTarget, reinterpret_cast<void *>(&Binding::onStartFrame),
+                              reinterpret_cast<void **>(&binding_->frame), &binding_->tokens[11]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -558,6 +625,8 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->globalIncluded.load(), binding_->navigations.load(),
             binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load(),
             binding_->terrainCompleted.load(), binding_->blockTexturesReloaded.load(),
-            binding_->clientsRefreshed.load(), binding_->refreshCancelled.load()};
+            binding_->clientsRefreshed.load(), binding_->refreshCancelled.load(),
+            binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
+            binding_->resourceWaitFrames.load()};
 }
 } // namespace bedrock

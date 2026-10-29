@@ -23,7 +23,7 @@ class PendingTerrainRefresh {
         return true;
     }
     bool pending() const noexcept { return manager_ != nullptr; }
-    void *take(void *game, void *level, std::uint32_t thread, bool &cancelled) noexcept {
+    void *take(void *game, void *level, std::uint32_t thread, bool &cancelled, bool resourcesReady = true) noexcept {
         cancelled = false;
         if (!pending() || game != game_ || thread != thread_)
             return nullptr;
@@ -32,7 +32,7 @@ class PendingTerrainRefresh {
             cancelled = true;
             return nullptr;
         }
-        if (!ready_)
+        if (!ready_ || !resourcesReady)
             return nullptr;
         auto *result = manager_;
         manager_ = nullptr; // Claim before native code can reenter the getter.

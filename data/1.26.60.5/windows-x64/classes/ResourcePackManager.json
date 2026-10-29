@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v5",
+      "adapter": "windows-live-reload-v6",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -82,9 +82,18 @@
         },
         "update_atlas_pbr": {
           "symbol": "MinecraftGame::_updateTextureAtlasPBRData"
+        },
+        "start_frame": {
+          "symbol": "MinecraftGame::startFrame"
+        },
+        "reload_geometry": {
+          "symbol": "MinecraftGame::reloadAnimationAndGeometryData"
+        },
+        "notify_client_resources": {
+          "symbol": "MinecraftGame::_notifyClientResourcePacksChanged"
         }
       },
-      "evidence": "v4 user confirmed in-world pack changes but both existing and newly placed blocks use scrambled atlas regions. v5 follows exact native hotreload BlockGraphics::reloadBlockTextures + per-client cache invalidation/all-chunks-dirty path, after normal terrain texture callback finishes. Pending reload stores identity tokens, no client/player pointer; live getLocalPlayer hook claims it on apply thread only if Game and Level still match. User has not runtime-tested v5.",
+      "evidence": "v5 user observed terrain_atlas_completed=1, block_textures_reloaded=1, clients_refreshed=1 and vanilla block appearance repaired; all model views and server custom blocks still broken. v6 additionally waits for native loader ready/no outstanding work; performs synchronous native animation/geometry + renderer/ECS rebinding and client resource-change notification at startFrame before final block texture/chunk refresh. Does not merge the separate server resource manager (native getter returns server-data context; not established as client resource layer). No v6 runtime proof; custom-block repair remains a hypothesis until user testing.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -108,6 +117,31 @@
         "entry_check": "90 48 85 F6 74 2C F0 FF 4E 08 75 26 48 8B 06 48 8B 00 48 89 F1 FF 15 89",
         "kind": "call-return-address",
         "evidence": "Native _finishReloadingResources lambda601 nested lambda3 ends terrain texture handle refresh with _updateTextureAtlasPBRData(Game*, Game+1490, true), call RVA9598C7, return9598CC. Hook marks readiness only after original returns."
+      },
+      "primary_clients": {
+        "map_offset": 2512,
+        "left_offset": 0,
+        "nil_offset": 25,
+        "key_offset": 32,
+        "client_offset": 56,
+        "evidence": "Native App::getPrimaryClientInstance at RVA8BCFC0 receives Game+30; reads App+9A0 (=Game+9D0), traverses leftmost tree entry, requires key byte+20 ==0 and reads owned client at+38. SDK borrows it at startFrame on original apply thread only; validates Game and Level identity before refresh."
+      },
+      "primary_client_lookup_entry": {
+        "rva": "0x8bcfc0",
+        "entry_check": "56 57 53 48 83 EC 20 48 8B 81 A0 09 00 00 4C 8B 40 08 41 80 78 19 00 48",
+        "kind": "entry-guard-only",
+        "evidence": "Native App primary-client map lookup entry, not invoked by SDK to avoid constructing/destroying a NonOwnerPtr return."
+      },
+      "resource_loader": {
+        "game_offset": 1696,
+        "ready_offset": 72,
+        "outstanding_offset": 64,
+        "evidence": "Exact Game::onFullPackStackInvalid reads ResourceLoadManager+48==1. Native geometry reload completion routine RVA88F410 first requires Game+6A0 nonnull and loader+40==0 before rebinding live clients/LevelRenderer. The adapter requires both in addition to terrain completion."
+      },
+      "client_notification_capture": {
+        "object_bytes": 16,
+        "game_offset": 8,
+        "evidence": "Native invoker RVA956930 reads only closure+8 Game*. It obtains current ActorResourceDefinitionGroup through Game vtable+380, calls client vtable+AB8 onActiveResourcePacksChanged, destroys its own temporary NonOwnerPtr. No vtable or ownership operations on the borrowed closure."
       }
     }
   },
@@ -370,7 +404,7 @@
       "abi": "void __fastcall(void* unused, ClientInstance*)",
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
-      "evidence": "Maintained SDK name for native stateless hotreload lambda439 invoker, vtable RVA F0978F0. Pdata [946B80,946C0E). RCX unused, RDX client. Clears native client cache via slot0x790, gets LevelRenderer via0x5C8, loops coordinators and calls RenderChunkCoordinator::_setAllDirty(false,false) RVA7920F70. Correlated LeviLamina LevelRenderer::rebuildAllRenderChunkGeometry source."
+      "evidence": "Maintained SDK name for native stateless hotreload lambda439 invoker, vtable RVA F0978F0. Pdata [946B80,946C0E). RCX unused, RDX client. Clears CachedScenes UI scene cache via slot0x790, gets LevelRenderer via0x5C8, loops coordinators and calls RenderChunkCoordinator::_setAllDirty(false,false) RVA7920F70. Correlated LeviLamina LevelRenderer::rebuildAllRenderChunkGeometry source."
     },
     "MinecraftGame::_updateTextureAtlasPBRData": {
       "rva": "0x8923f0",
@@ -384,6 +418,45 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
       "evidence": "atlas-pbr-completion-evidence.json ev_8bbf92d4d2d06cc37c02603e55889a37cddc621da3f946da22b860c70a7ac589. RCXGame, RDXTextureAtlas, R8Bterrain from exact instructions. Both hotreload and normal finishReloadingResources terrain callback use this final texture update. SDK only records readiness at exact normal-reload return address9598CC; performs block reload on subsequent live client getter on original apply thread."
+    },
+    "MinecraftGame::startFrame": {
+      "rva": "0x882f00",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC F8 02 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(MinecraftGame*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
+      "evidence": "Exact lambda412 RTTI startFrame@MinecraftGame@@QEAAXXZ at RVA12336170 -> invoker943940 -> registrar882F00..883AAD (VT F0976B0 loaded8838E4). RCXGame, no arguments. Refresh runs before original, never inside an actor/player getter."
+    },
+    "MinecraftGame::reloadAnimationAndGeometryData": {
+      "rva": "0x8c27a0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC D8 01 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(MinecraftGame*, bool sync)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
+      "evidence": "reload-animation-geometry-evidence.json, exact .pdata [8C27A0,8C3B05); Game primary vtable F091B70 slot67 (0x218), immediately before getGeometryGroup slot0x220. RCXGame, DLsync. Clears/rebuilds geometry and actor definitions; reloads client entity renderers at8C34E7, invokes client onAppResumed at8C358D, refreshes ECS render data at8C3596, reinitializes live LevelRenderer at8C36F7. Bool true takes synchronous native path. Candidate ABI, not runtime verified."
+    },
+    "MinecraftGame::_notifyClientResourcePacksChanged": {
+      "rva": "0x956930",
+      "signature": "",
+      "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF 48 89 D6 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void* gameClosure, ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
+      "evidence": "client-resource-notification-evidence.json; exact native per-client full resource change callback [956930,9569F9). RCX borrowed gameClosure (only+8 used), RDXliveClient. Gets Game ActorResourceDefinitionGroupMutable via vtable+380; calls ClientInstance::onActiveResourcePacksChanged (target65A6E10) via+AB8. That target clears block tessellator state, item texture caches, entity renderer resources, LevelRenderer references and UI scene cache."
     }
   }
 }

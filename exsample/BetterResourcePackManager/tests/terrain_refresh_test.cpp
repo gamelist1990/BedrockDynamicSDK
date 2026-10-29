@@ -9,6 +9,8 @@ int main() {
     assert(!pending.complete(&other));
     assert(pending.complete(&game));
     assert(!pending.complete(&game));
+    assert(!pending.take(&game, &level, 42, cancelled, false)); // Geometry/tasks still loading.
+    assert(pending.pending());
     assert(!pending.take(&game, &level, 7, cancelled)); // Worker cannot run native refresh.
     assert(!pending.take(&other, &level, 42, cancelled));
     assert(pending.take(&game, &level, 42, cancelled) == &manager);
