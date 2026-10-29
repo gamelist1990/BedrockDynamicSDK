@@ -8,23 +8,23 @@ Minecraft Bedrock **Windows x64** 向けのC++ SDKとMod DLLです。
 [バージョン別リリース](https://github.com/gamelist1990/BedrockDynamicSDK/releases) からModのZIPを取得します。
 同じゲームバージョンの更新は、同じリリース内のZIPを上書きします。
 
-| ゲーム | 定義・対応範囲 |
+| ゲーム | 対応状況 |
 | --- | --- |
-| 1.26.52.3 | 既存のネイティブアダプター定義。各ModのREADMEも参照 |
-| 1.26.60.5 | 43定義の入口確認済み（重複を統合して40関数）。Keyboard::feedはHookと値の取得を確認済み。その他のABI・オブジェクトレイアウトには調査中の項目あり |
+| 1.26.52.3 | 既存アダプターを新しいSDK構造でビルド |
+| 1.26.60.5 | Freecam・Zoom・Fakeの正常動作をユーザー確認済み。使用経路をverifiedへ反映 |
 
-**1.26.60.5の全Modが実機動作確認済みという意味ではありません。**
-Topなどが必要とするGUI・ローカル整数コマンド用CommandRegistryのレイアウトは未完成です。
-起動ログの「missing Minecraft layout」に表示されたクラスの調査が必要です。
+[1.26.60.5の確認済み関数・入口特定・未検証項目](data/1.26.60.5/README.md)をチェックリストで管理しています。
 
-### 1.26.60.5の今回の更新
+### 今回の変更
 
-FreecamのInsideBlockEffectに新EXEの対象型・呼出箇所を追加。飛行中の対象エフェクトだけを除外し、実機の見た目は確認待ちです。
+- **TabList**：Packet ID別の仮想デコーダーを共有Hookし、PlayerList・skinをSDKの専用ワーカーで解析。新経路の受信と画面表示は実機確認待ちです。
+- **SDK**：公開型・GameAccess・イベント・Actor component・Player bounds・TitlePacketsを分割。旧includeの転送ヘッダーを削除。
+- **CheckSig**：commands内のJSONでメモリ範囲を読み、実測バイト列・保護属性・読めなかった理由を入力別resultへ出力。
+- **定義**：クラス別JSONとmanifestを配布。旧windows-x64.jsonの自動生成とScanClientを廃止。
+- **未確認**：HitBoxの実表示、SpeedBuilderの新版設置処理、Freecamの未解決culler/view経路等はチェックリストを参照。
 
-- HitBox: LocalPlayer取得を正確な関数へ変更。新EXEの描画定義とPlayerList位置を追加。対象取得・描画は更新後の実機確認待ち。
-- SpeedBuilder: 共通`Packet::read` HookとID 88でタイトルを観測。現時点ではタイトル観測モードで、自動記録・設置は未対応。ホットバー選択・配置状態計算・HitResultのABI確認が必要。
-- TabList: 受領ログでは起動とTab入力のみ確認。GUIは表示されなかったとの報告を受領。旧固定PlayerList位置を版別定義へ置換し、空一覧の診断を追加。更新後の表示確認待ち。
-- 共有Hook runtimeは4.8.0。同時に使うMod DLLを同じリリースへ更新し、Minecraftを完全終了してから再起動してください。古いDLLが先にロードされると、そのruntimeが残ります。
+**共有runtimeは4.8.0。併用するModを同じリリースへ更新し、Minecraftを完全終了して再起動してください。**
+TabListはDLLロード後にワールドへ入り直すと、初回のPlayerListを受信できます。
 
 ## SDKと版別定義の更新
 
