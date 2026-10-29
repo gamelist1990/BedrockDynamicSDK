@@ -100,9 +100,21 @@
         },
         "recreate_builders": {
           "symbol": "LevelBuilder::recreateBuilders"
+        },
+        "get_block_graphics": {
+          "symbol": "BlockGraphics::getForBlock"
+        },
+        "read_cached_graphics": {
+          "symbol": "BlockGraphics::_readCachedClientGraphics"
+        },
+        "initialize_block_graphics": {
+          "symbol": "BlockGraphics::initBlocks"
+        },
+        "drain_renderer_tasks": {
+          "symbol": "TaskGroup::flush"
         }
       },
-      "evidence": "v6 user confirms player model repaired and geometry_reloaded/client_definitions_reloaded=1, but screenshots show custom-geometry atlas fragments after all stages; newly placed blocks also wrong. v7 retains v6 and adds native LevelRenderer onAppResumed after block UV updates, before all-chunk dirty callback, to drain tasks and recreate LevelBuilder workers rather than reusing old tessellation builders. Whether this also repairs server custom-material UV snapshots is not runtime established. No direct client component-memory patch or server-manager merge.",
+      "evidence": "v6 user confirms player model repaired and geometry_reloaded/client_definitions_reloaded=1, but screenshots show custom-geometry atlas fragments after all stages; newly placed blocks also wrong. v7 retains v6 and adds native LevelRenderer onAppResumed after block UV updates, before all-chunk dirty callback, to drain tasks and recreate LevelBuilder workers rather than reusing old tessellation builders. Whether this also repairs server custom-material UV snapshots is not runtime established. No direct client component-memory patch or server-manager merge. Final v7 also ports the previously omitted full initBlocks + scoped lazy getForBlock cached-pointer clearing from the Android mod. TaskGroup is drained before old owned graphics are destroyed.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -155,8 +167,11 @@
       "level_renderer": {
         "app_listener_offset": 8,
         "resume_slot_offset": 40,
-        "evidence": "Exact LevelRenderer constructor [53484D0,534D318) stores primary table F2465C0 at self, AppPlatformListener table F2466C0 at self+8 (534855B/5348562). Listener table slot5 is53542E0. Resume uses listener-relative embedded LevelBuilder at+548, drains TaskGroup via773730, calls5333590 with current gameplay resources and finishes via tail jump53544A0 with primary self=listener-8. Runtime vtable slot must equal checked resume entry before invocation."
-      }
+        "evidence": "Exact LevelRenderer constructor [53484D0,534D318) stores primary table F2465C0 at self, AppPlatformListener table F2466C0 at self+8 (534855B/5348562). Listener table slot5 is53542E0. Resume uses listener-relative embedded LevelBuilder at+548, drains TaskGroup via773730, calls5333590 with current gameplay resources and finishes via tail jump53544A0 with primary self=listener-8. Runtime vtable slot must equal checked resume entry before invocation.",
+        "task_group_offset": 1000
+      },
+      "block_client_graphics_offset": 48,
+      "block_graphics_cache_evidence": "Exact getForBlock RVA67ED140 -> Block client accessor at +118 -> folded reader6A459E0 reads cached BlockGraphics* at clientData+30; returns cached pointer if nonnull, otherwise resolves current global map by block runtime ID+114. Reader also appears in three item renderer functions; clearing is scoped by TLS to getForBlock only. Android source mod clears cached graphics in getForBlock before original and uses initBlocks instead of only reloadBlockTextures. v7 performs task drain, then full initBlocks, then native renderer resume/builder recreation; lazy cache invalidation remains active after the first rebuild. Runtime visual validation pending."
     }
   },
   "symbols": {
@@ -510,6 +525,58 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
       "evidence": "recreate-level-builders-evidence.json; lambda28 type anchor LevelBuilder::recreateBuilders vtable F2478E0; exact resume call5354359 RCXlistener+548, RDXgameplayGraphicsResources. Recreates worker builders in vector, disposing prior workers through533C0E0. Entry additionally checked; adapter invokes it through native LevelRenderer resume, retaining native task drain/resource ownership handling."
+    },
+    "BlockGraphics::getForBlock": {
+      "rva": "0x67ed140",
+      "signature": "",
+      "entry_check": "56 48 83 EC 60 48 89 CE 48 8B 05 71 AF B1 0B 48 31 E0 48 89 44 24 58 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
+      "evidence": "block-graphics-getter-evidence.json. Pdata[67ED140,67ED299). RCXblock; cached graphics reader at6A459E0 via client accessor+118; fallback global BlockGraphics map keyed block+114 runtime ID. Hook scopes shared field-reader invalidation to this resolver only."
+    },
+    "BlockGraphics::_readCachedClientGraphics": {
+      "rva": "0x6a459e0",
+      "signature": "",
+      "entry_check": "48 8B 42 30 48 8B 09 48 89 01 C3",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void* capture, void* clientData)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
+      "evidence": "cached-block-graphics-evidence.json. Leaf 11 bytes: MOV RAX,[RDX+30]; MOV RCX,[RCX]; MOV [RCX],RAX; RET. Shared with item-renderer functions6EDCDB0,6EDDB30,6EDEB90; SDK invalidates only within getForBlock TLS scope. Borrowed pointer is atomically cleared without destruction."
+    },
+    "BlockGraphics::initBlocks": {
+      "rva": "0x67f8f90",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ResourcePackManager*, const void* experiments)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
+      "evidence": "init-block-graphics-evidence.json; exact native initial gameplay callback94D20A passes manager RCX, LevelData+160 Experiments RDX. Destroys old owned BlockGraphics, reconstructs registry including runtime entries, invokes block client initialization hooks. SDK drains renderer tasks first and invalidates cached pointers on subsequent getForBlock lookups, matching Android mod cache handling."
+    },
+    "TaskGroup::flush": {
+      "rva": "0x773730",
+      "signature": "",
+      "entry_check": "55 41 56 56 57 53 48 81 EC 30 01 00 00 48 8D AC 24 80 00 00 00 0F 29 B5",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(TaskGroup*)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
+      "evidence": "Exact LevelRenderer::onAppResumed first call53542FF receives [listener+3E0] = [primaryRenderer+3E8]. Pdata[773730,773A38). SDK uses the same wait operation before replacing owned BlockGraphics, then lets native resume drain again/recreate workers."
     }
   }
 }

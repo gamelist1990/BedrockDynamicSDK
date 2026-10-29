@@ -75,7 +75,9 @@ DWORD WINAPI start(void *) noexcept {
                 current.geometryReloaded != previous.geometryReloaded ||
                 current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
-                current.levelBuildersRecreated != previous.levelBuildersRecreated) {
+                current.levelBuildersRecreated != previous.levelBuildersRecreated ||
+                current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
+                current.graphicsCacheResets != previous.graphicsCacheResets) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -96,6 +98,8 @@ DWORD WINAPI start(void *) noexcept {
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
                     << " resource_wait_frames=" << current.resourceWaitFrames
                     << " level_builders_recreated=" << current.levelBuildersRecreated
+                    << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
+                    << " graphics_cache_resets=" << current.graphicsCacheResets
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

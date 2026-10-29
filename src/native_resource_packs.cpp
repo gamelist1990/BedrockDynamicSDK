@@ -29,6 +29,7 @@ struct NativeResourcePacks::Binding {
     using ScreenName = void *(__fastcall *)(void *, void *);
     using LocalPlayer = void *(__fastcall *)(void *);
     using ClientGame = void *(__fastcall *)(void *);
+    using GraphicsGetter = void*(__fastcall *)(const void *);
     using GeometryReload = void(__fastcall *)(void *, bool);
     using AtlasUpdate = void(__fastcall *)(void *, const void *, bool);
     using Deallocate = void(__fastcall *)(void *);
@@ -42,7 +43,13 @@ struct NativeResourcePacks::Binding {
     GeometryReload geometryReload{};
     Event notifyClientResources{};
     ClientGame clientRenderer{};
-    Initialize resumeRenderer{};
+    Initialize resumeRenderer{}, drainRendererTasks{};
+    Event initializeBlockGraphics{}, cachedGraphics{};
+    GraphicsGetter blockGraphics{};
+    void *blockGraphicsTarget{}, *cachedGraphicsTarget{};
+    std::size_t rendererTasksOffset{}, cachedGraphicsOffset{};
+    std::atomic<bool> freshBlockGraphics{};
+    std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{};
     std::size_t rendererListenerOffset{}, rendererResumeSlotOffset{};
     std::atomic<std::uint64_t> levelBuildersRecreated{};
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
@@ -76,7 +83,7 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 12> tokens{};
+    std::array<BDS_HookToken, 14> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
@@ -140,6 +147,41 @@ struct NativeResourcePacks::Binding {
         std::lock_guard lock(state.refreshMutex);
         if (state.pendingRefresh.complete(game))
             ++state.terrainCompleted;
+    }
+    static bool &readingBlockGraphics() {
+        static thread_local bool value{};
+        return value;
+    }
+    static void *__fastcall onBlockGraphics(const void *block) {
+        auto &state = *active().load(std::memory_order_acquire);
+        const bool previous = readingBlockGraphics();
+        struct Restore {
+            bool previous;
+            ~Restore() { readingBlockGraphics() = previous; }
+        } restore{previous};
+        readingBlockGraphics() = true;
+        return state.blockGraphics(block);
+    }
+    static bool clearGraphics(void *data, std::size_t offset, void *&previous) noexcept {
+        __try {
+            previous = InterlockedExchangePointer(
+                reinterpret_cast<void *volatile *>(static_cast<std::byte *>(data) + offset), nullptr);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    static void __fastcall onCachedGraphics(void *capture, void *data) {
+        auto &state = *active().load(std::memory_order_acquire);
+        // The same tiny field-reader is folded into other callers. Restrict
+        // invalidation to BlockGraphics::getForBlock, matching the source mod.
+        if (readingBlockGraphics() && state.enabled.load(std::memory_order_acquire) &&
+            state.freshBlockGraphics.load(std::memory_order_acquire)) {
+            void *previous{};
+            if (!clearGraphics(data, state.cachedGraphicsOffset, previous))
+                ++state.failures;
+            else if (previous)
+                ++state.graphicsCacheResets;
+        }
+        state.cachedGraphics(capture, data);
     }
     void *primaryClient(void *game) const noexcept {
         // Borrow the primary map entry only during startFrame on its owning
@@ -212,6 +254,16 @@ struct NativeResourcePacks::Binding {
             if (native_profile::read(listener, 0, vtable) &&
                 native_profile::read(vtable, rendererResumeSlotOffset, resumeEntry) &&
                 resumeEntry == reinterpret_cast<void *>(resumeRenderer)) {
+                void *tasks{};
+                if (!native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
+                    ++failures;
+                    return;
+                }
+                // Drain old mesh jobs before initBlocks destroys owned graphics.
+                drainRendererTasks(tasks);
+                freshBlockGraphics.store(true, std::memory_order_release);
+                initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
+                ++blockGraphicsRebuilt;
                 resumeRenderer(listener);
                 ++levelBuildersRecreated;
             } else {
@@ -511,10 +563,19 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
         next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
         next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
+        next->blockGraphicsTarget = get("get_block_graphics", "void* __fastcall(const void* block)");
+        next->cachedGraphicsTarget = get("read_cached_graphics", "void __fastcall(void* capture, void* clientData)");
+        next->initializeBlockGraphics = reinterpret_cast<Binding::Event>(get("initialize_block_graphics", "void __fastcall(ResourcePackManager*, const void* experiments)"));
+        next->drainRendererTasks = reinterpret_cast<Binding::Initialize>(get("drain_renderer_tasks", "void __fastcall(TaskGroup*)"));
         next->resumeRenderer = reinterpret_cast<Binding::Initialize>(get("resume_renderer", "void __fastcall(AppPlatformListener*)"));
         // Check the callee reached by the native resume routine too.
         get("recreate_builders", "void __fastcall(LevelBuilder*, void* graphicsResources)");
         const auto &renderer = layout.at("level_renderer");
+        next->rendererTasksOffset = native_profile::number(renderer.at("task_group_offset"));
+        next->cachedGraphicsOffset = native_profile::number(layout.at("block_client_graphics_offset"));
+        if (next->rendererTasksOffset > 0x10000 || next->rendererTasksOffset % sizeof(void *) ||
+            next->cachedGraphicsOffset > 0x1000 || next->cachedGraphicsOffset % sizeof(void *))
+            throw std::runtime_error("invalid block graphics cache layout");
         next->rendererListenerOffset = native_profile::number(renderer.at("app_listener_offset"));
         next->rendererResumeSlotOffset = native_profile::number(renderer.at("resume_slot_offset"));
         if (next->rendererListenerOffset > 0x1000 || next->rendererListenerOffset % sizeof(void *) ||
@@ -593,7 +654,8 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->geometryReload || !binding_->notifyClientResources ||
-        !binding_->clientRenderer || !binding_->resumeRenderer ||
+        !binding_->clientRenderer || !binding_->resumeRenderer || !binding_->drainRendererTasks ||
+        !binding_->initializeBlockGraphics || !binding_->blockGraphicsTarget || !binding_->cachedGraphicsTarget ||
         !binding_->levelData || !binding_->gamePacks || !binding_->reloadBlockTextures || !binding_->refreshClient) {
         error = "resource pack profile has not been loaded";
         return false;
@@ -639,7 +701,11 @@ bool NativeResourcePacks::install(std::string &error) {
         BDS_HookDirectInstall(binding_->atlasTarget, reinterpret_cast<void *>(&Binding::onAtlasUpdate),
                               reinterpret_cast<void **>(&binding_->atlasUpdate), &binding_->tokens[10]) &&
         BDS_HookDirectInstall(binding_->frameTarget, reinterpret_cast<void *>(&Binding::onStartFrame),
-                              reinterpret_cast<void **>(&binding_->frame), &binding_->tokens[11]);
+                              reinterpret_cast<void **>(&binding_->frame), &binding_->tokens[11]) &&
+        BDS_HookDirectInstall(binding_->blockGraphicsTarget, reinterpret_cast<void *>(&Binding::onBlockGraphics),
+                              reinterpret_cast<void **>(&binding_->blockGraphics), &binding_->tokens[12]) &&
+        BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
+                              reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[13]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -661,6 +727,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->terrainCompleted.load(), binding_->blockTexturesReloaded.load(),
             binding_->clientsRefreshed.load(), binding_->refreshCancelled.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
-            binding_->resourceWaitFrames.load(), binding_->levelBuildersRecreated.load()};
+            binding_->resourceWaitFrames.load(), binding_->levelBuildersRecreated.load(),
+            binding_->blockGraphicsRebuilt.load(), binding_->graphicsCacheResets.load()};
 }
 } // namespace bedrock
