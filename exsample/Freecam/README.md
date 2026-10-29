@@ -114,7 +114,7 @@ revision5では本体が毎フレームmode3を再指定し、約5秒で1600回�
 
 `visibility_diagnostics: true`で、通常視点でもFreecam中でも0.5秒ごとにカメラの候補フィールド・カリング方式・Actor GameTypeを記録します。
 出力はDocuments/PEXData/Freecam/visibility.jsonlです。revision6は本体のカメラ描画から読み取った`raw_view_flags_7c_88`、`camera_view_flags_valid`、`draw_inside_cubes`も記録します。読み取りだけで描画フラグは変更しません。既定false。画面表示やゲームモードを変更しません。
-ScanClientの既存監視はEXEの書き込み可能セクションが対象で、カメラのヒープを追わないため、この補助記録も必要です。
+カメラのヒープを調べる場合は、この補助記録とCheckSigの範囲memoryジョブを併用できます。
 比較時はfull_bright=falseとし、同一ローカルワールド・同一描画方式で、通常の地上→本物のspectator地上→spectator地中→通常に戻してFreecam地中を、それぞれ10秒ずつ記録してください。
 GameType=-1やvalid_camera_read=falseは読み取り不成立です。候補フィールドの意味・視認効果はこの記録だけで確定しません。
 

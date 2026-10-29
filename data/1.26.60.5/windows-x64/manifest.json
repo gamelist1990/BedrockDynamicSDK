@@ -65,7 +65,7 @@
     },
     {
       "path": "classes/Camera.json",
-      "sha256": "543ab039fd4775c67bd52361ce8364680f3f75155bf245338ce12c5bcd800149"
+      "sha256": "8169039083e7fcff261bfef77628b6e33805c60d73757c4c0b40f64d98ababcb"
     },
     {
       "path": "classes/ClientInstance.json",
@@ -137,7 +137,7 @@
     },
     {
       "path": "classes/Packet.json",
-      "sha256": "0a62851ab36f470059adfa400b4a336d2306610f23be8ef67824e5e28d732b7b"
+      "sha256": "c8ce97eb2a4f07658ebe82d5463e8a64f65b823eb15716723e4378e02e4f6f48"
     },
     {
       "path": "classes/PacketRead.json",
@@ -165,7 +165,7 @@
     },
     {
       "path": "classes/StateVectorComponent.json",
-      "sha256": "21a7a6da342b64b29b23a136fae08a94a2b2787c5c83f2a84ba33eed71742488"
+      "sha256": "fc73506cd0b757b2534a2d99b0e63499ebf75bff8f7c0fad9fef6dd9aa5dece1"
     },
     {
       "path": "classes/Tessellator.json",

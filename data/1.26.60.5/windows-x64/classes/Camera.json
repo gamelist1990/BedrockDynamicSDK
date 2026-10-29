@@ -205,7 +205,10 @@
             "limitations": [
               "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
             ]
-          }
+          },
+          "runtime_unverified_fields": [
+            "variants"
+          ]
         },
         "evidence": "Candidate schema retained from 1.26.52.3; component fields and visual offsets are still old-build candidates. Functions are updated only where 1.26.60.5 has a unique .pdata-bounded static candidate.",
         "notes": "Only 1.26.60.5 function-start candidates are callable. Missing culler, caller, and view-factory candidates remain unresolved; no old-build vtable RVAs or runtime observations are reused.",
@@ -238,7 +241,12 @@
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
-      }
+      },
+      "runtime_unverified_fields": [
+        "hurt_time_component_hash",
+        "hurt_time_value_offset",
+        "hurt_time_value_size"
+      ]
     }
   }
 }

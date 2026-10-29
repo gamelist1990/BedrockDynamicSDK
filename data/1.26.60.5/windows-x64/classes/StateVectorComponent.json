@@ -27,7 +27,11 @@
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
-      }
+      },
+      "runtime_unverified_fields": [
+        "state_vector/fall_distance_component_hash",
+        "state_vector/fall_distance_value_offset"
+      ]
     }
   }
 }

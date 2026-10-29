@@ -6,6 +6,8 @@
 #include <map>
 #include <mutex>
 #include <vector>
+#include <atomic>
+#include <memory>
 
 namespace bedrock {
 // PlayerRecord/Skin/SkinImage are decoded from the selected data protocol.
@@ -107,7 +109,12 @@ class PlayerListPackets {
             }
             if (next.size() > 512)
                 throw std::runtime_error("packet roster exceeds 512 players");
+            auto snapshot = std::make_shared<std::vector<PacketPlayer>>();
+            snapshot->reserve(next.size());
+            for (const auto &[id, player] : next)
+                snapshot->push_back(player);
             players_.swap(next);
+            published_.store(std::move(snapshot), std::memory_order_release);
             for (const auto &update : updates) {
                 if (update.remove)
                     ++stats_.removed;
@@ -129,13 +136,11 @@ class PlayerListPackets {
             stats_.error = "packet roster decode failed";
         }
     }
+    std::shared_ptr<const std::vector<PacketPlayer>> snapshotShared() const noexcept {
+        return published_.load(std::memory_order_acquire);
+    }
     std::vector<PacketPlayer> snapshot() const {
-        std::lock_guard lock(mutex_);
-        std::vector<PacketPlayer> result;
-        result.reserve(players_.size());
-        for (const auto &[id, player] : players_)
-            result.push_back(player);
-        return result;
+        return *snapshotShared();
     }
     Statistics statistics() const {
         std::lock_guard lock(mutex_);
@@ -144,6 +149,7 @@ class PlayerListPackets {
     void clear() {
         std::lock_guard lock(mutex_);
         players_.clear();
+        published_.store(emptySnapshot_, std::memory_order_release);
         ++resetEpoch_;
         stats_.players = 0;
         ++stats_.generation;
@@ -202,6 +208,8 @@ class PlayerListPackets {
             throw std::runtime_error("invalid wire skin image extent");
         face(image, player);
     }
+    inline static const auto emptySnapshot_ = std::make_shared<const std::vector<PacketPlayer>>();
+    std::atomic<std::shared_ptr<const std::vector<PacketPlayer>>> published_{emptySnapshot_};
     mutable std::mutex mutex_;
     std::map<std::array<std::byte, 16>, PacketPlayer> players_;
     Statistics stats_;

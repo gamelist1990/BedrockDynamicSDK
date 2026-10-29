@@ -96,10 +96,10 @@ Freecam有効中の編集失敗は送信を止め、Freecam解除・本体復帰
 
 ## 実機確認の範囲
 
-この経路は静的解析に基づく候補で、実機の位置固定・解除復帰は未確認です。
+Freecamの正常動作はユーザー確認済みです。送信Hookの検証範囲は移動パケットの使用経路です。
 FreecamはsendToServerの同期呼出しに帰属するwireイベントだけを編集します。
 別スレッドへ遅延した送信、サーバー側送信、受信パケットをクライアント送信と推定しません。
-受信Hookは今回のAPIに追加していません。既存のFake応答経路は従来のCommandOutput read Hookです。
+受信には下記のパケット別仮想デコーダーHookを使用します。Fake応答と同一デコーダーの場合は共有runtimeの1本のHookにまとめます。
 
 `Freecam.log` の5秒ごとのsnapshotに次を出します。
 
@@ -143,3 +143,8 @@ roster.stop(packets);
 TabListはこの解析ワーカー、行生成ワーカー、MurderDetectのコピー処理を並行させます。
 ネイティブActorはSDKのruntime actor listからゲームtickで読み、ワーカーには渡しません。
 共有Hookの購読一覧は変更時だけコピーし、各callbackでの一覧生成と全体registryロックをなくしています。
+
+タイトルは`<bedrock/packets/title_packets.hpp>`の`TitlePackets`で購読できます。
+`install(selectedProfile, embeddedProfile, handler, error)`へ渡すhandlerは`TitlePacket`を受け取ります。
+`TitleType`の値はprotocol.jsonから生成し、Modはタイトルパケットのnative offsetを読みません。
+wire受信がない旧版ではSDKがexact-buildのタイトルアダプターを使います。

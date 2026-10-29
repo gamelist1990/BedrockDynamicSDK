@@ -15,6 +15,9 @@ def generate(source: Path, version_source: Path, policy_source: Path, output: Pa
     lines+=['enum class PacketType : std::uint16_t {']+[f'    {camel(name)}={value},' for name,value in ids.items()]+['};']
     lines+=['constexpr std::string_view packetName(std::uint16_t id) noexcept {','    switch(id){']+[f'    case {value}:return "{name}";' for name,value in ids.items()]+['    default:return "unknown";','    }','}']
     lines+=['enum class InputData : unsigned {']+[f'    {camel(name)}={index},' for name,index in flags.items()]+['};']
+    title_types=types['packet_set_title'][1][0]['type'][1]['mappings']
+    lines+=['enum class TitleType : int { Unknown=-1,']+[f'    {camel(name)}={number},' for number,name in title_types.items()]+['};']
+    lines+=['constexpr TitleType titleType(std::string_view name) noexcept {']+[f'    if(name=="{name}")return TitleType::{camel(name)};' for name in title_types.values()]+['    return TitleType::Unknown;','}']
     movement=json.loads(policy_source.read_text(encoding='utf-8'))['controls']
     lines+=['inline constexpr std::array movementControls{']+['    InputData::'+camel(name)+',' for name in movement if name in flags]+['};',
         'constexpr void clearMovement(std::array<std::uint64_t,2>& flags) noexcept {',

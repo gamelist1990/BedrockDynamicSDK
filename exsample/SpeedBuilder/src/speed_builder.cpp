@@ -4,7 +4,7 @@
 #include <bedrock/generated/symbols.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
-#include <bedrock/packets/packet_api.hpp>
+#include <bedrock/packets/title_packets.hpp>
 #include "native.hpp"
 #include "speed_builder/config.hpp"
 #include <knownfolders.h>
@@ -34,41 +34,16 @@ std::mutex logMutex;std::deque<std::string> logs;std::atomic<unsigned> lostLogs{
 void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}value+=" at_ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());logs.emplace_back(std::move(value));}
 struct TitleCopy{std::uint64_t epoch{};int type{};native::StringCopy text;};
 std::mutex titleMutex;std::deque<TitleCopy> titles;
-bedrock::PacketApi packetReads;bool wireTitles{},titleOnlyMode{};
+bedrock::TitlePackets packetTitles;bool wireTitles{},titleOnlyMode{};
 std::string gameVersion;
-std::atomic<unsigned> packetsRead{},titlesRead{},titleDecodeFailures{};
-void receivePacket(const bedrock::PacketReadEvent& event){
-    ++packetsRead;
-        if(stopped.load()||event.rawId()!=88)return;
-        ++titlesRead;
-        try{
-            bedrock::WireReader in(event.payload());TitleCopy text;text.epoch=epoch.load();
-            const auto type=in.zigzag(32);if(type<0||type>8)throw std::runtime_error("invalid title mode");text.type=static_cast<int>(type);
-            const auto value=in.string(2048);in.zigzag(32);in.zigzag(32);in.zigzag(32);
-            in.string();in.string();in.string();if(in.remaining())throw std::runtime_error("unexpected title tail");
-            text.text.size=value.size();std::memcpy(text.text.bytes,value.data(),value.size());
-            if(text.type==0||text.type==1||text.type==2||text.type==3||text.type==6||text.type==7){
-                std::unique_lock lock(titleMutex,std::try_to_lock);
-                if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
-            }
-        }catch(...){++titleDecodeFailures;}
-
-}
-using TitleReadFn=void*(__fastcall*)(void*,void*,void*);TitleReadFn originalTitleRead{};BDS_HookToken titleToken{};
-bool captureTitle(void* packet,void* result,TitleCopy* out)noexcept{
-    std::uintptr_t vt{};unsigned char success{};
-    return native::read(packet,0,vt)&&vt==bindings.titleVtable&&native::read(result,0x40,success)&&(success&1)&&
-        native::read(packet,0x30,out->type)&&out->type>=0&&out->type<=8&&
-        ((out->type==0||out->type==1||out->type==5)||native::copyString(static_cast<std::byte*>(packet)+0x38,&out->text));
-}
-void* __fastcall titleRead(void* packet,void* result,void* stream){
-    const auto generation=epoch.load();void* value=originalTitleRead(packet,result,stream);
-    if(stopped.load())return value;
-    TitleCopy text;text.epoch=generation;
-    if(captureTitle(packet,result,&text)&&(text.type==0||text.type==1||text.type==2||text.type==3||text.type==6||text.type==7)){
-        std::unique_lock lock(titleMutex,std::try_to_lock);
-        if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
-    }return value;
+void receiveTitle(const bedrock::TitlePacket& event){
+    if(stopped.load())return;
+    const auto type=event.type;
+    if(type!=bedrock::TitleType::Clear&&type!=bedrock::TitleType::Reset&&type!=bedrock::TitleType::SetTitle&&type!=bedrock::TitleType::SetSubtitle&&type!=bedrock::TitleType::SetTitleJson&&type!=bedrock::TitleType::SetSubtitleJson)return;
+    TitleCopy text;text.epoch=epoch.load();text.type=static_cast<int>(type);text.text.size=event.text.size();
+    std::memcpy(text.text.bytes,event.text.data(),event.text.size());
+    std::unique_lock lock(titleMutex,std::try_to_lock);
+    if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
 }
 std::string plain(std::string_view input){
     std::string out;out.reserve(input.size());
@@ -464,7 +439,7 @@ void worker(const std::filesystem::path& dir){
             if(!updates.empty())file.flush();
         }
         if(wireTitles&&Clock::now()>=nextDiagnostics){nextDiagnostics=Clock::now()+std::chrono::seconds(10);
-            file<<"Packet read counters: packets="<<packetsRead.load()<<" titles="<<titlesRead.load()<<" decode_failures="<<titleDecodeFailures.load()<<'\n';file.flush();}
+            file<<"Packet read counters: native_calls="<<packetTitles.receiveStatistics().calls<<" titles="<<packetTitles.received()<<" decode_failures="<<packetTitles.rejected()<<'\n';file.flush();}
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
         if(job&&job->before->token.world==epoch.load()){
             auto result=std::make_shared<DiffResult>(DiffResult{sb::prepareCandidates(*job->before,job->after),job->serial});
@@ -510,8 +485,7 @@ DWORD WINAPI start(void*){
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         gameVersion=bedrock::parseNativeProfile(profile).at("target").value("version",std::string("unknown"));
         reader.states.reserve(4096);reader.names.reserve(512);
-        if(wireTitles){packetReads.onReceive(bedrock::PacketId::SetTitle,receivePacket);if(!packetReads.installReceive(profile,bedrock::generated::kSymbolDatabase,error))throw std::runtime_error(error);}
-        else if(!BDS_HookDirectInstall(bindings.titleReadFn,reinterpret_cast<void*>(&titleRead),reinterpret_cast<void**>(&originalTitleRead),&titleToken))throw std::runtime_error("SetTitlePacket read hook conflict");
+        if(!packetTitles.install(profile,bedrock::generated::kSymbolDatabase,receiveTitle,error))throw std::runtime_error(error);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});
         api.Event.Enum.Keyboard.then([](const bedrock::KeyEvent& event){if(event.pressed&&event.inputKey()==config.load()->cancelKey)cancelRequested.store(true);});
@@ -520,7 +494,7 @@ DWORD WINAPI start(void*){
         if(titleOnlyMode)note("partial ready: Packet ID 88 title observer active [runtime unverified]; automatic recording/build disabled; missing PlayerInventory selection and BlockType placement ABI");
         note("ready; press Esc and return to gameplay; title/subtitle trigger enabled; cancel key="+std::to_string(config.load()->cancelKey));note(BDS_HookRuntimeDiagnostic());status.store(2);worker(dir);
     }catch(const std::exception& e){status.store(4);try{const auto dir=directory();std::filesystem::create_directories(dir);std::ofstream out(dir/L"SpeedBuilder.log",std::ios::app);out<<"startup failed: "<<e.what()<<'\n';}catch(...){} }
-    stopped.store(true);cancelRequested.store(true);if(status.load()!=4)status.store(3);return 0;
+    packetTitles.stop();stopped.store(true);cancelRequested.store(true);if(status.load()!=4)status.store(3);return 0;
 }
 }
 extern "C" __declspec(dllexport) unsigned SpeedBuilder_GetStatus(){return status.load();}

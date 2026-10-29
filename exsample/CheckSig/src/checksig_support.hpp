@@ -20,9 +20,17 @@ inline const SupportJson* supportLookup(const SupportJson& root,const std::strin
     catch(const std::exception&) { return nullptr; }
 }
 inline bool supportLayoutVerified(const SupportJson& root,std::string path) {
+    const auto requested=path;
     while(!path.empty()) {
         const auto* value=supportLookup(root,path);
-        if(value && value->is_object() && value->contains("runtime_verified")) return value->value("runtime_verified",false);
+        if(value && value->is_object() && value->contains("runtime_verified")) {
+            if(!value->value("runtime_verified",false))return false;
+            for(const auto& field:value->value("runtime_unverified_fields",SupportJson::array())){
+                const auto excluded=path+"/"+field.get<std::string>();
+                if(requested==excluded||requested.starts_with(excluded+"/"))return false;
+            }
+            return true;
+        }
         const auto slash=path.find_last_of('/'); if(slash==std::string::npos) break; path.resize(slash);
     }
     return false;

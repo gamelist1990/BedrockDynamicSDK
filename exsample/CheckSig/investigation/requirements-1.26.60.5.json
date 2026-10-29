@@ -136,7 +136,11 @@
     },
     {
       "id": "title_packets",
-      "label": "共通Packet::readとID88のタイトル読取"
+      "label": "ID別仮想デコーダーとタイトル読取"
+    },
+    {
+      "id": "roster_packets",
+      "label": "通信PlayerList・スキン・ワールド境界"
     },
     {
       "id": "local_commands",
@@ -204,12 +208,13 @@
       "required_groups": [
         "input",
         "fov",
-        "gameplay"
+        "gameplay",
+        "roster_packets",
+        "packet_interface",
+        "actors"
       ],
       "optional_groups": [
-        "actors",
-        "items",
-        "identity"
+        "items"
       ],
       "manual_checks": [
         "一覧の名前・UUID・Actor対応・装備表示・退出後の消去"
@@ -261,7 +266,7 @@
         "items",
         "world",
         "placement",
-        "title_packets",
+        "roster_packets",
         "world_events"
       ],
       "optional_groups": [],
@@ -306,7 +311,7 @@
       "required_groups": [],
       "optional_groups": [],
       "manual_checks": [
-        "JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新"
+        "JSON自動読込・入口照合・観測Hook・範囲メモリ読取・入力別結果と残作業の更新"
       ]
     }
   ],
@@ -2781,42 +2786,42 @@
     },
     {
       "id": "/layouts/PacketRead/stream_view_offset",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "layout",
       "path": "/layouts/PacketRead/stream_view_offset",
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketRead/stream_size_offset",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "layout",
       "path": "/layouts/PacketRead/stream_size_offset",
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketRead/stream_cursor_offset",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "layout",
       "path": "/layouts/PacketRead/stream_cursor_offset",
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketRead/result_success_offset",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "layout",
       "path": "/layouts/PacketRead/result_success_offset",
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"
     },
     {
       "id": "/layouts/PacketRead/read",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "function",
       "path": "/layouts/PacketRead/read",
       "next_action": "入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。"
     },
     {
       "id": "/layouts/PacketRead/vtable_anchor_slot",
-      "group": "title_packets",
+      "group": "roster_packets",
       "kind": "layout",
       "path": "/layouts/PacketRead/vtable_anchor_slot",
       "next_action": "現在のオブジェクトやテーブルに対して値・型・寿命を確認。"

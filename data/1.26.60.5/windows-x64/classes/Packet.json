@@ -23,7 +23,10 @@
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
-      }
+      },
+      "runtime_unverified_fields": [
+        "is_valid_slot"
+      ]
     }
   }
 }

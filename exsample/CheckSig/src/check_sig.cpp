@@ -685,7 +685,7 @@ public:
                 throw std::runtime_error("loaded PE .text metadata disagrees with the SDK fingerprint");
             writeEvent("started", {
                 {"identity", moduleIdentityJson(*image_, identity_)},
-                {"checksig_features_revision",4},
+                {"checksig_features_revision",5},
                 {"hook_runtime", BDS_HookRuntimeVersion()},
                 {"hook_runtime_abi", BDS_HookRuntimeAbi()}
             });
@@ -782,7 +782,7 @@ private:
         for(auto it=watchCalls_.begin();it!=watchCalls_.end();) {
             if(it->first.starts_with(source+":")) it=watchCalls_.erase(it); else ++it;
         }
-        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",4}, {"arch", "x64"},
+        jobResults_[source] = {{"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",5}, {"arch", "x64"},
             {"input", source}, {"identity", moduleIdentityJson(*image_, identity_)},
             {"status", "running"}, {"events", json::array()}};
         bool investigation = false, recorded = false;
@@ -1003,7 +1003,7 @@ private:
 
     void writeStatus(std::string_view state, std::string_view error = {}) {
         json status = {
-            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",4}, {"state", state},
+            {"schema", 1}, {"tool", "CheckSig"}, {"checksig_features_revision",5}, {"state", state},
             {"pid", GetCurrentProcessId()}, {"time_utc", timestampUtc()}
         };
         if (image_) status["identity"] = moduleIdentityJson(*image_, identity_);

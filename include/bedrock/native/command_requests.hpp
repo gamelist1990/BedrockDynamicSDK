@@ -156,7 +156,7 @@ public:
                 if (!BDS_HookSubscribe(BDS_HOOK_CLIENT_LEVEL_EXIT,reinterpret_cast<void*>(exit->address),onExit,this,&exitToken_))
                     throw std::runtime_error("world exit subscription failed");
             } else throw std::runtime_error("native world exit boundary unresolved");
-            loaded_=true; note("CommandRequest(77)/CommandOutput(79) adapter loaded [static candidate, runtime unverified]");
+            loaded_=true; note(layout.value("runtime_verified",false)?"CommandRequest/CommandOutput adapter loaded [verified within user-reported Fake operation]":"CommandRequest/CommandOutput adapter loaded [static candidate, runtime unverified]");
             error.clear(); return true;
         } catch (const std::exception& e) { error=e.what(); return false; }
     }

@@ -59,7 +59,7 @@ struct Bindings{
     struct ScanLayout { std::size_t minY{},maxY{},begin{},end{},stride{},storage{},getSlot{}; } scan;
     struct ScanSection { void* storage{}; bool empty{},unavailable{}; };
     void* regionFn{};void* getBlockFn{};void* selectFn{};void* getHitFn{};
-    void* titleReadFn{};std::uintptr_t titleVtable{};
+
     std::array<std::uintptr_t,2> gameTables{};
     std::vector<std::uintptr_t> sourceVtables;
     void* getChunkFn{};
@@ -152,8 +152,6 @@ struct Bindings{
     void load(const std::string& profile){
         loadWorld(profile);
         if(!placementReady)throw std::runtime_error("native block placement unavailable");
-        const auto j=bedrock::parseNativeProfile(profile);const auto& f=j.at("native_packets").at("title");
-        titleReadFn=checked(f.at("read"));titleVtable=base+number(f.at("vtable_rva"));
     }
     void* component(void* actor,std::uint32_t hash)const noexcept{
         void* registry{};std::uint32_t id{};

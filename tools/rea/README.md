@@ -5,7 +5,7 @@ Japanese guide: [README_ja.md](README_ja.md).
 Use [REA](https://github.com/morluto/rea) with its Ghidra provider for static
 analysis of the exact Minecraft Bedrock executable. REA supplies the analysis
 workflow and evidence-backed queries; Ghidra performs the native disassembly
-and decompilation. ScanClient remains the runtime observation tool. Compare
+and decompilation. CheckSig JSON jobs provide bounded runtime memory observations. Compare
 the two using the exact executable build and RVA.
 
 ## Prerequisites
@@ -89,10 +89,7 @@ SHA-256, provider, address/RVA, and confidence. REA pseudocode and names remain
 analysis evidence; ABI and structure layout must still be independently
 verified against the exact build and runtime observations.
 
-ScanClient captures only the Minecraft image's `.text`, `.rdata`, and `.pdata`
-sections as separate readable extents. Its filtered world-transition string
-references and function ranges are runtime-address evidence, not verified
-symbols. For REA's native PE workflow, point it at the original
-`Minecraft.Windows.exe`; use the ScanClient bundle to cross-check captured
-bytes and loaded addresses. Skipped or unreadable extents are not observed
-bytes.
+Use CheckSig's `memory` JSON action to capture a bounded range from the loaded
+image or sampled object, including unreadable-page reasons. For REA's native PE
+workflow, analyze the original Minecraft.Windows.exe and correlate exact SHA,
+RVA and observed bytes. Skipped or unreadable extents are not evidence of bytes.

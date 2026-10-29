@@ -1,5 +1,6 @@
 #pragma once
 #include <bedrock/native/packet_view.hpp>
+#include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/packets/wire_packet.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <optional>

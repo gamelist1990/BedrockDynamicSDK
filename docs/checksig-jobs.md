@@ -7,7 +7,7 @@ JSONはUTF-8で保存してください。UTF-8 BOMにも対応します。
 ## 対応するプロファイルを置く
 
 対象EXEと同じバージョンの `profile.json` を置くだけでdetectします。
-結果は `result/commands/windows-x64.result.json` へ出ます。
+結果は `result/commands/profile.result.json` へ出ます。
 `detect/result.json` と `detect/result.txt` は全プロファイルの一覧です。
 
 ## 調査を指定する
@@ -45,6 +45,7 @@ JSONはUTF-8で保存してください。UTF-8 BOMにも対応します。
 | unhook | symbol | 観測を停止 |
 | scan | pattern | `.text` 内のAOB検索。例 `48 8B ?? ?? 48 85 C0` |
 | read | address, type | 例 `rva:0x331C20`, `u8`。安全なコピーで値を読む |
+| memory | address, length, row_bytes（任意） | 領域別に最大1MiBの読み取り専用スナップショット |
 | port | なし | sourceに指定した旧定義から候補を検索 |
 
 readの型は既存のTXTコマンドと共通です。主な型は `u8/i8/u16/i16/u32/i32/u64/i64/ptr/f32/f64`。

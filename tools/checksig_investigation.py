@@ -57,7 +57,8 @@ def generate_catalog():
  group('sender','PacketSender',['/layouts/PacketSender/sender'])
  group('packet_interface','Packetの共通仮想インターフェース',['/layouts/Packet'])
  group('movement_packets','共通の送信バイト列Hook（Packet ID / 通信データ読み書き）',['/layouts/PacketWire/batch_append'])
- group('title_packets','共通Packet::readとID88のタイトル読取')
+ group('title_packets','ID別仮想デコーダーとタイトル読取')
+ group('roster_packets','通信PlayerList・スキン・ワールド境界')
  group('local_commands','CommandRegistryのローカル整数コマンド',['/layouts/CommandRegistry'])
  group('gui','GuiDataのメッセージ表示',['/layouts/GuiData'])
  group('render','LevelRenderer・Tessellator・マテリアル',['/layouts/LevelRenderer'])
@@ -76,7 +77,7 @@ def generate_catalog():
   if 'rva' in value and 'entry_check' in value:
    requirements.append({'id':path,'group':group_id,'kind':'function','path':path,**({'symbol':'CommandOutputPacket::read'} if path.endswith('/output_read') else {}),'next_action':'入口照合と呼び出し観測。Fake.logで登録・Origin・要求IDと応答の対応・timeoutも確認。'});return
   for k,v in value.items():append_new(v,path+'/'+k,group_id)
- append_new(new['layouts']['PacketRead'],'/layouts/PacketRead','title_packets')
+ append_new(new['layouts']['PacketRead'],'/layouts/PacketRead','roster_packets')
  group('request_sender','MinecraftCommandsからのCommandRequest送信経路')
  append_new(new['layouts']['PacketSender']['sender'],'/layouts/PacketSender/sender','request_sender')
  append_new(new['layouts']['CommandRequestPacket'],'/layouts/CommandRequestPacket','command_packets')
@@ -92,10 +93,10 @@ def generate_catalog():
  required={
   'AutoSprint':['keyboard','gameplay'],
   'Zoom':['input','fov','gameplay'],
-  'TabList':['input','fov','gameplay'],
+  'TabList':['input','fov','gameplay','roster_packets','packet_interface','actors'],
   'HitBox':['actors','items','render','gameplay','world_events'],
   'Freecam':['input','gameplay','actors','motion','freecam_camera','request_sender','movement_packets','freecam_boundaries'],
-  'SpeedBuilder':['input','gameplay','actors','items','world','placement','title_packets','world_events'],
+  'SpeedBuilder':['input','gameplay','actors','items','world','placement','roster_packets','world_events'],
   'Top':['gameplay','actors','items','world','motion','gui','sender','request_binding','local_commands','world_events'],
   'Fake':['gameplay','request_sender','command_packets','message_commands'],
   'CheckSig':[]}
@@ -108,8 +109,8 @@ def generate_catalog():
   'SpeedBuilder':['タイトル検知・記録・設置・インベントリ復帰・キャンセルとワールド切替'],
   'Top':['コマンド候補・整数引数・安全な移動先・位置/AABB/速度・落下状態と高さ・結果表示'],
   'Fake':['/fake候補とメッセージ・Origin省略5/指定0..255・requestId/UUIDと応答・timeout・接続切替'],
-  'CheckSig':['JSON自動読込・入口照合・観測Hook・値読取・入力別結果と残作業の更新']}
- optional={'Freecam':['render','camera','world_events'],'HitBox':['identity'],'TabList':['actors','items','identity']}
+  'CheckSig':['JSON自動読込・入口照合・観測Hook・範囲メモリ読取・入力別結果と残作業の更新']}
+ optional={'Freecam':['render','camera','world_events'],'HitBox':['identity'],'TabList':['items']}
  mods=[{'name':name,'required_groups':deps,'optional_groups':optional.get(name,[]),'manual_checks':checks[name]} for name,deps in required.items()]
  return {'schema':1,'target':{'version':VERSION,'sha256':new['target']['sha256'],'platform':'windows','arch':'x64'},'reference_version':OLD,'implementation_work':[
  {'id':'integer-command-abi','status':'needs-review-after-observation','mods':['Top'],'action':'新ビルドのCommand/CommandParameterData/Overload/整数parse ruleとnative factoryに合わせてローカルコマンドアダプターを対応させる。旧make_parameterがインライン化されている場合は関数検索だけでは解決しない。'},
@@ -131,6 +132,7 @@ def make_bundle(out):
   if watches:doc['watches']=watches
   path=out/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');return path
  audit=job(f'commands/{VERSION}-all-mods.json',[{'op':'audit'}])
+ job('optional/70-memory-range.json',[{'op':'memory','label':'module-header','address':'rva:0x0','length':512,'row_bytes':64}])
  for name,symbols in {
   '10-input':['Keyboard::feed','MouseDevice::feed','GameCore::keyboardEvent','ClientInstance::grabCursor','ClientInstance::releaseCursor','MultiPlayerLevel::_subTick','LevelRendererPlayer::getFov'],
   '20-actors-world':['ClientInstance::getLocalPlayer','Level::getRuntimeActorList','Actor::getNameTag','ClientInstance::getRegion','BlockSource::getBlock','BlockSource::getChunk'],

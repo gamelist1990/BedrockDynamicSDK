@@ -35,7 +35,12 @@
           "rva": "0x3A83770",
           "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 01 00 00 48 8D AC 24 80 00 00",
           "abi": "void* __fastcall(SetTitlePacket*, Result<void>* hidden_result, ReadOnlyBinaryStream*)"
-        }
+        },
+        "type_offset": 48,
+        "text_offset": 56,
+        "result_success_offset": 64,
+        "maximum_text_bytes": 2048,
+        "layout_evidence": "Existing title observer fields moved from SpeedBuilder to SDK; legacy runtime behavior preserved, no new object-layout claim."
       }
     }
   }

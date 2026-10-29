@@ -19,7 +19,10 @@ class PlayerRosterService {
             if (worker_.joinable())
                 return;
             stopping_ = false;
-            worker_ = std::thread([this] { run(); });
+            worker_ = std::thread([this] {
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                run();
+            });
         }
         for (const auto id : {PacketId::StartGame, PacketId::Disconnect, PacketId::PlayerList,
                               PacketId::PlayerSkin})
@@ -52,6 +55,9 @@ class PlayerRosterService {
     }
     std::vector<PacketPlayer> snapshot() const {
         return roster_.snapshot();
+    }
+    auto snapshotShared() const noexcept {
+        return roster_.snapshotShared();
     }
     PlayerListPackets::Statistics statistics() const {
         return roster_.statistics();
