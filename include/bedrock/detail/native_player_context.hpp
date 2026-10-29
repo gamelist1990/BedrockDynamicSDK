@@ -3,6 +3,7 @@
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <atomic>
+#include <utility>
 
 namespace bedrock::native_player {
 // Borrowed local-player access valid only in an owning client-tick scope.

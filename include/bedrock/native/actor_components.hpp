@@ -15,7 +15,15 @@ class NativeActorComponents {
         ready_ = layout_.valid();
         const auto root =
             profile.contains("native_camera") ? profile : parseNativeProfile(profile.dump());
+        gameTypeHash_ = 0;
+        gameTypeOffset_ = 0;
+        // Runtime IDs and ordinary components do not require Camera metadata.
+        // Game-type display is an optional reader for profiles that provide it.
+        if (!root.contains("native_camera") || !root.at("native_camera").contains("visual"))
+            return;
         const auto &visual = root.at("native_camera").at("visual");
+        if (!visual.contains("game_type_component_hash"))
+            return;
         gameTypeHash_ = native_profile::number(visual.at("game_type_component_hash"));
         gameTypeOffset_ = native_profile::number(visual.at("game_type_value_offset"));
         if (!gameTypeHash_ || gameTypeOffset_ > 4096 || visual.at("game_type_value_size") != 4)

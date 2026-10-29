@@ -12,7 +12,7 @@
 <a class="brand" href="#overview"><span class="brand-mark">B</span><span>Bedrock<span class="brand-sub">Dynamic SDK</span></span></a>
 <div class="version">C++20 <span>Windows x64</span></div>
 <label class="search-label" for="search">ドキュメント内を検索</label><input id="search" type="search" placeholder="API・機能を探す…" autocomplete="off">
-<nav aria-label="ドキュメント"><a href="#overview">はじめに</a><a href="#quickstart">導入と初期化</a><a href="#types">型とエラー</a><a href="#commands">Command Builder</a><a href="#profiles">プロファイル更新</a><a href="#world">World / ブロック配置</a><a href="#actors">Actor / Player</a><a href="#events">イベントとスレッド</a><a href="#camera">Camera / Freecam</a><a href="#reference">APIリファレンス</a><a href="#migration">移行とバージョン対応</a><a href="#publishing">このドキュメントの公開</a></nav>
+<nav aria-label="ドキュメント"><a href="#overview">はじめに</a><a href="#quickstart">導入と初期化</a><a href="#types">型とエラー</a><a href="#commands">Command Builder</a><a href="#profiles">プロファイル更新</a><a href="#packets">Packet / PlayerList</a><a href="#world">World / ブロック配置</a><a href="#actors">Actor / Player</a><a href="#events">イベントとスレッド</a><a href="#camera">Camera / Freecam</a><a href="#reference">APIリファレンス</a><a href="#migration">移行とバージョン対応</a><a href="#publishing">このドキュメントの公開</a></nav>
 <div class="sidebar-footer"><a href="https://github.com/gamelist1990/BedrockDynamicSDK">GitHub ↗</a><p>本体定義はSDKへ。<br>Modは機能の実装に集中。</p></div>
 </aside>
 <div class="content"><header class="topbar"><span>Documentation / API Guide</span><a href="examples/native_bootstrap.cpp" download>サンプルをダウンロード ↓</a></header>
@@ -99,9 +99,9 @@ const bool ready = profiles.prepare(
 <p>コマンド受付は <code>CommandDecision::Accepted / Rejected</code>。低水準のNativeClientCommandsの登録結果は <code>unavailable / waiting / unchanged / registered / collision / failed</code>、NativeCommandServiceは状態変化をonDiagnosticへ通知します。文字列を振り分ける旧 <code>ClientCommands</code> は本体の候補登録を行いません。</p>
 <a class="download-link" href="examples/typed_command.cpp">型付きコマンド例のソース →</a>
 </section>
-<section id="profiles" data-title="GitHub windows-x64.json manifest refresh 自動更新 ProfileManager Feature 要件 キャッシュ">
+<section id="profiles" data-title="GitHub manifest classes refresh 自動更新 ProfileManager Feature 要件 キャッシュ">
 <p class="eyebrow">ONE OWNER FOR VERSION DATA</p><h2>プロファイルの取得と更新</h2>
-<ol class="steps"><li><strong>ロード中のEXEを識別</strong><span>バージョン名だけに依存せず、ファイルまたはmapped .textのSHA-256とPE形状を確認。</span></li><li><strong>必要な機能を確認</strong><span>Feature、スキーマ、レイアウトのrevision、candidate利用方針を照合。Gameplay / LevelTick / Input等を要求すると、Hookの解決可否も先に確認します。</span></li><li><strong>アダプターを初期化</strong><span>必要なエントリガード・vtable・ABI形状を確認してからHook設置へ。</span></li><li><strong>不足時にGitHubへ再照会</strong><span>manifestとwindows-x64.jsonを再取得。失敗時は一致する埋め込み定義を確認。</span></li></ol>
+<ol class="steps"><li><strong>ロード中のEXEを識別</strong><span>バージョン名だけに依存せず、ファイルまたはmapped .textのSHA-256とPE形状を確認。</span></li><li><strong>必要な機能を確認</strong><span>Feature、スキーマ、レイアウトのrevision、candidate利用方針を照合。Gameplay / LevelTick / Input等を要求すると、Hookの解決可否も先に確認します。</span></li><li><strong>アダプターを初期化</strong><span>必要なエントリガード・vtable・ABI形状を確認してからHook設置へ。</span></li><li><strong>不足時にGitHubへ再照会</strong><span>版別manifestとクラス別JSONを再取得。失敗時は一致する埋め込み定義を確認。</span></li></ol>
 <pre><code>const bedrock::ProfileRequirements required{
     bedrock::Feature::Gameplay,
     bedrock::Feature::LevelTick,
@@ -117,6 +117,23 @@ const bedrock::ProfileSource source = selected-&gt;choice().source;</code></pre>
 <div class="table-wrap"><table><thead><tr><th>UpdatePolicy</th><th>動作</th></tr></thead><tbody><tr><td>CacheFirst</td><td>通常のSDK選択。キャッシュ・埋め込みを優先し、必要ならネットワーク。機能不足による強制再照会はしない。</td></tr><tr><td>RefreshIfNeeded</td><td>アダプターの初期化や必要定義の確認に失敗した場合、GitHubへ再照会する。</td></tr><tr><td>ForceRemote</td><td>最初から再照会経路を使う。既存の同時取得抑制・24時間制限は適用される。</td></tr></tbody></table></div>
 <p>取得先は既存SDKのGitHubカタログに固定。HTTPS、リダイレクト制限、manifestのJSONチェックサム、EXE指紋、PE形状の確認を維持します。更新対象はデータです。稼働中のHookを背景で書き換えず、新しい定義は初期化時に適用します。単なる「最新バージョン」のプロファイルを別ビルドへ流用しません。</p>
 <p><code>CandidatePolicy::VerifiedOnly</code> が既定です。候補のnative機能を利用するModは <code>AllowCandidates</code> を明示します。<code>supports</code> は必要なメタデータの存在確認であり、実機動作の確認ではありません。</p>
+</section>
+<section id="packets" data-title="PacketApi PlayerList PlayerRosterService TitlePackets memory CheckSig runtime 4.8">
+<p class="eyebrow">PACKETS AND COPIED DATA</p><h2>Packet / PlayerList</h2>
+<p><code>bedrock/packets/packet_api.hpp</code>からID別に受信を購読し、送信前のコピーを編集・キャンセルできます。受信はゲームdecode成功後の観測です。</p>
+<pre><code>bedrock::PacketApi packets;
+bedrock::PlayerRosterService roster;
+roster.start(packets);
+std::string error;
+packets.installReceive(selectedProfile, embeddedProfile, error);
+auto players = roster.snapshotShared();
+// 終了時はDllMainの外でcallbackをdrain。
+packets.stop();
+roster.stop(packets);</code></pre>
+<p>PlayerListとskinの解析は順序を保つ専用worker、表示は共有スナップショットを参照します。native Actorの読み取りはゲームtickに残します。タイトルは<code>TitlePackets</code>と<code>TitleType</code>で扱えます。</p>
+<p>定義は<code>data/&lt;version&gt;/windows-x64/manifest.json</code>とクラス別JSON。protocol.jsonをビルド時に埋め込み、旧include転送ヘッダーと旧windows-x64.jsonは使用しません。</p>
+<p>CheckSigの<code>memory</code>ジョブでアドレス・lengthを指定すると、読取バイト列と読めなかった領域を入力別resultへ保存します。</p>
+<p><a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/docs/packet-events.md">APIと受信経路の詳細 →</a> · <a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/data/1.26.60.5/README.md">確認済み範囲と残作業 →</a></p>
 </section>
 <section id="world" data-title="World getBlock setBlock placeBlock BlockSetBuilder ホットバー 状態 角度">
 <p class="eyebrow">READ & PLACE</p><h2>Worldとブロック配置</h2>
