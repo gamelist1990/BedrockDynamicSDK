@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-settings-apply-v2",
+      "adapter": "windows-live-apply-v3",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -49,13 +49,25 @@
         },
         "finalize_reload": {
           "symbol": "ResourcePackManager::_finalizeReload"
+        },
+        "navigate_apply_packs": {
+          "symbol": "MainMenuScreenModel::navigateToApplyResourcePacksScreen"
+        },
+        "destroy_apply_callback": {
+          "symbol": "GeneralSettingsScreenController::_destroyApplyStackCallback"
         }
       },
-      "evidence": "Exact Windows PE call chain: settings exit -> GeneralSettings stack apply -> queued event -> ResourcePackManager setStack/reload -> compose -> finalize. Apply scopes survive navigation and re-enter on the queued game event. Include-level flag is temporarily enabled only during in-world application, then restored. Static evidence is not visual runtime verification.",
+      "evidence": "Exact Windows PE call chain: settings exit -> GeneralSettings stack apply -> queued event -> ResourcePackManager setStack/reload -> compose -> finalize. Apply scopes survive navigation and re-enter on the queued game event. Include-level flag is temporarily enabled only during in-world application, then restored. Static evidence is not visual runtime verification. v2 user observed persistence after leave/rejoin but no live apply; level_stack_included remained zero. v3 consumes only the exact supported apply functor in navigateToApplyResourcePacksScreen while a live local player exists, invokes on the current game thread with the current model, and releases game-owned callback exactly once. Title navigation and unrelated callbacks retain original behavior. No visual success inferred from counters.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
-      "include_level_stack_offset": 378
+      "include_level_stack_offset": 378,
+      "callback_abi": {
+        "object_bytes": 64,
+        "owner_offset": 56,
+        "invoke_offset": 16,
+        "destroy_offset": 32
+      }
     }
   },
   "symbols": {
@@ -188,6 +200,32 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE .pdata and instructions; REA/Ghidra function slices; runtime validation pending",
       "evidence": "brpm-windows-1.26.60.5/finalize-reload-evidence.json; notifies each resource pack listener at vtable+0x20"
+    },
+    "MainMenuScreenModel::navigateToApplyResourcePacksScreen": {
+      "rva": "0x4d27230",
+      "signature": "",
+      "entry_check": "55 56 57 48 81 EC 80 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 F8 FE FF",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(MainMenuScreenModel*, void* callback)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata/instructions and REA/Ghidra function slice; no runtime confirmation",
+      "evidence": "brpm-windows-1.26.60.5/navigate-apply-packs-evidence.json; RCX model RDX consuming MSVC std::function parameter; owner at +0x38; clones into progress screen then destroys source via vtable+0x20"
+    },
+    "GeneralSettingsScreenController::_destroyApplyStackCallback": {
+      "rva": "0x5237690",
+      "signature": "",
+      "entry_check": "56 53 48 83 EC 28 89 D3 48 89 CE 48 83 C1 08 E8 3C DF 02 FB 84 DB 74 13",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void* callback, bool deallocate)",
+      "function_boundary": true,
+      "source": "Exact 1.26.60.5 PE .pdata/instructions and REA/Ghidra function slice; no runtime confirmation",
+      "evidence": "brpm-windows-1.26.60.5/apply-functor-destroy-evidence.json; functor vtable0xF239700 slot4; destroys vector at callback+8; frees callback via game delete only if DL is true"
     }
   }
 }

@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <bedrock/detail/owned_msvc_string.hpp>
+#include <bedrock/detail/owned_native_callback.hpp>
 #include <memory>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
@@ -19,6 +20,7 @@ struct NativeResourcePacks::Binding {
     using Initialize = void(__fastcall *)(void *);
     using Exit = std::uint64_t(__fastcall *)(void *);
     using Event = void(__fastcall *)(void *, void *);
+    using DestroyCallback = void(__fastcall *)(void *, bool);
     using Compose = std::uint64_t(__fastcall *)(void *, void *, void *, void *);
     using Construct = void *(__fastcall *)(void *, void *, bool, bool, const void *, bool);
     using Predicate = bool(__fastcall *)(void *);
@@ -29,6 +31,10 @@ struct NativeResourcePacks::Binding {
     void *ctorTarget{};
     void *preGameTarget{};
     void *exitTarget{}, *eventTarget{}, *composeTarget{}, *reloadTarget{}, *finalizeTarget{};
+    void *navigateTarget{}, *eventDestroyTarget{};
+    Event navigate{};
+    DestroyCallback eventDestroy{};
+    detail::NativeCallbackLayout callbackLayout{};
     Exit exit{};
     Event event{};
     Compose compose{};
@@ -42,11 +48,12 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeLevelOffset{};
-    std::array<BDS_HookToken, 8> tokens{};
+    std::array<BDS_HookToken, 9> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
     std::atomic<std::uint64_t> exits{}, applyEvents{}, reloads{}, compositions{}, finalized{}, levelIncluded{};
+    std::atomic<std::uint64_t> navigations{}, liveApplications{}, inWorldEvents{};
     std::mutex policyMutex;
     std::map<void *, ResourcePackMenuPolicy> policies;
 
@@ -74,6 +81,35 @@ struct NativeResourcePacks::Binding {
     void *clientFromModel(void *model) const noexcept {
         void *client{};
         return model && native_profile::read(model, modelClientOffset, client) ? client : nullptr;
+    }
+    static bool claimCallback(void *function, std::size_t offset, void *expected) noexcept {
+        __try {
+            auto **owner = reinterpret_cast<void **>(static_cast<std::byte *>(function) + offset);
+            if (*owner != expected)
+                return false;
+            *owner = nullptr;
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    static void __fastcall onNavigateApply(void *model, void *function) {
+        auto &state = *active().load(std::memory_order_acquire);
+        if (state.enabled.load(std::memory_order_acquire)) {
+            ++state.navigations;
+            auto *client = state.clientFromModel(model);
+            if (client && state.localPlayer(client) &&
+                detail::consumeNativeCallback(
+                    function, state.callbackLayout, state.eventTarget, state.eventDestroyTarget,
+                    [](const void *base, std::size_t offset, void *&value) {
+                        return native_profile::read(base, offset, value);
+                    }, claimCallback,
+                    [&](void *owner) {
+                        ++state.liveApplications;
+                        onApplyEvent(owner, model);
+                    }, state.eventDestroy))
+                return;
+        }
+        // Preserve ordinary title-screen navigation and all other functors.
+        state.navigate(model, function);
     }
     static bool exchangeFlag(void *self, std::size_t offset, unsigned char value,
                              unsigned char &previous) noexcept {
@@ -108,6 +144,8 @@ struct NativeResourcePacks::Binding {
             client = state.clientFromModel(model);
             if (!client)
                 ++state.failures;
+            else if (state.localPlayer(client))
+                ++state.inWorldEvents;
         }
         // This event executes after navigation. Keep the same client eligible
         // throughout the game's queued stack update and reload notifications.
@@ -260,7 +298,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-settings-apply-v2")
+        if (layout.at("adapter").get<std::string>() != "windows-live-apply-v3")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -273,6 +311,20 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
                                "void* __fastcall(GeneralSettingsScreenController*, void* model, "
                                "bool, bool, const void* initialPack, bool)");
         next->preGameTarget = get("is_pre_game", "bool __fastcall(ClientInstance*)");
+        next->navigateTarget = get("navigate_apply_packs",
+                                    "void __fastcall(MainMenuScreenModel*, void* callback)");
+        next->eventDestroyTarget = get("destroy_apply_callback",
+                                        "void __fastcall(void* callback, bool deallocate)");
+        next->eventDestroy = reinterpret_cast<Binding::DestroyCallback>(next->eventDestroyTarget);
+        const auto &callback = layout.at("callback_abi");
+        next->callbackLayout = {
+            native_profile::number(callback.at("owner_offset")),
+            native_profile::number(callback.at("invoke_offset")),
+            native_profile::number(callback.at("destroy_offset"))};
+        if (native_profile::number(callback.at("object_bytes")) != 64 ||
+            next->callbackLayout.ownerOffset != 56 || next->callbackLayout.invokeOffset != 16 ||
+            next->callbackLayout.destroyOffset != 32)
+            throw std::runtime_error("unsupported resource pack callback ABI");
         next->exitTarget = get("exit_settings", "uint64_t __fastcall(void* closure)");
         next->eventTarget = get("apply_stack_event", "void __fastcall(void* closure, void* model)");
         next->composeTarget = get("compose_full_stack",
@@ -327,7 +379,8 @@ bool NativeResourcePacks::install(std::string &error) {
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
-        !binding_->reloadTarget || !binding_->finalizeTarget) {
+        !binding_->reloadTarget || !binding_->finalizeTarget ||
+        !binding_->navigateTarget || !binding_->eventDestroy) {
         error = "resource pack profile has not been loaded";
         return false;
     }
@@ -362,7 +415,10 @@ bool NativeResourcePacks::install(std::string &error) {
         BDS_HookDirectInstall(binding_->reloadTarget, reinterpret_cast<void *>(&Binding::onReload),
                               reinterpret_cast<void **>(&binding_->reload), &binding_->tokens[6]) &&
         BDS_HookDirectInstall(binding_->finalizeTarget, reinterpret_cast<void *>(&Binding::onFinalize),
-                              reinterpret_cast<void **>(&binding_->finalize), &binding_->tokens[7]);
+                              reinterpret_cast<void **>(&binding_->finalize), &binding_->tokens[7]) &&
+        BDS_HookDirectInstall(binding_->navigateTarget,
+                              reinterpret_cast<void *>(&Binding::onNavigateApply),
+                              reinterpret_cast<void **>(&binding_->navigate), &binding_->tokens[8]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -379,6 +435,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),
             binding_->failures.load(), binding_->exits.load(), binding_->applyEvents.load(),
             binding_->reloads.load(), binding_->compositions.load(), binding_->finalized.load(),
-            binding_->levelIncluded.load()};
+            binding_->levelIncluded.load(), binding_->navigations.load(),
+            binding_->liveApplications.load(), binding_->inWorldEvents.load()};
 }
 } // namespace bedrock

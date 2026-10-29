@@ -13,6 +13,7 @@ class NativeResourcePacks final {
         std::uint64_t settingsOpened{}, preGameOverrides{}, failures{};
         std::uint64_t settingsExited{}, applyEvents{}, reloadCalls{}, stackCompositions{},
             reloadFinalized{}, levelStackIncluded{};
+        std::uint64_t applyNavigations{}, liveApplications{}, inWorldApplyEvents{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();
