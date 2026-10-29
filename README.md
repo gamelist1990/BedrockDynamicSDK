@@ -28,7 +28,7 @@ FreecamのInsideBlockEffectに新EXEの対象型・呼出箇所を追加。飛�
 
 ## SDKと版別定義の更新
 
-ネイティブのRVA・シグネチャ・offset・ABIはSDKと`data/<version>/windows-x64.json`で管理します。
+ネイティブのRVA・シグネチャ・offset・ABIはSDKと`data/<version>/windows-x64/classes/*.json`で管理します。参照パスとSHA256は`manifest.json`へ記録します。
 PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Modへネイティブ配置を追加しません。
 関数は共通の識別名で参照し、版別定義を一箇所で更新します。
 [探索順序・更新手順・ABIの制約・既存処理の移行残](docs/profile-maintenance.md)を参照してください。
@@ -79,7 +79,7 @@ DLLはGitHubのWindows RunnerでMSVC x64 Releaseとして作成します。
 
 - [APIドキュメント](https://gamelist1990.github.io/BedrockDynamicSDK/)
 - [サンプルMod](exsample/)
-- プロファイル：`data/<ゲームバージョン>/windows-x64.json`
+- プロファイル：`data/<ゲームバージョン>/windows-x64/manifest.json`
 
 プロファイルはGitHub取得とローカル取得に対応します。
 SHA-256・PE範囲・入口ガードを照合し、別バージョンのアドレスを代用しません。

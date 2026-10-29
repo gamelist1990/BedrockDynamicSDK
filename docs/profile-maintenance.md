@@ -7,7 +7,7 @@
 
 | 場所 | 管理するもの |
 | --- | --- |
-| `data/<version>/windows-x64.json` | EXE識別、RVA、入口ガード、シグネチャ、ABI、vtable slot、構造体とフィールド位置、候補・観測状態 |
+| `data/<version>/windows-x64/classes/*.json` | EXE識別、RVA、入口ガード、シグネチャ、ABI、vtable slot、構造体とフィールド位置、候補・観測状態 |
 | SDK `include/bedrock/native_*.hpp` / `detail/` | 関数呼出し、ネイティブABI、メモリ読取・書込、寿命・スレッド・範囲検査、コピーへの変換 |
 | Mod | SDKを呼ぶ条件、表示、設定、ゲーム機能の組合せ。アドレス探索・ネイティブ構造体・版別数値を追加しない |
 

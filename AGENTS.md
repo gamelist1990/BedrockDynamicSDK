@@ -22,7 +22,7 @@ observation alone does not establish a function signature or ABI.
 
 User requirement: Mod code must use SDK APIs for native access. Add executable
 signatures/RVAs, object/field offsets, vtable slots, function ABI, guards and
-version selection to the SDK and `data/<version>/windows-x64.json`; do not add
+version selection to the SDK and `data/<version>/windows-x64/classes/*.json` (indexed by the version manifest); do not add
 another native layout or fallback constant to `exsample/*/src`.
 
 Use stable Minecraft function identifiers under `symbols` and refer to them
@@ -32,3 +32,6 @@ Keep one executable function definition; do not copy its RVA/guard into Mods.
 Read `docs/profile-maintenance.md` for resolution order, ABI constraints and
 version migration evidence. Existing legacy native code is not permission to
 add more: migrate the touched native operation behind an SDK adapter.
+
+Canonical profiles are class parts indexed by `data/<version>/windows-x64/manifest.json`; refresh part hashes before updating `data/manifest.json`. Flat windows-x64.json files are generated interoperability artifacts, not editing sources.
+All protocol data and version selection come from data manifests. CMake embeds the complete selected protocol.json; do not add version-specific C++ protocol headers. Place public enums under include/bedrock/enums and implementations under the categorized SDK directories. Root header paths are compatibility forwards only.
