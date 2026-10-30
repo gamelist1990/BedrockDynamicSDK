@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v16",
+      "adapter": "windows-live-reload-v17-diagnostic",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -123,7 +123,7 @@
           "symbol": "MinecraftGame::_suspendSessionGateCandidate"
         }
       },
-      "evidence": "User v15 reports no reconnect display and no crash during test, but player models invisible and custom blocks incorrect; log shows scoped candidate gate used twice and geometry/client notification not run. v16 retains v15 lifecycle gate and restores v6 geometry reload and client resource notification for a model-repair experiment. v6 user saw models return but custom blocks remained incorrect. v13/v14 users reported crashes with geometry/client notification and other different lifecycle/custom flows; faulting operation remains unknown. v16 is not proven safe or a custom-block fix.",
+      "evidence": "User v16 reports crash after rapid settings edit and close; submitted stage log reaches camera_rebind end and counters show geometry and client notification returned. Faulting instruction and thread unknown; timing dependency is unproven. v17 preserves v16 refresh operations and adds timestamped stage/first-chance exception diagnostics; it is not a crash or custom-block fix.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,

@@ -168,8 +168,10 @@ struct NativeResourcePacks::Binding {
         if (!native_profile::read(game, state.terrainAtlasOffset, currentAtlas) || currentAtlas != atlas)
             return;
         std::lock_guard lock(state.refreshMutex);
-        if (state.pendingRefresh.complete(game))
+        if (state.pendingRefresh.complete(game)) {
             ++state.terrainCompleted;
+            state.trace("terrain_atlas_ready\r\n");
+        }
     }
     static bool &readingBlockGraphics() {
         static thread_local bool value{};
@@ -197,25 +199,31 @@ struct NativeResourcePacks::Binding {
             state.freshBlockGraphics.load(std::memory_order_acquire)) {
             void *previous{};
             if (!clearGraphics(data, state.cachedGraphicsOffset, previous)) ++state.failures;
-            else if (previous) ++state.graphicsCacheResets;
+            else if (previous) {
+                const auto count = ++state.graphicsCacheResets;
+                if (count == 1) state.trace("graphics_cache_reset first\r\n");
+                else if (count == 1024) state.trace("graphics_cache_reset count=1024\r\n");
+                else if (count == 4096) state.trace("graphics_cache_reset count=4096\r\n");
+            }
         }
         state.cachedGraphics(capture, data);
     }
     static void __fastcall onCameraFrame(void *camera, void *frameContext) {
         auto &state = *active().load(std::memory_order_acquire);
-        if (state.enabled.load(std::memory_order_acquire))
-            state.refreshCamera(camera);
+        const bool rebound = state.enabled.load(std::memory_order_acquire) && state.refreshCamera(camera);
+        if (rebound) state.trace("camera_frame_original begin\r\n");
         state.cameraFrame(camera, frameContext);
+        if (rebound) state.trace("camera_frame_original end\r\n");
     }
-    void refreshCamera(void *camera) {
+    bool refreshCamera(void *camera) {
         std::unique_lock lock(refreshMutex);
         auto *game = pendingCamera.game();
-        if (!game || pendingCamera.thread() != GetCurrentThreadId()) return;
+        if (!game || pendingCamera.thread() != GetCurrentThreadId()) return false;
         auto *client = primaryClient(game);
         auto *player = client && clientGame(client) == game ? localPlayer(client) : nullptr;
         auto *level = player ? clientLevel(client) : nullptr;
-        if (pendingCamera.cancelIfChanged(level)) { ++refreshCancelled; return; }
-        if (!player || !level) return;
+        if (pendingCamera.cancelIfChanged(level)) { ++refreshCancelled; trace("camera_context_changed\r\n"); return false; }
+        if (!player || !level) return false;
         auto *renderer = clientRenderer(client);
         void *owner{}, *currentCamera{}, *dimension{}, *playerDimension{}, *control{}, *vtable{}, *frameEntry{};
         if (!renderer || !native_profile::read(camera, cameraOwnerOffset, owner) || owner != renderer ||
@@ -224,7 +232,7 @@ struct NativeResourcePacks::Binding {
             !native_profile::read(player, playerDimensionOffset, playerDimension) || !playerDimension ||
             !native_profile::read(player, playerDimensionControlOffset, control) || !control ||
             !native_profile::read(camera, 0, vtable) || !native_profile::read(vtable, cameraFrameSlot, frameEntry) ||
-            frameEntry != cameraFrameTarget) return;
+            frameEntry != cameraFrameTarget) return false;
         // Claim before invoking native code to prevent a nested frame from
         // rebinding twice. Pointers are borrowed only for this call.
         pendingCamera.clear();
@@ -233,6 +241,7 @@ struct NativeResourcePacks::Binding {
         cameraRebind(camera, player);
         trace("camera_rebind end\r\n");
         ++camerasRefreshed;
+        return true;
     }
     void *primaryClient(void *game) const noexcept {
         // Borrow the primary map entry only during startFrame on its owning
@@ -444,7 +453,10 @@ struct NativeResourcePacks::Binding {
                 ++state.failures;
         }
         ApplyScope scope(client);
-        return state.exit(closure);
+        if (client) state.trace("settings_exit begin\r\n");
+        const auto result = state.exit(closure);
+        if (client) state.trace("settings_exit end\r\n");
+        return result;
     }
     static void __fastcall onApplyEvent(void *closure, void *model) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -460,7 +472,9 @@ struct NativeResourcePacks::Binding {
         // This event executes after navigation. Keep the same client eligible
         // throughout the game's queued stack update and reload notifications.
         ApplyScope scope(client);
+        if (client) state.trace("apply_event begin\r\n");
         state.event(closure, model);
+        if (client) state.trace("apply_event end\r\n");
     }
     static std::uint64_t __fastcall onCompose(void *self, void *full, void *global, void *level) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -494,11 +508,14 @@ struct NativeResourcePacks::Binding {
                 state.pendingCamera.clear();
                 state.pendingRefresh.begin(game, clientLevel, self, GetCurrentThreadId());
                 state.refreshPending.store(true, std::memory_order_release);
+                state.trace("compose_in_world begin\r\n");
             } else {
                 ++state.failures;
             }
         }
-        return state.compose(self, full, global, level);
+        const auto result = state.compose(self, full, global, level);
+        if (changed) state.trace("compose_in_world end\r\n");
+        return result;
     }
 
     static bool writeFlag(void *self, std::size_t offset) noexcept {
@@ -608,7 +625,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v16")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v17-diagnostic")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);

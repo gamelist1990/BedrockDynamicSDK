@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -10,11 +11,52 @@
 namespace {
 std::atomic<unsigned> startupStatus{};
 HANDLE traceFile = INVALID_HANDLE_VALUE;
+std::atomic<ULONGLONG> lastTraceTick{};
 void traceStep(const char *message) noexcept {
     if (traceFile == INVALID_HANDLE_VALUE) return;
+    const DWORD savedError = GetLastError();
+    const ULONGLONG tick = GetTickCount64();
+    lastTraceTick.store(tick, std::memory_order_relaxed);
+    char line[512]{};
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+                                   "tick_ms=%llu thread=%lu %s", tick,
+                                   static_cast<unsigned long>(GetCurrentThreadId()), message);
     DWORD written{};
-    WriteFile(traceFile, message, static_cast<DWORD>(lstrlenA(message)), &written, nullptr);
+    if (length > 0) WriteFile(traceFile, line, static_cast<DWORD>(length), &written, nullptr);
     FlushFileBuffers(traceFile);
+    SetLastError(savedError);
+}
+LONG CALLBACK observeException(EXCEPTION_POINTERS *pointers) noexcept {
+    if (!pointers || !pointers->ExceptionRecord || traceFile == INVALID_HANDLE_VALUE)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const auto *record = pointers->ExceptionRecord;
+    const DWORD code = record->ExceptionCode;
+    if (code != 0xc0000005 && code != 0xc0000409 && code != 0xc000001d && code != 0xc0000094)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const auto now = GetTickCount64();
+    const auto last = lastTraceTick.load(std::memory_order_relaxed);
+    if (!last || now - last > 60000) return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD savedError = GetLastError();
+    MEMORY_BASIC_INFORMATION region{};
+    const bool knownRegion = VirtualQuery(record->ExceptionAddress, &region, sizeof(region)) == sizeof(region);
+    const auto address = reinterpret_cast<std::uintptr_t>(record->ExceptionAddress);
+    const auto imageBase = knownRegion ? reinterpret_cast<std::uintptr_t>(region.AllocationBase) : 0;
+    const auto gameBase = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    const auto offset = imageBase && address >= imageBase ? address - imageBase : 0;
+    char line[512]{};
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "tick_ms=%llu thread=%lu first_chance code=0x%08lx address=0x%llx allocation=0x%llx offset=0x%llx game_image=%u flags=0x%lx params=%lu info0=0x%llx info1=0x%llx\r\n",
+        now, static_cast<unsigned long>(GetCurrentThreadId()), static_cast<unsigned long>(code),
+        static_cast<unsigned long long>(address), static_cast<unsigned long long>(imageBase),
+        static_cast<unsigned long long>(offset), imageBase && imageBase == gameBase ? 1u : 0u,
+        static_cast<unsigned long>(record->ExceptionFlags), static_cast<unsigned long>(record->NumberParameters),
+        static_cast<unsigned long long>(record->NumberParameters > 0 ? record->ExceptionInformation[0] : 0),
+        static_cast<unsigned long long>(record->NumberParameters > 1 ? record->ExceptionInformation[1] : 0));
+    DWORD written{};
+    if (length > 0) WriteFile(traceFile, line, static_cast<DWORD>(length), &written, nullptr);
+    FlushFileBuffers(traceFile);
+    SetLastError(savedError);
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 DWORD WINAPI start(void *) noexcept {
     startupStatus = 1;
@@ -33,7 +75,10 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v16: started\r\n");
+        traceStep("v17 diagnostic: started\r\n");
+        if (!AddVectoredExceptionHandler(1, observeException))
+            traceStep("exception_observer_install_failed\r\n");
+        else traceStep("exception_observer_installed\r\n");
         log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
@@ -60,7 +105,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v16 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v17 diagnostic is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
