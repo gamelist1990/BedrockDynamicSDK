@@ -10,4 +10,4 @@ Minecraft Windows x64 **1.26.60.5** 専用。v21のHook・カスタムブロッ�
 
 Minecraftを完全終了してDLLを交換してください。ログは `Documents/PEXData/BetterResourcePackManager/` に作成します。先頭は `adapter v21 load-complete` です。`readiness_retries` は、追加読み込みの検出によって再試行した回数です。件数だけでは実際の表示成功を保証しません。
 
-SDK側の構成と次バージョンへの更新手順は [API保守ガイド](../../docs/resource-packs.md) を参照してください。
+SDK側の構成と次バージョンへの更新手順は [API保守ガイド](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/docs/resource-packs.md) を参照してください。
