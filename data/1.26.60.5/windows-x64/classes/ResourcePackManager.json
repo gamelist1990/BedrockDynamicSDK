@@ -130,6 +130,9 @@
         },
         "atlas_texture_item": {
           "symbol": "AtlasItemManager::getTextureItemCandidate"
+        },
+        "reload_progress_tick": {
+          "symbol": "ResourcePackProgressScreenController::tickCandidate"
         }
       },
       "evidence": "User v16 reports crash after rapid settings edit and close; submitted stage log reaches camera_rebind end and counters show geometry and client notification returned. Faulting instruction and thread unknown; timing dependency is unproven. v17 preserves v16 refresh operations and adds timestamped stage/first-chance exception diagnostics; it is not a crash or custom-block fix.",
@@ -329,6 +332,12 @@
         "status": "candidate",
         "runtime_verified": false,
         "evidence": "v19-native-reload-screen-evidence.json ev_2828eeb20789757ea3750d605de206949a8f0a541f0007b3c697f308dc2df2f8; native navigate4D27230 clones apply functor, factory546A60 constructs progress controller50B27A0, tick50B2DE0 skips first tick then invokes owned callback and polls model4D6F870 before screen navigation. v19 preserves native callback ownership/progress path. v18 user observes immediate settings exit crashes, waiting in settings avoids it. Timing mitigation remains candidate, not proven crash diagnosis."
+      },
+      "reload_progress_gate": {
+        "model_offset": 3056,
+        "callback_owner_offset": 3512,
+        "callback_invoke_slot_offset": 16,
+        "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2; native x64 50B2DFB reads owner+DB8, 50B2E07 model+BF0, indirect invoke slot+10. Original tick always returns0. Before forwarding only an expected pending world-pack apply callback, v19 waits for previous Game resource loader ready/outstanding0; leaves callback owned by native controller."
       }
     }
   },
@@ -813,6 +822,19 @@
       "function_boundary": true,
       "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra raw slices and direct Windows x64 instructions; runtime unverified.",
       "evidence": "atlas-name-lookup-evidence.json ev_93d26d4a2b14fd87e51872cfd3d9feaf95a4bfbc1dd4bb94f3fec679a4fd9428; exact call6AD8CDD RCXmanager RDX borrowed Release MSVC string; returns item textures at+28."
+    },
+    "ResourcePackProgressScreenController::tickCandidate": {
+      "rva": "0x50b2de0",
+      "signature": "",
+      "entry_check": "41 57 41 56 56 57 53 48 83 EC 40 48 89 CE 80 B9 C0 0D 00 00 00 0F 84 93",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "uint64_t __fastcall(ResourcePackProgressScreenController*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra and direct Windows x64 instructions; runtime unverified.",
+      "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2. RCXcontroller only; prologue preservesRCX inRSI; return XOR EAX,EAX at50B2F64. Constructor50B27A0 sets primary vtableF22A5F0, slot2 points here. Keeps apply functor until its native tick; readiness polling follows callback."
     }
   }
 }

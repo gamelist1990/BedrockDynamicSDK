@@ -155,7 +155,8 @@ DWORD WINAPI start(void *) noexcept {
                 current.customUvMismatched != previous.customUvMismatched ||
                 current.customUvUnmatched != previous.customUvUnmatched ||
                 current.customUvUnchanged != previous.customUvUnchanged ||
-                current.nativeScreenWaitFrames != previous.nativeScreenWaitFrames) {
+                current.nativeScreenWaitFrames != previous.nativeScreenWaitFrames ||
+                current.previousReloadWaitFrames != previous.previousReloadWaitFrames) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -177,6 +178,7 @@ DWORD WINAPI start(void *) noexcept {
                     << " cameras_refreshed=" << current.camerasRefreshed
                     << " geometry_reloaded=" << current.geometryReloaded
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
+                    << " previous_reload_wait_frames=" << current.previousReloadWaitFrames
                     << " native_screen_wait_frames=" << current.nativeScreenWaitFrames
                     << " custom_materials_remapped=" << current.customMaterialsRemapped
                     << " custom_uv_sets_updated=" << current.customUvSetsUpdated

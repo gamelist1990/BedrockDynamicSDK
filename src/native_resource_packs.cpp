@@ -38,7 +38,11 @@ struct NativeResourcePacks::Binding {
     void *ctorTarget{};
     void *preGameTarget{};
     void *exitTarget{}, *eventTarget{}, *composeTarget{};
-    void *navigateTarget{};
+    void *navigateTarget{}, *progressTickTarget{};
+    Exit progressTick{};
+    std::size_t progressModelOffset{}, progressCallbackOffset{}, progressInvokeOffset{};
+    std::atomic<std::uint64_t> previousReloadWaitFrames{};
+    std::atomic<bool> progressWaiting{};
     void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
     Initialize frame{};
     Event cameraFrame{}, cameraRebind{}, initializeBlockGraphics{}, cachedGraphics{};
@@ -109,7 +113,7 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 14> tokens{};
+    std::array<BDS_HookToken, 15> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
@@ -493,6 +497,31 @@ struct NativeResourcePacks::Binding {
         if (refreshed) state.trace("game_frame_after_refresh end\r\n");
         state.observeCompletedFrame(game);
     }
+    static std::uint64_t __fastcall onProgressTick(void *controller) {
+        auto &state = *active().load(std::memory_order_acquire);
+        void *callback{}, *table{}, *invoke{}, *model{};
+        if (state.enabled.load(std::memory_order_acquire) &&
+            native_profile::read(controller, state.progressCallbackOffset, callback) && callback &&
+            native_profile::read(callback, 0, table) &&
+            native_profile::read(table, state.progressInvokeOffset, invoke) && invoke == state.eventTarget &&
+            native_profile::read(controller, state.progressModelOffset, model)) {
+            auto *client = state.clientFromModel(model);
+            auto *game = client ? state.clientGame(client) : nullptr;
+            if (game && state.localPlayer(client)) {
+                if (!state.resourcesReady(game)) {
+                    ++state.previousReloadWaitFrames;
+                    if (!state.progressWaiting.exchange(true))
+                        state.trace("native_apply_wait_previous_reload\r\n");
+                    // Do not execute or destroy the callback. Its controller
+                    // stays alive on the native progress screen and ticks again.
+                    return 0;
+                }
+                if (state.progressWaiting.exchange(false))
+                    state.trace("native_apply_previous_reload_ready\r\n");
+            }
+        }
+        return state.progressTick(controller);
+    }
     static void __fastcall onNavigateApply(void *model, void *function) {
         auto &state = *active().load(std::memory_order_acquire);
         if (state.enabled.load(std::memory_order_acquire)) {
@@ -725,6 +754,14 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->gameGateCaller = native_profile::checked(root, layout.at("game_in_game_caller"));
         next->navigateTarget = get("navigate_apply_packs",
                                     "void __fastcall(MainMenuScreenModel*, void* callback)");
+        next->progressTickTarget = get("reload_progress_tick", "uint64_t __fastcall(ResourcePackProgressScreenController*)");
+        const auto &progress = layout.at("reload_progress_gate");
+        next->progressModelOffset = native_profile::number(progress.at("model_offset"));
+        next->progressCallbackOffset = native_profile::number(progress.at("callback_owner_offset"));
+        next->progressInvokeOffset = native_profile::number(progress.at("callback_invoke_slot_offset"));
+        for (auto offset : {next->progressModelOffset, next->progressCallbackOffset, next->progressInvokeOffset})
+            if (!offset || offset > 0x10000 || offset % sizeof(void *))
+                throw std::runtime_error("invalid resource reload progress layout");
         next->exitTarget = get("exit_settings", "uint64_t __fastcall(void* closure)");
         next->eventTarget = get("apply_stack_event", "void __fastcall(void* closure, void* model)");
         next->composeTarget = get("compose_full_stack",
@@ -851,7 +888,7 @@ bool NativeResourcePacks::install(std::string &error) {
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
-        !binding_->navigateTarget ||
+        !binding_->navigateTarget || !binding_->progressTickTarget ||
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->cameraFrameTarget || !binding_->cameraRebind ||
@@ -909,7 +946,9 @@ bool NativeResourcePacks::install(std::string &error) {
         BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
                               reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[12]) &&
         BDS_HookDirectInstall(binding_->suspendGateTarget, reinterpret_cast<void *>(&Binding::onSuspendGate),
-                              reinterpret_cast<void **>(&binding_->suspendGate), &binding_->tokens[13]);
+                              reinterpret_cast<void **>(&binding_->suspendGate), &binding_->tokens[13]) &&
+        BDS_HookDirectInstall(binding_->progressTickTarget, reinterpret_cast<void *>(&Binding::onProgressTick),
+                              reinterpret_cast<void **>(&binding_->progressTick), &binding_->tokens[14]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -937,6 +976,6 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->remoteReloads.load(), binding_->suspendGateOverrides.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
             binding_->customMaterialsRemapped.load(), binding_->customUvSetsUpdated.load(),
-            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load(), binding_->nativeScreenWaitFrames.load()};
+            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load(), binding_->nativeScreenWaitFrames.load(), binding_->previousReloadWaitFrames.load()};
 }
 } // namespace bedrock
