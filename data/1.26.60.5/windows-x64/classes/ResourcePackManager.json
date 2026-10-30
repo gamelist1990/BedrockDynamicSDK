@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v11",
+      "adapter": "windows-live-reload-v12",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -95,20 +95,26 @@
         "initialize_block_graphics": {
           "symbol": "BlockGraphics::initBlocks"
         },
-        "reload_geometry": {
-          "symbol": "MinecraftGame::reloadAnimationAndGeometryData"
+        "platform_suspend": {
+          "symbol": "AppPlatform::_fireAppSuspended"
         },
-        "notify_client_resources": {
-          "symbol": "MinecraftGame::_notifyClientResourcePacksChanged"
+        "platform_resume": {
+          "symbol": "AppPlatform::_fireAppResumed"
         },
-        "refresh_client": {
-          "symbol": "MinecraftGame::_refreshClientAfterTextureAtlasReload"
+        "remote_client": {
+          "symbol": "ClientInstance::isMultiPlayerClient"
         },
-        "resume_renderer": {
-          "symbol": "LevelRenderer::onAppResumed"
+        "game_pre_suspend": {
+          "symbol": "MinecraftGame::onAppPreSuspended"
+        },
+        "game_suspend": {
+          "symbol": "MinecraftGame::onAppSuspended"
+        },
+        "game_resume": {
+          "symbol": "MinecraftGame::onAppResumed"
         }
       },
-      "evidence": "User reports v10 platform suspension/resumption disconnects and reconnects external multiplayer; log confirms refresh cancels after platform cycle before graphics/camera update. v11 removes application-wide platform notifications. Retains Windows v6/v7 geometry and client resource repair, and invokes only renderer resume and refresh. Android-style BlockGraphics init/cache invalidation and deferred camera rebind retained as candidates. No v11 gameplay runtime verification.",
+      "evidence": "v10 user reports local visual update works and external multiplayer disconnects during app lifecycle broadcast. v10 remote log shows refresh_cancelled after platform cycle before block init. v11 targeted graphics calls crash. v12 retains v10 lifecycle and block/camera flow, skips only checked MinecraftGame listener callbacks during mod-owned synchronous broadcast when ClientInstance remote predicate is true. All other lifecycle listeners remain active; whether this prevents disconnect or preserves renderer resources is unverified. Local uses v10 unfiltered.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -156,23 +162,20 @@
       "level_renderer": {
         "task_group_offset": 1000,
         "player_camera_offset": 1152,
-        "evidence": "OnAppResumed task group at primary renderer+3E8; LevelRenderer::frameUpdate 5355F00 loads player camera at renderer+480 and calls frameUpdate at 5355F0A.",
-        "app_listener_offset": 8,
-        "resume_slot_offset": 40
+        "evidence": "OnAppResumed task group at primary renderer+3E8; LevelRenderer::frameUpdate 5355F00 loads player camera at renderer+480 and calls frameUpdate at 5355F0A."
       },
       "optimization": {
-        "hooks": 13,
-        "removed": [
-          "application-wide AppPlatform suspend/resume and network lifecycle notifications",
-          "v8 registry enumeration, group/material/client-data rebuilding and raw flag writes"
-        ],
+        "hooks": 16,
         "preserved": [
-          "world/thread/atlas/loader guards",
-          "renderer task barriers",
-          "scoped graphics cache invalidation",
-          "deferred camera rebind"
+          "v10 local app lifecycle flow",
+          "terrain/loader and world/thread checks",
+          "block graphics init, cache invalidation, deferred camera refresh"
         ],
-        "evidence": "User reports external server reconnect during v10 platform cycle; v10 log shows refresh_cancelled=1 and graphics/camera updates=0. v11 uses renderer-only resume and v6/v7 model restoration; network behavior and custom-block visuals require runtime testing."
+        "added": [
+          "scoped remote-only MinecraftGame lifecycle callback suppression",
+          "stage tracing"
+        ],
+        "evidence": "REA listener-8a42a0/8a4e90/8917f0/65b0530 evidence; exact native callback scope, connectivity and visuals are unverified on Windows."
       },
       "player_camera": {
         "renderer_offset": 2456,
@@ -183,10 +186,25 @@
         "evidence": "Primary camera [5372310,5372769), secondary listener call sites at 53721A0 / 538F890; validated owner and current camera against client renderer before call; never call secondary listener directly."
       },
       "block_client_graphics_offset": 48,
-      "client_notification_capture": {
-        "object_bytes": 16,
-        "game_offset": 8,
-        "evidence": "Native invoker RVA956930 reads only closure+8 Game*. It obtains current ActorResourceDefinitionGroup through Game vtable+380, calls client vtable+AB8 onActiveResourcePacksChanged, destroys its own temporary NonOwnerPtr. No vtable or ownership operations on the borrowed closure."
+      "app_platform": {
+        "global_rva": "0x128bf570",
+        "object_offset": 16,
+        "suspend_slot": 512,
+        "resume_slot": 520,
+        "global_store_guard": {
+          "rva": "0x322d69",
+          "entry_check": "48 89 3D 10 C8 59 12 80 38 00 48 89 FE 75 17 C7",
+          "kind": "instruction-guard-only",
+          "evidence": "At 322D69 constructor stores the primary AppPlatform this pointer to global 128BF580. The global begins at 128BF570 with a lifetime flag pointer. Exact static layout, only borrowed on game thread."
+        },
+        "evidence": "Android FUN1283F4 stores this in global608E8 while hooking AppPlatform::AppPlatform; FUN125D88 calls vtable slots208 and210. Windows adds only one vtable destructor slot and native AppPlatform vtables dispatch listener suspension/resumption at offsets200/208. Verify both actual entries and lifetime before invocation."
+      },
+      "game_lifecycle_listener": {
+        "game_offset": 136,
+        "pre_suspend_slot": 24,
+        "suspend_slot": 32,
+        "resume_slot": 40,
+        "evidence": "Constructor and primary vtable inspected in exact 1.26.60.5 PE, checked against instance before scoped suppression."
       }
     }
   },
@@ -516,57 +534,83 @@
       "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
       "evidence": "init-block-graphics-evidence.json; exact initial callback94D20A passes manager and LevelData+160 Experiments. Replaces owned graphics objects; Android also invalidates their cached client-data pointers."
     },
-    "MinecraftGame::reloadAnimationAndGeometryData": {
-      "rva": "0x8c27a0",
+    "AppPlatform::_fireAppSuspended": {
+      "rva": "0x3287c0",
       "signature": "",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC D8 01 00 00 48 8D AC 24 80",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 00 FE",
       "cross_version_signature_available": false,
       "status": "candidate",
       "runtime_verified": false,
       "abi_verified": false,
-      "abi": "void __fastcall(MinecraftGame*, bool sync)",
+      "abi": "void __fastcall(AppPlatform*)",
       "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
-      "evidence": "reload-animation-geometry-evidence.json, exact .pdata [8C27A0,8C3B05); Game primary vtable F091B70 slot67 (0x218), immediately before getGeometryGroup slot0x220. RCXGame, DLsync. Clears/rebuilds geometry and actor definitions; reloads client entity renderers at8C34E7, invokes client postInitRenderResources at8C358D (corrected v6 descriptive label; this does not itself recreate LevelBuilder workers), refreshes ECS render data at8C3596, reinitializes live LevelRenderer at8C36F7. Bool true takes synchronous native path. Candidate ABI, not runtime verified."
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "platform-suspend-evidence.json; AppPlatform primary vtable EF C7B50 and GameCorePC primary vtable EF C5EE0 slot+200 both point here; iterates listeners using vtable+18 and +20. Android Itanium vtable +208 differs by one destructor slot from Windows ABI."
     },
-    "MinecraftGame::_notifyClientResourcePacksChanged": {
-      "rva": "0x956930",
+    "AppPlatform::_fireAppResumed": {
+      "rva": "0x328c00",
       "signature": "",
-      "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF 48 89 D6 48",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 00 FE",
       "cross_version_signature_available": false,
       "status": "candidate",
       "runtime_verified": false,
       "abi_verified": false,
-      "abi": "void __fastcall(void* gameClosure, ClientInstance*)",
+      "abi": "void __fastcall(AppPlatform*)",
       "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
-      "evidence": "client-resource-notification-evidence.json; exact native per-client full resource change callback [956930,9569F9). RCX borrowed gameClosure (only+8 used), RDXliveClient. Gets Game ActorResourceDefinitionGroupMutable via vtable+380; calls ClientInstance::onActiveResourcePacksChanged (target65A6E10) via+AB8. That target clears block tessellator state, item texture caches, entity renderer resources, LevelRenderer references and UI scene cache."
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "Exact AppPlatform/GameCorePC primary vtable slot+208; invokes AppPlatformListener virtual +28. Android Itanium vtable slot +210 differs by one destructor slot. Function identity inferred from listener dispatch and platform fields; runtime unverified."
     },
-    "MinecraftGame::_refreshClientAfterTextureAtlasReload": {
-      "rva": "0x946b80",
+    "ClientInstance::isMultiPlayerClient": {
+      "rva": "0x65b0530",
       "signature": "",
-      "entry_check": "56 57 53 48 83 EC 20 48 89 D6 48 8B 02 48 8B 80 90 07 00 00 48 89 D1 FF",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 50 05 00 00 FF 15 28 EA 3E 09",
       "cross_version_signature_available": false,
       "status": "candidate",
       "runtime_verified": false,
       "abi_verified": false,
-      "abi": "void __fastcall(void* unused, ClientInstance*)",
+      "abi": "bool __fastcall(ClientInstance*)",
       "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
-      "evidence": "Maintained SDK name for native stateless hotreload lambda439 invoker, vtable RVA F0978F0. Pdata [946B80,946C0E). RCX unused, RDX client. Clears CachedScenes UI scene cache via slot0x790, gets LevelRenderer via0x5C8, loops coordinators and calls RenderChunkCoordinator::_setAllDirty(false,false) RVA7920F70. Correlated LeviLamina LevelRenderer::rebuildAllRenderChunkGeometry source."
+      "source": "Exact Windows 1.26.60.5 PE and static REA/Ghidra evidence; runtime and ABI unverified.",
+      "evidence": "listener-65b0530-evidence.json; primary vtable F2B9330 slot171, immediately after verified isPreGame slot169 and multiplayer predicate slot170. Semantic name based on current generated ClientInstance interface order; exact-version runtime behavior unverified."
     },
-    "LevelRenderer::onAppResumed": {
-      "rva": "0x53542e0",
+    "MinecraftGame::onAppPreSuspended": {
+      "rva": "0x8a42a0",
       "signature": "",
-      "entry_check": "55 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45 00 FE FF FF FF 48 89 CE",
+      "entry_check": "55 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80 00 00 00 48 C7 85 D0 00",
       "cross_version_signature_available": false,
       "status": "candidate",
       "runtime_verified": false,
       "abi_verified": false,
       "abi": "void __fastcall(AppPlatformListener*)",
       "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
-      "evidence": "renderer-resume-builders-evidence.json and v7-exact-calls.json. ABI RCX = LevelRenderer+8 AppPlatformListener subobject, NOT primary LevelRenderer*. Exact vtable slot5, validated against instance at runtime. Drains renderer tasks, recreates builders, resumes camera/helper resources; tail jumps53544A0. Raw slice Ghidra cannot follow the out-of-slice tail jump; full PE instructions retained separately."
+      "source": "Exact Windows 1.26.60.5 PE and static REA/Ghidra evidence; runtime and ABI unverified.",
+      "evidence": "listener-8a42a0-evidence.json; Game constructor RVA82DA3D stores listener vtable F0924E0 at Game+88; its slots 3, 4, 5 are RVAs8A42A0,8A4E90,8917F0. RTTI lambda_503@onAppSuspended@MinecraftGame and registrar8A50C1 inside RVA8A4E90. User observed v10 broadcast disconnects remote; scope suppression to checked Game listener on synchronous adapter-owned remote broadcast. Actual causal listener and runtime safety unproven."
+    },
+    "MinecraftGame::onAppSuspended": {
+      "rva": "0x8a4e90",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88 04 00 00 48 8D AC 24 80 00 00 00 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(AppPlatformListener*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE and static REA/Ghidra evidence; runtime and ABI unverified.",
+      "evidence": "listener-8a4e90-evidence.json; Game constructor RVA82DA3D stores listener vtable F0924E0 at Game+88; its slots 3, 4, 5 are RVAs8A42A0,8A4E90,8917F0. RTTI lambda_503@onAppSuspended@MinecraftGame and registrar8A50C1 inside RVA8A4E90. User observed v10 broadcast disconnects remote; scope suppression to checked Game listener on synchronous adapter-owned remote broadcast. Actual causal listener and runtime safety unproven."
+    },
+    "MinecraftGame::onAppResumed": {
+      "rva": "0x8917f0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 08 05 00 00 48 8D AC 24 80 00 00 00 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(AppPlatformListener*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE and static REA/Ghidra evidence; runtime and ABI unverified.",
+      "evidence": "listener-8917f0-evidence.json; Game constructor RVA82DA3D stores listener vtable F0924E0 at Game+88; its slots 3, 4, 5 are RVAs8A42A0,8A4E90,8917F0. RTTI lambda_503@onAppSuspended@MinecraftGame and registrar8A50C1 inside RVA8A4E90. User observed v10 broadcast disconnects remote; scope suppression to checked Game listener on synchronous adapter-owned remote broadcast. Actual causal listener and runtime safety unproven."
     }
   }
 }

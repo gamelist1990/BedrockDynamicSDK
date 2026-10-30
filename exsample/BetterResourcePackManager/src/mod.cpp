@@ -32,9 +32,8 @@ DWORD WINAPI start(void *) noexcept {
         traceFile = CreateFileW((directory / L"BetterResourcePackManager-stage.log").c_str(),
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
-        if (traceFile == INVALID_HANDLE_VALUE)
-            throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v11 diagnostic: started\r\n");
+        if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
+        traceStep("v12: started\r\n");
         log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
@@ -61,7 +60,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v11 diagnostic is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v12 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -82,13 +81,12 @@ DWORD WINAPI start(void *) noexcept {
                 current.terrainAtlasCompleted != previous.terrainAtlasCompleted ||
                 current.refreshCancelled != previous.refreshCancelled ||
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
-                current.geometryReloaded != previous.geometryReloaded ||
-                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
-                current.levelBuildersRecreated != previous.levelBuildersRecreated ||
-                current.clientsRefreshed != previous.clientsRefreshed ||
+                current.platformCycles != previous.platformCycles ||
                 current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
                 current.graphicsCacheResets != previous.graphicsCacheResets ||
-                current.camerasRefreshed != previous.camerasRefreshed) {
+                current.camerasRefreshed != previous.camerasRefreshed ||
+                current.remoteReloads != previous.remoteReloads ||
+                current.gameLifecycleSkipped != previous.gameLifecycleSkipped) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -102,12 +100,11 @@ DWORD WINAPI start(void *) noexcept {
                     << " terrain_atlas_completed=" << current.terrainAtlasCompleted
                     << " refresh_cancelled=" << current.refreshCancelled
                     << " resource_wait_frames=" << current.resourceWaitFrames
-                    << " geometry_reloaded=" << current.geometryReloaded
-                    << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
-                    << " level_builders_recreated=" << current.levelBuildersRecreated
-                    << " clients_refreshed=" << current.clientsRefreshed
+                    << " platform_cycles=" << current.platformCycles
                     << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
                     << " graphics_cache_resets=" << current.graphicsCacheResets
+                    << " remote_reloads=" << current.remoteReloads
+                    << " game_lifecycle_skipped=" << current.gameLifecycleSkipped
                     << " cameras_refreshed=" << current.camerasRefreshed
                     << " failures=" << current.failures << '\n';
                 log.flush();
