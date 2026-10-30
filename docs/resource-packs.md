@@ -17,6 +17,8 @@
 
 v21の検証はユーザー報告に基づき、`analysis/mod_runtime_validation.json` と使用中のシンボルに記録しています。新しい待機処理の実機検証状況は `load_completion` に分けています。これを全SDK、他バージョン、削除済みの全体再初期化処理の検証へ拡張してはいけません。識別名に残る `Candidate` 接尾辞は既存参照との安定性のため保持します。現在の検証状態は名前ではなくメタデータを参照してください。
 
-次のゲーム版では [プロファイル更新手順](profile-maintenance.md) に従い、正確なEXE指紋・呼出規約・入口と呼出元ガード・構造体配置を再確認します。同じABIなら主にクラス定義を更新し、ABIが変わればSDKのアダプターも変更します。別版のRVAへ自動復帰する処理を追加しません。現在の対応ABIは `windows-live-reload-v21-load-complete` で、互換性のない古いプロファイルは拒否し、同一EXEの内蔵定義への補完経路に任せます。
+次のゲーム版では [プロファイル更新手順](profile-maintenance.md) に従い、正確なEXE指紋・呼出規約・入口と呼出元ガード・構造体配置を再確認します。同じABIなら主にクラス定義を更新し、ABIが変わればSDKのアダプターも変更します。別版のRVAへ自動復帰する処理を追加しません。現在の対応ABIは `windows-live-reload-v21-pending-apply` で、互換性のない古いプロファイルは拒否し、同一EXEの内蔵定義への補完経路に任せます。
 
 廃止した停止・復帰、全体形状再初期化、クライアント資源全体の通知、独自コールバック消費用ヘルパーはアクティブ定義から削除しました。過去の根拠はGit履歴とREA記録に残っています。`Status` の旧カウンター `platformCycles`、`suspendGateOverrides`、`geometryReloaded`、`clientDefinitionsReloaded` は既存コードとの互換性のため0を返します。`nativeScreenWaitFrames` は `completionWaitFrames` の互換エイリアスです。
+
+ネイティブ適用イベントが戻っただけでは成功扱いにしません。`PendingPackApply` は世界・マネージャー・スレッドの識別情報だけを保持します。ネイティブのdirtyフラグを読み、ローダーが完了したフレームで `ResourcePackManager::applyPendingStack` に再判定を委ねます。フラグを書き換えて強制実行する処理、借用コールバックの保存・再実行はありません。追加した呼出しと配置は `pending_apply` と個別シンボルに実機未確認として記録しています。

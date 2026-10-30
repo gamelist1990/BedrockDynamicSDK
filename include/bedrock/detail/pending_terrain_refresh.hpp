@@ -49,6 +49,21 @@ class PendingTerrainRefresh {
         return result;
     }
 };
+// Native stack changes can be deferred by resource listeners. Retain only
+// identity tokens, never a borrowed UI callback or client pointer.
+class PendingPackApply {
+    void *game_{}, *level_{}, *manager_{};
+    std::uint32_t thread_{};
+  public:
+    void begin(void *game, void *level, void *manager, std::uint32_t thread) noexcept {
+        game_ = game; level_ = level; manager_ = manager; thread_ = thread;
+    }
+    void clear() noexcept { game_ = level_ = manager_ = nullptr; thread_ = 0; }
+    bool matches(void *game, void *level, void *manager, std::uint32_t thread) const noexcept {
+        return manager_ && game == game_ && level == level_ && manager == manager_ && thread == thread_;
+    }
+    bool pending() const noexcept { return manager_ != nullptr; }
+};
 // Identity only: no retained ownership. Calls are synchronized by the adapter.
 class PendingCameraRefresh {
     void *game_{}, *level_{};

@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "verified",
       "runtime_verified": true,
-      "adapter": "windows-live-reload-v21-load-complete",
+      "adapter": "windows-live-reload-v21-pending-apply",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -115,6 +115,9 @@
         },
         "invalidate_actor_bindings": {
           "symbol": "ClientInstance::invalidateActorRenderBindingsCandidate"
+        },
+        "apply_pending_stack": {
+          "symbol": "ResourcePackManager::applyPendingStack"
         }
       },
       "evidence": "Exact-build REA/Ghidra and Windows x64 instruction evidence retained on symbols; user confirmed v21 complete on 2026-10-31, except a rare immediate-apply load race. Only v21 consumed bindings retained. See runtime_validation and load_completion.",
@@ -305,10 +308,16 @@
         "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
       },
       "load_completion": {
-        "revision": 2,
+        "revision": 3,
         "runtime_verified": false,
         "status": "awaiting-runtime-confirmation",
-        "policy": "Serialize native apply callbacks after previous loader/refresh completion. Match atlas completion to request generation. Retain claimed request across renewed loader work and retry only after a completed idle frame. Revalidate loader/atlas identity after renderer task drains. No fixed time delay."
+        "policy": "Serialize native apply callbacks after previous loader/refresh completion. Match atlas completion to request generation. Retain claimed request across renewed loader work and retry only after a completed idle frame. Revalidate loader/atlas identity after renderer task drains. No fixed time delay. Retain native pending-stack request across listener deferral and permit scoped in-world composition in the owning game frame."
+      },
+      "pending_apply": {
+        "dirty_offset": 377,
+        "runtime_verified": false,
+        "status": "awaiting-runtime-confirmation",
+        "evidence": "Exact set-stack17CB081 ORs byte+179 with changed result; native event52374F0 tests+179 before5237507 call17CC040; applyPendingStack clears word+178 only after listener acceptance. Retain game/level/manager/thread identity through deferred composition; retry only while native dirty bit is set and loader is idle."
       }
     }
   },
@@ -856,6 +865,19 @@
       "runtime_validation": {
         "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
       }
+    },
+    "ResourcePackManager::applyPendingStack": {
+      "rva": "0x17cc040",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 38 48 8D 6C 24 30 48 C7 45 00 FE FF FF",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ResourcePackManager*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE; native call site 5237504 MOV RCX,RAX;5237507 CALL17CC040; REA/Ghidra raw slice and Windows x64 instructions. New adapter-owned retry path runtime pending.",
+      "evidence": "v21-pending-native-apply-evidence.json ev_84bd18af0fde571b6c142a281d5e5a94c884124ab79c208a492ebffc9c7bbb9f. Entry [17CC040,17CC1AA). Tests every listener vtable+10 and returns without clearing dirty when busy. Native full/global/level composition at17CC0BA; update17CC0C3; notifications17CC170; word+178 cleared only at17CC194. Set-stack17CABD0 ORs actual-change result into+179 at17CB081. Adapter never writes these flags."
     }
   }
 }

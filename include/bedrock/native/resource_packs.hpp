@@ -23,7 +23,7 @@ class NativeResourcePacks final {
         // Retained as an alias of completionWaitFrames for existing consumers.
         std::uint64_t nativeScreenWaitFrames{}, previousReloadWaitFrames{};
         std::uint64_t completionWaitFrames{};
-        std::uint64_t immediateSelections{}, modelBindingsRefreshed{}, readinessRetries{};
+        std::uint64_t immediateSelections{}, modelBindingsRefreshed{}, readinessRetries{}, nativeApplyRetries{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();
