@@ -15,13 +15,15 @@ class NativeResourcePacks final {
             globalStackIncluded{};
         std::uint64_t applyNavigations{}, liveApplications{}, inWorldApplyEvents{}, gameGateOverrides{};
         std::uint64_t terrainAtlasCompleted{}, refreshCancelled{}, resourceWaitFrames{};
+        // Only platformCycles/suspendGateOverrides below are legacy, always zero.
         std::uint64_t platformCycles{}, blockGraphicsRebuilt{}, graphicsCacheResets{}, camerasRefreshed{}, remoteReloads{}, suspendGateOverrides{};
+        // Legacy whole-resource reset counters; always zero.
         std::uint64_t geometryReloaded{}, clientDefinitionsReloaded{};
         std::uint64_t customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
         // Retained as an alias of completionWaitFrames for existing consumers.
         std::uint64_t nativeScreenWaitFrames{}, previousReloadWaitFrames{};
         std::uint64_t completionWaitFrames{};
-        std::uint64_t immediateSelections{}, modelBindingsRefreshed{};
+        std::uint64_t immediateSelections{}, modelBindingsRefreshed{}, readinessRetries{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();

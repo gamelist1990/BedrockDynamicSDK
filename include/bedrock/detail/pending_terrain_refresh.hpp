@@ -7,7 +7,7 @@ namespace bedrock::detail {
 class PendingTerrainRefresh {
     void *game_{}, *level_{}, *manager_{};
     std::uint32_t thread_{};
-    bool ready_{};
+    bool ready_{}, claimed_{};
     std::uint64_t generation_{};
   public:
     void begin(void *game, void *level, void *manager, std::uint32_t thread) noexcept {
@@ -16,13 +16,19 @@ class PendingTerrainRefresh {
         level_ = level;
         manager_ = manager;
         thread_ = thread;
-        ready_ = false;
+        ready_ = claimed_ = false;
     }
-    bool complete(void *game) noexcept {
-        if (!pending() || game != game_ || ready_)
+    bool complete(void *game, std::uint64_t generation) noexcept {
+        if (!pending() || game != game_ || generation != generation_ || ready_)
             return false;
         ready_ = true;
         return true;
+    }
+    // A stale completion/claim must never consume or requeue a newer selection.
+    void finish(std::uint64_t generation, bool retry = false) noexcept {
+        if (generation != generation_ || !claimed_) return;
+        claimed_ = false;
+        if (!retry) manager_ = nullptr;
     }
     std::uint64_t generation() const noexcept { return generation_; }
     bool atlasReady() const noexcept { return ready_; }
@@ -36,10 +42,10 @@ class PendingTerrainRefresh {
             cancelled = true;
             return nullptr;
         }
-        if (!ready_ || !resourcesReady)
+        if (claimed_ || !ready_ || !resourcesReady)
             return nullptr;
         auto *result = manager_;
-        manager_ = nullptr; // Claim before native code can reenter the getter.
+        claimed_ = true; // Keep the request until native refresh actually succeeds.
         return result;
     }
 };

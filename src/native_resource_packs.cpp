@@ -69,7 +69,7 @@ struct NativeResourcePacks::Binding {
     std::size_t rendererTasksOffset{};
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
-    std::atomic<std::uint64_t> resourceWaitFrames{};
+    std::atomic<std::uint64_t> resourceWaitFrames{}, readinessRetries{};
     detail::NativeMaterialUvs materialUvs;
     std::atomic<std::uint64_t> customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
     AtlasUpdate atlasUpdate{};
@@ -152,6 +152,11 @@ struct NativeResourcePacks::Binding {
     static void __fastcall onAtlasUpdate(void *game, const void *atlas, bool terrain) {
         const auto caller = _ReturnAddress();
         auto &state = *active().load(std::memory_order_acquire);
+        std::uint64_t generation{};
+        {
+            std::lock_guard lock(state.refreshMutex);
+            generation = state.pendingRefresh.generation();
+        }
         state.atlasUpdate(game, atlas, terrain);
         if (!state.enabled.load(std::memory_order_acquire) || !terrain || caller != state.atlasCaller)
             return;
@@ -159,7 +164,7 @@ struct NativeResourcePacks::Binding {
         if (!native_profile::read(game, state.terrainAtlasOffset, currentAtlas) || currentAtlas != atlas)
             return;
         std::lock_guard lock(state.refreshMutex);
-        if (state.pendingRefresh.complete(game)) {
+        if (state.pendingRefresh.complete(game, generation)) {
             ++state.terrainCompleted;
             state.trace("terrain_atlas_ready\r\n");
         }
@@ -283,9 +288,11 @@ struct NativeResourcePacks::Binding {
         void *loader{}, *atlas{};
         const bool ready = reloadIdentity(game, loader, atlas);
         bool barrierReady{};
+        std::uint64_t generation{};
         {
             std::lock_guard lock(refreshMutex);
-            barrierReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, ready);
+            generation = pendingRefresh.generation();
+            barrierReady = reloadBarrier.allows(generation, loader, atlas, ready);
             if (!barrierReady) reloadBarrier.clear();
             manager = pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled, ready && barrierReady);
             refreshPending.store(pendingRefresh.pending(), std::memory_order_release);
@@ -300,6 +307,31 @@ struct NativeResourcePacks::Binding {
             }
             return;
         }
+        // Consume only on completion, preserving the request if a task drain
+        // exposes further loader work. Generation matching prevents an old
+        // refresh from consuming a newer selection during native reentrancy.
+        struct Claim {
+            Binding &state;
+            std::uint64_t generation;
+            bool retry{};
+            ~Claim() {
+                std::lock_guard lock(state.refreshMutex);
+                state.pendingRefresh.finish(generation, retry);
+                if (retry) {
+                    state.reloadBarrier.clear();
+                    ++state.readinessRetries;
+                    state.trace("refresh_wait_loader_after_drain\r\n");
+                }
+                state.refreshPending.store(state.pendingRefresh.pending(), std::memory_order_release);
+            }
+        } claim{*this, generation};
+        const auto loaded = [&] {
+            void *currentLoader{}, *currentAtlas{};
+            const bool idle = reloadIdentity(game, currentLoader, currentAtlas);
+            std::lock_guard lock(refreshMutex);
+            return pendingRefresh.generation() == generation && idle &&
+                currentLoader == loader && currentAtlas == atlas;
+        };
         trace("refresh_claimed\r\n");
         auto *data = levelData(level);
         if (!data || gamePacks(game) != manager) {
@@ -328,12 +360,13 @@ struct NativeResourcePacks::Binding {
         trace("drain_before_block_init end\r\n");
         if (primaryClient(game) != client || clientGame(client) != game ||
             clientLevel(client) != level || gamePacks(game) != manager ||
-            clientRenderer(client) != renderer || !resourcesReady(game) ||
+            clientRenderer(client) != renderer ||
             !(data = levelData(level))) {
             ++refreshCancelled;
             trace("block_context_changed\r\n");
             return;
         }
+        if (!loaded()) { claim.retry = true; return; }
         freshBlockGraphics.store(true, std::memory_order_release);
         trace("init_block_graphics begin\r\n");
         initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
@@ -350,11 +383,9 @@ struct NativeResourcePacks::Binding {
         }
         drainRendererTasks(tasks);
         trace("drain_before_custom_uv end\r\ncustom_uv_prepare begin\r\n");
+        if (!loaded()) { claim.retry = true; return; }
         materialUvs.counts = {};
         try {
-            void *atlas{};
-            if (!native_profile::read(game, terrainAtlasOffset, atlas) || !atlas)
-                throw std::runtime_error("custom_uv_no_atlas");
             auto *atlasManager = materialUvs.atlasManager(atlas);
             if (!materialUvs.prepare(atlasManager))
                 throw std::runtime_error("custom_uv_snapshot_rejected");
@@ -362,7 +393,7 @@ struct NativeResourcePacks::Binding {
             void *currentAtlas{};
             if (primaryClient(game) != client || clientGame(client) != game ||
                 clientLevel(client) != level || gamePacks(game) != manager ||
-                clientRenderer(client) != renderer || !resourcesReady(game) ||
+                clientRenderer(client) != renderer || !loaded() ||
                 !native_profile::read(game, terrainAtlasOffset, currentAtlas) || currentAtlas != atlas ||
                 materialUvs.atlasManager(atlas) != atlasManager)
                 throw std::runtime_error("custom_uv_context_changed");
@@ -375,6 +406,9 @@ struct NativeResourcePacks::Binding {
             ++failures;
             trace(error.what());
             trace("\r\n");
+            materialUvs.discard();
+            claim.retry = !loaded();
+            return;
         }
         char uvSummary[256]{};
         _snprintf_s(uvSummary, sizeof(uvSummary), _TRUNCATE,
@@ -392,17 +426,19 @@ struct NativeResourcePacks::Binding {
         // Refresh per-entity cached bindings against existing resources. Never
         // replace actor renderers, global geometry or their component objects.
         if (primaryClient(game) != client || clientGame(client) != game ||
-            clientLevel(client) != level || clientRenderer(client) != renderer || !resourcesReady(game)) {
+            clientLevel(client) != level || clientRenderer(client) != renderer) {
             ++refreshCancelled;
             trace("model_bindings_context_changed\r\n");
             return;
         }
+        if (!loaded()) { claim.retry = true; return; }
         trace("model_bindings_invalidate begin\r\n");
         invalidateActorBindings(client);
         ++modelBindingsRefreshed;
         trace("model_bindings_invalidate end\r\n");
         {
             std::lock_guard lock(refreshMutex);
+            if (pendingRefresh.generation() != generation) return;
             pendingCamera.begin(game, level, GetCurrentThreadId());
             trace("camera_pending\r\n");
         }
@@ -437,7 +473,7 @@ struct NativeResourcePacks::Binding {
             auto *client = state.clientFromModel(model);
             auto *game = client ? state.clientGame(client) : nullptr;
             if (game && state.localPlayer(client)) {
-                if (!state.resourcesReady(game)) {
+                if (!state.resourcesReady(game) || state.refreshPending.load(std::memory_order_acquire)) {
                     ++state.previousReloadWaitFrames;
                     if (!state.progressWaiting.exchange(true))
                         state.trace("native_apply_wait_previous_reload\r\n");
@@ -708,7 +744,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-immediate-bindings")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-load-complete")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
         const auto get = [&](const char *field, const char *abi) {
@@ -950,6 +986,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     result.customUvUnchanged = binding_->customUvUnchanged.load();
     result.completionWaitFrames = binding_->completionWaitFrames.load();
     result.previousReloadWaitFrames = binding_->previousReloadWaitFrames.load();
+    result.readinessRetries = binding_->readinessRetries.load();
     result.immediateSelections = binding_->immediateSelections.load();
     result.modelBindingsRefreshed = binding_->modelBindingsRefreshed.load();
     result.nativeScreenWaitFrames = result.completionWaitFrames;

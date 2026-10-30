@@ -91,7 +91,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v21 immediate bindings candidate: started\r\n");
+        traceStep("v21 load-complete revision: started\r\n");
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
@@ -102,7 +102,7 @@ DWORD WINAPI start(void *) noexcept {
         bedrock::ProfileManager profiles;
         std::string error;
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,
-                                              bedrock::CandidatePolicy::AllowCandidates};
+                                              bedrock::CandidatePolicy::VerifiedOnly};
         if (!profiles.prepare(
                 {bedrock::Feature::ResourcePacks}, options,
                 [packs](const bedrock::RuntimeProfile &profile, std::string &failure) {
@@ -121,8 +121,8 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v21 immediate bindings candidate is experimental; runtime "
-               "validation pending.\n";
+        log << "Hooks installed. Exact-build native live reload adapter v21 load-complete; v21 hooks user-verified; "
+               "load-completion revision runtime validation pending.\n";
         log.flush();
         startupStatus = 2;
         bedrock::NativeResourcePacks::Status previous{};
@@ -154,7 +154,8 @@ DWORD WINAPI start(void *) noexcept {
                 current.completionWaitFrames != previous.completionWaitFrames ||
                 current.previousReloadWaitFrames != previous.previousReloadWaitFrames ||
                 current.immediateSelections != previous.immediateSelections ||
-                current.modelBindingsRefreshed != previous.modelBindingsRefreshed) {
+                current.modelBindingsRefreshed != previous.modelBindingsRefreshed ||
+                current.readinessRetries != previous.readinessRetries) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -175,6 +176,7 @@ DWORD WINAPI start(void *) noexcept {
                     << " immediate_selections=" << current.immediateSelections
                     << " model_bindings_refreshed=" << current.modelBindingsRefreshed
                     << " previous_reload_wait_frames=" << current.previousReloadWaitFrames
+                    << " readiness_retries=" << current.readinessRetries
                     << " completion_wait_frames=" << current.completionWaitFrames
                     << " custom_materials_remapped=" << current.customMaterialsRemapped
                     << " custom_uv_sets_updated=" << current.customUvSetsUpdated

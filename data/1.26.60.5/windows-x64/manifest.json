@@ -33,7 +33,7 @@
     },
     {
       "path": "analysis/mod_runtime_validation.json",
-      "sha256": "1040eb7ead790e92c143c018bd4322426a1dcff5107d9eff666dfc81064efb92"
+      "sha256": "c79f0def06c7ab28ef1e708499b105e08602266faee5e4017f5d9c84f25e8c06"
     },
     {
       "path": "analysis/runtime_follow_up.json",
@@ -49,7 +49,7 @@
     },
     {
       "path": "analysis/runtime_verified_symbols.json",
-      "sha256": "02981911769ea926318d67fecd328edc6a65f3fadc2f835e42f729b73ad22518"
+      "sha256": "be5238f3ad55bf2e09fb5ad8bde139ca1dda5c84f77d9acc2e104d7e3477192e"
     },
     {
       "path": "analysis/status.json",
@@ -161,7 +161,7 @@
     },
     {
       "path": "classes/ResourcePackManager.json",
-      "sha256": "aab4b4dc3abdeffe6fc24885abfc63c22f6c14a6a2d3602295eeae428b45e1a4"
+      "sha256": "41e6983743422c4c5c5c81b6d165820fa7fb25915854a565acd070f17356f18e"
     },
     {
       "path": "classes/RuntimeActorList.json",

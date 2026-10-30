@@ -18,22 +18,28 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     runtime_symbols = set(profile["analysis"]["runtime_verified_symbols"])
     assert {"Keyboard::feed", "LevelRendererPlayer::getFov", "ClientInstance::getLocalPlayer"} <= runtime_symbols
     resource_layout = profile["layouts"]["ResourcePackManager"]
-    resource_candidates = {
+    resource_bindings = {
         row["symbol"] for row in resource_layout["functions"].values()
     } - {"ClientInstance::getLocalPlayer"}
-    assert len(profile["symbols"]) == 41 + len(resource_candidates)
-    assert resource_layout["status"] == "candidate"
-    assert resource_layout["runtime_verified"] is False
-    for name in resource_candidates:
+    assert len(profile["symbols"]) == 41 + len(resource_bindings)
+    assert resource_layout["status"] == "verified"
+    assert resource_layout["runtime_verified"] is True
+    assert resource_layout["load_completion"]["runtime_verified"] is False
+    for name in resource_bindings:
         row = profile["symbols"][name]
-        assert row["status"] == "candidate"
-        assert row["runtime_verified"] is False
-        assert row["abi_verified"] is False
-        assert name not in runtime_symbols
+        assert row["status"] == "verified"
+        assert row["runtime_verified"] is True
+        assert row["abi_verified"] is True
+        assert name in runtime_symbols
+        assert row["verification_scope"] == "user-reported-mod-operation"
+        assert row["runtime_validation"]["ref"] == "analysis.mod_runtime_validation.BetterResourcePackManager"
+    report = profile["analysis"]["mod_runtime_validation"]["BetterResourcePackManager"]
+    assert report["baseline_source_commit"] == "40c043b64c58e444134f17b1a07532524aef701b"
+    assert report["authority"] == "user-reported" and report["limitations"]
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
-    assert len(verified) == 40
-    assert verified == set(profile["symbols"]) - {"Level::getPlayerList"} - resource_candidates
-    for name in verified:
+    assert len(verified) == 40 + len(resource_bindings)
+    assert verified == set(profile["symbols"]) - {"Level::getPlayerList"}
+    for name in verified - resource_bindings:
         row = profile["symbols"][name]
         assert row["abi_verified"] is (name in runtime_symbols)
         assert row["runtime_verified"] is (name in runtime_symbols)
@@ -41,6 +47,8 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
         assert row["entry_validation"]["status"] == "complete"
         assert row["entry_validation"]["entry_guard_hit"] is True
         assert row["entry_validation"]["readable"] is True
+    assert not any(name.startswith("AppPlatform::") for name in resource_bindings)
+    assert "MinecraftGame::reloadAnimationAndGeometryData" not in profile["symbols"]
     keyboard = profile["symbols"]["Keyboard::feed"]
     evidence = keyboard["runtime_validation"]
     assert keyboard["rva"] == "0x331C20"
