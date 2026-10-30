@@ -1,4 +1,5 @@
 #include "bedrock/profiles/resolver.hpp"
+#include "bedrock/profiles/profile_json.hpp"
 #include "bedrock/runtime/hook_runtime.h"
 #include <array>
 #include <cassert>
@@ -7,6 +8,31 @@
 #include <vector>
 
 int main() {
+    // Regression: old cache has no layouts; the exact-build bundle must work.
+    nlohmann::json legacy = {{"target", {{"sha256", "exe"}, {"text_sha256", "text"},
+        {"size_of_image", 512}, {"text_rva", "0x100"}, {"text_size", 256}}}};
+    auto bundled = legacy;
+    bundled["layouts"]["PacketRead"] = {{"revision", 2}, {"origin", "embedded"}};
+    const auto select = [&](const nlohmann::json &current, const nlohmann::json &fallback) {
+        return bedrock::selectNativeLayoutProfile(current.dump(), fallback.dump(), "PacketRead", 2);
+    };
+    assert(select(legacy, bundled).at("layouts").at("PacketRead").at("origin") == "embedded");
+    auto outdated = legacy;
+    outdated["layouts"]["PacketRead"] = {{"revision", 1}};
+    assert(select(outdated, bundled).at("layouts").at("PacketRead").at("revision") == 2);
+    auto current = bundled;
+    current["layouts"]["PacketRead"]["origin"] = "selected";
+    assert(select(current, bundled).at("layouts").at("PacketRead").at("origin") == "selected");
+    for (const auto *field : {"sha256", "text_sha256", "size_of_image", "text_rva", "text_size"}) {
+        auto mismatch = bundled;
+        mismatch["target"][field] = "different";
+        bool rejected{};
+        try { select(legacy, mismatch); } catch (const std::invalid_argument &) { rejected = true; }
+        assert(rejected);
+    }
+    bool rejected{};
+    try { select(legacy, outdated); } catch (const std::invalid_argument &) { rejected = true; }
+    assert(rejected);
     const std::string hash(64, 'a');
     std::string payload = R"({
       "schema": 1,
