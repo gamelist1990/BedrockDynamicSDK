@@ -24,7 +24,7 @@
     "1.26.60.5": {
       "windows-x64": {
         "path": "data/1.26.60.5/windows-x64/manifest.json",
-        "sha256": "fff221e99c9a321c806608fe0f9fae39870396e48dfdfed0ea5e33556c996e10",
+        "sha256": "baa738688d64fa2d3a1967172d6fe98a39bf8b4c78c8a5c8c362e4c6bf6dbe10",
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
         "symbols": 79,
         "protocol": {

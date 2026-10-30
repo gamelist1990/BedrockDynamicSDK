@@ -66,8 +66,8 @@ LONG CALLBACK observeException(EXCEPTION_POINTERS *pointers) noexcept {
     }
     if (const auto *context = pointers->ContextRecord) {
         _snprintf_s(line, sizeof(line), _TRUNCATE,
-            "fault_context rip=0x%llx rsp=0x%llx rax=0x%llx rcx=0x%llx rdx=0x%llx r8=0x%llx r9=0x%llx\r\n",
-            context->Rip, context->Rsp, context->Rax, context->Rcx, context->Rdx, context->R8, context->R9);
+            "fault_context rip=0x%llx rsp=0x%llx rax=0x%llx rcx=0x%llx rdx=0x%llx r8=0x%llx r9=0x%llx r12=0x%llx r15=0x%llx\r\n",
+            context->Rip, context->Rsp, context->Rax, context->Rcx, context->Rdx, context->R8, context->R9, context->R12, context->R15);
         WriteFile(traceFile, line, static_cast<DWORD>(strnlen_s(line, sizeof(line))), &written, nullptr);
     }
     FlushFileBuffers(traceFile);
@@ -91,7 +91,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v19 native progress candidate: started\r\n");
+        traceStep("v20 block material candidate: started\r\n");
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
@@ -121,7 +121,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v19 native progress candidate is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v20 block material candidate is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;

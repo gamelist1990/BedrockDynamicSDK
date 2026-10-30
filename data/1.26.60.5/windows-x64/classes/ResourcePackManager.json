@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v19-native-progress",
+      "adapter": "windows-live-reload-v20-block-material-only",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -338,6 +338,12 @@
         "callback_owner_offset": 3512,
         "callback_invoke_slot_offset": 16,
         "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2; native x64 50B2DFB reads owner+DB8, 50B2E07 model+BF0, indirect invoke slot+10. Original tick always returns0. Before forwarding only an expected pending world-pack apply callback, v19 waits for previous Game resource loader ready/outstanding0; leaves callback owned by native controller."
+      },
+      "refresh_scope": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "mode": "block_material_only",
+        "evidence": "v20-fault-render-function-evidence.json ev_d7235c159c207a6764707d3448e870ed0801b329cd304d0ad98c58923aacd36c. User v19 exception RVA6EC9DB2: MOV RAX,[RAX+10], RAX=0 after MOV RAX,[R15]. Render path6EBA910 called by LevelRendererCamera render command53E0DF0. Crash after additional geometry/notify/platform updates and camera refresh; causal ownership error is unproven. v20 removes adapter-owned AppPlatform broadcasts, suspend-session override hook, geometry reload and per-client resource reset; retains native loader/progress completion, BlockGraphics init, same-count Material UV repair and camera refresh. Lifecycle/actor symbol definitions remain historical static metadata, not called by this adapter."
       }
     }
   },

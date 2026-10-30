@@ -13,7 +13,6 @@
 #include <memory>
 #include <intrin.h>
 #include <bedrock/detail/pending_terrain_refresh.hpp>
-#include <bedrock/detail/scoped_suspend_gate.hpp>
 #include <bedrock/detail/native_material_uvs.hpp>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
@@ -48,30 +47,12 @@ struct NativeResourcePacks::Binding {
     Event cameraFrame{}, cameraRebind{}, initializeBlockGraphics{}, cachedGraphics{};
     GraphicsGetter blockGraphics{};
     void *cameraFrameTarget{}, *blockGraphicsTarget{}, *cachedGraphicsTarget{};
-    Initialize platformSuspend{}, platformResume{};
-    void *gamePreSuspendTarget{}, *gameSuspendTarget{}, *gameResumeTarget{};
-    void *suspendGateTarget{}, *suspendGateCaller1{}, *suspendGateCaller2{};
-    Predicate suspendGate{};
     Predicate remoteClient{};
-    std::size_t gameListenerOffset{}, gamePreSlot{}, gameSuspendSlot{}, gameResumeSlot{};
     std::atomic<std::uint64_t> remoteReloads{}, suspendGateOverrides{};
     std::atomic<NativeResourcePacks::TraceCallback> traceCallback{};
     void trace(const char *message) const noexcept {
         if (auto callback = traceCallback.load(std::memory_order_acquire)) callback(message);
     }
-    static bool __fastcall onSuspendGate(void *game) {
-        auto &state = *active().load(std::memory_order_acquire);
-        const void *caller = _ReturnAddress();
-        if (detail::ScopedSuspendGate::matches(state.enabled.load(std::memory_order_acquire), game,
-                                               caller, state.suspendGateCaller1, state.suspendGateCaller2)) {
-            ++state.suspendGateOverrides;
-            state.trace("suspend_gate_override\r\n");
-            return true;
-        }
-        return state.suspendGate(game);
-    }
-    void *platformGlobal{};
-    std::size_t platformObjectOffset{}, platformSuspendSlot{}, platformResumeSlot{};
     std::size_t cameraOwnerOffset{}, rendererCameraOffset{}, cameraDimensionOffset{}, playerDimensionOffset{}, playerDimensionControlOffset{}, cameraFrameSlot{}, cachedGraphicsOffset{};
     std::atomic<bool> freshBlockGraphics{};
     std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{}, platformCycles{}, camerasRefreshed{};
@@ -82,11 +63,8 @@ struct NativeResourcePacks::Binding {
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
     std::atomic<std::uint64_t> resourceWaitFrames{};
-    using GeometryReload = void(__fastcall *)(void *, bool);
-    GeometryReload geometryReload{};
     detail::NativeMaterialUvs materialUvs;
     std::atomic<std::uint64_t> customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
-    Event notifyClientResources{};
     std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{};
     AtlasUpdate atlasUpdate{};
     ClientGame clientLevel{}, levelData{}, gamePacks{};
@@ -113,7 +91,7 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 15> tokens{};
+    std::array<BDS_HookToken, 14> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
@@ -332,89 +310,27 @@ struct NativeResourcePacks::Binding {
             ++failures;
             return;
         }
-        void *tasks{}, *platform{}, *lifetime{}, *vtable{}, *suspendEntry{}, *resumeEntry{};
-        unsigned char live{};
-        if (!native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks ||
-            !native_profile::read(platformGlobal, 0, lifetime) || !lifetime ||
-            !native_profile::read(lifetime, 0, live) || live != 1 ||
-            !native_profile::read(platformGlobal, platformObjectOffset, platform) || !platform ||
-            !native_profile::read(platform, 0, vtable) ||
-            !native_profile::read(vtable, platformSuspendSlot, suspendEntry) ||
-            !native_profile::read(vtable, platformResumeSlot, resumeEntry) ||
-            suspendEntry != reinterpret_cast<void *>(platformSuspend) ||
-            resumeEntry != reinterpret_cast<void *>(platformResume)) {
+        void *tasks{};
+        if (!native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
             ++failures;
             return;
         }
-        // Android calls the platform suspension/resumption notifications after
-        // finalization, then rebuilds BlockGraphics. Drain mesh work first;
-        // Windows has asynchronous renderer jobs and this object is borrowed.
-        const bool remote = remoteClient(client);
-        void *gameListener = static_cast<std::byte *>(game) + gameListenerOffset;
-        if (remote) {
-            void *gameTable{}, *pre{}, *suspend{}, *resume{};
-            if (!native_profile::read(gameListener, 0, gameTable) ||
-                !native_profile::read(gameTable, gamePreSlot, pre) || pre != gamePreSuspendTarget ||
-                !native_profile::read(gameTable, gameSuspendSlot, suspend) || suspend != gameSuspendTarget ||
-                !native_profile::read(gameTable, gameResumeSlot, resume) || resume != gameResumeTarget) {
-                ++failures;
-                trace("game_listener_validation_failed\r\n");
-                return;
-            }
+        if (remoteClient(client)) {
             ++remoteReloads;
-            trace("mode_remote_scoped_gate\r\n");
-        } else trace("mode_local_unfiltered\r\n");
-        trace("drain_before_platform begin\r\n");
-        drainRendererTasks(tasks);
-        trace("drain_before_platform end\r\n");
-        {
-            // Scope only the mod-initiated synchronous broadcast on this
-            // thread. Normal operating-system lifecycle events still pass.
-            detail::ScopedSuspendGate scope(remote ? game : nullptr);
-            trace("platform_suspend begin\r\n");
-            platformSuspend(platform);
-            trace("platform_suspend end\r\nplatform_resume begin\r\n");
-            platformResume(platform);
-            trace("platform_resume end\r\n");
-        }
-        ++platformCycles;
-        // Lifecycle callbacks can replace client or renderer state. Recheck
-        // before touching the old graphics registry and drain any newly queued
-        // mesh work created by resume.
-        if (primaryClient(game) != client || clientGame(client) != game ||
-            clientLevel(client) != level || gamePacks(game) != manager ||
-            clientRenderer(client) != renderer ||
-            !native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
-            ++refreshCancelled;
-            return;
-        }
+            trace("mode_remote_block_material_only\r\n");
+        } else trace("mode_local_block_material_only\r\n");
+        // The native reload has already finished. Do not broadcast a second
+        // application lifecycle or replace actor resources underneath render
+        // commands. Only update the block graphics/material data needed here.
         trace("drain_before_block_init begin\r\n");
         drainRendererTasks(tasks);
         trace("drain_before_block_init end\r\n");
-        // v6 restored player models with the game's geometry reload and
-        // per-client notification. Keep the v15 session gate and validate the
-        // borrowed world/renderer after each native operation.
-        trace("geometry_reload begin\r\n");
-        geometryReload(game, true);
-        ++geometryReloaded;
-        trace("geometry_reload end\r\n");
         if (primaryClient(game) != client || clientGame(client) != game ||
             clientLevel(client) != level || gamePacks(game) != manager ||
-            clientRenderer(client) != renderer) {
+            clientRenderer(client) != renderer || !resourcesReady(game) ||
+            !(data = levelData(level))) {
             ++refreshCancelled;
-            trace("geometry_context_changed\r\n");
-            return;
-        }
-        trace("notify_client begin\r\n");
-        std::array<void *, 2> closure{nullptr, game};
-        notifyClientResources(closure.data(), client);
-        ++clientDefinitionsReloaded;
-        trace("notify_client end\r\n");
-        if (primaryClient(game) != client || clientGame(client) != game ||
-            clientLevel(client) != level || gamePacks(game) != manager ||
-            clientRenderer(client) != renderer || !(data = levelData(level))) {
-            ++refreshCancelled;
-            trace("client_context_changed\r\n");
+            trace("block_context_changed\r\n");
             return;
         }
         freshBlockGraphics.store(true, std::memory_order_release);
@@ -489,9 +405,9 @@ struct NativeResourcePacks::Binding {
         } scope(insideFrame);
         // No actor render call is on the stack here. Only a completed outer
         // original frame can satisfy the reload barrier; nested frames cannot.
-        const auto before = state.platformCycles.load();
+        const auto before = state.blockGraphicsRebuilt.load();
         state.refreshAtFrame(game);
-        const bool refreshed = before != state.platformCycles.load();
+        const bool refreshed = before != state.blockGraphicsRebuilt.load();
         if (refreshed) state.trace("game_frame_after_refresh begin\r\n");
         state.frame(game);
         if (refreshed) state.trace("game_frame_after_refresh end\r\n");
@@ -732,7 +648,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v19-native-progress")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v20-block-material-only")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
         const auto get = [&](const char *field, const char *abi) {
@@ -784,18 +700,8 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->cachedGraphicsTarget = get("read_cached_graphics", "void __fastcall(void* capture, void* clientData)");
         next->initializeBlockGraphics = reinterpret_cast<Binding::Event>(get("initialize_block_graphics", "void __fastcall(ResourcePackManager*, const void* experiments)"));
         next->remoteClient = reinterpret_cast<Binding::Predicate>(get("remote_client", "bool __fastcall(ClientInstance*)"));
-        next->gamePreSuspendTarget = get("game_pre_suspend", "void __fastcall(AppPlatformListener*)");
-        next->gameSuspendTarget = get("game_suspend", "void __fastcall(AppPlatformListener*)");
-        next->gameResumeTarget = get("game_resume", "void __fastcall(AppPlatformListener*)");
-        next->suspendGateTarget = get("suspend_gate_candidate", "bool __fastcall(MinecraftGame*)");
-        next->suspendGateCaller1 = native_profile::checked(root, layout.at("suspend_gate_caller1"));
-        next->suspendGateCaller2 = native_profile::checked(root, layout.at("suspend_gate_caller2"));
-        next->platformSuspend = reinterpret_cast<Binding::Initialize>(get("platform_suspend", "void __fastcall(AppPlatform*)"));
-        next->platformResume = reinterpret_cast<Binding::Initialize>(get("platform_resume", "void __fastcall(AppPlatform*)"));
         next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
         next->drainRendererTasks = reinterpret_cast<Binding::Initialize>(get("drain_renderer_tasks", "void __fastcall(TaskGroup*)"));
-        next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
-        next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
         const auto &renderer = layout.at("level_renderer");
         next->rendererTasksOffset = native_profile::number(renderer.at("task_group_offset"));
         next->rendererCameraOffset = native_profile::number(renderer.at("player_camera_offset"));
@@ -806,26 +712,9 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->playerDimensionControlOffset = native_profile::number(camera.at("player_dimension_control_offset"));
         next->cameraFrameSlot = native_profile::number(camera.at("frame_slot_offset"));
         next->cachedGraphicsOffset = native_profile::number(layout.at("block_client_graphics_offset"));
-        const auto &gameListener = layout.at("game_lifecycle_listener");
-        next->gameListenerOffset = native_profile::number(gameListener.at("game_offset"));
-        next->gamePreSlot = native_profile::number(gameListener.at("pre_suspend_slot"));
-        next->gameSuspendSlot = native_profile::number(gameListener.at("suspend_slot"));
-        next->gameResumeSlot = native_profile::number(gameListener.at("resume_slot"));
-        for (auto offset : {next->gameListenerOffset, next->gamePreSlot, next->gameSuspendSlot, next->gameResumeSlot})
-            if (offset > 0x10000 || offset % sizeof(void *)) throw std::runtime_error("invalid game lifecycle layout");
-        const auto &platform = layout.at("app_platform");
-        const auto platformRva = native_profile::number(platform.at("global_rva"));
-        if (platformRva >= native_profile::number(root.at("target").at("size_of_image")) - 24)
-            throw std::runtime_error("invalid app platform global");
-        native_profile::checked(root, platform.at("global_store_guard"));
-        next->platformGlobal = reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) + platformRva);
-        next->platformObjectOffset = native_profile::number(platform.at("object_offset"));
-        next->platformSuspendSlot = native_profile::number(platform.at("suspend_slot"));
-        next->platformResumeSlot = native_profile::number(platform.at("resume_slot"));
         for (auto offset : {next->rendererTasksOffset, next->rendererCameraOffset, next->cameraOwnerOffset,
-                            next->cameraDimensionOffset, next->playerDimensionOffset, next->playerDimensionControlOffset, next->cameraFrameSlot, next->cachedGraphicsOffset,
-                            next->platformObjectOffset, next->platformSuspendSlot, next->platformResumeSlot})
-            if (offset > 0x10000 || offset % sizeof(void *)) throw std::runtime_error("invalid renderer or platform layout");
+                            next->cameraDimensionOffset, next->playerDimensionOffset, next->playerDimensionControlOffset, next->cameraFrameSlot, next->cachedGraphicsOffset})
+            if (offset > 0x10000 || offset % sizeof(void *)) throw std::runtime_error("invalid renderer layout");
         native_profile::checked(root, layout.at("primary_client_lookup_entry"));
         const auto &clients = layout.at("primary_clients");
         next->clientsOffset = native_profile::number(clients.at("map_offset"));
@@ -893,11 +782,8 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->cameraFrameTarget || !binding_->cameraRebind ||
         !binding_->blockGraphicsTarget || !binding_->cachedGraphicsTarget || !binding_->initializeBlockGraphics ||
-        !binding_->platformGlobal || !binding_->platformSuspend || !binding_->platformResume ||
-        !binding_->remoteClient || !binding_->gamePreSuspendTarget || !binding_->gameSuspendTarget || !binding_->gameResumeTarget ||
-        !binding_->suspendGateTarget || !binding_->suspendGateCaller1 || !binding_->suspendGateCaller2 ||
-        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks ||
-        !binding_->geometryReload || !binding_->notifyClientResources) {
+        !binding_->remoteClient ||
+        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks) {
         error = "resource pack profile has not been loaded";
         return false;
     }
@@ -945,10 +831,8 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->blockGraphics), &binding_->tokens[11]) &&
         BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
                               reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[12]) &&
-        BDS_HookDirectInstall(binding_->suspendGateTarget, reinterpret_cast<void *>(&Binding::onSuspendGate),
-                              reinterpret_cast<void **>(&binding_->suspendGate), &binding_->tokens[13]) &&
         BDS_HookDirectInstall(binding_->progressTickTarget, reinterpret_cast<void *>(&Binding::onProgressTick),
-                              reinterpret_cast<void **>(&binding_->progressTick), &binding_->tokens[14]);
+                              reinterpret_cast<void **>(&binding_->progressTick), &binding_->tokens[13]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
