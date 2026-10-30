@@ -41,9 +41,9 @@ int main() {
     bedrock::detail::ResourceReloadBarrier barrier;
     int loader{}, atlas{}, replacement{};
     assert(!barrier.allows(1, &loader, &atlas, true));
-    barrier.observe(1, &loader, &atlas, false); // Progress screen still active.
+    barrier.observe(1, &loader, &atlas, false); // Loader still has work.
     assert(!barrier.allows(1, &loader, &atlas, true));
-    barrier.observe(1, &loader, &atlas, true); // Entire original world frame returned.
+    barrier.observe(1, &loader, &atlas, true); // Entire original frame returned, including while settings stay open.
     assert(barrier.allows(1, &loader, &atlas, true));
     assert(!barrier.allows(2, &loader, &atlas, true)); // A new request cannot reuse it.
     assert(!barrier.allows(1, &replacement, &atlas, true));
@@ -53,12 +53,6 @@ int main() {
     assert(!barrier.allows(1, &loader, &atlas, true));
     barrier.observe(1, &loader, nullptr, true);
     assert(!barrier.allows(1, &loader, nullptr, true));
-    assert(bedrock::detail::isWorldRenderScreen("hud_screen"));
-    assert(bedrock::detail::isWorldRenderScreen("pause_screen"));
-    assert(!bedrock::detail::isWorldRenderScreen("progress_popup"));
-    assert(!bedrock::detail::isWorldRenderScreen("progress_screen"));
-    assert(!bedrock::detail::isWorldRenderScreen("screen"));
-    assert(!bedrock::detail::isWorldRenderScreen("screen_world_controls_and_settings - global_texture_pack_tab"));
     const auto generation = pending.generation();
     pending.begin(&game, &level, &manager, 42);
     assert(pending.generation() != generation && !pending.atlasReady());

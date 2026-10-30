@@ -1,13 +1,9 @@
 #pragma once
 #include <cstdint>
-#include <string_view>
 
 namespace bedrock::detail {
-inline bool isWorldRenderScreen(std::string_view screen) noexcept {
-    return screen == "hud_screen" || screen == "pause_screen";
-}
 // Record a completed original frame, not elapsed time. A request, loader, atlas,
-// menu transition or renewed work invalidates the observation.
+// renewed work invalidates the observation.
 class ResourceReloadBarrier {
     std::uint64_t generation_{};
     const void *loader_{}, *atlas_{};

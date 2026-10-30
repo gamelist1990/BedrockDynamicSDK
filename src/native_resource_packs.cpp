@@ -32,12 +32,19 @@ struct NativeResourcePacks::Binding {
     using ClientGame = void *(__fastcall *)(void *);
     using GraphicsGetter = void *(__fastcall *)(const void *);
     using AtlasUpdate = void(__fastcall *)(void *, const void *, bool);
+    using PrepareSelection = void(__fastcall *)(void *, const void *, bool, bool);
     using Deallocate = void(__fastcall *)(void *);
     void *initTarget{};
     void *ctorTarget{};
     void *preGameTarget{};
     void *exitTarget{}, *eventTarget{}, *composeTarget{};
     void *navigateTarget{}, *progressTickTarget{};
+    void *selectionTarget{}, *prepareSelectionTarget{};
+    Initialize selectionChanged{}, invalidateActorBindings{};
+    PrepareSelection prepareSelection{};
+    std::size_t autoApplyOffset{};
+    bool applyIncludeFlag{}, applySaveFlag{};
+    std::atomic<std::uint64_t> immediateSelections{}, modelBindingsRefreshed{};
     Exit progressTick{};
     std::size_t progressModelOffset{}, progressCallbackOffset{}, progressInvokeOffset{};
     std::atomic<std::uint64_t> previousReloadWaitFrames{};
@@ -48,14 +55,14 @@ struct NativeResourcePacks::Binding {
     GraphicsGetter blockGraphics{};
     void *cameraFrameTarget{}, *blockGraphicsTarget{}, *cachedGraphicsTarget{};
     Predicate remoteClient{};
-    std::atomic<std::uint64_t> remoteReloads{}, suspendGateOverrides{};
+    std::atomic<std::uint64_t> remoteReloads{};
     std::atomic<NativeResourcePacks::TraceCallback> traceCallback{};
     void trace(const char *message) const noexcept {
         if (auto callback = traceCallback.load(std::memory_order_acquire)) callback(message);
     }
     std::size_t cameraOwnerOffset{}, rendererCameraOffset{}, cameraDimensionOffset{}, playerDimensionOffset{}, playerDimensionControlOffset{}, cameraFrameSlot{}, cachedGraphicsOffset{};
     std::atomic<bool> freshBlockGraphics{};
-    std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{}, platformCycles{}, camerasRefreshed{};
+    std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{}, camerasRefreshed{};
     detail::PendingCameraRefresh pendingCamera;
     ClientGame clientRenderer{};
     Initialize drainRendererTasks{};
@@ -65,14 +72,13 @@ struct NativeResourcePacks::Binding {
     std::atomic<std::uint64_t> resourceWaitFrames{};
     detail::NativeMaterialUvs materialUvs;
     std::atomic<std::uint64_t> customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
-    std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{};
     AtlasUpdate atlasUpdate{};
     ClientGame clientLevel{}, levelData{}, gamePacks{};
     std::size_t experimentsOffset{}, terrainAtlasOffset{};
     std::mutex refreshMutex;
     detail::PendingTerrainRefresh pendingRefresh;
     detail::ResourceReloadBarrier reloadBarrier;
-    std::atomic<std::uint64_t> nativeScreenWaitFrames{};
+    std::atomic<std::uint64_t> completionWaitFrames{};
     std::atomic<bool> refreshPending{};
     std::atomic<std::uint64_t> terrainCompleted{}, refreshCancelled{};
     Event navigate{};
@@ -91,7 +97,7 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 14> tokens{};
+    std::array<BDS_HookToken, 16> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
@@ -249,10 +255,6 @@ struct NativeResourcePacks::Binding {
                native_profile::read(loader, loaderReadyOffset, ready) && ready == 1 &&
                native_profile::read(loader, loaderOutstandingOffset, outstanding) && outstanding == 0;
     }
-    bool idleWorldScreen(void *client) {
-        try { return client && detail::isWorldRenderScreen(screen(client)); }
-        catch (const std::exception &) { return false; }
-    }
     bool reloadIdentity(void *game, void *&loader, void *&atlas) const noexcept {
         return resourcesReady(game) && native_profile::read(game, loaderOffset, loader) && loader &&
             native_profile::read(game, terrainAtlasOffset, atlas) && atlas;
@@ -262,12 +264,12 @@ struct NativeResourcePacks::Binding {
         auto *client = primaryClient(game);
         auto *level = client && clientGame(client) == game && localPlayer(client) ? clientLevel(client) : nullptr;
         void *loader{}, *atlas{};
-        const bool idle = level && reloadIdentity(game, loader, atlas) && idleWorldScreen(client);
+        const bool idle = level && reloadIdentity(game, loader, atlas);
         std::lock_guard lock(refreshMutex);
         const bool stable = idle && pendingRefresh.atlasReady();
         const bool wasReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, stable);
         reloadBarrier.observe(pendingRefresh.generation(), loader, atlas, stable);
-        if (stable && !wasReady) trace("native_reload_world_frame_completed\r\n");
+        if (stable && !wasReady) trace("resource_reload_frame_completed\r\n");
     }
     void refreshAtFrame(void *game) {
         if (!enabled.load(std::memory_order_acquire) ||
@@ -280,11 +282,10 @@ struct NativeResourcePacks::Binding {
         bool cancelled{};
         void *loader{}, *atlas{};
         const bool ready = reloadIdentity(game, loader, atlas);
-        const bool worldScreen = ready && idleWorldScreen(client);
         bool barrierReady{};
         {
             std::lock_guard lock(refreshMutex);
-            barrierReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, ready && worldScreen);
+            barrierReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, ready);
             if (!barrierReady) reloadBarrier.clear();
             manager = pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled, ready && barrierReady);
             refreshPending.store(pendingRefresh.pending(), std::memory_order_release);
@@ -294,8 +295,8 @@ struct NativeResourcePacks::Binding {
         if (!manager) {
             if (!ready) ++resourceWaitFrames;
             else if (!barrierReady) {
-                const auto waits = ++nativeScreenWaitFrames;
-                if (waits == 1) trace("refresh_wait_native_reload_screen\r\n");
+                const auto waits = ++completionWaitFrames;
+                if (waits == 1) trace("refresh_wait_completed_frame\r\n");
             }
             return;
         }
@@ -388,6 +389,18 @@ struct NativeResourcePacks::Binding {
         customUvMismatched += materialUvs.counts.mismatched;
         customUvUnmatched += materialUvs.counts.unmatched;
         customUvUnchanged += materialUvs.counts.unchanged;
+        // Refresh per-entity cached bindings against existing resources. Never
+        // replace actor renderers, global geometry or their component objects.
+        if (primaryClient(game) != client || clientGame(client) != game ||
+            clientLevel(client) != level || clientRenderer(client) != renderer || !resourcesReady(game)) {
+            ++refreshCancelled;
+            trace("model_bindings_context_changed\r\n");
+            return;
+        }
+        trace("model_bindings_invalidate begin\r\n");
+        invalidateActorBindings(client);
+        ++modelBindingsRefreshed;
+        trace("model_bindings_invalidate end\r\n");
         {
             std::lock_guard lock(refreshMutex);
             pendingCamera.begin(game, level, GetCurrentThreadId());
@@ -437,6 +450,53 @@ struct NativeResourcePacks::Binding {
             }
         }
         return state.progressTick(controller);
+    }
+    static void *&immediateController() {
+        static thread_local void *controller{};
+        return controller;
+    }
+    static void __fastcall onSelectionChanged(void *controller) {
+        auto &state = *active().load(std::memory_order_acquire);
+        void *model{};
+        void *client{};
+        bool immediate{};
+        if (state.enabled.load(std::memory_order_acquire) &&
+            native_profile::read(controller, state.settingsModelOffset, model) &&
+            (client = state.clientFromModel(model)) && state.localPlayer(client)) {
+            try {
+                const auto name = state.screen(client);
+                immediate = ResourcePackMenuPolicy::liveGlobalSelection(name, true);
+            } catch (const std::exception &) { ++state.failures; }
+        }
+        unsigned char previousFlag{};
+        const bool changed = immediate && exchangeFlag(controller, state.autoApplyOffset, 1, previousFlag);
+        if (immediate && !changed) ++state.failures;
+        struct Restore {
+            Binding &state;
+            void *controller, *previousController;
+            bool changed;
+            unsigned char previousFlag;
+            ~Restore() {
+                immediateController() = previousController;
+                unsigned char ignored{};
+                if (changed && !exchangeFlag(controller, state.autoApplyOffset, previousFlag, ignored)) ++state.failures;
+            }
+        } restore{state, controller, immediateController(), changed, previousFlag};
+        if (changed) {
+            immediateController() = controller;
+            ++state.immediateSelections;
+            state.trace("immediate_selection begin\r\n");
+        }
+        state.selectionChanged(controller);
+        if (changed) state.trace("immediate_selection end\r\n");
+    }
+    static void __fastcall onPrepareSelection(void *controller, const void *packs, bool include, bool save) {
+        auto &state = *active().load(std::memory_order_acquire);
+        if (state.enabled.load(std::memory_order_acquire) && controller && controller == immediateController()) {
+            include = state.applyIncludeFlag;
+            save = state.applySaveFlag;
+        }
+        state.prepareSelection(controller, packs, include, save);
     }
     static void __fastcall onNavigateApply(void *model, void *function) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -648,7 +708,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v20-block-material-only")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-immediate-bindings")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
         const auto get = [&](const char *field, const char *abi) {
@@ -670,6 +730,15 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->gameGateCaller = native_profile::checked(root, layout.at("game_in_game_caller"));
         next->navigateTarget = get("navigate_apply_packs",
                                     "void __fastcall(MainMenuScreenModel*, void* callback)");
+        next->selectionTarget = get("selection_changed", "void __fastcall(GeneralSettingsScreenController*)");
+        next->prepareSelectionTarget = get("prepare_selection_apply", "void __fastcall(GeneralSettingsScreenController*, const void* selectedPacks, bool include, bool save)");
+        next->invalidateActorBindings = reinterpret_cast<Binding::Initialize>(get("invalidate_actor_bindings", "void __fastcall(ClientInstance*)"));
+        const auto &immediate = layout.at("immediate_selection");
+        next->autoApplyOffset = native_profile::number(immediate.at("auto_apply_offset"));
+        next->applyIncludeFlag = immediate.at("apply_include_flag").get<bool>();
+        next->applySaveFlag = immediate.at("apply_save_flag").get<bool>();
+        if (!next->autoApplyOffset || next->autoApplyOffset > 0x10000)
+            throw std::runtime_error("invalid immediate selection layout");
         next->progressTickTarget = get("reload_progress_tick", "uint64_t __fastcall(ResourcePackProgressScreenController*)");
         const auto &progress = layout.at("reload_progress_gate");
         next->progressModelOffset = native_profile::number(progress.at("model_offset"));
@@ -778,6 +847,7 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
         !binding_->navigateTarget || !binding_->progressTickTarget ||
+        !binding_->selectionTarget || !binding_->prepareSelectionTarget || !binding_->invalidateActorBindings ||
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->cameraFrameTarget || !binding_->cameraRebind ||
@@ -832,7 +902,11 @@ bool NativeResourcePacks::install(std::string &error) {
         BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
                               reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[12]) &&
         BDS_HookDirectInstall(binding_->progressTickTarget, reinterpret_cast<void *>(&Binding::onProgressTick),
-                              reinterpret_cast<void **>(&binding_->progressTick), &binding_->tokens[13]);
+                              reinterpret_cast<void **>(&binding_->progressTick), &binding_->tokens[13]) &&
+        BDS_HookDirectInstall(binding_->selectionTarget, reinterpret_cast<void *>(&Binding::onSelectionChanged),
+                              reinterpret_cast<void **>(&binding_->selectionChanged), &binding_->tokens[14]) &&
+        BDS_HookDirectInstall(binding_->prepareSelectionTarget, reinterpret_cast<void *>(&Binding::onPrepareSelection),
+                              reinterpret_cast<void **>(&binding_->prepareSelection), &binding_->tokens[15]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -849,17 +923,36 @@ void NativeResourcePacks::setTraceCallback(TraceCallback callback) noexcept {
     binding_->traceCallback.store(callback, std::memory_order_release);
 }
 NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
-    return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),
-            binding_->failures.load(), binding_->exits.load(), binding_->applyEvents.load(),
-            binding_->compositions.load(),
-            binding_->globalIncluded.load(), binding_->navigations.load(),
-            binding_->liveApplications.load(), binding_->inWorldEvents.load(), binding_->gameGateOverrides.load(),
-            binding_->terrainCompleted.load(), binding_->refreshCancelled.load(), binding_->resourceWaitFrames.load(),
-            binding_->platformCycles.load(), binding_->blockGraphicsRebuilt.load(),
-            binding_->graphicsCacheResets.load(), binding_->camerasRefreshed.load(),
-            binding_->remoteReloads.load(), binding_->suspendGateOverrides.load(),
-            binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
-            binding_->customMaterialsRemapped.load(), binding_->customUvSetsUpdated.load(),
-            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load(), binding_->nativeScreenWaitFrames.load(), binding_->previousReloadWaitFrames.load()};
+    Status result{};
+    result.installed = binding_->installed.load();
+    result.settingsOpened = binding_->opened.load();
+    result.preGameOverrides = binding_->overrides.load();
+    result.failures = binding_->failures.load();
+    result.settingsExited = binding_->exits.load();
+    result.applyEvents = binding_->applyEvents.load();
+    result.stackCompositions = binding_->compositions.load();
+    result.globalStackIncluded = binding_->globalIncluded.load();
+    result.applyNavigations = binding_->navigations.load();
+    result.liveApplications = binding_->liveApplications.load();
+    result.inWorldApplyEvents = binding_->inWorldEvents.load();
+    result.gameGateOverrides = binding_->gameGateOverrides.load();
+    result.terrainAtlasCompleted = binding_->terrainCompleted.load();
+    result.refreshCancelled = binding_->refreshCancelled.load();
+    result.resourceWaitFrames = binding_->resourceWaitFrames.load();
+    result.blockGraphicsRebuilt = binding_->blockGraphicsRebuilt.load();
+    result.graphicsCacheResets = binding_->graphicsCacheResets.load();
+    result.camerasRefreshed = binding_->camerasRefreshed.load();
+    result.remoteReloads = binding_->remoteReloads.load();
+    result.customMaterialsRemapped = binding_->customMaterialsRemapped.load();
+    result.customUvSetsUpdated = binding_->customUvSetsUpdated.load();
+    result.customUvMismatched = binding_->customUvMismatched.load();
+    result.customUvUnmatched = binding_->customUvUnmatched.load();
+    result.customUvUnchanged = binding_->customUvUnchanged.load();
+    result.completionWaitFrames = binding_->completionWaitFrames.load();
+    result.previousReloadWaitFrames = binding_->previousReloadWaitFrames.load();
+    result.immediateSelections = binding_->immediateSelections.load();
+    result.modelBindingsRefreshed = binding_->modelBindingsRefreshed.load();
+    result.nativeScreenWaitFrames = result.completionWaitFrames;
+    return result;
 }
 } // namespace bedrock

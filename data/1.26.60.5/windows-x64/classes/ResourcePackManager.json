@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v20-block-material-only",
+      "adapter": "windows-live-reload-v21-immediate-bindings",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -133,6 +133,15 @@
         },
         "reload_progress_tick": {
           "symbol": "ResourcePackProgressScreenController::tickCandidate"
+        },
+        "selection_changed": {
+          "symbol": "GeneralSettingsScreenController::onPackSelectionChangedCandidate"
+        },
+        "prepare_selection_apply": {
+          "symbol": "GeneralSettingsScreenController::preparePackSelectionApplyCandidate"
+        },
+        "invalidate_actor_bindings": {
+          "symbol": "ClientInstance::invalidateActorRenderBindingsCandidate"
         }
       },
       "evidence": "User v16 reports crash after rapid settings edit and close; submitted stage log reaches camera_rebind end and counters show geometry and client notification returned. Faulting instruction and thread unknown; timing dependency is unproven. v17 preserves v16 refresh operations and adds timestamped stage/first-chance exception diagnostics; it is not a crash or custom-block fix.",
@@ -342,8 +351,14 @@
       "refresh_scope": {
         "status": "candidate",
         "runtime_verified": false,
-        "mode": "block_material_only",
-        "evidence": "v20-fault-render-function-evidence.json ev_d7235c159c207a6764707d3448e870ed0801b329cd304d0ad98c58923aacd36c. User v19 exception RVA6EC9DB2: MOV RAX,[RAX+10], RAX=0 after MOV RAX,[R15]. Render path6EBA910 called by LevelRendererCamera render command53E0DF0. Crash after additional geometry/notify/platform updates and camera refresh; causal ownership error is unproven. v20 removes adapter-owned AppPlatform broadcasts, suspend-session override hook, geometry reload and per-client resource reset; retains native loader/progress completion, BlockGraphics init, same-count Material UV repair and camera refresh. Lifecycle/actor symbol definitions remain historical static metadata, not called by this adapter."
+        "mode": "block_material_and_actor_bindings",
+        "evidence": "v20-fault-render-function-evidence.json ev_d7235c159c207a6764707d3448e870ed0801b329cd304d0ad98c58923aacd36c. User v19 exception RVA6EC9DB2: MOV RAX,[RAX+10], RAX=0 after MOV RAX,[R15]. Render path6EBA910 called by LevelRendererCamera render command53E0DF0. Crash after additional geometry/notify/platform updates and camera refresh; causal ownership error is unproven. v20 removes adapter-owned AppPlatform broadcasts, suspend-session override hook, geometry reload and per-client resource reset; retains native loader/progress completion, BlockGraphics init, same-count Material UV repair and camera refresh. Lifecycle/actor symbol definitions remain historical static metadata, not called by this adapter. v21 adds only native ClientInstance actor render binding invalidation, not full geometry reload or client-resource reset. Completion is gated by atlas/loader identity and a completed frame, independent of current UI screen."
+      },
+      "immediate_selection": {
+        "auto_apply_offset": 3425,
+        "apply_include_flag": true,
+        "apply_save_flag": true,
+        "evidence": "Native51EFC90 checks controller+D61==1 before native immediate apply. Hook enables flag only during same-controller global selection callback, restores it on return. Prepared native callbacks own pack-vector/model lifetimes; adapter never invents or retains captures."
       }
     }
   },
@@ -841,6 +856,45 @@
       "function_boundary": true,
       "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra and direct Windows x64 instructions; runtime unverified.",
       "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2. RCXcontroller only; prologue preservesRCX inRSI; return XOR EAX,EAX at50B2F64. Constructor50B27A0 sets primary vtableF22A5F0, slot2 points here. Keeps apply functor until its native tick; readiness polling follows callback."
+    },
+    "GeneralSettingsScreenController::onPackSelectionChangedCandidate": {
+      "rva": "0x51efc20",
+      "signature": "",
+      "entry_check": "55 56 57 48 83 EC 60 48 8D 6C 24 60 48 C7 45 F8 FE FF FF FF 48 89 CE 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(GeneralSettingsScreenController*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra and direct Windows x64 instruction correlation; runtime unverified.",
+      "evidence": "v21-selection-change-evidence.json ev_82c3da8cb4361d678c76e0c4a662914557c88b5c29bfce7d81520771665e7eb3. RCXcontroller, model+D48, existing auto-apply byte+D61, pack model+DD0. Original creates selected pack vector and calls prepare at51EFCF2; no retained adapter pointer."
+    },
+    "GeneralSettingsScreenController::preparePackSelectionApplyCandidate": {
+      "rva": "0x51ef8f0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC A8 00 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(GeneralSettingsScreenController*, const void* selectedPacks, bool include, bool save)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra and direct Windows x64 instruction correlation; runtime unverified.",
+      "evidence": "v21-apply-stack-plan-evidence.json ev_f2decb46a9d28b2d0b927a7ce16d4a5f42dd061a55b84a5cb67ec4dbf3055715. RCXcontroller,RDXvector,R8B/R9Bflags saved inprologue. Compares selected/current vectors, makes native-owned callback and invokes native reload navigation. Normal close caller52377C3 passestrue,true; native preview51EFCF2 passesfalse,false. v21 passes normal-close flags only in same-controller immediate-selection TLS scope."
+    },
+    "ClientInstance::invalidateActorRenderBindingsCandidate": {
+      "rva": "0x6533850",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83 EC 50 48 8D 6C 24 50 48 C7 45 F8 FE",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra and direct Windows x64 instruction correlation; runtime unverified.",
+      "evidence": "v21-146533850-evidence.json ev_9d036fe9b1ab229f5a3cf8f9e094329f2216c29df61be705372d80089ae7f371. Windows RCXclient, native8C3593 MOV RCX,RBX;8C3596 call6533850. Visits registry actor render component storage, marks cached state byte false and erases per-entity render resource entries; no replacement of global geometry/actor renderer dispatchers. Exact behavior and model visibility require runtime confirmation."
     }
   }
 }

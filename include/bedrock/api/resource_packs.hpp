@@ -9,6 +9,10 @@ namespace bedrock {
 // Keep one policy per ClientInstance and serialize access on the adapter side.
 class ResourcePackMenuPolicy {
   public:
+    static bool liveGlobalSelection(std::string_view screen, bool inWorld) noexcept {
+        return inWorld && screen.find("screen_world_controls_and_settings") != std::string_view::npos &&
+            screen.find("global_texture_pack_tab") != std::string_view::npos;
+    }
     bool preGame(bool original, std::string_view screen, bool inWorld) {
         if (!inWorld) {
             reset();
@@ -19,8 +23,7 @@ class ResourcePackMenuPolicy {
         if (settings)
             globalTab_ = screen.find("global_texture_pack_tab") != std::string_view::npos;
         const bool transient = screen == "screen" || screen == "progress_popup";
-        const bool global =
-            settings && screen.find("global_texture_pack_tab") != std::string_view::npos;
+        const bool global = liveGlobalSelection(screen, inWorld);
         const bool result = original || global || (globalTab_ && transient);
         if (!transient && !settings)
             globalTab_ = false;
