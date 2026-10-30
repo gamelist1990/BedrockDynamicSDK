@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include <string_view>
+#include <string>
 #include <stdexcept>
 namespace bedrock {
 // Schema 1 profiles support Minecraft class names under layouts. Legacy files
@@ -77,5 +78,24 @@ inline nlohmann::json parseNativeProfile(std::string_view text) {
         root["native_command_requests"] = layouts.at("CommandRequestPacket");
     }
     return root;
+}
+// Fill a missing/outdated layout from the bundled definition only when all
+// executable fingerprints match. Legacy caches may have no layouts object.
+inline nlohmann::json selectNativeLayoutProfile(std::string_view selected,
+                                                std::string_view embedded,
+                                                const char *layout, int minimumRevision = 0) {
+    auto current = parseNativeProfile(selected);
+    const auto usable = [&](const nlohmann::json &root) {
+        return root.contains("layouts") && root.at("layouts").contains(layout) &&
+            root.at("layouts").at(layout).value("revision", 0) >= minimumRevision;
+    };
+    if (usable(current)) return current;
+    auto fallback = parseNativeProfile(embedded);
+    for (const auto *field : {"sha256", "text_sha256", "size_of_image", "text_rva", "text_size"})
+        if (current.at("target").at(field) != fallback.at("target").at(field))
+            throw std::invalid_argument("embedded layout belongs to another executable");
+    if (!usable(fallback))
+        throw std::invalid_argument(std::string("missing or outdated SDK layout: ") + layout);
+    return fallback;
 }
 } // namespace bedrock

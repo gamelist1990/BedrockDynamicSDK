@@ -51,19 +51,9 @@ class PacketReadEvents {
         return routes_.routes();
     }
     void load(std::string_view selected, std::string_view embedded) {
-        auto root = parseNativeProfile(selected);
-        if (!root.at("layouts").contains("PacketRead") ||
-            root.at("layouts").at("PacketRead").value("revision", 0) < 2) {
-            const auto fallback = parseNativeProfile(embedded);
-            for (const auto *field :
-                 {"sha256", "text_sha256", "size_of_image", "text_rva", "text_size"})
-                if (root.at("target").at(field) != fallback.at("target").at(field))
-                    throw std::runtime_error(
-                        "embedded Packet receiver belongs to another executable");
-            root = fallback;
-        }
-        load(root);
+        load(selectNativeLayoutProfile(selected, embedded, "PacketRead", 2));
     }
+
     bool subscribeTarget(void *target, BDS_HookCallback callback, void *user,
                          BDS_HookToken *token) const {
         return BDS_HookSubscribe(BDS_HOOK_PACKET_READ, target, callback, user, token) != 0;
