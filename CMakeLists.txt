@@ -140,6 +140,15 @@ if(WIN32)
         endforeach()
     endif()
     add_library(bedrock::hook_runtime ALIAS bedrock_hook_runtime)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_library(bedrock_resource_packs STATIC EXCLUDE_FROM_ALL src/native_resource_packs.cpp)
+        add_library(bedrock::resource_packs ALIAS bedrock_resource_packs)
+        target_link_libraries(bedrock_resource_packs PUBLIC bedrock::sdk bedrock::hook_runtime)
+        target_compile_options(bedrock_resource_packs PRIVATE /W4 /permissive- /utf-8)
+        set_property(TARGET bedrock_resource_packs PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
     # GameApi's optional native mouse sender dispatches through the shared
     # broker, so Win32 consumers of the facade must link its implementation.
     target_link_libraries(bedrock_game_api INTERFACE bedrock::hook_runtime)

@@ -27,7 +27,8 @@ enum class Feature {
     WorldEvents,
     WorldHeight,
     Brightness,
-    GameType
+    GameType,
+    ResourcePacks
 };
 
 enum class ProfileSource : std::uint8_t {

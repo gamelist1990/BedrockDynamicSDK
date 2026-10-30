@@ -1,0 +1,861 @@
+{
+  "layouts": {
+    "ResourcePackManager": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "verified",
+      "runtime_verified": true,
+      "adapter": "windows-live-reload-v21-load-complete",
+      "reload_on_exit_offset": 4234,
+      "string_abi": {
+        "object_bytes": 32,
+        "size_offset": 16,
+        "capacity_offset": 24,
+        "inline_bytes": 16,
+        "maximum_bytes": 512,
+        "large_allocation_threshold": 4096,
+        "alignment_overhead": 39
+      },
+      "functions": {
+        "initialize_settings": {
+          "symbol": "SettingsScreenController::_init"
+        },
+        "construct_general_settings": {
+          "symbol": "GeneralSettingsScreenController::GeneralSettingsScreenController"
+        },
+        "is_pre_game": {
+          "symbol": "ClientInstance::isPreGame"
+        },
+        "top_screen_name": {
+          "symbol": "ClientInstance::getTopScreenName"
+        },
+        "local_player": {
+          "symbol": "ClientInstance::getLocalPlayer"
+        },
+        "deallocate": {
+          "symbol": "Bedrock::Memory::deallocate"
+        },
+        "exit_settings": {
+          "symbol": "SettingsScreenController::_handleMenuExitButtonEvent"
+        },
+        "apply_stack_event": {
+          "symbol": "GeneralSettingsScreenController::_applyResourcePackStackEvent"
+        },
+        "compose_full_stack": {
+          "symbol": "ResourcePackManager::composeFullStack"
+        },
+        "navigate_apply_packs": {
+          "symbol": "MainMenuScreenModel::navigateToApplyResourcePacksScreen"
+        },
+        "client_game": {
+          "symbol": "ClientInstance::getMinecraftGame"
+        },
+        "game_is_in_game": {
+          "symbol": "MinecraftGame::isInGame"
+        },
+        "on_full_stack_invalid": {
+          "symbol": "MinecraftGame::onFullPackStackInvalid"
+        },
+        "client_level": {
+          "symbol": "ClientInstance::getLevel"
+        },
+        "level_data": {
+          "symbol": "Level::getLevelData"
+        },
+        "game_packs": {
+          "symbol": "MinecraftGame::getResourcePackManager"
+        },
+        "update_atlas_pbr": {
+          "symbol": "MinecraftGame::_updateTextureAtlasPBRData"
+        },
+        "start_frame": {
+          "symbol": "MinecraftGame::startFrame"
+        },
+        "client_renderer": {
+          "symbol": "ClientInstance::getLevelRenderer"
+        },
+        "drain_renderer_tasks": {
+          "symbol": "TaskGroup::flush"
+        },
+        "camera_frame": {
+          "symbol": "LevelRendererPlayer::frameUpdate"
+        },
+        "camera_rebind": {
+          "symbol": "LevelRendererCamera::preDimensionChanged"
+        },
+        "get_block_graphics": {
+          "symbol": "BlockGraphics::getForBlock"
+        },
+        "read_cached_graphics": {
+          "symbol": "BlockGraphics::_readCachedClientGraphics"
+        },
+        "initialize_block_graphics": {
+          "symbol": "BlockGraphics::initBlocks"
+        },
+        "remote_client": {
+          "symbol": "ClientInstance::isMultiPlayerClient"
+        },
+        "block_materials": {
+          "symbol": "Block::getMaterialInstancesCandidate"
+        },
+        "block_baked_materials": {
+          "symbol": "Block::getBakedMaterialMapCandidate"
+        },
+        "atlas_texture_item": {
+          "symbol": "AtlasItemManager::getTextureItemCandidate"
+        },
+        "reload_progress_tick": {
+          "symbol": "ResourcePackProgressScreenController::tickCandidate"
+        },
+        "selection_changed": {
+          "symbol": "GeneralSettingsScreenController::onPackSelectionChangedCandidate"
+        },
+        "prepare_selection_apply": {
+          "symbol": "GeneralSettingsScreenController::preparePackSelectionApplyCandidate"
+        },
+        "invalidate_actor_bindings": {
+          "symbol": "ClientInstance::invalidateActorRenderBindingsCandidate"
+        }
+      },
+      "evidence": "Exact-build REA/Ghidra and Windows x64 instruction evidence retained on symbols; user confirmed v21 complete on 2026-10-31, except a rare immediate-apply load race. Only v21 consumed bindings retained. See runtime_validation and load_completion.",
+      "exit_closure_owner_offset": 8,
+      "settings_model_offset": 3400,
+      "model_client_offset": 88,
+      "include_global_stack_offset": 378,
+      "game_in_game_caller": {
+        "rva": "0x8c1d25",
+        "entry_check": "84 C0 0F 85 C1 00 00 00 48 8B 86 E8 05 00 00 80",
+        "kind": "call-return-address",
+        "evidence": "full-stack-invalid-evidence.json; game vtable+0xC0 predicate call at RVA0x8C1D1F; return address0x8C1D25. Guard only, not a callable function."
+      },
+      "level_data_experiments_offset": 352,
+      "terrain_atlas_offset": 5264,
+      "terrain_completion_caller": {
+        "rva": "0x9598cc",
+        "entry_check": "90 48 85 F6 74 2C F0 FF 4E 08 75 26 48 8B 06 48 8B 00 48 89 F1 FF 15 89",
+        "kind": "call-return-address",
+        "evidence": "Native _finishReloadingResources lambda601 nested lambda3 ends terrain texture handle refresh with _updateTextureAtlasPBRData(Game*, Game+1490, true), call RVA9598C7, return9598CC. Hook marks readiness only after original returns."
+      },
+      "primary_clients": {
+        "map_offset": 2512,
+        "left_offset": 0,
+        "nil_offset": 25,
+        "key_offset": 32,
+        "client_offset": 56,
+        "evidence": "Native App::getPrimaryClientInstance at RVA8BCFC0 receives Game+30; reads App+9A0 (=Game+9D0), traverses leftmost tree entry, requires key byte+20 ==0 and reads owned client at+38. SDK borrows it at startFrame on original apply thread only; validates Game and Level identity before refresh."
+      },
+      "primary_client_lookup_entry": {
+        "rva": "0x8bcfc0",
+        "entry_check": "56 57 53 48 83 EC 20 48 8B 81 A0 09 00 00 4C 8B 40 08 41 80 78 19 00 48",
+        "kind": "entry-guard-only",
+        "evidence": "Native App primary-client map lookup entry, not invoked by SDK to avoid constructing/destroying a NonOwnerPtr return."
+      },
+      "resource_loader": {
+        "game_offset": 1696,
+        "ready_offset": 72,
+        "outstanding_offset": 64,
+        "evidence": "Exact Game::onFullPackStackInvalid reads ResourceLoadManager+48==1. Native geometry reload completion routine RVA88F410 first requires Game+6A0 nonnull and loader+40==0 before rebinding live clients/LevelRenderer. The adapter requires both in addition to terrain completion."
+      },
+      "level_renderer": {
+        "task_group_offset": 1000,
+        "player_camera_offset": 1152,
+        "evidence": "OnAppResumed task group at primary renderer+3E8; LevelRenderer::frameUpdate 5355F00 loads player camera at renderer+480 and calls frameUpdate at 5355F0A."
+      },
+      "optimization": {
+        "hooks": 16,
+        "removed": [
+          "AppPlatform suspend/resume broadcasts and session gate",
+          "full geometry reload and client-wide resource notification",
+          "custom block reconstruction and block-registry ready flag writes",
+          "unused callback construction ABI and platform globals"
+        ],
+        "preserved": [
+          "native owned selection/progress callback",
+          "atlas and loader completion plus completed-frame barrier",
+          "targeted block graphics and in-place custom material UV repair",
+          "per-entity render binding invalidation and deferred camera update"
+        ]
+      },
+      "player_camera": {
+        "renderer_offset": 2456,
+        "dimension_offset": 2440,
+        "player_dimension_offset": 496,
+        "player_dimension_control_offset": 504,
+        "frame_slot_offset": 56,
+        "evidence": "Primary camera [5372310,5372769), secondary listener call sites at 53721A0 / 538F890; validated owner and current camera against client renderer before call; never call secondary listener directly."
+      },
+      "block_client_graphics_offset": 48,
+      "custom_material_uvs": {
+        "status": "verified",
+        "runtime_verified": true,
+        "evidence": "Exact PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a. material-uv-constructor-evidence.json ev_072e26a21e0488685153f5195e0eadea792f831d71897d1a48674723b0129321: native6AD7D70 initializes vector+18 and copies source96 weight+0,UV+4,PBR+5C into target24 UV+0,weight+10,PBR+14. Native6AD8B70 iterates component map head+8,node texture+40,shared Material+68. Native31F4630 reads registry tree value+50 and permutations+228. Native6AD9920 stores shared material pointers in baked map vector+0. In-place UV repair in v21 is user-verified within the adapter scope; no ready-bit reset, ownership replacement, or allocations in game memory. User confirmed v21 operation on 2026-10-31; see layout runtime_validation for scope and limitations.",
+        "registry_guard": {
+          "rva": "0x534ac53",
+          "entry_check": "48 8D 0D FE B7 61 0D 48 8D 95 D0 04 00 00 E8 CA 99 EA FD"
+        },
+        "registry_rva": 311845976,
+        "registry_displacement_offset": 3,
+        "registry_instruction_bytes": 7,
+        "layout_guards": [
+          {
+            "rva": "0x534a84b",
+            "entry_check": "48 8B 48 20 48 85 C9 74 50 F0 FF 41 08 48 8B 70 18"
+          },
+          {
+            "rva": "0x6ad8bdd",
+            "entry_check": "4C 8D 77 40 0F B6 47 64"
+          },
+          {
+            "rva": "0x6ad8f2b",
+            "entry_check": "F0 41 FF 47 08 4C 89 67 68 48 8B 77 70 4C 89 7F 70"
+          },
+          {
+            "rva": "0x6ad8dd8",
+            "entry_check": "4C 8B 78 28 4C 39 78 30 48 8D 05 11 4F F2 0B"
+          },
+          {
+            "rva": "0x6a459f0",
+            "entry_check": "48 8B 42 10 48 8B 09 48 89 01 C3"
+          },
+          {
+            "rva": "0x31f46bc",
+            "entry_check": "49 8B 5C 24 50 48 85 DB 74 53 48 8B 06"
+          },
+          {
+            "rva": "0x31f46db",
+            "entry_check": "4C 8B AB 28 02 00 00 48 8B 9B 30 02 00 00"
+          },
+          {
+            "rva": "0x6ad7d70",
+            "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 0F 29 7D"
+          }
+        ],
+        "atlas_manager_offset": 24,
+        "registry_count_offset": 8,
+        "tree_parent_offset": 8,
+        "tree_right_offset": 16,
+        "tree_nil_offset": 25,
+        "tree_value_offset": 80,
+        "type_permutations_offset": 552,
+        "block_flags_offset": 204,
+        "block_ready_mask": 2,
+        "component_head_offset": 8,
+        "node_texture_offset": 64,
+        "node_material_offset": 104,
+        "node_render_layer_offset": 100,
+        "unsupported_layer_first": 17,
+        "unsupported_layer_last": 21,
+        "baked_materials_offset": 0,
+        "shared_pointer_bytes": 16,
+        "material_uvs_offset": 24,
+        "item_textures_offset": 40,
+        "string_size_offset": 16,
+        "string_capacity_offset": 24,
+        "string_inline_bytes": 16,
+        "source_stride": 96,
+        "source_coordinates_offset": 4,
+        "source_weight_offset": 0,
+        "source_pbr_offset": 92,
+        "target_stride": 24,
+        "target_coordinates_offset": 0,
+        "target_weight_offset": 16,
+        "target_pbr_offset": 20,
+        "write_bytes": 22,
+        "maximum_types": 65536,
+        "maximum_blocks": 1048576,
+        "maximum_materials": 65536,
+        "maximum_materials_per_block": 4096,
+        "maximum_variants": 4096,
+        "maximum_name_bytes": 512,
+        "maximum_uv_sets": 262144,
+        "maximum_vector_capacity": 1048576,
+        "item_name_offset": 0,
+        "maximum_material_links": 1048576,
+        "verification_scope": "user-reported-mod-operation"
+      },
+      "reload_progress_policy": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "v19-native-reload-screen-evidence.json ev_2828eeb20789757ea3750d605de206949a8f0a541f0007b3c697f308dc2df2f8; native navigate4D27230 clones apply functor, factory546A60 constructs progress controller50B27A0, tick50B2DE0 skips first tick then invokes owned callback and polls model4D6F870 before screen navigation. v19 preserves native callback ownership/progress path. v18 user observes immediate settings exit crashes, waiting in settings avoids it. Timing mitigation remains candidate, not proven crash diagnosis."
+      },
+      "reload_progress_gate": {
+        "model_offset": 3056,
+        "callback_owner_offset": 3512,
+        "callback_invoke_slot_offset": 16,
+        "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2; native x64 50B2DFB reads owner+DB8, 50B2E07 model+BF0, indirect invoke slot+10. Original tick always returns0. Before forwarding only an expected pending world-pack apply callback, v19 waits for previous Game resource loader ready/outstanding0; leaves callback owned by native controller."
+      },
+      "refresh_scope": {
+        "status": "verified",
+        "runtime_verified": true,
+        "mode": "block_material_and_actor_bindings",
+        "evidence": "v20-fault-render-function-evidence.json ev_d7235c159c207a6764707d3448e870ed0801b329cd304d0ad98c58923aacd36c. User v19 exception RVA6EC9DB2: MOV RAX,[RAX+10], RAX=0 after MOV RAX,[R15]. Render path6EBA910 called by LevelRendererCamera render command53E0DF0. Crash after additional geometry/notify/platform updates and camera refresh; causal ownership error is unproven. v20 removes adapter-owned AppPlatform broadcasts, suspend-session override hook, geometry reload and per-client resource reset; retains native loader/progress completion, BlockGraphics init, same-count Material UV repair and camera refresh. Retired lifecycle and full actor resource-reset definitions have been removed from the active profile. v21 adds only native ClientInstance actor render binding invalidation, not full geometry reload or client-resource reset. Completion is gated by atlas/loader identity and a completed frame, independent of current UI screen.",
+        "verification_scope": "user-reported-mod-operation"
+      },
+      "immediate_selection": {
+        "auto_apply_offset": 3425,
+        "apply_include_flag": true,
+        "apply_save_flag": true,
+        "evidence": "Native51EFC90 checks controller+D61==1 before native immediate apply. Hook enables flag only during same-controller global selection callback, restores it on return. Prepared native callbacks own pack-vector/model lifetimes; adapter never invents or retains captures. User confirmed v21 operation on 2026-10-31; see layout runtime_validation for scope and limitations.",
+        "status": "verified",
+        "runtime_verified": true,
+        "verification_scope": "user-reported-mod-operation"
+      },
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      },
+      "load_completion": {
+        "revision": 2,
+        "runtime_verified": false,
+        "status": "awaiting-runtime-confirmation",
+        "policy": "Serialize native apply callbacks after previous loader/refresh completion. Match atlas completion to request generation. Retain claimed request across renewed loader work and retry only after a completed idle frame. Revalidate loader/atlas identity after renderer task drains. No fixed time delay."
+      }
+    }
+  },
+  "symbols": {
+    "SettingsScreenController::_init": {
+      "rva": "0x50e50d0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 38 06 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(SettingsScreenController*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/settings-init-evidence.json; .pdata [0x50E50D0,0x50E7BD7); root+0x1089/0x108A become GeneralSettings ctor R8B/R9B at call 0x50E5356; REA ev_17cdbae0b8130ee1aefcdb62e1680e1b326bdf81651ab368b2f3e2073598289e",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "GeneralSettingsScreenController::GeneralSettingsScreenController": {
+      "rva": "0x51c8d30",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 0A 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(GeneralSettingsScreenController*, void* model, bool, bool, const void* initialPack, bool)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/ctor-evidence.json; lambda_301 type descriptor 0x12494190 -> wrapper vtable 0xF236BD0 -> ctor; preserves stack args initialPack and legacySync",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::isPreGame": {
+      "rva": "0x65b04b0",
+      "signature": "",
+      "entry_check": "48 83 EC 28 48 8B 01 48 8B 80 30 05 00 00 FF 15 AC EA 3E 09 48 85 C0 0F",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "bool __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Corrected primary ClientInstance vtable RVA F2B9330 slot169; calls slot166 getLevel then SETE AL. Prior evidence used 8-byte preceding address F2B9328. Function RVA unchanged. pre-game-evidence.json.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::getTopScreenName": {
+      "rva": "0x65accd0",
+      "signature": "",
+      "entry_check": "55 56 57 48 81 EC A0 00 00 00 48 8D AC 24 80 00 00 00 0F 29 75 10 48 C7",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(ClientInstance*, void* stringResult)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Corrected primary ClientInstance vtable RVA F2B9330 slot134. Function RVA unchanged. RCXclient,RDX owned stringResult. screen-name-evidence.json.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "Bedrock::Memory::deallocate": {
+      "rva": "0x392960",
+      "signature": "",
+      "entry_check": "55 48 83 EC 30 48 8D 6C 24 30 48 C7 45 F8 FE FF FF FF 48 89 CA 48 8B 0D",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(void*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/deallocate-evidence.json ev_b106a6d44e025e05a63cf1fe7ad374eb517687e184fef2b234e67b754074bbbd; global delete thunk 0xE934B00 jumps here; RCX allocation; dispatches allocator slot2, ignores caller size",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "SettingsScreenController::_handleMenuExitButtonEvent": {
+      "rva": "0x5177070",
+      "signature": "",
+      "entry_check": "56 57 48 83 EC 58 48 8B 71 08 48 8B BE 48 0D 00 00 48 8B 4F 20 48 8B 01",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "uint64_t __fastcall(void* closure)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/settings-exit-evidence.json; closure+8 -> SettingsScreenController; root+0x108A gates child apply at 0x5177130",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "GeneralSettingsScreenController::_applyResourcePackStackEvent": {
+      "rva": "0x5237200",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC A0 01 00 00 48 8D AC 24 80 00 00",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(void* closure, void* model)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/apply-event-evidence.json; RCX closure, RDX model; allocates stack, calls setStack(1), then reload if dirty at 0x5237507",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MainMenuScreenModel::navigateToApplyResourcePacksScreen": {
+      "rva": "0x4d27230",
+      "signature": "",
+      "entry_check": "55 56 57 48 81 EC 80 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 F8 FE FF",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(MainMenuScreenModel*, void* callback)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/navigate-apply-packs-evidence.json; RCX model RDX consuming MSVC std::function parameter; owner at +0x38; clones into progress screen then destroys source via vtable+0x20",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::getMinecraftGame": {
+      "rva": "0x1a58900",
+      "signature": "",
+      "entry_check": "48 8B 81 C8 01 00 00 C3",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Exact PE leaf MOV RAX,[RCX+1C8]; RET. Corrected primary ClientInstance vtable RVA F2B9330 slot78.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MinecraftGame::isInGame": {
+      "rva": "0x896430",
+      "signature": "",
+      "entry_check": "0F B6 81 38 05 00 00 24 01 C3",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "bool __fastcall(MinecraftGame*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "game-in-game-evidence.json; exact game vtable0xF091B70 slot24; MOVZX EAX,byte [RCX+0x538]; AND AL,1; RET",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MinecraftGame::onFullPackStackInvalid": {
+      "rva": "0x8c1b10",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 00 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "bool __fastcall(ResourcePackListener*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "full-stack-invalid-evidence.json; listener vtable0xF092690 slot2; constructor0x82D820 stores this vtable at Game+0xB8. If primary world loaded and isInGame returns true, returns false at0x8C1DEE before restacking; loader ready flag and cancellation/waits follow the game-state gate.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ResourcePackManager::composeFullStack": {
+      "rva": "0x17cc1e0",
+      "signature": "",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 28 4D 89 CC 4D 89 C6 48 89",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "uint64_t __fastcall(ResourcePackManager*, void*, void*, void*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "compose-stack-evidence.json; RDX output, R8 global, R9 level; native wrapper loads global from manager+0x138 and level from+0x130. manager+0x17A gates GLOBAL stack inclusion. Returns zero.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::getLevel": {
+      "rva": "0x65b02f0",
+      "signature": "",
+      "entry_check": "48 8B 81 D0 01 00 00 48 8B 80 D0 00 00 00 48 85 C0 74 19 80 78 28 01 75",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "ClientInstance primary vtable RVA F2B9330 slots166/167; validates nonowner lifetime flags then returns ClientLevel. Same slot167 used by native texture hot reload.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "Level::getLevelData": {
+      "rva": "0x232c730",
+      "signature": "",
+      "entry_check": "48 8B 81 80 00 00 00 48 85 C0 74 0D 80 38 00 74 18 48 8B 81 90 00 00 00",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(Level*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Level primary vtable RVA F0C39F0 slot173. Leaf validates nonowner owner+80 and returns level+90. Native hotreload RVA92AEAD invokes slot0x568 then adds0x160 for Experiments.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MinecraftGame::getResourcePackManager": {
+      "rva": "0x8bc9e0",
+      "signature": "",
+      "entry_check": "48 8B 81 28 02 00 00 C3",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(MinecraftGame*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Leaf MOV RAX,[RCX+228]; RET. Native hotreload RVA92AEBA obtains same manager before BlockGraphics reload.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MinecraftGame::_updateTextureAtlasPBRData": {
+      "rva": "0x8923f0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC D8 00 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(MinecraftGame*, const void* atlas, bool terrain)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "atlas-pbr-completion-evidence.json ev_8bbf92d4d2d06cc37c02603e55889a37cddc621da3f946da22b860c70a7ac589. RCXGame, RDXTextureAtlas, R8Bterrain from exact instructions. Both hotreload and normal finishReloadingResources terrain callback use this final texture update. SDK only records readiness at exact normal-reload return address9598CC; performs block reload on subsequent live client getter on original apply thread.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "MinecraftGame::startFrame": {
+      "rva": "0x882f00",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC F8 02 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(MinecraftGame*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Exact lambda412 RTTI startFrame@MinecraftGame@@QEAAXXZ at RVA12336170 -> invoker943940 -> registrar882F00..883AAD (VT F0976B0 loaded8838E4). RCXGame, no arguments. Refresh runs before original, never inside an actor/player getter.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::getLevelRenderer": {
+      "rva": "0x8ab680",
+      "signature": "",
+      "entry_check": "48 8B 81 E0 01 00 00 C3",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Exact ClientInstance primary vtable F2B9330 slot185 (0x5C8); leaf MOV RAX,[RCX+1E0]; RET. Same getter used by native per-client hotreload callback946B80.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "TaskGroup::flush": {
+      "rva": "0x773730",
+      "signature": "",
+      "entry_check": "55 41 56 56 57 53 48 81 EC 30 01 00 00 48 8D AC 24 80 00 00 00 0F 29 B5",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(TaskGroup*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "Exact LevelRenderer::onAppResumed first call53542FF receives [listener+3E0] = [primaryRenderer+3E8]. Pdata[773730,773A38). SDK uses the same wait operation before replacing owned BlockGraphics, then lets native resume drain again/recreate workers.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "LevelRendererPlayer::frameUpdate": {
+      "rva": "0x5356de0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 02 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(LevelRendererPlayer*, void* frameContext)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "player-camera-frame-evidence.json; exact LevelRenderer::frameUpdate call 5355F0A passes renderer+480 as RCX and frame context as RDX. Player camera primary vtable F246FD0 slot7.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "LevelRendererCamera::preDimensionChanged": {
+      "rva": "0x5372310",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45 00 FE FF FF",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(LevelRendererCamera*, void* player)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "camera-change-dimension-evidence.json; Windows instructions RCX primary camera, RDX Player. Removes camera from old coordinator, obtains player dimension at +1F0/+1F8, updates shared camera state and registers in current dimension coordinator. Static candidate, not runtime-verified. Distinct from secondary listener callbacks at 5371750 and 53721A0.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "BlockGraphics::getForBlock": {
+      "rva": "0x67ed140",
+      "signature": "",
+      "entry_check": "56 48 83 EC 60 48 89 CE 48 8B 05 71 AF B1 0B 48 31 E0 48 89 44 24 58 48",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "block-graphics-getter-evidence.json; [67ED140,67ED299), RCX Block; get client data with callback6A459E0, fallback global graphics map.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "BlockGraphics::_readCachedClientGraphics": {
+      "rva": "0x6a459e0",
+      "signature": "",
+      "entry_check": "48 8B 42 30 48 8B 09 48 89 01 C3",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(void* capture, void* clientData)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "cached-block-graphics-evidence.json. 11-byte folded field reader; shared with item code. SDK scopes nulling to getForBlock via TLS.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "BlockGraphics::initBlocks": {
+      "rva": "0x67f8f90",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(ResourcePackManager*, const void* experiments)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "init-block-graphics-evidence.json; exact initial callback94D20A passes manager and LevelData+160 Experiments. Replaces owned graphics objects; Android also invalidates their cached client-data pointers.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::isMultiPlayerClient": {
+      "rva": "0x65b0530",
+      "signature": "",
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 50 05 00 00 FF 15 28 EA 3E 09",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "bool __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "listener-65b0530-evidence.json; primary vtable F2B9330 slot171, immediately after verified isPreGame slot169 and multiplayer predicate slot170. Semantic name based on current generated ClientInstance interface order; exact-version runtime behavior unverified.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "Block::getMaterialInstancesCandidate": {
+      "rva": "0x31656c0",
+      "signature": "",
+      "entry_check": "56 57 48 83 EC 28 48 89 CE 48 83 C1 08 8B 05 C1 2E 7E 0F 8B 15 EF F0 70",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "material-component-getter-evidence.json ev_056c0fafc254ed040f0090e81d730235a4704b21c02098affdaaf027c2b2a20b; RCX Block, returns payload+8 from components or legacy fallback.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "Block::getBakedMaterialMapCandidate": {
+      "rva": "0x6a395a0",
+      "signature": "",
+      "entry_check": "48 83 EC 58 48 8B 05 15 EB 8C 0B 48 31 E0 48 89 44 24 50 48 C7 44 24 30",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "baked-material-getter-evidence.json ev_3660aac3f7f80f3aa021bb1e379a8dd092f900cc71ca18b0e9e0f79d469633f2; RCX Block, visits clientData+118 with callback6A459F0 reading data+10.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "AtlasItemManager::getTextureItemCandidate": {
+      "rva": "0x4e17700",
+      "signature": "",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 53 48 83 EC 40 48 89 D6 48 8B 7A 10 48 83",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void* __fastcall(void* atlasManager, const std::string* name)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "atlas-name-lookup-evidence.json ev_93d26d4a2b14fd87e51872cfd3d9feaf95a4bfbc1dd4bb94f3fec679a4fd9428; exact call6AD8CDD RCXmanager RDX borrowed Release MSVC string; returns item textures at+28.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ResourcePackProgressScreenController::tickCandidate": {
+      "rva": "0x50b2de0",
+      "signature": "",
+      "entry_check": "41 57 41 56 56 57 53 48 83 EC 40 48 89 CE 80 B9 C0 0D 00 00 00 0F 84 93",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "uint64_t __fastcall(ResourcePackProgressScreenController*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "v19-progress-tick-evidence.json ev_01cc4b62cb32c0f3e0c5565aca787cdf2c7a3e2bedafabf2d553b948b8c71ca2. RCXcontroller only; prologue preservesRCX inRSI; return XOR EAX,EAX at50B2F64. Constructor50B27A0 sets primary vtableF22A5F0, slot2 points here. Keeps apply functor until its native tick; readiness polling follows callback.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "GeneralSettingsScreenController::onPackSelectionChangedCandidate": {
+      "rva": "0x51efc20",
+      "signature": "",
+      "entry_check": "55 56 57 48 83 EC 60 48 8D 6C 24 60 48 C7 45 F8 FE FF FF FF 48 89 CE 48",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(GeneralSettingsScreenController*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "v21-selection-change-evidence.json ev_82c3da8cb4361d678c76e0c4a662914557c88b5c29bfce7d81520771665e7eb3. RCXcontroller, model+D48, existing auto-apply byte+D61, pack model+DD0. Original creates selected pack vector and calls prepare at51EFCF2; no retained adapter pointer.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "GeneralSettingsScreenController::preparePackSelectionApplyCandidate": {
+      "rva": "0x51ef8f0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC A8 00 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(GeneralSettingsScreenController*, const void* selectedPacks, bool include, bool save)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "v21-apply-stack-plan-evidence.json ev_f2decb46a9d28b2d0b927a7ce16d4a5f42dd061a55b84a5cb67ec4dbf3055715. RCXcontroller,RDXvector,R8B/R9Bflags saved inprologue. Compares selected/current vectors, makes native-owned callback and invokes native reload navigation. Normal close caller52377C3 passestrue,true; native preview51EFCF2 passesfalse,false. v21 passes normal-close flags only in same-controller immediate-selection TLS scope.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    },
+    "ClientInstance::invalidateActorRenderBindingsCandidate": {
+      "rva": "0x6533850",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 83 EC 50 48 8D 6C 24 50 48 C7 45 F8 FE",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(ClientInstance*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "v21-146533850-evidence.json ev_9d036fe9b1ab229f5a3cf8f9e094329f2216c29df61be705372d80089ae7f371. Windows RCXclient, native8C3593 MOV RCX,RBX;8C3596 call6533850. Visits registry actor render component storage, marks cached state byte false and erases per-entity render resource entries; no replacement of global geometry/actor renderer dispatchers. Exact behavior and model visibility require runtime confirmation.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    }
+  }
+}

@@ -339,7 +339,8 @@
         "limitations": [
           "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
         ]
-      }
+      },
+      "abi": "LocalPlayer* __fastcall(ClientInstance*)"
     },
     "ClientInstance::onLevelExit": {
       "rva": "0x65A3350",

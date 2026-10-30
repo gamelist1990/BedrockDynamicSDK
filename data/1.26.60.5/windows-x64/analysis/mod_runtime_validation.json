@@ -53,6 +53,18 @@
         "previous_observation": "receive_ready=1, roster_packets=0, rows=0",
         "change": "Per-ID virtual decoder routing; owned packet queue; dedicated roster worker",
         "next": "Confirm native_calls, copied, published, roster_packets and nonempty visible rows after rejoining"
+      },
+      "BetterResourcePackManager": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-31",
+        "baseline_source_commit": "40c043b64c58e444134f17b1a07532524aef701b",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "scope": "v21 consumed hooks, layouts, custom block UV remapping, actor render binding refresh and in-settings selection apply",
+        "limitations": [
+          "User confirmation of v21 mod operation; no new per-symbol CheckSig samples supplied.",
+          "Rare immediate-apply load race reported separately; load-completion retry revision is not yet runtime confirmed."
+        ]
       }
     }
   }

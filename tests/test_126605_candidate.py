@@ -17,10 +17,29 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     assert profile["analysis"]["runtime_verified"] is False
     runtime_symbols = set(profile["analysis"]["runtime_verified_symbols"])
     assert {"Keyboard::feed", "LevelRendererPlayer::getFov", "ClientInstance::getLocalPlayer"} <= runtime_symbols
-    assert len(profile["symbols"]) == 41
+    resource_layout = profile["layouts"]["ResourcePackManager"]
+    resource_bindings = {
+        row["symbol"] for row in resource_layout["functions"].values()
+    } - {"ClientInstance::getLocalPlayer"}
+    assert len(profile["symbols"]) == 41 + len(resource_bindings)
+    assert resource_layout["status"] == "verified"
+    assert resource_layout["runtime_verified"] is True
+    assert resource_layout["load_completion"]["runtime_verified"] is False
+    for name in resource_bindings:
+        row = profile["symbols"][name]
+        assert row["status"] == "verified"
+        assert row["runtime_verified"] is True
+        assert row["abi_verified"] is True
+        assert name in runtime_symbols
+        assert row["verification_scope"] == "user-reported-mod-operation"
+        assert row["runtime_validation"]["ref"] == "analysis.mod_runtime_validation.BetterResourcePackManager"
+    report = profile["analysis"]["mod_runtime_validation"]["BetterResourcePackManager"]
+    assert report["baseline_source_commit"] == "40c043b64c58e444134f17b1a07532524aef701b"
+    assert report["authority"] == "user-reported" and report["limitations"]
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
+    assert len(verified) == 40 + len(resource_bindings)
     assert verified == set(profile["symbols"]) - {"Level::getPlayerList"}
-    for name in verified:
+    for name in verified - resource_bindings:
         row = profile["symbols"][name]
         assert row["abi_verified"] is (name in runtime_symbols)
         assert row["runtime_verified"] is (name in runtime_symbols)
@@ -28,6 +47,8 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
         assert row["entry_validation"]["status"] == "complete"
         assert row["entry_validation"]["entry_guard_hit"] is True
         assert row["entry_validation"]["readable"] is True
+    assert not any(name.startswith("AppPlatform::") for name in resource_bindings)
+    assert "MinecraftGame::reloadAnimationAndGeometryData" not in profile["symbols"]
     keyboard = profile["symbols"]["Keyboard::feed"]
     evidence = keyboard["runtime_validation"]
     assert keyboard["rva"] == "0x331C20"
@@ -52,7 +73,7 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
             native_keyboard["message_offset"], native_keyboard["key_offset"]) == (0, 64, 16, 24)
     assert (native_keyboard["key_down_vtable_slot"], native_keyboard["key_up_vtable_slot"]) == (1, 2)
     entry = build_index(root)["versions"]["1.26.60.5"]["windows-x64"]
-    assert entry["symbols"] == 41
+    assert entry["symbols"] == len(profile["symbols"])
     assert entry["sha256"] == hashlib.sha256((root.parent / entry["path"]).read_bytes()).hexdigest()
     assert entry["module_sha256"] == profile["target"]["sha256"]
     assert json.loads((root / "manifest.json").read_text())["versions"]["1.26.60.5"]["windows-x64"] == entry
