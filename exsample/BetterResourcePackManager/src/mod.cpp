@@ -33,7 +33,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v12: started\r\n");
+        traceStep("v13: started\r\n");
         log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
@@ -60,7 +60,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v12 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v13 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -86,7 +86,11 @@ DWORD WINAPI start(void *) noexcept {
                 current.graphicsCacheResets != previous.graphicsCacheResets ||
                 current.camerasRefreshed != previous.camerasRefreshed ||
                 current.remoteReloads != previous.remoteReloads ||
-                current.gameLifecycleSkipped != previous.gameLifecycleSkipped) {
+                current.gameLifecycleSkipped != previous.gameLifecycleSkipped ||
+                current.geometryReloaded != previous.geometryReloaded ||
+                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
+                current.customResourcesRebuilt != previous.customResourcesRebuilt ||
+                current.blockClientDataRebuilt != previous.blockClientDataRebuilt) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -106,6 +110,10 @@ DWORD WINAPI start(void *) noexcept {
                     << " remote_reloads=" << current.remoteReloads
                     << " game_lifecycle_skipped=" << current.gameLifecycleSkipped
                     << " cameras_refreshed=" << current.camerasRefreshed
+                    << " geometry_reloaded=" << current.geometryReloaded
+                    << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
+                    << " custom_resources_rebuilt=" << current.customResourcesRebuilt
+                    << " block_client_data_rebuilt=" << current.blockClientDataRebuilt
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;
