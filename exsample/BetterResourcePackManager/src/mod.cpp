@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v10 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v11 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -68,7 +68,10 @@ DWORD WINAPI start(void *) noexcept {
                 current.terrainAtlasCompleted != previous.terrainAtlasCompleted ||
                 current.refreshCancelled != previous.refreshCancelled ||
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
-                current.platformCycles != previous.platformCycles ||
+                current.geometryReloaded != previous.geometryReloaded ||
+                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
+                current.levelBuildersRecreated != previous.levelBuildersRecreated ||
+                current.clientsRefreshed != previous.clientsRefreshed ||
                 current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
                 current.graphicsCacheResets != previous.graphicsCacheResets ||
                 current.camerasRefreshed != previous.camerasRefreshed) {
@@ -85,7 +88,10 @@ DWORD WINAPI start(void *) noexcept {
                     << " terrain_atlas_completed=" << current.terrainAtlasCompleted
                     << " refresh_cancelled=" << current.refreshCancelled
                     << " resource_wait_frames=" << current.resourceWaitFrames
-                    << " platform_cycles=" << current.platformCycles
+                    << " geometry_reloaded=" << current.geometryReloaded
+                    << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
+                    << " level_builders_recreated=" << current.levelBuildersRecreated
+                    << " clients_refreshed=" << current.clientsRefreshed
                     << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
                     << " graphics_cache_resets=" << current.graphicsCacheResets
                     << " cameras_refreshed=" << current.camerasRefreshed
