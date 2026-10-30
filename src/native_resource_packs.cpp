@@ -77,6 +77,9 @@ struct NativeResourcePacks::Binding {
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
     std::atomic<std::uint64_t> resourceWaitFrames{};
+    using GeometryReload = void(__fastcall *)(void *, bool);
+    GeometryReload geometryReload{};
+    Event notifyClientResources{};
     std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{};
     AtlasUpdate atlasUpdate{};
     ClientGame clientLevel{}, levelData{}, gamePacks{};
@@ -344,6 +347,32 @@ struct NativeResourcePacks::Binding {
         trace("drain_before_block_init begin\r\n");
         drainRendererTasks(tasks);
         trace("drain_before_block_init end\r\n");
+        // v6 restored player models with the game's geometry reload and
+        // per-client notification. Keep the v15 session gate and validate the
+        // borrowed world/renderer after each native operation.
+        trace("geometry_reload begin\r\n");
+        geometryReload(game, true);
+        ++geometryReloaded;
+        trace("geometry_reload end\r\n");
+        if (primaryClient(game) != client || clientGame(client) != game ||
+            clientLevel(client) != level || gamePacks(game) != manager ||
+            clientRenderer(client) != renderer) {
+            ++refreshCancelled;
+            trace("geometry_context_changed\r\n");
+            return;
+        }
+        trace("notify_client begin\r\n");
+        std::array<void *, 2> closure{nullptr, game};
+        notifyClientResources(closure.data(), client);
+        ++clientDefinitionsReloaded;
+        trace("notify_client end\r\n");
+        if (primaryClient(game) != client || clientGame(client) != game ||
+            clientLevel(client) != level || gamePacks(game) != manager ||
+            clientRenderer(client) != renderer || !(data = levelData(level))) {
+            ++refreshCancelled;
+            trace("client_context_changed\r\n");
+            return;
+        }
         freshBlockGraphics.store(true, std::memory_order_release);
         trace("init_block_graphics begin\r\n");
         initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
@@ -579,7 +608,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v15")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v16")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -644,6 +673,8 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->platformResume = reinterpret_cast<Binding::Initialize>(get("platform_resume", "void __fastcall(AppPlatform*)"));
         next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
         next->drainRendererTasks = reinterpret_cast<Binding::Initialize>(get("drain_renderer_tasks", "void __fastcall(TaskGroup*)"));
+        next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
+        next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
         const auto &renderer = layout.at("level_renderer");
         next->rendererTasksOffset = native_profile::number(renderer.at("task_group_offset"));
         next->rendererCameraOffset = native_profile::number(renderer.at("player_camera_offset"));
@@ -744,7 +775,8 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->platformGlobal || !binding_->platformSuspend || !binding_->platformResume ||
         !binding_->remoteClient || !binding_->gamePreSuspendTarget || !binding_->gameSuspendTarget || !binding_->gameResumeTarget ||
         !binding_->suspendGateTarget || !binding_->suspendGateCaller1 || !binding_->suspendGateCaller2 ||
-        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks) {
+        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks ||
+        !binding_->geometryReload || !binding_->notifyClientResources) {
         error = "resource pack profile has not been loaded";
         return false;
     }
