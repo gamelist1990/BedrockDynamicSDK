@@ -47,7 +47,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v9 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v10 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -66,13 +66,12 @@ DWORD WINAPI start(void *) noexcept {
                 current.inWorldApplyEvents != previous.inWorldApplyEvents ||
                 current.gameGateOverrides != previous.gameGateOverrides ||
                 current.terrainAtlasCompleted != previous.terrainAtlasCompleted ||
-                current.blockTexturesReloaded != previous.blockTexturesReloaded ||
-                current.clientsRefreshed != previous.clientsRefreshed ||
                 current.refreshCancelled != previous.refreshCancelled ||
-                current.geometryReloaded != previous.geometryReloaded ||
-                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
                 current.resourceWaitFrames != previous.resourceWaitFrames ||
-                current.levelBuildersRecreated != previous.levelBuildersRecreated) {
+                current.platformCycles != previous.platformCycles ||
+                current.blockGraphicsRebuilt != previous.blockGraphicsRebuilt ||
+                current.graphicsCacheResets != previous.graphicsCacheResets ||
+                current.camerasRefreshed != previous.camerasRefreshed) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -84,13 +83,12 @@ DWORD WINAPI start(void *) noexcept {
                     << " in_world_apply_events=" << current.inWorldApplyEvents
                     << " game_gate_overrides=" << current.gameGateOverrides
                     << " terrain_atlas_completed=" << current.terrainAtlasCompleted
-                    << " block_textures_reloaded=" << current.blockTexturesReloaded
-                    << " clients_refreshed=" << current.clientsRefreshed
                     << " refresh_cancelled=" << current.refreshCancelled
-                    << " geometry_reloaded=" << current.geometryReloaded
-                    << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
                     << " resource_wait_frames=" << current.resourceWaitFrames
-                    << " level_builders_recreated=" << current.levelBuildersRecreated
+                    << " platform_cycles=" << current.platformCycles
+                    << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
+                    << " graphics_cache_resets=" << current.graphicsCacheResets
+                    << " cameras_refreshed=" << current.camerasRefreshed
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

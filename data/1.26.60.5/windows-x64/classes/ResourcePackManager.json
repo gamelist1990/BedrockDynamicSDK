@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v9",
+      "adapter": "windows-live-reload-v10",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -68,38 +68,41 @@
         "game_packs": {
           "symbol": "MinecraftGame::getResourcePackManager"
         },
-        "reload_block_textures": {
-          "symbol": "BlockGraphics::reloadBlockTextures"
-        },
-        "refresh_client": {
-          "symbol": "MinecraftGame::_refreshClientAfterTextureAtlasReload"
-        },
         "update_atlas_pbr": {
           "symbol": "MinecraftGame::_updateTextureAtlasPBRData"
         },
         "start_frame": {
           "symbol": "MinecraftGame::startFrame"
         },
-        "reload_geometry": {
-          "symbol": "MinecraftGame::reloadAnimationAndGeometryData"
-        },
-        "notify_client_resources": {
-          "symbol": "MinecraftGame::_notifyClientResourcePacksChanged"
-        },
         "client_renderer": {
           "symbol": "ClientInstance::getLevelRenderer"
         },
-        "resume_renderer": {
-          "symbol": "LevelRenderer::onAppResumed"
-        },
-        "recreate_builders": {
-          "symbol": "LevelBuilder::recreateBuilders"
-        },
         "drain_renderer_tasks": {
           "symbol": "TaskGroup::flush"
+        },
+        "camera_frame": {
+          "symbol": "LevelRendererPlayer::frameUpdate"
+        },
+        "camera_rebind": {
+          "symbol": "LevelRendererCamera::preDimensionChanged"
+        },
+        "get_block_graphics": {
+          "symbol": "BlockGraphics::getForBlock"
+        },
+        "read_cached_graphics": {
+          "symbol": "BlockGraphics::_readCachedClientGraphics"
+        },
+        "initialize_block_graphics": {
+          "symbol": "BlockGraphics::initBlocks"
+        },
+        "platform_suspend": {
+          "symbol": "AppPlatform::_fireAppSuspended"
+        },
+        "platform_resume": {
+          "symbol": "AppPlatform::_fireAppResumed"
         }
       },
-      "evidence": "User reports v8 2437435 crashes after block_graphics_rebuilt=1, before custom_resources_rebuilt/block_client_data_rebuilt. Exact faulting instruction is unknown without a crash dump. v9 removes all v8 registry traversal, group/material initialization, raw Block ready-bit mutation and native per-type client-data reconstruction. Rechecked attached Android v2.3.1 SHA0995969634128e548ac912f54d92e8b22f99badb0d015ec827a1fbd56a6ac4ee: finalize calls initBlocks and getForBlock hook clears one cached graphics pointer, camera-frame hook resets clouds and invokes preDimensionChanged; no v8-style global client-data regeneration. Windows v9 uses the existing in-place reloadBlockTextures path instead of destroying/recreating owned BlockGraphics, so both cached-graphics hooks are removed. Preserve Windows v6 model repair confirmed by user plus v7 native builder recreation; one claimed refresh per ready terrain completion. Language-subpack detour removed because it observed a counter only. Performance and custom-block visuals remain runtime unverified. Reload-stack detour also removed because it observed a counter only.",
+      "evidence": "Android v2.3.1 finalize path invokes AppPlatform callbacks, BlockGraphics::initBlocks, and defers camera preDimensionChanged to frameUpdate; getForBlock clears the stale client graphics pointer. Windows v10 follows these stages with exact-build candidate bindings and a render task barrier. Windows loader/atlas completion remain separate because Android finalize equivalent is not identified. Camera cloud texture reference refresh from Android is not yet mapped on Windows. No Windows game runtime validation.",
       "exit_closure_owner_offset": 8,
       "settings_model_offset": 3400,
       "model_client_offset": 88,
@@ -144,38 +147,52 @@
         "outstanding_offset": 64,
         "evidence": "Exact Game::onFullPackStackInvalid reads ResourceLoadManager+48==1. Native geometry reload completion routine RVA88F410 first requires Game+6A0 nonnull and loader+40==0 before rebinding live clients/LevelRenderer. The adapter requires both in addition to terrain completion."
       },
-      "client_notification_capture": {
-        "object_bytes": 16,
-        "game_offset": 8,
-        "evidence": "Native invoker RVA956930 reads only closure+8 Game*. It obtains current ActorResourceDefinitionGroup through Game vtable+380, calls client vtable+AB8 onActiveResourcePacksChanged, destroys its own temporary NonOwnerPtr. No vtable or ownership operations on the borrowed closure."
-      },
       "level_renderer": {
-        "app_listener_offset": 8,
-        "resume_slot_offset": 40,
-        "evidence": "Exact LevelRenderer constructor [53484D0,534D318) stores primary table F2465C0 at self, AppPlatformListener table F2466C0 at self+8 (534855B/5348562). Listener table slot5 is53542E0. Resume uses listener-relative embedded LevelBuilder at+548, drains TaskGroup via773730, calls5333590 with current gameplay resources and finishes via tail jump53544A0 with primary self=listener-8. Runtime vtable slot must equal checked resume entry before invocation.",
-        "task_group_offset": 1000
+        "task_group_offset": 1000,
+        "player_camera_offset": 1152,
+        "evidence": "OnAppResumed task group at primary renderer+3E8; LevelRenderer::frameUpdate 5355F00 loads player camera at renderer+480 and calls frameUpdate at 5355F0A."
       },
       "optimization": {
-        "hooks": 10,
+        "hooks": 13,
         "removed": [
-          "global BlockGraphics::initBlocks",
-          "BlockGraphics::getForBlock detour",
-          "folded cached-graphics reader detour",
-          "language-subpack diagnostic-only detour",
-          "v8 registry enumeration and flag writes",
-          "v8 material/group/client-data reconstruction",
-          "reload-stack diagnostic-only detour"
+          "separate geometry reload and client-definition notification",
+          "direct renderer resume and builder recreation",
+          "separate in-place block texture reload",
+          "explicit all-chunk dirty notification",
+          "v8 global client-data regeneration and raw ready-bit writes"
         ],
         "preserved": [
-          "terrain and native-loader completion wait",
-          "world/thread identity cancellation",
-          "native renderer task barrier",
-          "v6 model/definition repair",
-          "Windows in-place BlockGraphics texture refresh",
-          "native LevelBuilder recreation",
-          "native all-chunk dirty notification"
+          "loader/terrain completion wait and world/thread checks",
+          "renderer task barrier"
         ],
-        "evidence": "brpm-v9-android/recheck-evidence.json; block-texture-reload-evidence.json; camera-pre-dimension-evidence.json; v9-optimization-audit.md. Android camera dimension-listener Windows equivalent detaches dimension state; do not call it blindly in a live world. No new native function or field layout introduced by v9."
+        "added": [
+          "Android-style platform suspend/resume",
+          "Android-style initBlocks and scoped stale-reference invalidation",
+          "Android-style deferred primary camera rebind"
+        ],
+        "evidence": "platform-and-finalize-evidence.json; platform-suspend-evidence.json; camera-change-dimension-evidence.json. This is an experimental structural port, not runtime proof or a measured performance result."
+      },
+      "player_camera": {
+        "renderer_offset": 2456,
+        "dimension_offset": 2440,
+        "player_dimension_offset": 496,
+        "player_dimension_control_offset": 504,
+        "frame_slot_offset": 56,
+        "evidence": "Primary camera [5372310,5372769), secondary listener call sites at 53721A0 / 538F890; validated owner and current camera against client renderer before call; never call secondary listener directly."
+      },
+      "block_client_graphics_offset": 48,
+      "app_platform": {
+        "global_rva": "0x128bf570",
+        "object_offset": 16,
+        "suspend_slot": 512,
+        "resume_slot": 520,
+        "global_store_guard": {
+          "rva": "0x322d69",
+          "entry_check": "48 89 3D 10 C8 59 12 80 38 00 48 89 FE 75 17 C7",
+          "kind": "instruction-guard-only",
+          "evidence": "At 322D69 constructor stores the primary AppPlatform this pointer to global 128BF580. The global begins at 128BF570 with a lifetime flag pointer. Exact static layout, only borrowed on game thread."
+        },
+        "evidence": "Android FUN1283F4 stores this in global608E8 while hooking AppPlatform::AppPlatform; FUN125D88 calls vtable slots208 and210. Windows adds only one vtable destructor slot and native AppPlatform vtables dispatch listener suspension/resumption at offsets200/208. Verify both actual entries and lifetime before invocation."
       }
     }
   },
@@ -388,32 +405,6 @@
       "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
       "evidence": "Leaf MOV RAX,[RCX+228]; RET. Native hotreload RVA92AEBA obtains same manager before BlockGraphics reload."
     },
-    "BlockGraphics::reloadBlockTextures": {
-      "rva": "0x68037d0",
-      "signature": "",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 01 00 00 48 8D AC 24 80",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(ResourcePackManager*, const void* experiments)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
-      "evidence": "block-texture-reload-evidence.json. Pdata [68037D0,6804272). Exact hotreload call RVA92AEC4 RCXmanager RDXLevelData+160. Loads blocks.json from full stack and updates existing BlockGraphics texture items without replacing objects."
-    },
-    "MinecraftGame::_refreshClientAfterTextureAtlasReload": {
-      "rva": "0x946b80",
-      "signature": "",
-      "entry_check": "56 57 53 48 83 EC 20 48 89 D6 48 8B 02 48 8B 80 90 07 00 00 48 89 D1 FF",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* unused, ClientInstance*)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices; v5 runtime validation pending",
-      "evidence": "Maintained SDK name for native stateless hotreload lambda439 invoker, vtable RVA F0978F0. Pdata [946B80,946C0E). RCX unused, RDX client. Clears CachedScenes UI scene cache via slot0x790, gets LevelRenderer via0x5C8, loops coordinators and calls RenderChunkCoordinator::_setAllDirty(false,false) RVA7920F70. Correlated LeviLamina LevelRenderer::rebuildAllRenderChunkGeometry source."
-    },
     "MinecraftGame::_updateTextureAtlasPBRData": {
       "rva": "0x8923f0",
       "signature": "",
@@ -440,32 +431,6 @@
       "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
       "evidence": "Exact lambda412 RTTI startFrame@MinecraftGame@@QEAAXXZ at RVA12336170 -> invoker943940 -> registrar882F00..883AAD (VT F0976B0 loaded8838E4). RCXGame, no arguments. Refresh runs before original, never inside an actor/player getter."
     },
-    "MinecraftGame::reloadAnimationAndGeometryData": {
-      "rva": "0x8c27a0",
-      "signature": "",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC D8 01 00 00 48 8D AC 24 80",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(MinecraftGame*, bool sync)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
-      "evidence": "reload-animation-geometry-evidence.json, exact .pdata [8C27A0,8C3B05); Game primary vtable F091B70 slot67 (0x218), immediately before getGeometryGroup slot0x220. RCXGame, DLsync. Clears/rebuilds geometry and actor definitions; reloads client entity renderers at8C34E7, invokes client postInitRenderResources at8C358D (corrected v6 descriptive label; this does not itself recreate LevelBuilder workers), refreshes ECS render data at8C3596, reinitializes live LevelRenderer at8C36F7. Bool true takes synchronous native path. Candidate ABI, not runtime verified."
-    },
-    "MinecraftGame::_notifyClientResourcePacksChanged": {
-      "rva": "0x956930",
-      "signature": "",
-      "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40 48 C7 45 F8 FE FF FF FF 48 89 D6 48",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(void* gameClosure, ClientInstance*)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE instructions, native vtables, RTTI callable anchors and REA/Ghidra slices; v6 runtime validation pending",
-      "evidence": "client-resource-notification-evidence.json; exact native per-client full resource change callback [956930,9569F9). RCX borrowed gameClosure (only+8 used), RDXliveClient. Gets Game ActorResourceDefinitionGroupMutable via vtable+380; calls ClientInstance::onActiveResourcePacksChanged (target65A6E10) via+AB8. That target clears block tessellator state, item texture caches, entity renderer resources, LevelRenderer references and UI scene cache."
-    },
     "ClientInstance::getLevelRenderer": {
       "rva": "0x8ab680",
       "signature": "",
@@ -479,32 +444,6 @@
       "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
       "evidence": "Exact ClientInstance primary vtable F2B9330 slot185 (0x5C8); leaf MOV RAX,[RCX+1E0]; RET. Same getter used by native per-client hotreload callback946B80."
     },
-    "LevelRenderer::onAppResumed": {
-      "rva": "0x53542e0",
-      "signature": "",
-      "entry_check": "55 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45 00 FE FF FF FF 48 89 CE",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(AppPlatformListener*)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
-      "evidence": "renderer-resume-builders-evidence.json and v7-exact-calls.json. ABI RCX = LevelRenderer+8 AppPlatformListener subobject, NOT primary LevelRenderer*. Exact vtable slot5, validated against instance at runtime. Drains renderer tasks, recreates builders, resumes camera/helper resources; tail jumps53544A0. Raw slice Ghidra cannot follow the out-of-slice tail jump; full PE instructions retained separately."
-    },
-    "LevelBuilder::recreateBuilders": {
-      "rva": "0x5333590",
-      "signature": "",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC E8 00 00 00 48 8D AC 24 80",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "runtime_verified": false,
-      "abi_verified": false,
-      "abi": "void __fastcall(LevelBuilder*, void* graphicsResources)",
-      "function_boundary": true,
-      "source": "Exact 1.26.60.5 PE, native constructor/vtable/call instructions and REA/Ghidra slices. v7 runtime validation pending.",
-      "evidence": "recreate-level-builders-evidence.json; lambda28 type anchor LevelBuilder::recreateBuilders vtable F2478E0; exact resume call5354359 RCXlistener+548, RDXgameplayGraphicsResources. Recreates worker builders in vector, disposing prior workers through533C0E0. Entry additionally checked; adapter invokes it through native LevelRenderer resume, retaining native task drain/resource ownership handling."
-    },
     "TaskGroup::flush": {
       "rva": "0x773730",
       "signature": "",
@@ -517,6 +456,97 @@
       "function_boundary": true,
       "source": "Exact 1.26.60.5 PE instructions and REA/Ghidra slices, correlated with Android source mod. Runtime validation pending.",
       "evidence": "Exact LevelRenderer::onAppResumed first call53542FF receives [listener+3E0] = [primaryRenderer+3E8]. Pdata[773730,773A38). SDK uses the same wait operation before replacing owned BlockGraphics, then lets native resume drain again/recreate workers."
+    },
+    "LevelRendererPlayer::frameUpdate": {
+      "rva": "0x5356de0",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 48 02 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(LevelRendererPlayer*, void* frameContext)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "player-camera-frame-evidence.json; exact LevelRenderer::frameUpdate call 5355F0A passes renderer+480 as RCX and frame context as RDX. Player camera primary vtable F246FD0 slot7."
+    },
+    "LevelRendererCamera::preDimensionChanged": {
+      "rva": "0x5372310",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 56 57 53 48 83 EC 48 48 8D 6C 24 40 48 C7 45 00 FE FF FF",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(LevelRendererCamera*, void* player)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "camera-change-dimension-evidence.json; Windows instructions RCX primary camera, RDX Player. Removes camera from old coordinator, obtains player dimension at +1F0/+1F8, updates shared camera state and registers in current dimension coordinator. Static candidate, not runtime-verified. Distinct from secondary listener callbacks at 5371750 and 53721A0."
+    },
+    "BlockGraphics::getForBlock": {
+      "rva": "0x67ed140",
+      "signature": "",
+      "entry_check": "56 48 83 EC 60 48 89 CE 48 8B 05 71 AF B1 0B 48 31 E0 48 89 44 24 58 48",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "block-graphics-getter-evidence.json; [67ED140,67ED299), RCX Block; get client data with callback6A459E0, fallback global graphics map."
+    },
+    "BlockGraphics::_readCachedClientGraphics": {
+      "rva": "0x6a459e0",
+      "signature": "",
+      "entry_check": "48 8B 42 30 48 8B 09 48 89 01 C3",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(void* capture, void* clientData)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "cached-block-graphics-evidence.json. 11-byte folded field reader; shared with item code. SDK scopes nulling to getForBlock via TLS."
+    },
+    "BlockGraphics::initBlocks": {
+      "rva": "0x67f8f90",
+      "signature": "",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 58 01 00 00 48 8D AC 24 80",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(ResourcePackManager*, const void* experiments)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "init-block-graphics-evidence.json; exact initial callback94D20A passes manager and LevelData+160 Experiments. Replaces owned graphics objects; Android also invalidates their cached client-data pointers."
+    },
+    "AppPlatform::_fireAppSuspended": {
+      "rva": "0x3287c0",
+      "signature": "",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 00 FE",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(AppPlatform*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "platform-suspend-evidence.json; AppPlatform primary vtable EF C7B50 and GameCorePC primary vtable EF C5EE0 slot+200 both point here; iterates listeners using vtable+18 and +20. Android Itanium vtable +208 differs by one destructor slot from Windows ABI."
+    },
+    "AppPlatform::_fireAppResumed": {
+      "rva": "0x328c00",
+      "signature": "",
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 00 FE",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void __fastcall(AppPlatform*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE instructions and REA/Ghidra; ABI and runtime behavior remain unverified.",
+      "evidence": "Exact AppPlatform/GameCorePC primary vtable slot+208; invokes AppPlatformListener virtual +28. Android Itanium vtable slot +210 differs by one destructor slot. Function identity inferred from listener dispatch and platform fields; runtime unverified."
     }
   }
 }

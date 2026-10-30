@@ -24,4 +24,13 @@ int main() {
     pending.complete(&game);
     pending.begin(&game, &level, &manager, 42); // Next reload must await its atlas.
     assert(!pending.take(&game, &level, 42, cancelled));
+    bedrock::detail::PendingCameraRefresh camera;
+    camera.begin(&game, &level, 42);
+    assert(camera.game() == &game && camera.thread() == 42);
+    assert(!camera.cancelIfChanged(&level));
+    assert(camera.cancelIfChanged(&other));
+    assert(!camera.game() && camera.thread() == 0);
+    camera.begin(&game, &level, 42);
+    camera.clear();
+    assert(!camera.game());
 }

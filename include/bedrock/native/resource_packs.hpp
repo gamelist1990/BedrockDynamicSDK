@@ -14,9 +14,8 @@ class NativeResourcePacks final {
         std::uint64_t settingsExited{}, applyEvents{}, stackCompositions{},
             globalStackIncluded{};
         std::uint64_t applyNavigations{}, liveApplications{}, inWorldApplyEvents{}, gameGateOverrides{};
-        std::uint64_t terrainAtlasCompleted{}, blockTexturesReloaded{}, clientsRefreshed{}, refreshCancelled{};
-        std::uint64_t geometryReloaded{}, clientDefinitionsReloaded{}, resourceWaitFrames{};
-        std::uint64_t levelBuildersRecreated{};
+        std::uint64_t terrainAtlasCompleted{}, refreshCancelled{}, resourceWaitFrames{};
+        std::uint64_t platformCycles{}, blockGraphicsRebuilt{}, graphicsCacheResets{}, camerasRefreshed{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();

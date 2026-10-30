@@ -39,4 +39,18 @@ class PendingTerrainRefresh {
         return result;
     }
 };
+// Identity only: no retained ownership. Calls are synchronized by the adapter.
+class PendingCameraRefresh {
+    void *game_{}, *level_{};
+    std::uint32_t thread_{};
+  public:
+    void begin(void *game, void *level, std::uint32_t thread) noexcept { game_=game; level_=level; thread_=thread; }
+    void *game() const noexcept { return game_; }
+    std::uint32_t thread() const noexcept { return thread_; }
+    void clear() noexcept { game_=nullptr; level_=nullptr; thread_=0; }
+    bool cancelIfChanged(void *level) noexcept {
+        if (game_ && level != level_) { clear(); return true; }
+        return false;
+    }
+};
 }
