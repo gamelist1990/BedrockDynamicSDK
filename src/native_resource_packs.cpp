@@ -13,6 +13,7 @@
 #include <intrin.h>
 #include <bedrock/detail/pending_terrain_refresh.hpp>
 #include <bedrock/detail/scoped_suspend_gate.hpp>
+#include <bedrock/detail/native_material_uvs.hpp>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
 #error NativeResourcePacks requires the Release MSVC STL ABI (_ITERATOR_DEBUG_LEVEL=0)
@@ -79,6 +80,8 @@ struct NativeResourcePacks::Binding {
     std::atomic<std::uint64_t> resourceWaitFrames{};
     using GeometryReload = void(__fastcall *)(void *, bool);
     GeometryReload geometryReload{};
+    detail::NativeMaterialUvs materialUvs;
+    std::atomic<std::uint64_t> customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
     Event notifyClientResources{};
     std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{};
     AtlasUpdate atlasUpdate{};
@@ -387,7 +390,47 @@ struct NativeResourcePacks::Binding {
         initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
         trace("init_block_graphics end\r\n");
         ++blockGraphicsRebuilt;
-        trace("custom_rebuild_disabled\r\n");
+        // UV-only repair: keep shared Material objects and vector allocations.
+        // The existing camera refresh below rebuilds chunks from these values.
+        trace("drain_before_custom_uv begin\r\n");
+        if (clientRenderer(client) != renderer ||
+            !native_profile::read(renderer, rendererTasksOffset, tasks) || !tasks) {
+            ++refreshCancelled;
+            trace("custom_uv_context_changed\r\n");
+            return;
+        }
+        drainRendererTasks(tasks);
+        trace("drain_before_custom_uv end\r\ncustom_uv_prepare begin\r\n");
+        materialUvs.counts = {};
+        try {
+            void *atlas{};
+            if (!native_profile::read(game, terrainAtlasOffset, atlas) || !atlas)
+                throw std::runtime_error("custom_uv_no_atlas");
+            auto *atlasManager = materialUvs.atlasManager(atlas);
+            if (!materialUvs.prepare(atlasManager))
+                throw std::runtime_error("custom_uv_snapshot_rejected");
+            trace("custom_uv_prepare end\r\n");
+            void *currentAtlas{};
+            if (primaryClient(game) != client || clientGame(client) != game ||
+                clientLevel(client) != level || gamePacks(game) != manager ||
+                clientRenderer(client) != renderer || !resourcesReady(game) ||
+                !native_profile::read(game, terrainAtlasOffset, currentAtlas) || currentAtlas != atlas ||
+                materialUvs.atlasManager(atlas) != atlasManager)
+                throw std::runtime_error("custom_uv_context_changed");
+            trace("custom_uv_commit begin\r\n");
+            if (!materialUvs.commit()) throw std::runtime_error("custom_uv_commit_rejected");
+            trace("custom_uv_commit end\r\n");
+            customMaterialsRemapped += materialUvs.counts.materials;
+            customUvSetsUpdated += materialUvs.counts.rows;
+        } catch (const std::exception &error) {
+            ++failures;
+            trace(error.what());
+            trace("\r\n");
+        }
+        materialUvs.discard();
+        customUvMismatched += materialUvs.counts.mismatched;
+        customUvUnmatched += materialUvs.counts.unmatched;
+        customUvUnchanged += materialUvs.counts.unchanged;
         {
             std::lock_guard lock(refreshMutex);
             pendingCamera.begin(game, level, GetCurrentThreadId());
@@ -625,8 +668,9 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v17-diagnostic")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v18-material-uv")
             throw std::runtime_error("unsupported resource pack adapter ABI");
+        next->materialUvs.load(root, layout);
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
             if (definition.at("abi").get<std::string>() != abi)
@@ -868,6 +912,8 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->platformCycles.load(), binding_->blockGraphicsRebuilt.load(),
             binding_->graphicsCacheResets.load(), binding_->camerasRefreshed.load(),
             binding_->remoteReloads.load(), binding_->suspendGateOverrides.load(),
-            binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load()};
+            binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
+            binding_->customMaterialsRemapped.load(), binding_->customUvSetsUpdated.load(),
+            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load()};
 }
 } // namespace bedrock

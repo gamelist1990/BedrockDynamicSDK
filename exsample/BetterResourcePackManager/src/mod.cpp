@@ -78,7 +78,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v17 diagnostic: started\r\n");
+        traceStep("v18 material UV candidate: started\r\n");
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
@@ -108,7 +108,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v17 diagnostic is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v18 material UV candidate is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -136,7 +136,12 @@ DWORD WINAPI start(void *) noexcept {
                 current.remoteReloads != previous.remoteReloads ||
                 current.suspendGateOverrides != previous.suspendGateOverrides ||
                 current.geometryReloaded != previous.geometryReloaded ||
-                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded) {
+                current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded ||
+                current.customMaterialsRemapped != previous.customMaterialsRemapped ||
+                current.customUvSetsUpdated != previous.customUvSetsUpdated ||
+                current.customUvMismatched != previous.customUvMismatched ||
+                current.customUvUnmatched != previous.customUvUnmatched ||
+                current.customUvUnchanged != previous.customUvUnchanged) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -158,6 +163,11 @@ DWORD WINAPI start(void *) noexcept {
                     << " cameras_refreshed=" << current.camerasRefreshed
                     << " geometry_reloaded=" << current.geometryReloaded
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
+                    << " custom_materials_remapped=" << current.customMaterialsRemapped
+                    << " custom_uv_sets_updated=" << current.customUvSetsUpdated
+                    << " custom_uv_mismatched=" << current.customUvMismatched
+                    << " custom_uv_unmatched=" << current.customUvUnmatched
+                    << " custom_uv_unchanged=" << current.customUvUnchanged
                     << " failures=" << current.failures << '\n';
                 log.flush();
                 previous = current;

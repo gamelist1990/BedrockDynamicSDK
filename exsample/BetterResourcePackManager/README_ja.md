@@ -1,11 +1,15 @@
-# BetterResourcePackManager Windows 診断版 v17
+# BetterResourcePackManager Windows v18 テクスチャ座標修正版（実機未検証）
 
-Minecraft 1.26.60.5 / Windows x64 用。対応 EXE SHA-256: `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`。
+Minecraft Windows 1.26.60.5 専用。v17 の診断機能に、カスタムブロックの既存マテリアルへ新しいアトラスのUV座標を反映する処理を追加しました。
 
-v16 の利用者ログは `camera_rebind end` まで進んでいますが、クラッシュした命令やスレッドは不明です。v17 は更新処理を変更せず、診断ログに時刻、スレッド、設定終了・リソース更新の前後、および取得できた一部のWindows例外情報を記録します。
+元のパック A → B でテクスチャが崩れ、B → A で戻るという報告から、古い座標の残留を修正対象としています。対象EXEのマテリアル生成処理を静的解析し、同じUV・重み・PBR情報の変換を既存データに適用します。この原因仮説とゲーム内の結果は、まだ実機で検証していません。
 
-**v17 は診断版であり、クラッシュやカスタムブロックを修正する変更は含みません。** Windows例外ログの `first_chance` は回復する例外も含み、クラッシュを意味するとは限りません。fail-fastを含む一部の終了は観測されない場合があります。
+共有マテリアル、ブロック登録情報、モデル、ゲームのメモリ所有権は置き換えません。ロード完了後のメインフレームで描画タスクを待ち、参照を再検査してから更新します。サイズが一致しない、参照が曖昧、名前検索がmissingへフォールバックする、特殊レイヤー、UV値が不正なデータは変更しません。座標の件数が変わるパックはこの方式の対象外です。従来の個別BlockGraphics参照クリアは継続しています。
 
-Minecraft を完全終了して DLL を入れ替え、ログ先頭の `adapter v17 diagnostic` を確認してください。通常ログは `Documents/PEXData/BetterResourcePackManager/BetterResourcePackManager.log`、逐次ログは同じフォルダーの `BetterResourcePackManager-stage.log` です。逐次ログは次回起動時に上書きされます。
+外部サーバー接続維持のv15のゲート、プレイヤーモデル更新、段階ログを継続しています。設定をすぐ閉じた際の過去のクラッシュを解消したと断定する変更ではありません。
 
-外部サーバーで `suspend_gate_overrides` が増えれば候補分岐を通っています。これは接続維持や描画の正常性を保証するものではありません。Windows CI はビルドと自動テストを行いますが、Minecraft 内での動作は検証しません。
+Minecraft を完全終了してDLLを交換してください。ログの先頭は `adapter v18 material UV candidate` です。通常ログと段階ログは `Documents/PEXData/BetterResourcePackManager/` に出力します。
+
+確認対象は A → B → A、既存／新規のカスタムブロック、プレイヤーモデル、外部サーバーの接続維持です。`custom_materials_remapped` は変更したマテリアル数、`custom_uv_sets_updated` は座標レコード数です。`custom_uv_mismatched` は件数不一致、`custom_uv_unmatched` は名前・参照・値などの条件を満たさず除外した数、`custom_uv_unchanged` は既に同じ値だった数です。カウンターが増えても見た目の正常を保証しません。
+
+Windowsビルドと自動テストの成功は、Minecraft内の動作確認とは別です。

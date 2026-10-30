@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "candidate",
       "runtime_verified": false,
-      "adapter": "windows-live-reload-v17-diagnostic",
+      "adapter": "windows-live-reload-v18-material-uv",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -121,6 +121,15 @@
         },
         "suspend_gate_candidate": {
           "symbol": "MinecraftGame::_suspendSessionGateCandidate"
+        },
+        "block_materials": {
+          "symbol": "Block::getMaterialInstancesCandidate"
+        },
+        "block_baked_materials": {
+          "symbol": "Block::getBakedMaterialMapCandidate"
+        },
+        "atlas_texture_item": {
+          "symbol": "AtlasItemManager::getTextureItemCandidate"
         }
       },
       "evidence": "User v16 reports crash after rapid settings edit and close; submitted stage log reaches camera_rebind end and counters show geometry and client notification returned. Faulting instruction and thread unknown; timing dependency is unproven. v17 preserves v16 refresh operations and adds timestamped stage/first-chance exception diagnostics; it is not a crash or custom-block fix.",
@@ -228,6 +237,93 @@
         "entry_check": "84 C0 0F 85 90 00 00 00 41 08 DE 74 52 84 DB 75 62",
         "kind": "call-return-address",
         "evidence": "Direct call to candidate gate RVA8A4C90 at 8A55A0 inside MinecraftGame::onAppSuspended; true skips subsequent suspend branch. Exact semantics unverified."
+      },
+      "custom_material_uvs": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "evidence": "Exact PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a. material-uv-constructor-evidence.json ev_072e26a21e0488685153f5195e0eadea792f831d71897d1a48674723b0129321: native6AD7D70 initializes vector+18 and copies source96 weight+0,UV+4,PBR+5C into target24 UV+0,weight+10,PBR+14. Native6AD8B70 iterates component map head+8,node texture+40,shared Material+68. Native31F4630 reads registry tree value+50 and permutations+228. Native6AD9920 stores shared material pointers in baked map vector+0. In-place UV repair is a hypothesis requiring runtime verification; no ready-bit reset, ownership replacement, or allocations in game memory.",
+        "registry_guard": {
+          "rva": "0x534ac53",
+          "entry_check": "48 8D 0D FE B7 61 0D 48 8D 95 D0 04 00 00 E8 CA 99 EA FD"
+        },
+        "registry_rva": 311845976,
+        "registry_displacement_offset": 3,
+        "registry_instruction_bytes": 7,
+        "layout_guards": [
+          {
+            "rva": "0x534a84b",
+            "entry_check": "48 8B 48 20 48 85 C9 74 50 F0 FF 41 08 48 8B 70 18"
+          },
+          {
+            "rva": "0x6ad8bdd",
+            "entry_check": "4C 8D 77 40 0F B6 47 64"
+          },
+          {
+            "rva": "0x6ad8f2b",
+            "entry_check": "F0 41 FF 47 08 4C 89 67 68 48 8B 77 70 4C 89 7F 70"
+          },
+          {
+            "rva": "0x6ad8dd8",
+            "entry_check": "4C 8B 78 28 4C 39 78 30 48 8D 05 11 4F F2 0B"
+          },
+          {
+            "rva": "0x6a459f0",
+            "entry_check": "48 8B 42 10 48 8B 09 48 89 01 C3"
+          },
+          {
+            "rva": "0x31f46bc",
+            "entry_check": "49 8B 5C 24 50 48 85 DB 74 53 48 8B 06"
+          },
+          {
+            "rva": "0x31f46db",
+            "entry_check": "4C 8B AB 28 02 00 00 48 8B 9B 30 02 00 00"
+          },
+          {
+            "rva": "0x6ad7d70",
+            "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 78 48 8D 6C 24 70 0F 29 7D"
+          }
+        ],
+        "atlas_manager_offset": 24,
+        "registry_count_offset": 8,
+        "tree_parent_offset": 8,
+        "tree_right_offset": 16,
+        "tree_nil_offset": 25,
+        "tree_value_offset": 80,
+        "type_permutations_offset": 552,
+        "block_flags_offset": 204,
+        "block_ready_mask": 2,
+        "component_head_offset": 8,
+        "node_texture_offset": 64,
+        "node_material_offset": 104,
+        "node_render_layer_offset": 100,
+        "unsupported_layer_first": 17,
+        "unsupported_layer_last": 21,
+        "baked_materials_offset": 0,
+        "shared_pointer_bytes": 16,
+        "material_uvs_offset": 24,
+        "item_textures_offset": 40,
+        "string_size_offset": 16,
+        "string_capacity_offset": 24,
+        "string_inline_bytes": 16,
+        "source_stride": 96,
+        "source_coordinates_offset": 4,
+        "source_weight_offset": 0,
+        "source_pbr_offset": 92,
+        "target_stride": 24,
+        "target_coordinates_offset": 0,
+        "target_weight_offset": 16,
+        "target_pbr_offset": 20,
+        "write_bytes": 22,
+        "maximum_types": 65536,
+        "maximum_blocks": 1048576,
+        "maximum_materials": 65536,
+        "maximum_materials_per_block": 4096,
+        "maximum_variants": 4096,
+        "maximum_name_bytes": 512,
+        "maximum_uv_sets": 262144,
+        "maximum_vector_capacity": 1048576,
+        "item_name_offset": 0,
+        "maximum_material_links": 1048576
       }
     }
   },
@@ -673,6 +769,45 @@
       "function_boundary": true,
       "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and direct x64 instruction inspection.",
       "evidence": "suspend-gate-8a4c90-evidence.json ev_318c880027ab19258080cf840a9df471545094c80a02abf2a97aea24f3a6210b. Calls at 8A5430 and 8A55A0 from onAppSuspended pass Game* and use low return byte. Android isInEDUMultiplayerSession equivalence remains unverified."
+    },
+    "Block::getMaterialInstancesCandidate": {
+      "rva": "0x31656c0",
+      "signature": "",
+      "entry_check": "56 57 48 83 EC 28 48 89 CE 48 83 C1 08 8B 05 C1 2E 7E 0F 8B 15 EF F0 70",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra raw slices and direct Windows x64 instructions; runtime unverified.",
+      "evidence": "material-component-getter-evidence.json ev_056c0fafc254ed040f0090e81d730235a4704b21c02098affdaaf027c2b2a20b; RCX Block, returns payload+8 from components or legacy fallback."
+    },
+    "Block::getBakedMaterialMapCandidate": {
+      "rva": "0x6a395a0",
+      "signature": "",
+      "entry_check": "48 83 EC 58 48 8B 05 15 EB 8C 0B 48 31 E0 48 89 44 24 50 48 C7 44 24 30",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(const void* block)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra raw slices and direct Windows x64 instructions; runtime unverified.",
+      "evidence": "baked-material-getter-evidence.json ev_3660aac3f7f80f3aa021bb1e379a8dd092f900cc71ca18b0e9e0f79d469633f2; RCX Block, visits clientData+118 with callback6A459F0 reading data+10."
+    },
+    "AtlasItemManager::getTextureItemCandidate": {
+      "rva": "0x4e17700",
+      "signature": "",
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 53 48 83 EC 40 48 89 D6 48 8B 7A 10 48 83",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "abi": "void* __fastcall(void* atlasManager, const std::string* name)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE SHA256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; REA/Ghidra raw slices and direct Windows x64 instructions; runtime unverified.",
+      "evidence": "atlas-name-lookup-evidence.json ev_93d26d4a2b14fd87e51872cfd3d9feaf95a4bfbc1dd4bb94f3fec679a4fd9428; exact call6AD8CDD RCXmanager RDX borrowed Release MSVC string; returns item textures at+28."
     }
   }
 }
