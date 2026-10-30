@@ -8,8 +8,10 @@ class PendingTerrainRefresh {
     void *game_{}, *level_{}, *manager_{};
     std::uint32_t thread_{};
     bool ready_{};
+    std::uint64_t generation_{};
   public:
     void begin(void *game, void *level, void *manager, std::uint32_t thread) noexcept {
+        ++generation_;
         game_ = game;
         level_ = level;
         manager_ = manager;
@@ -22,6 +24,8 @@ class PendingTerrainRefresh {
         ready_ = true;
         return true;
     }
+    std::uint64_t generation() const noexcept { return generation_; }
+    bool atlasReady() const noexcept { return ready_; }
     bool pending() const noexcept { return manager_ != nullptr; }
     void *take(void *game, void *level, std::uint32_t thread, bool &cancelled, bool resourcesReady = true) noexcept {
         cancelled = false;

@@ -18,6 +18,7 @@ class NativeResourcePacks final {
         std::uint64_t platformCycles{}, blockGraphicsRebuilt{}, graphicsCacheResets{}, camerasRefreshed{}, remoteReloads{}, suspendGateOverrides{};
         std::uint64_t geometryReloaded{}, clientDefinitionsReloaded{};
         std::uint64_t customMaterialsRemapped{}, customUvSetsUpdated{}, customUvMismatched{}, customUvUnmatched{}, customUvUnchanged{};
+        std::uint64_t nativeScreenWaitFrames{};
     };
     NativeResourcePacks();
     ~NativeResourcePacks();

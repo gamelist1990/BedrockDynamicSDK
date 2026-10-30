@@ -8,7 +8,8 @@
 #include <map>
 #include <mutex>
 #include <bedrock/detail/owned_msvc_string.hpp>
-#include <bedrock/detail/owned_native_callback.hpp>
+#include <bedrock/detail/resource_reload_barrier.hpp>
+#include <cstdio>
 #include <memory>
 #include <intrin.h>
 #include <bedrock/detail/pending_terrain_refresh.hpp>
@@ -24,7 +25,6 @@ struct NativeResourcePacks::Binding {
     using Initialize = void(__fastcall *)(void *);
     using Exit = std::uint64_t(__fastcall *)(void *);
     using Event = void(__fastcall *)(void *, void *);
-    using DestroyCallback = void(__fastcall *)(void *, bool);
     using Compose = std::uint64_t(__fastcall *)(void *, void *, void *, void *);
     using Construct = void *(__fastcall *)(void *, void *, bool, bool, const void *, bool);
     using Predicate = bool(__fastcall *)(void *);
@@ -38,7 +38,7 @@ struct NativeResourcePacks::Binding {
     void *ctorTarget{};
     void *preGameTarget{};
     void *exitTarget{}, *eventTarget{}, *composeTarget{};
-    void *navigateTarget{}, *eventDestroyTarget{};
+    void *navigateTarget{};
     void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
     Initialize frame{};
     Event cameraFrame{}, cameraRebind{}, initializeBlockGraphics{}, cachedGraphics{};
@@ -89,11 +89,11 @@ struct NativeResourcePacks::Binding {
     std::size_t experimentsOffset{}, terrainAtlasOffset{};
     std::mutex refreshMutex;
     detail::PendingTerrainRefresh pendingRefresh;
+    detail::ResourceReloadBarrier reloadBarrier;
+    std::atomic<std::uint64_t> nativeScreenWaitFrames{};
     std::atomic<bool> refreshPending{};
     std::atomic<std::uint64_t> terrainCompleted{}, refreshCancelled{};
     Event navigate{};
-    DestroyCallback eventDestroy{};
-    detail::NativeCallbackLayout callbackLayout{};
     Exit exit{};
     Event event{};
     Compose compose{};
@@ -267,6 +267,26 @@ struct NativeResourcePacks::Binding {
                native_profile::read(loader, loaderReadyOffset, ready) && ready == 1 &&
                native_profile::read(loader, loaderOutstandingOffset, outstanding) && outstanding == 0;
     }
+    bool idleWorldScreen(void *client) {
+        try { return client && detail::isWorldRenderScreen(screen(client)); }
+        catch (const std::exception &) { return false; }
+    }
+    bool reloadIdentity(void *game, void *&loader, void *&atlas) const noexcept {
+        return resourcesReady(game) && native_profile::read(game, loaderOffset, loader) && loader &&
+            native_profile::read(game, terrainAtlasOffset, atlas) && atlas;
+    }
+    void observeCompletedFrame(void *game) {
+        if (!enabled.load(std::memory_order_acquire) || !refreshPending.load(std::memory_order_acquire)) return;
+        auto *client = primaryClient(game);
+        auto *level = client && clientGame(client) == game && localPlayer(client) ? clientLevel(client) : nullptr;
+        void *loader{}, *atlas{};
+        const bool idle = level && reloadIdentity(game, loader, atlas) && idleWorldScreen(client);
+        std::lock_guard lock(refreshMutex);
+        const bool stable = idle && pendingRefresh.atlasReady();
+        const bool wasReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, stable);
+        reloadBarrier.observe(pendingRefresh.generation(), loader, atlas, stable);
+        if (stable && !wasReady) trace("native_reload_world_frame_completed\r\n");
+    }
     void refreshAtFrame(void *game) {
         if (!enabled.load(std::memory_order_acquire) ||
             !refreshPending.load(std::memory_order_acquire))
@@ -276,17 +296,25 @@ struct NativeResourcePacks::Binding {
         auto *level = player && clientGame(client) == game ? clientLevel(client) : nullptr;
         void *manager{};
         bool cancelled{};
-        const bool ready = resourcesReady(game);
+        void *loader{}, *atlas{};
+        const bool ready = reloadIdentity(game, loader, atlas);
+        const bool worldScreen = ready && idleWorldScreen(client);
+        bool barrierReady{};
         {
             std::lock_guard lock(refreshMutex);
-            manager = pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled, ready);
+            barrierReady = reloadBarrier.allows(pendingRefresh.generation(), loader, atlas, ready && worldScreen);
+            if (!barrierReady) reloadBarrier.clear();
+            manager = pendingRefresh.take(game, level, GetCurrentThreadId(), cancelled, ready && barrierReady);
             refreshPending.store(pendingRefresh.pending(), std::memory_order_release);
         }
         if (cancelled)
             ++refreshCancelled;
         if (!manager) {
-            if (!ready)
-                ++resourceWaitFrames;
+            if (!ready) ++resourceWaitFrames;
+            else if (!barrierReady) {
+                const auto waits = ++nativeScreenWaitFrames;
+                if (waits == 1) trace("refresh_wait_native_reload_screen\r\n");
+            }
             return;
         }
         trace("refresh_claimed\r\n");
@@ -427,6 +455,15 @@ struct NativeResourcePacks::Binding {
             trace(error.what());
             trace("\r\n");
         }
+        char uvSummary[256]{};
+        _snprintf_s(uvSummary, sizeof(uvSummary), _TRUNCATE,
+            "custom_uv_result materials=%llu rows=%llu mismatched=%llu unmatched=%llu unchanged=%llu\r\n",
+            static_cast<unsigned long long>(materialUvs.counts.materials),
+            static_cast<unsigned long long>(materialUvs.counts.rows),
+            static_cast<unsigned long long>(materialUvs.counts.mismatched),
+            static_cast<unsigned long long>(materialUvs.counts.unmatched),
+            static_cast<unsigned long long>(materialUvs.counts.unchanged));
+        trace(uvSummary);
         materialUvs.discard();
         customUvMismatched += materialUvs.counts.mismatched;
         customUvUnmatched += materialUvs.counts.unmatched;
@@ -439,39 +476,34 @@ struct NativeResourcePacks::Binding {
     }
     static void __fastcall onStartFrame(void *game) {
         auto &state = *active().load(std::memory_order_acquire);
-        // No actor render call is on the stack here. Replacing renderer objects
-        // inside getLocalPlayer would invalidate its caller's borrowed objects.
+        static thread_local bool insideFrame{};
+        if (insideFrame) { state.frame(game); return; }
+        struct FrameScope {
+            bool &inside;
+            explicit FrameScope(bool &value) : inside(value) { inside = true; }
+            ~FrameScope() { inside = false; }
+        } scope(insideFrame);
+        // No actor render call is on the stack here. Only a completed outer
+        // original frame can satisfy the reload barrier; nested frames cannot.
+        const auto before = state.platformCycles.load();
         state.refreshAtFrame(game);
+        const bool refreshed = before != state.platformCycles.load();
+        if (refreshed) state.trace("game_frame_after_refresh begin\r\n");
         state.frame(game);
-    }
-    static bool claimCallback(void *function, std::size_t offset, void *expected) noexcept {
-        __try {
-            auto **owner = reinterpret_cast<void **>(static_cast<std::byte *>(function) + offset);
-            if (*owner != expected)
-                return false;
-            *owner = nullptr;
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (refreshed) state.trace("game_frame_after_refresh end\r\n");
+        state.observeCompletedFrame(game);
     }
     static void __fastcall onNavigateApply(void *model, void *function) {
         auto &state = *active().load(std::memory_order_acquire);
         if (state.enabled.load(std::memory_order_acquire)) {
             ++state.navigations;
-            auto *client = state.clientFromModel(model);
-            if (client && state.localPlayer(client) &&
-                detail::consumeNativeCallback(
-                    function, state.callbackLayout, state.eventTarget, state.eventDestroyTarget,
-                    [](const void *base, std::size_t offset, void *&value) {
-                        return native_profile::read(base, offset, value);
-                    }, claimCallback,
-                    [&](void *owner) {
-                        ++state.liveApplications;
-                        onApplyEvent(owner, model);
-                    }, state.eventDestroy))
-                return;
+            state.trace("native_reload_screen_navigation begin\r\n");
         }
-        // Preserve ordinary title-screen navigation and all other functors.
+        // Preserve the game's callback ownership, progress-screen ticks and
+        // readiness polling. Never invoke/consume its apply callback inline.
         state.navigate(model, function);
+        if (state.enabled.load(std::memory_order_acquire))
+            state.trace("native_reload_screen_navigation end\r\n");
     }
     static bool exchangeFlag(void *self, std::size_t offset, unsigned char value,
                              unsigned char &previous) noexcept {
@@ -509,8 +541,10 @@ struct NativeResourcePacks::Binding {
             client = state.clientFromModel(model);
             if (!client)
                 ++state.failures;
-            else if (state.localPlayer(client))
+            else if (state.localPlayer(client)) {
                 ++state.inWorldEvents;
+                ++state.liveApplications;
+            }
         }
         // This event executes after navigation. Keep the same client eligible
         // throughout the game's queued stack update and reload notifications.
@@ -549,6 +583,7 @@ struct NativeResourcePacks::Binding {
             if (game && clientLevel && state.gamePacks(game) == self) {
                 std::lock_guard lock(state.refreshMutex);
                 state.pendingCamera.clear();
+                state.reloadBarrier.clear();
                 state.pendingRefresh.begin(game, clientLevel, self, GetCurrentThreadId());
                 state.refreshPending.store(true, std::memory_order_release);
                 state.trace("compose_in_world begin\r\n");
@@ -668,7 +703,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v18-material-uv")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v19-native-progress")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
         const auto get = [&](const char *field, const char *abi) {
@@ -690,18 +725,6 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->gameGateCaller = native_profile::checked(root, layout.at("game_in_game_caller"));
         next->navigateTarget = get("navigate_apply_packs",
                                     "void __fastcall(MainMenuScreenModel*, void* callback)");
-        next->eventDestroyTarget = get("destroy_apply_callback",
-                                        "void __fastcall(void* callback, bool deallocate)");
-        next->eventDestroy = reinterpret_cast<Binding::DestroyCallback>(next->eventDestroyTarget);
-        const auto &callback = layout.at("callback_abi");
-        next->callbackLayout = {
-            native_profile::number(callback.at("owner_offset")),
-            native_profile::number(callback.at("invoke_offset")),
-            native_profile::number(callback.at("destroy_offset"))};
-        if (native_profile::number(callback.at("object_bytes")) != 64 ||
-            next->callbackLayout.ownerOffset != 56 || next->callbackLayout.invokeOffset != 16 ||
-            next->callbackLayout.destroyOffset != 32)
-            throw std::runtime_error("unsupported resource pack callback ABI");
         next->exitTarget = get("exit_settings", "uint64_t __fastcall(void* closure)");
         next->eventTarget = get("apply_stack_event", "void __fastcall(void* closure, void* model)");
         next->composeTarget = get("compose_full_stack",
@@ -828,7 +851,7 @@ bool NativeResourcePacks::install(std::string &error) {
     if (!binding_->initTarget || !binding_->ctorTarget || !binding_->preGameTarget ||
         !binding_->screenName || !binding_->localPlayer || !binding_->deallocate ||
         !binding_->exitTarget || !binding_->eventTarget || !binding_->composeTarget ||
-        !binding_->navigateTarget || !binding_->eventDestroy ||
+        !binding_->navigateTarget ||
         !binding_->clientGame || !binding_->gameInGameTarget || !binding_->gameGateCaller ||
         !binding_->atlasTarget || !binding_->atlasCaller || !binding_->clientLevel ||
         !binding_->frameTarget || !binding_->cameraFrameTarget || !binding_->cameraRebind ||
@@ -914,6 +937,6 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->remoteReloads.load(), binding_->suspendGateOverrides.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load(),
             binding_->customMaterialsRemapped.load(), binding_->customUvSetsUpdated.load(),
-            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load()};
+            binding_->customUvMismatched.load(), binding_->customUvUnmatched.load(), binding_->customUvUnchanged.load(), binding_->nativeScreenWaitFrames.load()};
 }
 } // namespace bedrock

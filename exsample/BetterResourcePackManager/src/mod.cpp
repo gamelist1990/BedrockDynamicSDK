@@ -4,6 +4,7 @@
 #include <shlobj.h>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -57,6 +58,18 @@ LONG CALLBACK observeException(EXCEPTION_POINTERS *pointers) noexcept {
         static_cast<unsigned long long>(record->NumberParameters > 1 ? record->ExceptionInformation[1] : 0));
     DWORD written{};
     if (length > 0) WriteFile(traceFile, line, static_cast<DWORD>(length), &written, nullptr);
+    char module[MAX_PATH]{};
+    if (knownRegion && region.Type == MEM_IMAGE &&
+        GetModuleFileNameA(static_cast<HMODULE>(region.AllocationBase), module, MAX_PATH)) {
+        _snprintf_s(line, sizeof(line), _TRUNCATE, "fault_module=%s\r\n", module);
+        WriteFile(traceFile, line, static_cast<DWORD>(strnlen_s(line, sizeof(line))), &written, nullptr);
+    }
+    if (const auto *context = pointers->ContextRecord) {
+        _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "fault_context rip=0x%llx rsp=0x%llx rax=0x%llx rcx=0x%llx rdx=0x%llx r8=0x%llx r9=0x%llx\r\n",
+            context->Rip, context->Rsp, context->Rax, context->Rcx, context->Rdx, context->R8, context->R9);
+        WriteFile(traceFile, line, static_cast<DWORD>(strnlen_s(line, sizeof(line))), &written, nullptr);
+    }
     FlushFileBuffers(traceFile);
     SetLastError(savedError);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -78,7 +91,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v18 material UV candidate: started\r\n");
+        traceStep("v19 native progress candidate: started\r\n");
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
@@ -108,7 +121,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v18 material UV candidate is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v19 native progress candidate is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -141,7 +154,8 @@ DWORD WINAPI start(void *) noexcept {
                 current.customUvSetsUpdated != previous.customUvSetsUpdated ||
                 current.customUvMismatched != previous.customUvMismatched ||
                 current.customUvUnmatched != previous.customUvUnmatched ||
-                current.customUvUnchanged != previous.customUvUnchanged) {
+                current.customUvUnchanged != previous.customUvUnchanged ||
+                current.nativeScreenWaitFrames != previous.nativeScreenWaitFrames) {
                 log << "settings=" << current.settingsOpened
                     << " pre_game_overrides=" << current.preGameOverrides
                     << " exits=" << current.settingsExited
@@ -163,6 +177,7 @@ DWORD WINAPI start(void *) noexcept {
                     << " cameras_refreshed=" << current.camerasRefreshed
                     << " geometry_reloaded=" << current.geometryReloaded
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded
+                    << " native_screen_wait_frames=" << current.nativeScreenWaitFrames
                     << " custom_materials_remapped=" << current.customMaterialsRemapped
                     << " custom_uv_sets_updated=" << current.customUvSetsUpdated
                     << " custom_uv_mismatched=" << current.customUvMismatched
