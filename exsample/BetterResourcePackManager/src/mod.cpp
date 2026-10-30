@@ -33,10 +33,13 @@ LONG CALLBACK observeException(EXCEPTION_POINTERS *pointers) noexcept {
     const DWORD code = record->ExceptionCode;
     if (code != 0xc0000005 && code != 0xc0000409 && code != 0xc000001d && code != 0xc0000094)
         return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD savedError = GetLastError();
     const auto now = GetTickCount64();
     const auto last = lastTraceTick.load(std::memory_order_relaxed);
-    if (!last || now - last > 60000) return EXCEPTION_CONTINUE_SEARCH;
-    const DWORD savedError = GetLastError();
+    if (!last || now - last > 60000) {
+        SetLastError(savedError);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     MEMORY_BASIC_INFORMATION region{};
     const bool knownRegion = VirtualQuery(record->ExceptionAddress, &region, sizeof(region)) == sizeof(region);
     const auto address = reinterpret_cast<std::uintptr_t>(record->ExceptionAddress);
