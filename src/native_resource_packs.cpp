@@ -51,6 +51,10 @@ struct NativeResourcePacks::Binding {
     std::atomic<bool> freshBlockGraphics{};
     std::atomic<std::uint64_t> blockGraphicsRebuilt{}, graphicsCacheResets{}, geometryReloaded{}, clientDefinitionsReloaded{}, levelBuildersRecreated{}, clientsRefreshed{}, camerasRefreshed{};
     detail::PendingCameraRefresh pendingCamera;
+    std::atomic<NativeResourcePacks::TraceCallback> traceCallback{};
+    void trace(const char *message) const noexcept {
+        if (auto callback = traceCallback.load(std::memory_order_acquire)) callback(message);
+    }
     ClientGame clientRenderer{};
     Initialize drainRendererTasks{};
     std::size_t rendererTasksOffset{};
@@ -205,7 +209,9 @@ struct NativeResourcePacks::Binding {
         // rebinding twice. Pointers are borrowed only for this call.
         pendingCamera.clear();
         lock.unlock();
+        trace("camera_rebind begin\r\n");
         cameraRebind(camera, player);
+        trace("camera_rebind end\r\n");
         ++camerasRefreshed;
     }
     void *primaryClient(void *game) const noexcept {
@@ -251,6 +257,7 @@ struct NativeResourcePacks::Binding {
                 ++resourceWaitFrames;
             return;
         }
+        trace("refresh_claimed\r\n");
         auto *data = levelData(level);
         if (!data || gamePacks(game) != manager) {
             ++failures;
@@ -273,8 +280,11 @@ struct NativeResourcePacks::Binding {
         // Do not broadcast AppPlatform suspension: that includes networking
         // listeners and may disconnect external multiplayer sessions. These
         // renderer/client calls were exercised in the earlier v6/v7 tests.
+        trace("drain_before_geometry begin\r\n");
         drainRendererTasks(tasks);
+        trace("drain_before_geometry end\r\ngeometry_reload begin\r\n");
         geometryReload(game, true);
+        trace("geometry_reload end\r\n");
         ++geometryReloaded;
         if (primaryClient(game) != client || clientGame(client) != game ||
             clientLevel(client) != level || gamePacks(game) != manager) {
@@ -282,7 +292,9 @@ struct NativeResourcePacks::Binding {
             return;
         }
         std::array<void *, 2> closure{nullptr, game};
+        trace("notify_client begin\r\n");
         notifyClientResources(closure.data(), client);
+        trace("notify_client end\r\n");
         ++clientDefinitionsReloaded;
         // Native callbacks may change world or renderer identities.
         if (primaryClient(game) != client || clientGame(client) != game ||
@@ -294,17 +306,26 @@ struct NativeResourcePacks::Binding {
         }
         data = levelData(level);
         if (!data) { ++refreshCancelled; return; }
+        trace("drain_before_block_init begin\r\n");
         drainRendererTasks(tasks);
+        trace("drain_before_block_init end\r\n");
         freshBlockGraphics.store(true, std::memory_order_release);
+        trace("init_block_graphics begin\r\n");
         initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
+        trace("init_block_graphics end\r\n");
         ++blockGraphicsRebuilt;
+        trace("resume_renderer begin\r\n");
         resumeRenderer(listener);
+        trace("resume_renderer end\r\n");
         ++levelBuildersRecreated;
+        trace("refresh_client begin\r\n");
         refreshClient(nullptr, client);
+        trace("refresh_client end\r\n");
         ++clientsRefreshed;
         {
             std::lock_guard lock(refreshMutex);
             pendingCamera.begin(game, level, GetCurrentThreadId());
+            trace("camera_pending\r\n");
         }
     }
     static void __fastcall onStartFrame(void *game) {
@@ -738,6 +759,9 @@ bool NativeResourcePacks::install(std::string &error) {
     binding_->enabled.store(true, std::memory_order_release);
     error.clear();
     return true;
+}
+void NativeResourcePacks::setTraceCallback(TraceCallback callback) noexcept {
+    binding_->traceCallback.store(callback, std::memory_order_release);
 }
 NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     return {binding_->installed.load(), binding_->opened.load(), binding_->overrides.load(),

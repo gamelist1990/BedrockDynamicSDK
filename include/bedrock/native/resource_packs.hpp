@@ -23,6 +23,8 @@ class NativeResourcePacks final {
     NativeResourcePacks &operator=(const NativeResourcePacks &) = delete;
     bool load(const RuntimeProfile &profile, std::string &error);
     bool install(std::string &error);
+    using TraceCallback = void (*)(const char *) noexcept;
+    void setTraceCallback(TraceCallback callback) noexcept;
     Status status() const noexcept;
 
   private:

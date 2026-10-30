@@ -9,6 +9,13 @@
 
 namespace {
 std::atomic<unsigned> startupStatus{};
+HANDLE traceFile = INVALID_HANDLE_VALUE;
+void traceStep(const char *message) noexcept {
+    if (traceFile == INVALID_HANDLE_VALUE) return;
+    DWORD written{};
+    WriteFile(traceFile, message, static_cast<DWORD>(lstrlenA(message)), &written, nullptr);
+    FlushFileBuffers(traceFile);
+}
 DWORD WINAPI start(void *) noexcept {
     startupStatus = 1;
     try {
@@ -22,6 +29,12 @@ DWORD WINAPI start(void *) noexcept {
         std::ofstream log(directory / L"BetterResourcePackManager.log", std::ios::trunc);
         if (!log)
             throw std::runtime_error("log file unavailable");
+        traceFile = CreateFileW((directory / L"BetterResourcePackManager-stage.log").c_str(),
+                                GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+        if (traceFile == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("stage diagnostic log unavailable");
+        traceStep("v11 diagnostic: started\r\n");
         log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
@@ -42,12 +55,13 @@ DWORD WINAPI start(void *) noexcept {
             startupStatus = 4;
             return 1;
         }
+        packs->setTraceCallback(&traceStep);
         const auto snapshot = profiles.snapshot();
         log << "profile=" << snapshot->choice().version
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v11 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v11 diagnostic is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;

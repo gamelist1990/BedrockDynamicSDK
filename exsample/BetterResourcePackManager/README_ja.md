@@ -19,3 +19,7 @@ ctest --test-dir build-brpm -C Release --output-on-failure
 ```
 
 Windows CI はビルド・単体テスト・対象外プロセスへの DLL ロード拒否を確認します。Minecraft の描画やオンライン接続は実行しません。
+
+## クラッシュ診断版
+
+このビルドは v11 と同じ更新処理を使い、各ネイティブ呼出しの直前・直後を `Documents/PEXData/BetterResourcePackManager/BetterResourcePackManager-stage.log` に即時書き込みます。クラッシュの解消版ではなく、同じ操作で再びクラッシュする可能性があります。ログの末尾を確認し、再起動前に控えてください。次回起動時にはログを上書きします。
