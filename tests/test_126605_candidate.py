@@ -20,8 +20,8 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     resource_layout = profile["layouts"]["ResourcePackManager"]
     resource_bindings = {
         row["symbol"] for row in resource_layout["functions"].values()
-    } - {"ClientInstance::getLocalPlayer"}
-    assert len(profile["symbols"]) == 41 + len(resource_bindings)
+    } - {"ClientInstance::getLocalPlayer", "ResourcePackManager::applyPendingStack"}
+    assert len(profile["symbols"]) == 42 + len(resource_bindings)
     assert resource_layout["status"] == "verified"
     assert resource_layout["runtime_verified"] is True
     assert resource_layout["load_completion"]["runtime_verified"] is False
@@ -38,7 +38,7 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     assert report["authority"] == "user-reported" and report["limitations"]
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
     assert len(verified) == 40 + len(resource_bindings)
-    assert verified == set(profile["symbols"]) - {"Level::getPlayerList"}
+    assert verified == set(profile["symbols"]) - {"Level::getPlayerList", "ResourcePackManager::applyPendingStack"}
     for name in verified - resource_bindings:
         row = profile["symbols"][name]
         assert row["abi_verified"] is (name in runtime_symbols)

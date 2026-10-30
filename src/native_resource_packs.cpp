@@ -50,7 +50,11 @@ struct NativeResourcePacks::Binding {
     std::atomic<std::uint64_t> previousReloadWaitFrames{};
     std::atomic<bool> progressWaiting{};
     void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
-    Initialize frame{};
+    Initialize frame{}, applyPendingStack{};
+    std::size_t stackDirtyOffset{};
+    detail::PendingPackApply pendingNativeApply;
+    std::atomic<bool> nativeApplyPending{};
+    std::atomic<std::uint64_t> nativeApplyRetries{};
     Event cameraFrame{}, cameraRebind{}, initializeBlockGraphics{}, cachedGraphics{};
     GraphicsGetter blockGraphics{};
     void *cameraFrameTarget{}, *blockGraphicsTarget{}, *cachedGraphicsTarget{};
@@ -116,6 +120,56 @@ struct NativeResourcePacks::Binding {
         return value;
     }
 
+    static void *&frameGame() {
+        static thread_local void *game{};
+        return game;
+    }
+    bool pendingApplyMatches(void *game, void *client, void *manager) {
+        auto *level = client && localPlayer(client) ? clientLevel(client) : nullptr;
+        std::lock_guard lock(refreshMutex);
+        return level && pendingNativeApply.matches(game, level, manager, GetCurrentThreadId());
+    }
+    void rememberApply(void *client) {
+        auto *game = clientGame(client);
+        auto *level = localPlayer(client) ? clientLevel(client) : nullptr;
+        auto *manager = game ? gamePacks(game) : nullptr;
+        if (!game || !level || !manager) return;
+        std::lock_guard lock(refreshMutex);
+        pendingNativeApply.begin(game, level, manager, GetCurrentThreadId());
+        nativeApplyPending.store(true, std::memory_order_release);
+        trace("native_apply_requested\r\n");
+    }
+    void retryNativeApply(void *game) {
+        if (!enabled.load(std::memory_order_acquire) || !nativeApplyPending.load(std::memory_order_acquire)) return;
+        auto *client = primaryClient(game);
+        auto *manager = gamePacks(game);
+        if (!client || clientGame(client) != game || !pendingApplyMatches(game, client, manager)) {
+            std::lock_guard lock(refreshMutex);
+            pendingNativeApply.clear();
+            nativeApplyPending.store(false, std::memory_order_release);
+            trace("native_apply_context_cancelled\r\n");
+            return;
+        }
+        unsigned char dirty{};
+        if (!native_profile::read(manager, stackDirtyOffset, dirty) || dirty > 1) {
+            ++failures;
+            return;
+        }
+        if (!dirty) {
+            std::lock_guard lock(refreshMutex);
+            pendingNativeApply.clear();
+            nativeApplyPending.store(false, std::memory_order_release);
+            trace("native_apply_no_pending_stack\r\n");
+            return;
+        }
+        if (!resourcesReady(game) || refreshPending.load(std::memory_order_acquire)) return;
+        ApplyScope scope(client);
+        const auto count = ++nativeApplyRetries;
+        if (count == 1 || count % 120 == 0) trace("native_apply_pending_stack_retry\r\n");
+        // Native code rechecks every listener and retains its dirty bit when
+        // busy. Do not force readiness or reconstruct an apply callback.
+        applyPendingStack(manager);
+    }
     static void *&applyingClient() {
         static thread_local void *client{};
         return client;
@@ -140,7 +194,12 @@ struct NativeResourcePacks::Binding {
         const auto caller = _ReturnAddress();
         auto &state = *active().load(std::memory_order_acquire);
         const bool original = state.gameInGame(game);
-        const auto client = applyingClient();
+        auto client = applyingClient();
+        if (!client && state.nativeApplyPending.load(std::memory_order_acquire)) {
+            auto *candidate = state.primaryClient(game);
+            if (candidate && state.clientGame(candidate) == game &&
+                state.pendingApplyMatches(game, candidate, state.gamePacks(game))) client = candidate;
+        }
         if (original && state.enabled.load(std::memory_order_acquire) &&
             caller == state.gameGateCaller && client &&
             state.clientGame(client) == game && state.localPlayer(client)) {
@@ -455,6 +514,10 @@ struct NativeResourcePacks::Binding {
         // No actor render call is on the stack here. Only a completed outer
         // original frame can satisfy the reload barrier; nested frames cannot.
         const auto before = state.blockGraphicsRebuilt.load();
+        auto *previousGame = frameGame();
+        frameGame() = game;
+        struct RestoreGame { void *previous; ~RestoreGame() { frameGame() = previous; } } restoreGame{previousGame};
+        state.retryNativeApply(game);
         state.refreshAtFrame(game);
         const bool refreshed = before != state.blockGraphicsRebuilt.load();
         if (refreshed) state.trace("game_frame_after_refresh begin\r\n");
@@ -590,7 +653,7 @@ struct NativeResourcePacks::Binding {
         // This event executes after navigation. Keep the same client eligible
         // throughout the game's queued stack update and reload notifications.
         ApplyScope scope(client);
-        if (client) state.trace("apply_event begin\r\n");
+        if (client) { state.rememberApply(client); state.trace("apply_event begin\r\n"); }
         state.event(closure, model);
         if (client) state.trace("apply_event end\r\n");
     }
@@ -600,7 +663,13 @@ struct NativeResourcePacks::Binding {
         if (enabled)
             ++state.compositions;
         unsigned char previous{};
-        const auto client = applyingClient();
+        auto client = applyingClient();
+        if (!client && frameGame() && state.nativeApplyPending.load(std::memory_order_acquire)) {
+            auto *game = frameGame();
+            auto *candidate = state.primaryClient(game);
+            if (candidate && state.clientGame(candidate) == game && state.gamePacks(game) == self &&
+                state.pendingApplyMatches(game, candidate, self)) client = candidate;
+        }
         const bool inWorld = enabled && client && state.localPlayer(client);
         const bool changed = inWorld && exchangeFlag(self, state.includeGlobalOffset, 1, previous);
         if (inWorld && !changed)
@@ -744,15 +813,18 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-load-complete")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-pending-apply")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
+        next->stackDirtyOffset = native_profile::number(layout.at("pending_apply").at("dirty_offset"));
+        if (!next->stackDirtyOffset || next->stackDirtyOffset > 0x10000) throw std::runtime_error("invalid pending stack layout");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
             if (definition.at("abi").get<std::string>() != abi)
                 throw std::runtime_error(std::string("resource pack ABI mismatch: ") + field);
             return native_profile::checked(root, definition);
         };
+        next->applyPendingStack = reinterpret_cast<Binding::Initialize>(get("apply_pending_stack", "void __fastcall(ResourcePackManager*)"));
         next->initTarget = get("initialize_settings", "void __fastcall(SettingsScreenController*)");
         next->ctorTarget = get("construct_general_settings",
                                "void* __fastcall(GeneralSettingsScreenController*, void* model, "
@@ -986,6 +1058,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
     result.customUvUnchanged = binding_->customUvUnchanged.load();
     result.completionWaitFrames = binding_->completionWaitFrames.load();
     result.previousReloadWaitFrames = binding_->previousReloadWaitFrames.load();
+    result.nativeApplyRetries = binding_->nativeApplyRetries.load();
     result.readinessRetries = binding_->readinessRetries.load();
     result.immediateSelections = binding_->immediateSelections.load();
     result.modelBindingsRefreshed = binding_->modelBindingsRefreshed.load();

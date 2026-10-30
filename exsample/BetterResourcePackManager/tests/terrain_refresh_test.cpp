@@ -50,6 +50,18 @@ int main() {
     pending.finish(oldGeneration, true);
     assert(pending.pending() && !pending.atlasReady());
     assert(!pending.take(&game, &level, 42, cancelled));
+    bedrock::detail::PendingPackApply apply;
+    assert(!apply.matches(&game, &level, &manager, 42));
+    apply.begin(&game, &level, &manager, 42);
+    assert(apply.pending() && apply.matches(&game, &level, &manager, 42));
+    // Listener deferral retains eligibility for the later owning frame.
+    assert(apply.matches(&game, &level, &manager, 42));
+    assert(!apply.matches(&other, &level, &manager, 42));
+    assert(!apply.matches(&game, &other, &manager, 42));
+    assert(!apply.matches(&game, &level, &other, 42));
+    assert(!apply.matches(&game, &level, &manager, 7));
+    apply.clear();
+    assert(!apply.pending() && !apply.matches(&game, &level, &manager, 42));
     bedrock::detail::PendingCameraRefresh camera;
     camera.begin(&game, &level, 42);
     assert(camera.game() == &game && camera.thread() == 42);
