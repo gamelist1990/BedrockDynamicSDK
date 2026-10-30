@@ -33,7 +33,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v14: started\r\n");
+        traceStep("v15: started\r\n");
         log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
@@ -60,7 +60,7 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v14 is experimental; runtime "
+        log << "Hooks installed. Exact-build native live reload adapter v15 is experimental; runtime "
                "validation pending.\n";
         log.flush();
         startupStatus = 2;
@@ -86,7 +86,7 @@ DWORD WINAPI start(void *) noexcept {
                 current.graphicsCacheResets != previous.graphicsCacheResets ||
                 current.camerasRefreshed != previous.camerasRefreshed ||
                 current.remoteReloads != previous.remoteReloads ||
-                current.gameLifecycleSkipped != previous.gameLifecycleSkipped ||
+                current.suspendGateOverrides != previous.suspendGateOverrides ||
                 current.geometryReloaded != previous.geometryReloaded ||
                 current.clientDefinitionsReloaded != previous.clientDefinitionsReloaded) {
                 log << "settings=" << current.settingsOpened
@@ -106,7 +106,7 @@ DWORD WINAPI start(void *) noexcept {
                     << " block_graphics_rebuilt=" << current.blockGraphicsRebuilt
                     << " graphics_cache_resets=" << current.graphicsCacheResets
                     << " remote_reloads=" << current.remoteReloads
-                    << " game_lifecycle_skipped=" << current.gameLifecycleSkipped
+                    << " suspend_gate_overrides=" << current.suspendGateOverrides
                     << " cameras_refreshed=" << current.camerasRefreshed
                     << " geometry_reloaded=" << current.geometryReloaded
                     << " client_definitions_reloaded=" << current.clientDefinitionsReloaded

@@ -1,5 +1,7 @@
 #include <bedrock/detail/pending_terrain_refresh.hpp>
+#include <bedrock/detail/scoped_suspend_gate.hpp>
 #include <cassert>
+#include <thread>
 int main() {
     int game{}, level{}, manager{}, other{};
     bedrock::detail::PendingTerrainRefresh pending;
@@ -33,4 +35,21 @@ int main() {
     camera.begin(&game, &level, 42);
     camera.clear();
     assert(!camera.game());
+
+    using Gate = bedrock::detail::ScopedSuspendGate;
+    int call1{}, call2{}, unrelated{};
+    assert(!Gate::matches(true, &game, &call1, &call1, &call2));
+    {
+        Gate outer(&game);
+        assert(Gate::matches(true, &game, &call1, &call1, &call2));
+        assert(Gate::matches(true, &game, &call2, &call1, &call2));
+        assert(!Gate::matches(false, &game, &call1, &call1, &call2));
+        assert(!Gate::matches(true, &other, &call1, &call1, &call2));
+        assert(!Gate::matches(true, &game, &unrelated, &call1, &call2));
+        std::thread otherThread([&] { assert(!Gate::matches(true, &game, &call1, &call1, &call2)); });
+        otherThread.join();
+        { Gate inner(&other); assert(!Gate::matches(true, &game, &call1, &call1, &call2)); }
+        assert(Gate::matches(true, &game, &call1, &call1, &call2));
+    }
+    assert(!Gate::matches(true, &game, &call1, &call1, &call2));
 }

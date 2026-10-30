@@ -12,6 +12,7 @@
 #include <memory>
 #include <intrin.h>
 #include <bedrock/detail/pending_terrain_refresh.hpp>
+#include <bedrock/detail/scoped_suspend_gate.hpp>
 
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
 #error NativeResourcePacks requires the Release MSVC STL ABI (_ITERATOR_DEBUG_LEVEL=0)
@@ -43,35 +44,26 @@ struct NativeResourcePacks::Binding {
     GraphicsGetter blockGraphics{};
     void *cameraFrameTarget{}, *blockGraphicsTarget{}, *cachedGraphicsTarget{};
     Initialize platformSuspend{}, platformResume{};
-    Initialize gamePreSuspend{}, gameSuspend{}, gameResume{};
     void *gamePreSuspendTarget{}, *gameSuspendTarget{}, *gameResumeTarget{};
+    void *suspendGateTarget{}, *suspendGateCaller1{}, *suspendGateCaller2{};
+    Predicate suspendGate{};
     Predicate remoteClient{};
     std::size_t gameListenerOffset{}, gamePreSlot{}, gameSuspendSlot{}, gameResumeSlot{};
-    std::atomic<std::uint64_t> remoteReloads{}, gameLifecycleSkipped{};
+    std::atomic<std::uint64_t> remoteReloads{}, suspendGateOverrides{};
     std::atomic<NativeResourcePacks::TraceCallback> traceCallback{};
     void trace(const char *message) const noexcept {
         if (auto callback = traceCallback.load(std::memory_order_acquire)) callback(message);
     }
-    static void *&suppressedListener() { static thread_local void *value{}; return value; }
-    struct LifecycleScope {
-        void *previous;
-        explicit LifecycleScope(void *listener) : previous(suppressedListener()) { suppressedListener() = listener; }
-        ~LifecycleScope() { suppressedListener() = previous; }
-    };
-    static void __fastcall onGamePreSuspend(void *listener) {
+    static bool __fastcall onSuspendGate(void *game) {
         auto &state = *active().load(std::memory_order_acquire);
-        if (listener && listener == suppressedListener()) { ++state.gameLifecycleSkipped; state.trace("skip_game_pre_suspend\r\n"); return; }
-        state.gamePreSuspend(listener);
-    }
-    static void __fastcall onGameSuspend(void *listener) {
-        auto &state = *active().load(std::memory_order_acquire);
-        if (listener && listener == suppressedListener()) { ++state.gameLifecycleSkipped; state.trace("skip_game_suspend\r\n"); return; }
-        state.gameSuspend(listener);
-    }
-    static void __fastcall onGameResume(void *listener) {
-        auto &state = *active().load(std::memory_order_acquire);
-        if (listener && listener == suppressedListener()) { ++state.gameLifecycleSkipped; state.trace("skip_game_resume\r\n"); return; }
-        state.gameResume(listener);
+        const void *caller = _ReturnAddress();
+        if (detail::ScopedSuspendGate::matches(state.enabled.load(std::memory_order_acquire), game,
+                                               caller, state.suspendGateCaller1, state.suspendGateCaller2)) {
+            ++state.suspendGateOverrides;
+            state.trace("suspend_gate_override\r\n");
+            return true;
+        }
+        return state.suspendGate(game);
     }
     void *platformGlobal{};
     std::size_t platformObjectOffset{}, platformSuspendSlot{}, platformResumeSlot{};
@@ -85,9 +77,6 @@ struct NativeResourcePacks::Binding {
     std::size_t clientsOffset{}, nodeLeftOffset{}, nodeNilOffset{}, nodeKeyOffset{}, nodeClientOffset{};
     std::size_t loaderOffset{}, loaderReadyOffset{}, loaderOutstandingOffset{};
     std::atomic<std::uint64_t> resourceWaitFrames{};
-    using GeometryReload = void(__fastcall *)(void *, bool);
-    GeometryReload geometryReload{};
-    Event notifyClientResources{};
     std::atomic<std::uint64_t> geometryReloaded{}, clientDefinitionsReloaded{};
     AtlasUpdate atlasUpdate{};
     ClientGame clientLevel{}, levelData{}, gamePacks{};
@@ -114,7 +103,7 @@ struct NativeResourcePacks::Binding {
     std::size_t reloadOffset{}, stringSizeOffset{}, stringCapacityOffset{}, stringInlineBytes{},
         stringObjectBytes{}, maximumStringBytes{}, largeAllocationThreshold{}, alignmentOverhead{};
     std::size_t closureOwnerOffset{}, settingsModelOffset{}, modelClientOffset{}, includeGlobalOffset{};
-    std::array<BDS_HookToken, 16> tokens{};
+    std::array<BDS_HookToken, 14> tokens{};
     std::atomic<bool> enabled{}, installed{};
     bool retained{};
     std::atomic<std::uint64_t> opened{}, overrides{}, failures{};
@@ -326,7 +315,7 @@ struct NativeResourcePacks::Binding {
                 return;
             }
             ++remoteReloads;
-            trace("mode_remote_filtered\r\n");
+            trace("mode_remote_scoped_gate\r\n");
         } else trace("mode_local_unfiltered\r\n");
         trace("drain_before_platform begin\r\n");
         drainRendererTasks(tasks);
@@ -334,7 +323,7 @@ struct NativeResourcePacks::Binding {
         {
             // Scope only the mod-initiated synchronous broadcast on this
             // thread. Normal operating-system lifecycle events still pass.
-            LifecycleScope scope(remote ? gameListener : nullptr);
+            detail::ScopedSuspendGate scope(remote ? game : nullptr);
             trace("platform_suspend begin\r\n");
             platformSuspend(platform);
             trace("platform_suspend end\r\nplatform_resume begin\r\n");
@@ -355,28 +344,6 @@ struct NativeResourcePacks::Binding {
         trace("drain_before_block_init begin\r\n");
         drainRendererTasks(tasks);
         trace("drain_before_block_init end\r\n");
-        trace("geometry_reload begin\r\n");
-        geometryReload(game, true);
-        ++geometryReloaded;
-        trace("geometry_reload end\r\n");
-        if (primaryClient(game) != client || clientGame(client) != game ||
-            clientLevel(client) != level || gamePacks(game) != manager) {
-            ++refreshCancelled;
-            trace("geometry_context_changed\r\n");
-            return;
-        }
-        trace("notify_client begin\r\n");
-        std::array<void *, 2> closure{nullptr, game};
-        notifyClientResources(closure.data(), client);
-        ++clientDefinitionsReloaded;
-        trace("notify_client end\r\n");
-        if (primaryClient(game) != client || clientGame(client) != game ||
-            clientLevel(client) != level || gamePacks(game) != manager ||
-            clientRenderer(client) != renderer || !(data = levelData(level))) {
-            ++refreshCancelled;
-            trace("client_context_changed\r\n");
-            return;
-        }
         freshBlockGraphics.store(true, std::memory_order_release);
         trace("init_block_graphics begin\r\n");
         initializeBlockGraphics(manager, static_cast<std::byte *>(data) + experimentsOffset);
@@ -612,7 +579,7 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v14")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v15")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         const auto get = [&](const char *field, const char *abi) {
             const auto &definition = layout.at("functions").at(field);
@@ -670,12 +637,13 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->gamePreSuspendTarget = get("game_pre_suspend", "void __fastcall(AppPlatformListener*)");
         next->gameSuspendTarget = get("game_suspend", "void __fastcall(AppPlatformListener*)");
         next->gameResumeTarget = get("game_resume", "void __fastcall(AppPlatformListener*)");
+        next->suspendGateTarget = get("suspend_gate_candidate", "bool __fastcall(MinecraftGame*)");
+        next->suspendGateCaller1 = native_profile::checked(root, layout.at("suspend_gate_caller1"));
+        next->suspendGateCaller2 = native_profile::checked(root, layout.at("suspend_gate_caller2"));
         next->platformSuspend = reinterpret_cast<Binding::Initialize>(get("platform_suspend", "void __fastcall(AppPlatform*)"));
         next->platformResume = reinterpret_cast<Binding::Initialize>(get("platform_resume", "void __fastcall(AppPlatform*)"));
         next->clientRenderer = reinterpret_cast<Binding::ClientGame>(get("client_renderer", "void* __fastcall(ClientInstance*)"));
         next->drainRendererTasks = reinterpret_cast<Binding::Initialize>(get("drain_renderer_tasks", "void __fastcall(TaskGroup*)"));
-        next->geometryReload = reinterpret_cast<Binding::GeometryReload>(get("reload_geometry", "void __fastcall(MinecraftGame*, bool sync)"));
-        next->notifyClientResources = reinterpret_cast<Binding::Event>(get("notify_client_resources", "void __fastcall(void* gameClosure, ClientInstance*)"));
         const auto &renderer = layout.at("level_renderer");
         next->rendererTasksOffset = native_profile::number(renderer.at("task_group_offset"));
         next->rendererCameraOffset = native_profile::number(renderer.at("player_camera_offset"));
@@ -775,8 +743,8 @@ bool NativeResourcePacks::install(std::string &error) {
         !binding_->blockGraphicsTarget || !binding_->cachedGraphicsTarget || !binding_->initializeBlockGraphics ||
         !binding_->platformGlobal || !binding_->platformSuspend || !binding_->platformResume ||
         !binding_->remoteClient || !binding_->gamePreSuspendTarget || !binding_->gameSuspendTarget || !binding_->gameResumeTarget ||
-        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks ||
-        !binding_->geometryReload || !binding_->notifyClientResources) {
+        !binding_->suspendGateTarget || !binding_->suspendGateCaller1 || !binding_->suspendGateCaller2 ||
+        !binding_->clientRenderer || !binding_->drainRendererTasks || !binding_->levelData || !binding_->gamePacks) {
         error = "resource pack profile has not been loaded";
         return false;
     }
@@ -824,12 +792,8 @@ bool NativeResourcePacks::install(std::string &error) {
                               reinterpret_cast<void **>(&binding_->blockGraphics), &binding_->tokens[11]) &&
         BDS_HookDirectInstall(binding_->cachedGraphicsTarget, reinterpret_cast<void *>(&Binding::onCachedGraphics),
                               reinterpret_cast<void **>(&binding_->cachedGraphics), &binding_->tokens[12]) &&
-        BDS_HookDirectInstall(binding_->gamePreSuspendTarget, reinterpret_cast<void *>(&Binding::onGamePreSuspend),
-                              reinterpret_cast<void **>(&binding_->gamePreSuspend), &binding_->tokens[13]) &&
-        BDS_HookDirectInstall(binding_->gameSuspendTarget, reinterpret_cast<void *>(&Binding::onGameSuspend),
-                              reinterpret_cast<void **>(&binding_->gameSuspend), &binding_->tokens[14]) &&
-        BDS_HookDirectInstall(binding_->gameResumeTarget, reinterpret_cast<void *>(&Binding::onGameResume),
-                              reinterpret_cast<void **>(&binding_->gameResume), &binding_->tokens[15]);
+        BDS_HookDirectInstall(binding_->suspendGateTarget, reinterpret_cast<void *>(&Binding::onSuspendGate),
+                              reinterpret_cast<void **>(&binding_->suspendGate), &binding_->tokens[13]);
     if (!installed) {
         // The broker's direct trampolines have process lifetime. Keep any
         // successfully installed thunk disabled and forwarding to the game;
@@ -854,7 +818,7 @@ NativeResourcePacks::Status NativeResourcePacks::status() const noexcept {
             binding_->terrainCompleted.load(), binding_->refreshCancelled.load(), binding_->resourceWaitFrames.load(),
             binding_->platformCycles.load(), binding_->blockGraphicsRebuilt.load(),
             binding_->graphicsCacheResets.load(), binding_->camerasRefreshed.load(),
-            binding_->remoteReloads.load(), binding_->gameLifecycleSkipped.load(),
+            binding_->remoteReloads.load(), binding_->suspendGateOverrides.load(),
             binding_->geometryReloaded.load(), binding_->clientDefinitionsReloaded.load()};
 }
 } // namespace bedrock
