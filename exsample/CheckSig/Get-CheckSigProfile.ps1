@@ -10,6 +10,10 @@ param(
     [Alias("CommandDirectory")]
     [string]$CommandsDirectory,
 
+    # Optional immutable revision for reproducible profile installation.
+    [ValidatePattern('^(main|[0-9a-fA-F]{40})$')]
+    [string]$GitHubRef = "main",
+
     [switch]$Force
 )
 
@@ -17,7 +21,7 @@ $ErrorActionPreference = "Stop"
 
 $owner = "gamelist1990"
 $repository = "BedrockDynamicSDK"
-$branch = "main"
+$branch = $GitHubRef
 $maxProfileBytes = 16777216
 
 function Expand-ProfileParts {

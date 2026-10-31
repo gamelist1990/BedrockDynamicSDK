@@ -30,7 +30,8 @@ try {
     Assert-Rejected { & $installer -Source Local -LocalPath $invalid -CommandsDirectory $destination } "Malformed JSON was accepted"
     Assert-Rejected { & $installer -Source Local -LocalPath $local -Version "0.0.0.0" -CommandsDirectory $destination } "Wrong requested version was accepted"
     $remote = Join-Path $temporary "from-github"
-    & $installer -Source GitHub -Version "1.26.60.5" -CommandsDirectory $remote | Out-Null
+    $reference = if ($env:CHECKSIG_PROFILE_REF) { $env:CHECKSIG_PROFILE_REF } else { "main" }
+    & $installer -Source GitHub -GitHubRef $reference -Version "1.26.60.5" -CommandsDirectory $remote | Out-Null
     # The transport authenticates the manifest and each part; installed output
     # is the assembled profile, not the manifest's original byte stream.
     $remoteDocument = Get-Content -LiteralPath (Join-Path $remote "1.26.60.5-windows-x64.json") -Raw -Encoding UTF8 | ConvertFrom-Json
