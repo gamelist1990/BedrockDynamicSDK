@@ -435,6 +435,10 @@ bool NativeGameAccess::load(const RuntimeProfile& profile, std::string& error) {
             if(method.value("abi_verified",false) || profile.candidatePolicy()==CandidatePolicy::AllowCandidates)
                 next->itemHoverNameTarget=native_profile::checked(root,method);
         }
+        // A cached packet-era profile without the string ownership binding must
+        // fall back as a whole, rather than silently losing display names.
+        if (next->wireRoster && !next->deallocate)
+            throw std::runtime_error("native client profile lacks owned item-name binding");
         impl_ = std::move(next);
         error.clear(); return true;
     } catch (const std::exception& e) { error=e.what(); return false; }
