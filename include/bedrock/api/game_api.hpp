@@ -295,6 +295,8 @@ public:
         return !event.cancelled();
     }
     void dispatchLevelTick(void* level, std::uint64_t sequence) noexcept {
+        if (!access_->beginWorldTick(level)) return;
+        struct TickScope { GameAccess* access; ~TickScope() { access->endWorldTick(); } } scope{access_};
         worldEventLevel_.store(level, std::memory_order_release);
         invalidateActorReadCaches();
         try { Event.Enum.LevelTick.emit(LevelTickEvent{level, sequence}); }
@@ -360,6 +362,7 @@ public:
         try { Event.Enum.Update.emit(event); } catch (...) {}
     }
     void dispatchGameplay(const GameplayEvent& event) noexcept {
+        access_->observeClient(event.clientInstance);
         gameplayActive_.store(event.active, std::memory_order_release);
         try { Event.Enum.Gameplay.emit(event); } catch (...) {}
     }

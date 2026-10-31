@@ -1,0 +1,21 @@
+{
+  "symbols": {
+    "Bedrock::Memory::deallocate": {
+      "rva": "0x392960",
+      "signature": "",
+      "entry_check": "55 48 83 EC 30 48 8D 6C 24 30 48 C7 45 F8 FE FF FF FF 48 89 CA 48 8B 0D",
+      "cross_version_signature_available": false,
+      "status": "verified",
+      "runtime_verified": true,
+      "abi_verified": true,
+      "abi": "void __fastcall(void*)",
+      "function_boundary": true,
+      "source": "Exact Windows 1.26.60.5 PE, REA/Ghidra and Windows x64 instruction correlation. Consumed v21 binding confirmed by user on 2026-10-31; scoped to this adapter and executable. See evidence and runtime_validation.",
+      "evidence": "brpm-windows-1.26.60.5/deallocate-evidence.json ev_b106a6d44e025e05a63cf1fe7ad374eb517687e184fef2b234e67b754074bbbd; global delete thunk 0xE934B00 jumps here; RCX allocation; dispatches allocator slot2, ignores caller size",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
+      }
+    }
+  }
+}
