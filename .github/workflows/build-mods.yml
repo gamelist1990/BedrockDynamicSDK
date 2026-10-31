@@ -50,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: astral-sh/setup-uv@v6
       - name: Verify data and Python
         run: |
@@ -142,7 +144,7 @@ jobs:
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
       - name: Mod input and DLL smoke tests
-        if: matrix.mod == 'CheckSig' || matrix.mod == 'BetterResourcePackManager'
+        if: matrix.mod == 'CheckSig' || matrix.mod == 'BetterResourcePackManager' || matrix.mod == 'TabList'
         run: ctest --test-dir build-mod -C Release --output-on-failure
       - name: CheckSig profile installer tests (Windows PowerShell 5.1)
         if: matrix.mod == 'CheckSig'

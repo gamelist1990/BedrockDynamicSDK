@@ -60,6 +60,10 @@
       "sha256": "8ae097fc3b17ee193ba2ceeb4d508532ee25f75390900bd9697d4b82bcef7254"
     },
     {
+      "path": "classes/BedrockMemory.json",
+      "sha256": "e90163b9af808a13ec4b3d5ea2a3fbd6b073c872b4e7b37824bba3cd8b473f6b"
+    },
+    {
       "path": "classes/BlockSource.json",
       "sha256": "e1228380062e737543c0c704fb16de891b8439a0e67dc213879010c28f363193"
     },
@@ -97,11 +101,11 @@
     },
     {
       "path": "classes/ItemStack.json",
-      "sha256": "b6534b940a3a5a6ddba2533f63878be925ca8774ddf014402d34fafca35717c8"
+      "sha256": "a11a8daa3e3f0642c98b1f7bdd65e16b0e9e3254bafaf3ca453342988fe51b96"
     },
     {
       "path": "classes/ItemStackBase.json",
-      "sha256": "dc7e25c0784608d1c5b454d3687bf900ddc8d0d60cdce937e53059535b92ff0d"
+      "sha256": "fb809daf51607e4fe0e91ff90884a836157381d9ed9421ef51c5322aac4e0309"
     },
     {
       "path": "classes/Keyboard.json",
@@ -161,7 +165,7 @@
     },
     {
       "path": "classes/ResourcePackManager.json",
-      "sha256": "2b5b71a847a95da09da1f9779c2ebfc90b07056f99f3f6ff06dac08e9e5403d2"
+      "sha256": "765a152d14f5d373a981eda1eedb493f9ab9fe2ff943d08d076ca1e8760ffe9e"
     },
     {
       "path": "classes/RuntimeActorList.json",

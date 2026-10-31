@@ -13,6 +13,9 @@ namespace bedrock {
 class GameAccess : public BlockAccess {
   public:
     virtual ~GameAccess() = default;
+    virtual void observeClient(void*) noexcept {}
+    virtual bool beginWorldTick(void*) noexcept { return true; }
+    virtual void endWorldTick() noexcept {}
     [[nodiscard]] virtual bool isActorValid(void *actor) const noexcept = 0;
     [[nodiscard]] virtual void *localPlayer() const noexcept = 0;
     [[nodiscard]] virtual void *worldOf(void *actor) const noexcept = 0;

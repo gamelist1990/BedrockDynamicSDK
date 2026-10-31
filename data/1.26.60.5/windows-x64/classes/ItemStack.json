@@ -50,7 +50,19 @@
         "evidence": "ItemStack fields and string layout are carried forward from 1.26.52.3 and remain candidate-only; hover-name ABI is unverified."
       },
       "evidence": "Candidate layout for exact 1.26.60.5 executable. New-build evidence: Equipment hash byte pattern appears 16 times in .text; ClientInstance local-player getter candidate is table slot 34 / RVA 0x659E470. Actor context absolute offsets are supported only by candidate static reads. Remaining inventory, supplies, equipment, slot, and ItemStack offsets are carried forward from 1.26.52.3. runtime_verified=false.",
-      "runtime_verified": false
+      "runtime_verified": false,
+      "string_deallocate": {
+        "symbol": "Bedrock::Memory::deallocate"
+      },
+      "returned_string_abi": {
+        "size_offset": 16,
+        "capacity_offset": 24,
+        "inline_bytes": 16,
+        "maximum_bytes": 256,
+        "large_allocation_threshold": 4096,
+        "alignment_overhead": 39,
+        "evidence": "Exact hover-name body1AD8070 writes Release MSVC string to RDX and allocates through the Game allocator. SDK copies the owned result and frees with the Game deallocator, never the Mod CRT. Runtime use remains candidate."
+      }
     }
   }
 }

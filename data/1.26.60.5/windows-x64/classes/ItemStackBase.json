@@ -38,7 +38,9 @@
         "entry_guard_hit": true,
         "pdata_function_entry": true
       },
-      "verification_scope": "entry-guard"
+      "verification_scope": "entry-guard",
+      "abi": "std::string* __fastcall(ItemStackBase*, std::string*)",
+      "static_abi_evidence": "sdk-hover-name-abi-evidence.json ev_a765cf00d91f2e204cfdf16f6c6a9b02428f3e540c70ee92d42145a4f4a1310a; exact PE SHA988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a. RVA1AD808B saves RDX inRSI, calls1AD81E0 withRCXstack unchanged; output size/capacity atRSI+10/+18, RAX=RSI return. Runtime/ABI verified flags remain false."
     }
   }
 }

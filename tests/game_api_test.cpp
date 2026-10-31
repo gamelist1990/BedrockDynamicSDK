@@ -14,6 +14,16 @@ struct FakeGame final : bedrock::GameAccess {
         {reinterpret_cast<void*>(0x30), "\xC2\xA7" "pOtherPlayer"}};
     std::unordered_map<void*, bedrock::HeldItemInfo> heldItems{
         {local, {"minecraft:bow", "Bow", 1}}};
+    bool tickAllowed=true, inTick=false;
+    unsigned tickBegins{}, tickEnds{};
+    void* observedClient{};
+    void observeClient(void* client) noexcept override { observedClient=client; }
+    bool beginWorldTick(void*) noexcept override {
+        ++tickBegins;
+        if(!tickAllowed) return false;
+        inTick=true; return true;
+    }
+    void endWorldTick() noexcept override { assert(inTick);inTick=false;++tickEnds; }
     bool keyState{};
     unsigned sentKey{};
     unsigned mouseClicks{};
@@ -59,6 +69,23 @@ struct FakeGame final : bedrock::GameAccess {
 int main() {
     FakeGame game;
     bedrock::GameApi api{game};
+    unsigned tickEvents{};
+    const auto tickListener=api.Event.Enum.LevelTick.then([&](const auto&) {
+        assert(game.inTick); ++tickEvents;
+    });
+    api.dispatchLevelTick(game.worldHandle,1);
+    assert(tickEvents==1 && !game.inTick && game.tickBegins==game.tickEnds);
+    game.tickAllowed=false;
+    api.dispatchLevelTick(game.worldHandle,2);
+    assert(tickEvents==1 && !game.inTick);
+    game.tickAllowed=true;
+    const auto throwing=api.Event.Enum.LevelTick.then([](const auto&) { throw std::runtime_error("listener failed"); });
+    api.dispatchLevelTick(game.worldHandle,3);
+    assert(!game.inTick && game.tickBegins==game.tickEnds+1); // rejected begin has no matching end
+    api.Event.Enum.LevelTick.off(throwing);
+    api.Event.Enum.LevelTick.off(tickListener);
+    api.dispatchGameplay({true,reinterpret_cast<void*>(0x1234)});
+    assert(game.observedClient==reinterpret_cast<void*>(0x1234));
     unsigned actorEvents = 0;
     unsigned viewEvents = 0;
     unsigned renderViewEvents = 0;
