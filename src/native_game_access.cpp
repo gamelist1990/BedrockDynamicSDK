@@ -37,7 +37,7 @@ struct NativeGameAccess::Impl {
     bool wireRoster{};
     RosterProvider rosterProvider;
     NameProvider nameProvider;
-    bool onTick() const noexcept {
+    bool onTick() noexcept {
         return ownerThread.load(std::memory_order_acquire) == GetCurrentThreadId() && tickDepth;
     }
 struct ReadRegion { std::uintptr_t begin{},end{}; };
@@ -191,11 +191,11 @@ bool looksLikeActor(void* actor) noexcept {
     return executableSlots >= 2;
 }
 
-bool isActorValid(void* actor) const noexcept {
+bool isActorValid(void* actor) noexcept {
     return looksLikeActor(actor);
 }
 
-std::vector<void*> actorHandles(void* world) const {
+std::vector<void*> actorHandles(void* world) {
     std::vector<void*> result;
     if (!onTick() || !world ||
         world != levelInstance.load(std::memory_order_acquire)) return result;
@@ -258,7 +258,7 @@ std::optional<std::uint64_t> readActorRuntimeId(void* actor) noexcept {
         ? std::optional<std::uint64_t>{runtimeId} : std::nullopt;
 }
 
-std::optional<std::uint64_t> actorRuntimeId(void* actor) const {
+std::optional<std::uint64_t> actorRuntimeId(void* actor) {
     return onTick() ? readActorRuntimeId(actor) : std::nullopt;
 }
 
@@ -267,7 +267,7 @@ bool readActorGameType(void* actor,std::int32_t& gameType) noexcept {
     const auto value=actorComponents.gameType(actor);if(!value)return false;gameType=*value;return true;
 }
 
-void* localPlayer() const noexcept {
+void* localPlayer() noexcept {
     if (!onTick() || !nativeItemLayout) return nullptr;
     void* client = clientInstance.load(std::memory_order_acquire);
     void* player=localPlayerGetter.get(client);
@@ -337,19 +337,19 @@ EquipmentReadStatus readEquipmentItem(void* actor, bedrock::EquipmentSlot slot,
 }
 
 std::optional<bedrock::ItemStack> equipmentItem(
-    void* actor, bedrock::EquipmentSlot slot) const {
+    void* actor, bedrock::EquipmentSlot slot) {
     bedrock::ItemStack item;
     return readEquipmentItem(actor, slot, &item) == EquipmentReadStatus::Item
         ? std::optional<bedrock::ItemStack>{std::move(item)} : std::nullopt;
 }
 
-std::size_t localInventorySize(void* player) const {
+std::size_t localInventorySize(void* player) {
     return nativeItemLayout && player && player == localPlayer()
         ? nativeItemLayout->localInventorySlots : 0;
 }
 
 std::optional<bedrock::ItemStack> localInventoryItem(
-    void* player, std::size_t slot) const {
+    void* player, std::size_t slot) {
     if (!nativeItemLayout || !player || player != localPlayer() ||
         slot >= nativeItemLayout->localInventorySlots) return std::nullopt;
     const auto& layout = *nativeItemLayout;
@@ -379,7 +379,7 @@ std::optional<bedrock::ItemStack> localInventoryItem(
     return item.valid() ? std::optional<bedrock::ItemStack>{std::move(item)} : std::nullopt;
 }
 
-std::optional<std::size_t> selectedHotbarSlot(void* player) const {
+std::optional<std::size_t> selectedHotbarSlot(void* player) {
     if (!nativeItemLayout || !player || player != localPlayer()) return std::nullopt;
     void* supplies = nullptr;
     std::uint32_t selected = 0;
@@ -389,7 +389,7 @@ std::optional<std::size_t> selectedHotbarSlot(void* player) const {
     return static_cast<std::size_t>(selected);
 }
 
-void* worldOf(void* actor) const noexcept {
+void* worldOf(void* actor) noexcept {
     return looksLikeActor(actor) ? levelInstance.load(std::memory_order_acquire) : nullptr;
 }
 
