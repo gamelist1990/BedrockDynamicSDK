@@ -56,9 +56,9 @@ PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Mo
 ## Mod
 
 `Freecam` / `SpeedBuilder` / `Top` / `HitBox` / `TabList` /
-`Zoom` / `AutoSprint` / `CheckSig` / `Fake` / `BetterResourcePackManager`
+`Zoom` / `AutoSprint` / `CheckSig` / `Fake` / `GlobalResourcePack`
 
-[BetterResourcePackManager v21](exsample/BetterResourcePackManager/README_ja.md) は1.26.60.5向けです。設定を開いたままグローバルリソースを適用し、カスタムブロックのUV・モデルの描画参照を更新します。既存v21の動作はユーザー確認済みです。まれな未読み込みに対する完了待ち・再試行の追加修正は、自動テスト済み・実機確認待ちとして区別しています。[SDK API保守ガイド](docs/resource-packs.md)も参照してください。
+[global resourcepack v21](exsample/GlobalResourcePack/README_ja.md) は1.26.60.5向けです。設定を開いたままグローバルリソースを適用し、カスタムブロックのUV・モデルの描画参照を更新します。既存v21の動作はユーザー確認済みです。まれな未読み込みに対する完了待ち・再試行の追加修正は、自動テスト済み・実機確認待ちとして区別しています。[SDK API保守ガイド](docs/resource-packs.md)も参照してください。
 
 [Fake](exsample/Fake/README_ja.md) は1.26.60.5向けの調査版です。
 `/fake メッセージ` で `/me メッセージ` をOrigin=5で要求し、
