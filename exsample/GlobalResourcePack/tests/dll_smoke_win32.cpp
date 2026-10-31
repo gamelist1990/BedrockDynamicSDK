@@ -12,7 +12,7 @@ int wmain(int argc, wchar_t **argv) {
         return 2;
     }
     const auto status = reinterpret_cast<unsigned (*)()>(
-        GetProcAddress(module, "BetterResourcePackManager_Status"));
+        GetProcAddress(module, "GlobalResourcePack_Status"));
     if (!status)
         return 3;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{60};

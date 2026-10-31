@@ -1,4 +1,4 @@
-# BetterResourcePackManager Windows v21
+# global resourcepack — Windows v21
 
 Minecraft Windows x64 **1.26.60.5** 専用。v21のHook・カスタムブロック表示・モデル参照更新・設定中の即時適用は、ユーザーの動作確認に基づき検証済みとして記録しています。
 
@@ -8,7 +8,7 @@ Minecraft Windows x64 **1.26.60.5** 専用。v21のHook・カスタムブロッ�
 
 描画更新は、ブロック描画定義の更新、共有マテリアルを保持したカスタムブロックUV補正、エンティティの描画参照無効化、カメラ更新です。アプリ全体の停止・復帰通知、全形状定義のリロード、クライアント資源全体の再初期化は削除済みです。
 
-Minecraftを完全終了してDLLを交換してください。ログは `Documents/PEXData/BetterResourcePackManager/` に作成します。先頭は `adapter v21 preserve-selection repair` です。`readiness_retries` は、追加読み込みの検出によって再試行した回数です。件数だけでは実際の表示成功を保証しません。
+配布DLL名は `GlobalResourcePack.dll` です。旧名のDLLを削除し、Minecraftを完全終了して新しいDLLに交換してください。旧DLLと同時に読み込まないでください。ログは `Documents/PEXData/GlobalResourcePack/` に作成します。先頭は `adapter v21 preserve-selection repair` です。`readiness_retries` は、追加読み込みの検出によって再試行した回数です。件数だけでは実際の表示成功を保証しません。
 
 SDK側の構成と次バージョンへの更新手順は [API保守ガイド](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/docs/resource-packs.md) を参照してください。
 

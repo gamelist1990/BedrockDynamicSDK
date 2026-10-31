@@ -81,13 +81,13 @@ DWORD WINAPI start(void *) noexcept {
         if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_CREATE, nullptr, &documents)))
             throw std::runtime_error("Documents directory unavailable");
         const auto directory =
-            std::filesystem::path(documents) / L"PEXData" / L"BetterResourcePackManager";
+            std::filesystem::path(documents) / L"PEXData" / L"GlobalResourcePack";
         CoTaskMemFree(documents);
         std::filesystem::create_directories(directory);
-        std::ofstream log(directory / L"BetterResourcePackManager.log", std::ios::trunc);
+        std::ofstream log(directory / L"GlobalResourcePack.log", std::ios::trunc);
         if (!log)
             throw std::runtime_error("log file unavailable");
-        traceFile = CreateFileW((directory / L"BetterResourcePackManager-stage.log").c_str(),
+        traceFile = CreateFileW((directory / L"GlobalResourcePack-stage.log").c_str(),
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
@@ -95,7 +95,7 @@ DWORD WINAPI start(void *) noexcept {
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
-        log << "BetterResourcePackManager / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
+        log << "global resourcepack / BedrockDynamicSDK " << BEDROCK_SDK_BUILD_ID << '\n';
         // Installed SDK thunks stay valid until process exit. The adapter and
         // worker intentionally have the same lifetime as Minecraft.
         auto *packs = new bedrock::NativeResourcePacks;
@@ -192,7 +192,7 @@ DWORD WINAPI start(void *) noexcept {
         }
     } catch (const std::exception &error) {
         OutputDebugStringA(
-            (std::string("[BetterResourcePackManager] ") + error.what() + "\n").c_str());
+            (std::string("[global resourcepack] ") + error.what() + "\n").c_str());
         startupStatus = 4;
         return 1;
     } catch (...) {
@@ -201,7 +201,7 @@ DWORD WINAPI start(void *) noexcept {
     }
 }
 } // namespace
-extern "C" __declspec(dllexport) unsigned BetterResourcePackManager_Status() noexcept {
+extern "C" __declspec(dllexport) unsigned GlobalResourcePack_Status() noexcept {
     return startupStatus.load();
 }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {

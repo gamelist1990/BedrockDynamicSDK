@@ -40,7 +40,7 @@ jobs:
           version = os.environ['GAME_VERSION']
           if version not in ('1.26.52.3', '1.26.60.5'): raise SystemExit('Unsupported version')
           available = ['Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','CheckSig']
-          if version == '1.26.60.5': available.extend(['Fake', 'BetterResourcePackManager'])
+          if version == '1.26.60.5': available.extend(['Fake', 'GlobalResourcePack'])
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
           if not selected or any(x not in available for x in selected): raise SystemExit('Unknown Mod or Mod unavailable for this version')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
@@ -79,7 +79,7 @@ jobs:
       - name: Build resource pack example for 1.26.60.5
         shell: pwsh
         run: |
-          cmake -S exsample/BetterResourcePackManager -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" "-DBEDROCK_GAME_VERSION=1.26.60.5" -DBEDROCK_BUILD_ID=${{ github.sha }}
+          cmake -S exsample/GlobalResourcePack -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" "-DBEDROCK_GAME_VERSION=1.26.60.5" -DBEDROCK_BUILD_ID=${{ github.sha }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-brpm --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -87,10 +87,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: BetterResourcePackManager-1.26.60.5-windows-x64
+          name: GlobalResourcePack-1.26.60.5-windows-x64
           path: |
-            build-brpm/Release/BetterResourcePackManager.dll
-            exsample/BetterResourcePackManager/README_ja.md
+            build-brpm/Release/GlobalResourcePack.dll
+            exsample/GlobalResourcePack/README_ja.md
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -142,7 +142,7 @@ jobs:
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
       - name: Mod input and DLL smoke tests
-        if: matrix.mod == 'CheckSig' || matrix.mod == 'BetterResourcePackManager'
+        if: matrix.mod == 'CheckSig' || matrix.mod == 'GlobalResourcePack'
         run: ctest --test-dir build-mod -C Release --output-on-failure
       - name: CheckSig profile installer tests (Windows PowerShell 5.1)
         if: matrix.mod == 'CheckSig'
@@ -180,9 +180,9 @@ jobs:
           Copy-Item exsample/Fake/README_ja.md build-mod/Release/
           Copy-Item docs/command-requests.md build-mod/Release/
       - name: Package resource pack example usage
-        if: matrix.mod == 'BetterResourcePackManager'
+        if: matrix.mod == 'GlobalResourcePack'
         shell: pwsh
-        run: Copy-Item exsample/BetterResourcePackManager/README_ja.md build-mod/Release/
+        run: Copy-Item exsample/GlobalResourcePack/README_ja.md build-mod/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-${{ needs.plan.outputs.version }}-windows-x64
