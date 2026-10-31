@@ -8,8 +8,10 @@ Minecraft Windows x64 **1.26.60.5** 専用。v21のHook・カスタムブロッ�
 
 描画更新は、ブロック描画定義の更新、共有マテリアルを保持したカスタムブロックUV補正、エンティティの描画参照無効化、カメラ更新です。アプリ全体の停止・復帰通知、全形状定義のリロード、クライアント資源全体の再初期化は削除済みです。
 
-Minecraftを完全終了してDLLを交換してください。ログは `Documents/PEXData/BetterResourcePackManager/` に作成します。先頭は `adapter v21 pending-apply repair` です。`readiness_retries` は、追加読み込みの検出によって再試行した回数です。件数だけでは実際の表示成功を保証しません。
+Minecraftを完全終了してDLLを交換してください。ログは `Documents/PEXData/BetterResourcePackManager/` に作成します。先頭は `adapter v21 preserve-selection repair` です。`readiness_retries` は、追加読み込みの検出によって再試行した回数です。件数だけでは実際の表示成功を保証しません。
 
 SDK側の構成と次バージョンへの更新手順は [API保守ガイド](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/docs/resource-packs.md) を参照してください。
 
 適用イベントが戻っても、ネイティブのパック一覧合成が保留される経路に対応しました。適用イベントからGame・Level・ResourcePackManager・所有スレッドの識別情報を保持し、ゲーム側に未適用の印が残る場合だけ、ローダーが完了した通常フレームでネイティブの保留適用処理を再試行します。ゲーム側の待機判定や未適用フラグは書き換えません。遅延した合成でも、同じ適用要求に限りグローバルリソースを含めます。`native_apply_retries` はこの再試行の回数です。この補修経路の実機確認は未完了です。
+
+最新の補修は、即時適用時にゲーム側の選択参照の変換方式を上書きせず、保存だけを有効化します。メニュー終了用の引数を流用していた処理を外しました。前回のログは未適用フラグが残っていなかったため、保留再試行だけでは説明できません。`apply_event result requested/global_before/global_after/dirty` に選択参照数・解決後のグローバルパック数を記録します。今回の選択方式の修正は実機確認待ちです。

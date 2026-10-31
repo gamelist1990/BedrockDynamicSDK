@@ -91,7 +91,7 @@ DWORD WINAPI start(void *) noexcept {
                                 GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
         if (traceFile == INVALID_HANDLE_VALUE) throw std::runtime_error("stage diagnostic log unavailable");
-        traceStep("v21 pending-apply repair: started\r\n");
+        traceStep("v21 preserve-selection repair: started\r\n");
         if (!AddVectoredExceptionHandler(1, observeException))
             traceStep("exception_observer_install_failed\r\n");
         else traceStep("exception_observer_installed\r\n");
@@ -121,8 +121,8 @@ DWORD WINAPI start(void *) noexcept {
             << " source=" << bedrock::profileSourceName(snapshot->choice().source)
             << " exe_sha256=" << snapshot->choice().identity.fileSha256
             << " text_sha256=" << snapshot->choice().identity.textSha256 << '\n';
-        log << "Hooks installed. Exact-build native live reload adapter v21 pending-apply repair; v21 baseline hooks user-verified; "
-               "pending native apply/retry runtime validation pending.\n";
+        log << "Hooks installed. Exact-build native live reload adapter v21 preserve-selection repair; v21 baseline hooks user-verified; "
+               "selection-identity correction runtime validation pending.\n";
         log.flush();
         startupStatus = 2;
         bedrock::NativeResourcePacks::Status previous{};

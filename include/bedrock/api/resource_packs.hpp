@@ -9,6 +9,12 @@ namespace bedrock {
 // Keep one policy per ClientInstance and serialize access on the adapter side.
 class ResourcePackMenuPolicy {
   public:
+    struct ApplyFlags { bool nativeSelectionMode{}, save{}; };
+    // Immediate selection uses the game's exact reference-resolution mode.
+    // Only persistence changes; do not replace the native mode with close-menu flags.
+    static ApplyFlags immediateApplyFlags(bool nativeSelectionMode) noexcept {
+        return {nativeSelectionMode, true};
+    }
     static bool liveGlobalSelection(std::string_view screen, bool inWorld) noexcept {
         return inWorld && screen.find("screen_world_controls_and_settings") != std::string_view::npos &&
             screen.find("global_texture_pack_tab") != std::string_view::npos;

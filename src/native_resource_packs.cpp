@@ -43,7 +43,7 @@ struct NativeResourcePacks::Binding {
     Initialize selectionChanged{}, invalidateActorBindings{};
     PrepareSelection prepareSelection{};
     std::size_t autoApplyOffset{};
-    bool applyIncludeFlag{}, applySaveFlag{};
+    bool applySaveFlag{};
     std::atomic<std::uint64_t> immediateSelections{}, modelBindingsRefreshed{};
     Exit progressTick{};
     std::size_t progressModelOffset{}, progressCallbackOffset{}, progressInvokeOffset{};
@@ -52,6 +52,21 @@ struct NativeResourcePacks::Binding {
     void *atlasTarget{}, *atlasCaller{}, *frameTarget{};
     Initialize frame{}, applyPendingStack{};
     std::size_t stackDirtyOffset{};
+    std::size_t referenceBeginOffset{}, referenceEndOffset{}, referenceStride{};
+    std::size_t globalStackOffset{}, stackBeginOffset{}, stackEndOffset{}, stackStride{};
+    std::uint64_t referenceCount(const void *object, std::size_t beginOffset,
+                                  std::size_t endOffset, std::size_t stride) const noexcept {
+        std::uintptr_t begin{}, end{};
+        if (!native_profile::read(object, beginOffset, begin) ||
+            !native_profile::read(object, endOffset, end) || end < begin ||
+            !stride || (end-begin)%stride || (end-begin)/stride > 4096) return UINT64_MAX;
+        return (end-begin)/stride;
+    }
+    std::uint64_t globalPackCount(void *manager) const noexcept {
+        void *stack{};
+        return native_profile::read(manager, globalStackOffset, stack) && stack ?
+            referenceCount(stack, stackBeginOffset, stackEndOffset, stackStride) : UINT64_MAX;
+    }
     detail::PendingPackApply pendingNativeApply;
     std::atomic<bool> nativeApplyPending{};
     std::atomic<std::uint64_t> nativeApplyRetries{};
@@ -592,8 +607,11 @@ struct NativeResourcePacks::Binding {
     static void __fastcall onPrepareSelection(void *controller, const void *packs, bool include, bool save) {
         auto &state = *active().load(std::memory_order_acquire);
         if (state.enabled.load(std::memory_order_acquire) && controller && controller == immediateController()) {
-            include = state.applyIncludeFlag;
-            save = state.applySaveFlag;
+            const auto flags = ResourcePackMenuPolicy::immediateApplyFlags(include);
+            include = flags.nativeSelectionMode;
+            save = flags.save && state.applySaveFlag;
+            state.trace(include ? "selection_prepare native_mode=1 save=1\r\n" :
+                                  "selection_prepare native_mode=0 save=1\r\n");
         }
         state.prepareSelection(controller, packs, include, save);
     }
@@ -654,8 +672,23 @@ struct NativeResourcePacks::Binding {
         // throughout the game's queued stack update and reload notifications.
         ApplyScope scope(client);
         if (client) { state.rememberApply(client); state.trace("apply_event begin\r\n"); }
+        const auto references = state.referenceCount(closure, state.referenceBeginOffset,
+            state.referenceEndOffset, state.referenceStride);
+        auto *manager = client ? state.gamePacks(state.clientGame(client)) : nullptr;
+        const auto before = manager ? state.globalPackCount(manager) : UINT64_MAX;
         state.event(closure, model);
-        if (client) state.trace("apply_event end\r\n");
+        if (client) {
+            unsigned char dirty{};
+            const bool readable = native_profile::read(manager, state.stackDirtyOffset, dirty);
+            char summary[256]{};
+            _snprintf_s(summary, sizeof(summary), _TRUNCATE,
+                "apply_event result requested=%llu global_before=%llu global_after=%llu dirty=%u readable=%u\r\n",
+                static_cast<unsigned long long>(references), static_cast<unsigned long long>(before),
+                static_cast<unsigned long long>(state.globalPackCount(manager)),
+                static_cast<unsigned>(dirty), static_cast<unsigned>(readable));
+            state.trace(summary);
+            state.trace("apply_event end\r\n");
+        }
     }
     static std::uint64_t __fastcall onCompose(void *self, void *full, void *global, void *level) {
         auto &state = *active().load(std::memory_order_acquire);
@@ -813,9 +846,22 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         auto next = std::make_unique<Binding>();
         const auto root = parseNativeProfile(profile.json());
         const auto &layout = root.at("layouts").at("ResourcePackManager");
-        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-pending-apply")
+        if (layout.at("adapter").get<std::string>() != "windows-live-reload-v21-preserve-selection")
             throw std::runtime_error("unsupported resource pack adapter ABI");
         next->materialUvs.load(root, layout);
+        const auto &diagnostic = layout.at("selection_diagnostics");
+        next->referenceBeginOffset = native_profile::number(diagnostic.at("callback_vector_begin_offset"));
+        next->referenceEndOffset = native_profile::number(diagnostic.at("callback_vector_end_offset"));
+        next->referenceStride = native_profile::number(diagnostic.at("reference_bytes"));
+        next->globalStackOffset = native_profile::number(diagnostic.at("global_stack_offset"));
+        next->stackBeginOffset = native_profile::number(diagnostic.at("stack_begin_offset"));
+        next->stackEndOffset = native_profile::number(diagnostic.at("stack_end_offset"));
+        next->stackStride = native_profile::number(diagnostic.at("stack_entry_bytes"));
+        for (auto offset : {next->referenceBeginOffset, next->referenceEndOffset,
+                            next->globalStackOffset, next->stackBeginOffset, next->stackEndOffset})
+            if (offset > 0x10000 || offset % sizeof(void *)) throw std::runtime_error("invalid selection diagnostics layout");
+        if (!next->referenceStride || next->referenceStride > 4096 ||
+            !next->stackStride || next->stackStride > 4096) throw std::runtime_error("invalid pack record size");
         next->stackDirtyOffset = native_profile::number(layout.at("pending_apply").at("dirty_offset"));
         if (!next->stackDirtyOffset || next->stackDirtyOffset > 0x10000) throw std::runtime_error("invalid pending stack layout");
         const auto get = [&](const char *field, const char *abi) {
@@ -843,7 +889,8 @@ bool NativeResourcePacks::load(const RuntimeProfile &profile, std::string &error
         next->invalidateActorBindings = reinterpret_cast<Binding::Initialize>(get("invalidate_actor_bindings", "void __fastcall(ClientInstance*)"));
         const auto &immediate = layout.at("immediate_selection");
         next->autoApplyOffset = native_profile::number(immediate.at("auto_apply_offset"));
-        next->applyIncludeFlag = immediate.at("apply_include_flag").get<bool>();
+        if (immediate.at("selection_identity_policy") != "preserve-native")
+            throw std::runtime_error("unsupported native selection identity policy");
         next->applySaveFlag = immediate.at("apply_save_flag").get<bool>();
         if (!next->autoApplyOffset || next->autoApplyOffset > 0x10000)
             throw std::runtime_error("invalid immediate selection layout");

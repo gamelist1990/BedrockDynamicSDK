@@ -5,7 +5,7 @@
       "pointer_size": 8,
       "status": "verified",
       "runtime_verified": true,
-      "adapter": "windows-live-reload-v21-pending-apply",
+      "adapter": "windows-live-reload-v21-preserve-selection",
       "reload_on_exit_offset": 4234,
       "string_abi": {
         "object_bytes": 32,
@@ -296,19 +296,19 @@
       },
       "immediate_selection": {
         "auto_apply_offset": 3425,
-        "apply_include_flag": true,
         "apply_save_flag": true,
-        "evidence": "Native51EFC90 checks controller+D61==1 before native immediate apply. Hook enables flag only during same-controller global selection callback, restores it on return. Prepared native callbacks own pack-vector/model lifetimes; adapter never invents or retains captures. User confirmed v21 operation on 2026-10-31; see layout runtime_validation for scope and limitations.",
+        "evidence": "Native51EFC90 checks controller+D61==1 before native immediate apply. Hook enables flag only during same-controller global selection callback, restores it on return. Prepared native callbacks own pack-vector/model lifetimes; adapter never invents or retains captures. User confirmed v21 operation on 2026-10-31; see layout runtime_validation for scope and limitations. Correction: v21 overrode R8B with the menu-close flag. Native selection51EFCF2 passesfalse,false; constructor193C500 conditionally replaces reference version/identity fields when flag is true (193C585..193C7DA). Immediate apply now preserves native R8B and changes persistence only. New behavior runtime pending; ev_ file v21-selection-identity-constructor-evidence.json.",
         "status": "verified",
         "runtime_verified": true,
-        "verification_scope": "user-reported-mod-operation"
+        "verification_scope": "user-reported-mod-operation",
+        "selection_identity_policy": "preserve-native"
       },
       "verification_scope": "user-reported-mod-operation",
       "runtime_validation": {
         "ref": "analysis.mod_runtime_validation.BetterResourcePackManager"
       },
       "load_completion": {
-        "revision": 3,
+        "revision": 4,
         "runtime_verified": false,
         "status": "awaiting-runtime-confirmation",
         "policy": "Serialize native apply callbacks after previous loader/refresh completion. Match atlas completion to request generation. Retain claimed request across renewed loader work and retry only after a completed idle frame. Revalidate loader/atlas identity after renderer task drains. No fixed time delay. Retain native pending-stack request across listener deferral and permit scoped in-world composition in the owning game frame."
@@ -318,6 +318,21 @@
         "runtime_verified": false,
         "status": "awaiting-runtime-confirmation",
         "evidence": "Exact set-stack17CB081 ORs byte+179 with changed result; native event52374F0 tests+179 before5237507 call17CC040; applyPendingStack clears word+178 only after listener acceptance. Retain game/level/manager/thread identity through deferred composition; retry only while native dirty bit is set and loader is idle."
+      },
+      "selection_diagnostics": {
+        "callback_vector_begin_offset": 8,
+        "callback_vector_end_offset": 16,
+        "reference_bytes": 80,
+        "global_stack_offset": 312,
+        "stack_begin_offset": 8,
+        "stack_end_offset": 16,
+        "stack_entry_bytes": 296,
+        "evidence": "Native52372FE LEA RDX,[RDI+8] passes captured vector to193C500. Native51EF933 reads manager+138 global stack;193EC B0 serializes stack entries+8/end+10. SetStack17CAF5F reads prior global+138 and compares entry stride128. Counts only; no game ownership changes."
+      },
+      "selection_fix": {
+        "runtime_verified": false,
+        "status": "awaiting-runtime-confirmation",
+        "reason": "Submitted e8266e3b log reports apply_events=1, native_apply_no_pending_stack, no composition. A deferred/dirty request was not present; prior pending-apply hypothesis does not explain this sample. Preserve the game-provided reference-resolution flag and log requested/resolved pack counts."
       }
     }
   },

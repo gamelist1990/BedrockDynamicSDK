@@ -9,6 +9,11 @@ int main() {
     assert(!Policy::liveGlobalSelection("screen_world_controls_and_settings - level_texture_pack_tab", true));
     assert(!Policy::liveGlobalSelection("unrelated_global_texture_pack_tab", true));
     assert(!Policy::liveGlobalSelection("progress_popup", true));
+    // Immediate apply must not normalize/drop selected reference identity.
+    for (bool original : {false, true}) {
+        const auto flags = Policy::immediateApplyFlags(original);
+        assert(flags.nativeSelectionMode == original && flags.save);
+    }
     bedrock::ResourcePackMenuPolicy policy;
     assert(!policy.preGame(false, "unrelated_global_texture_pack_tab", true));
     assert(!policy.preGame(false, "hud_screen", true));
