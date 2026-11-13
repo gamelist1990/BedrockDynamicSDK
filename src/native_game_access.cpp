@@ -40,7 +40,7 @@ struct NativeGameAccess::Impl {
     bool onTick() noexcept {
         return ownerThread.load(std::memory_order_acquire) == GetCurrentThreadId() && tickDepth;
     }
-struct ReadRegion { std::uintptr_t begin{},end{}; };
+struct ReadRegion { std::uintptr_t begin; std::uintptr_t end; };
 inline static thread_local std::array<ReadRegion,32> nativeReadRegions{};
 inline static thread_local std::size_t nativeReadRegionCursor{};
 inline static thread_local bool nativeReadRegionsActive=false;
