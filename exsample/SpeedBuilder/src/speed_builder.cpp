@@ -5,7 +5,7 @@
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
 #include <bedrock/packets/title_packets.hpp>
-#include "native.hpp"
+#include <bedrock/native/world_access.hpp>
 #include "speed_builder/config.hpp"
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -22,9 +22,9 @@
 #error SpeedBuilder requires MSVC Release STL ABI.
 #endif
 namespace {
-namespace sb=speed_builder;namespace native=speedbuilder_native;
+namespace sb=speed_builder;
 using Clock=std::chrono::steady_clock;using Vec=bedrock::Vec3;
-native::Bindings bindings;native::Reader reader(bindings);
+bedrock::NativeWorldAccess worldAccess;
 bedrock::GameApi api;std::unique_ptr<bedrock::GameHooks> hooks;
 std::atomic<bool> stopped{},gameplay{},cancelRequested{};
 std::atomic<void*> client{};std::atomic<std::uint64_t> epoch{1};std::atomic<unsigned> status{};
@@ -32,7 +32,7 @@ std::atomic<std::shared_ptr<const sb::Config>> config{std::make_shared<const sb:
 std::atomic<unsigned> configRevision{};
 std::mutex logMutex;std::deque<std::string> logs;std::atomic<unsigned> lostLogs{},lostTitles{},titleQueued{};
 void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}value+=" at_ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());logs.emplace_back(std::move(value));}
-struct TitleCopy{std::uint64_t epoch{};int type{};native::StringCopy text;};
+struct TitleCopy{std::uint64_t epoch{};int type{};bedrock::NativeStringCopy text;};
 std::mutex titleMutex;std::deque<TitleCopy> titles;
 bedrock::TitlePackets packetTitles;bool wireTitles{},titleOnlyMode{};
 std::string gameVersion;
@@ -54,7 +54,7 @@ std::string plain(std::string_view input){
         if(c>=32&&c!=127)out+=input[i];++i;
     }return out;
 }
-std::string titleText(const native::StringCopy& text,int type){
+std::string titleText(const bedrock::NativeStringCopy& text,int type){
     auto value=plain(std::string_view(text.bytes,text.size));if(type<6)return value;
     try{auto j=nlohmann::json::parse(value);std::string result;
         const auto visit=[&](const auto& self,const nlohmann::json& node)->void{
@@ -96,30 +96,30 @@ unsigned nativeCalls{},nativeAccepted{},placementDeferred{};std::string lastDefe
 void restoreProbe(void* player,std::uint64_t liveRuntime){
     if(!probe)return;
     if(probe->player==player&&probe->runtime==liveRuntime&&probe->world==epoch.load()&&probe->oldSlot>=0&&
-       bindings.selected(player)==probe->heldSlot)bindings.select(player,static_cast<unsigned>(probe->oldSlot));
+       worldAccess.selected(player)==probe->heldSlot)worldAccess.select(player,static_cast<unsigned>(probe->oldSlot));
     probe.reset();
 }
 std::uint64_t lastProgress{};sb::Phase lastPhase=sb::Phase::idle;
 void restorePending(void* player,std::uint64_t liveRuntime){
     if(!pending)return;
     if(player==pending->player&&liveRuntime==pending->runtime&&generation==epoch.load()){
-        auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);float yaw{},pitch{};
-        if(pending->rotationApplied&&native::read(rot,bindings.actors.rotationYawOffset,yaw)&&std::abs(yaw-pending->yaw)<.01f)
-            native::write(rot,bindings.actors.rotationYawOffset,pending->oldYaw);
-        if(pending->rotationApplied&&native::read(rot,bindings.actors.rotationPitchOffset,pitch)&&std::abs(pitch-pending->pitch)<.01f)
-            native::write(rot,bindings.actors.rotationPitchOffset,pending->oldPitch);
-        if(bindings.selected(player)==static_cast<int>(pending->request.hotbarSlot)&&pending->oldSlot>=0&&pending->oldSlot<9)
-            bindings.select(player,static_cast<unsigned>(pending->oldSlot));
+        auto* rot=worldAccess.component(player,worldAccess.actors().actorRotationComponentHash);float yaw{},pitch{};
+        if(pending->rotationApplied&&worldAccess.readField(rot,worldAccess.actors().rotationYawOffset,yaw)&&std::abs(yaw-pending->yaw)<.01f)
+            worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,pending->oldYaw);
+        if(pending->rotationApplied&&worldAccess.readField(rot,worldAccess.actors().rotationPitchOffset,pitch)&&std::abs(pitch-pending->pitch)<.01f)
+            worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,pending->oldPitch);
+        if(worldAccess.selected(player)==static_cast<int>(pending->request.hotbarSlot)&&pending->oldSlot>=0&&pending->oldSlot<9)
+            worldAccess.select(player,static_cast<unsigned>(pending->oldSlot));
     }pending.reset();
 }
 void resetRound(std::uint64_t world){
     // Cross-world pointers are discarded; never restore into an expired world.
-    pending.reset();probe.reset();removalCheck.reset();immutablePreview.reset();rejectedResult=0;reader.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
+    pending.reset();probe.reset();removalCheck.reset();immutablePreview.reset();rejectedResult=0;worldAccess.clear();roundConfig=config.load();model=std::make_unique<sb::Model>(*roundConfig);model->reset(world);
     currentTitle.clear();currentSubtitle.clear();lastQueuedPass=capturePass=acceptedResult=0;lastPhase=sb::Phase::idle;
     nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();mismatchLogs.clear();recipeCache.clear();
     {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
 }
-void processTitles(const native::NativeHotbar& hotbar,const Vec& position){
+void processTitles(const bedrock::NativeHotbar& hotbar,const Vec& position){
     std::deque<TitleCopy> updates;{std::unique_lock lock(titleMutex,std::try_to_lock);if(lock){updates.swap(titles);titleQueued.fetch_sub(static_cast<unsigned>(updates.size()));}}
     for(const auto& update:updates){if(update.epoch!=generation)continue;
         if(update.type==0||update.type==1){currentTitle.clear();currentSubtitle.clear();}
@@ -146,7 +146,7 @@ void capture(void* source){
     const auto request=model->captureRequest(tick);if(request.positions.empty())return;
     const auto captureBudget=model->phase()==sb::Phase::capturing?2000:1000;
     const auto deadline=Clock::now()+std::chrono::microseconds(captureBudget);std::vector<sb::Cell> cells;cells.reserve(request.positions.size());
-    for(const auto& pos:request.positions){auto cell=reader.getBlock(source,pos);
+    for(const auto& pos:request.positions){auto cell=worldAccess.getBlock(source,pos);
         if(cell.kind==sb::CellKind::unknown)note("capture unavailable at "+std::to_string(pos.x)+","+std::to_string(pos.y)+","+std::to_string(pos.z)+" [chunk/layout/native read]");
         cells.push_back(std::move(cell));if(Clock::now()>=deadline)break;}
     if(!model->submitCapture(request.token,tick,cells))return;
@@ -172,45 +172,45 @@ std::string propertyText(const sb::Cell& cell){
     else {auto values=nlohmann::json::object();for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){values[key]=v;},value);out["properties"]=std::move(values);}
     return out.dump();
 }
-bool sameBlockType(const native::BlockInfo* expected,const native::BlockInfo* actual){
+bool sameBlockType(const bedrock::NativeBlockInfo* expected,const bedrock::NativeBlockInfo* actual){
     return expected&&actual&&(expected->type==actual->type||expected->name==actual->name);
 }
 bool neighborDerived(std::string_view id){
     return id.ends_with("_fence")||id.ends_with("_wall")||id.ends_with("_pane")||id=="minecraft:iron_bars";
 }
-bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec eye){
+bool probeNext(void* player,void* source,const bedrock::NativeHotbar& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
     const auto slot=p.request.hotbarSlot;const auto target=p.request.target;const auto* goal=model->recordedCell(target);
-    const auto now=reader.getBlock(source,target);
+    const auto now=worldAccess.getBlock(source,target);
     if(!goal||(p.request.recipe.augment?!sb::canAugment(*goal,now):now.kind!=sb::CellKind::air)){
         model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
-    auto* wanted=reader.describe(reinterpret_cast<void*>(p.targetState.value_or(0)));
-    const auto heldName=slot<9?reader.typeName(hotbar.types[slot]):std::string{};
+    auto* wanted=worldAccess.describe(reinterpret_cast<void*>(p.targetState.value_or(0)));
+    const auto heldName=slot<9?worldAccess.typeName(hotbar.types[slot]):std::string{};
     if(!wanted||slot>=9||!hotbar.types[slot]||!hotbar.copied[slot].count||
        hotbar.copied[slot].identifier!=p.request.recipe.itemIdentifier||heldName!=p.request.recipe.itemIdentifier){
         ++placementDeferred;lastDeferred="probe_item_or_type_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;
     }
-    if(p.oldSlot<0)p.oldSlot=bindings.selected(player);
+    if(p.oldSlot<0)p.oldSlot=worldAccess.selected(player);
     if(p.oldSlot<0||p.oldSlot>8){model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
     if(!p.selectionReady){
-        if(!bindings.select(player,slot)){++placementDeferred;lastDeferred="select_slot_failed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
+        if(!worldAccess.select(player,slot)){++placementDeferred;lastDeferred="select_slot_failed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
         p.heldSlot=static_cast<int>(slot);p.selectionReady=true;p.selectedTick=tick;return false;
     }
-    if(bindings.selected(player)!=static_cast<int>(slot)){++placementDeferred;lastDeferred="selected_slot_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
+    if(worldAccess.selected(player)!=static_cast<int>(slot)){++placementDeferred;lastDeferred="selected_slot_changed";model->deferPlacement(p.request.token,p.request.actionId,tick);restoreProbe(player,runtime);return false;}
     if(tick<=p.selectedTick)return false;
     const auto commit=[&](const PlacementPlan& plan){
         Pending action;action.request=plan.request;action.runtime=runtime;action.player=player;action.source=source;
         action.prepared=tick;action.yaw=plan.yaw;action.pitch=plan.pitch;action.hit=plan.hit;action.oldSlot=p.oldSlot;
         // A fallback may have come from another matching hotbar slot. Select it
         // again and retain the normal one-tick main-hand boundary before use.
-        if(!bindings.select(player,action.request.hotbarSlot))return false;
+        if(!worldAccess.select(player,action.request.hotbarSlot))return false;
         p.heldSlot=static_cast<int>(action.request.hotbarSlot);
-        auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-        if(!native::read(rot,bindings.actors.rotationYawOffset,action.oldYaw)||!native::read(rot,bindings.actors.rotationPitchOffset,action.oldPitch))return false;
-        if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch)){
-            native::write(rot,bindings.actors.rotationYawOffset,action.oldYaw);native::write(rot,bindings.actors.rotationPitchOffset,action.oldPitch);return false;
+        auto* rot=worldAccess.component(player,worldAccess.actors().actorRotationComponentHash);
+        if(!worldAccess.readField(rot,worldAccess.actors().rotationYawOffset,action.oldYaw)||!worldAccess.readField(rot,worldAccess.actors().rotationPitchOffset,action.oldPitch))return false;
+        if(!worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,action.yaw)||!worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,action.pitch)){
+            worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,action.oldYaw);worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,action.oldPitch);return false;
         }
         if(plan.request.recipe.exactStateSupported){
             if(recipeCache.size()<2048){auto& choices=recipeCache[p.targetState.value_or(0)];
@@ -229,12 +229,12 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     if(p.candidate==0)if(auto found=recipeCache.find(p.targetState.value_or(0));found!=recipeCache.end()){
         for(const auto& c:found->second){if(c.type!=hotbar.types[slot]||c.aux!=hotbar.aux[slot])continue;
             const auto n=sb::faceNormal(c.recipe.face);sb::BlockPos support{target.x-n.x,target.y-n.y,target.z-n.z};
-            const auto base=reader.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate))continue;
+            const auto base=worldAccess.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate))continue;
             Vec hit{support.x+c.recipe.hitX,support.y+c.recipe.hitY,support.z+c.recipe.hitZ};
             const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
             if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)continue;
             void* predicted{};
-            if(bindings.predict(hotbar.types[slot],player,target,static_cast<unsigned>(c.recipe.face),{c.recipe.hitX,c.recipe.hitY,c.recipe.hitZ},hotbar.aux[slot],c.recipe.yaw,c.recipe.pitch,&predicted)&&
+            if(worldAccess.predict(hotbar.types[slot],player,target,static_cast<unsigned>(c.recipe.face),{c.recipe.hitX,c.recipe.hitY,c.recipe.hitZ},hotbar.aux[slot],c.recipe.yaw,c.recipe.pitch,&predicted)&&
                reinterpret_cast<std::uintptr_t>(predicted)==p.targetState){PlacementPlan plan;plan.request=p.request;plan.request.support=support;plan.request.recipe=c.recipe;
                 plan.yaw=c.recipe.yaw;plan.pitch=c.recipe.pitch;plan.hit=hit;return commit(plan);}
         }
@@ -245,19 +245,19 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
         const auto face=faces[i%6];i/=6;const unsigned turn=i%4;const float yaw=p.preferredYaw+float(turn)*90.f;i/=4;
         const float height=heights[i%3];i/=3;const unsigned tilt=i%3;const float pitch=tilt==0?p.preferredPitch:pitches[tilt];
         const auto normal=sb::faceNormal(static_cast<sb::Face>(face));sb::BlockPos support{target.x-normal.x,target.y-normal.y,target.z-normal.z};
-        const auto base=reader.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate)){++p.noSupport;continue;}
+        const auto base=worldAccess.getBlock(source,support,true);if(base.kind!=sb::CellKind::block||(!base.supportsPlacement&&!goal->nativePlacementCandidate)){++p.noSupport;continue;}
         Vec fractional{.5f,height,.5f};if(face==0)fractional.y=0;else if(face==1)fractional.y=1;
         else if(face==2)fractional.z=0;else if(face==3)fractional.z=1;else if(face==4)fractional.x=0;else fractional.x=1;
         Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
         const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
         if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach){++p.outOfReach;continue;}
         void* predicted{};++p.predictions;
-        const bool ok=bindings.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
+        const bool ok=worldAccess.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
         if(!ok){++p.nativeFailures;continue;}
-        auto* predictedInfo=reader.describe(predicted);if(!sameBlockType(wanted,predictedInfo))continue;
-        const auto predictedCell=reader.describeCell(predicted,target);
+        auto* predictedInfo=worldAccess.describe(predicted);if(!sameBlockType(wanted,predictedInfo))continue;
+        const auto predictedCell=worldAccess.describeCell(predicted,target);
         const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
-        if(!exact){++p.mismatches;std::uint16_t data{};if(native::read(predicted,bindings.layout("block_state_data_offset"),data))p.lastData=data;}
+        if(!exact){++p.mismatches;std::uint16_t data{};if(worldAccess.readField(predicted,worldAccess.layout("block_state_data_offset"),data))p.lastData=data;}
         PlacementPlan plan;plan.request=p.request;plan.request.support=support;auto& recipe=plan.request.recipe;
         recipe.face=static_cast<sb::Face>(face);recipe.orientationKnown=true;recipe.exactStateSupported=exact;recipe.deferredState=!exact;
         recipe.yaw=yaw;recipe.pitch=pitch;recipe.hitX=fractional.x;recipe.hitY=fractional.y;recipe.hitZ=fractional.z;
@@ -285,10 +285,10 @@ bool probeNext(void* player,void* source,const native::NativeHotbar& hotbar,Vec 
     }return false;
 }
 void tickGame(const bedrock::LevelTickEvent& event){
-    void* instance=client.load();void* player=bindings.local(instance);void* level{};
-    if(!player||!native::read(player,bindings.layout("player_level_offset"),level)||level!=event.level)return;
-    Vec position{};std::uint64_t id{};if(!bindings.pose(player,position,id))return;
-    auto* source=bindings.region(instance);if(!source)return;
+    void* instance=client.load();void* player=worldAccess.localPlayer(instance);void* level{};
+    if(!player||!worldAccess.readField(player,worldAccess.layout("player_level_offset"),level)||level!=event.level)return;
+    Vec position{};std::uint64_t id{};if(!worldAccess.pose(player,position,id))return;
+    auto* source=worldAccess.region(instance);if(!source)return;
     const auto world=epoch.load();
     if(!model||generation!=world||playerIdentity!=player||runtime!=id||sourceIdentity!=source){
         const auto reasons=std::string(generation!=world?"epoch ":"")+(playerIdentity!=player?"player ":"")+(runtime!=id?"runtime_id ":"")+(sourceIdentity!=source?"region ":"");
@@ -299,7 +299,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     model->update(generation,tick);
     if(stopped.load()||cancelRequested.exchange(false)||!gameplay.load()||!roundConfig->enabled){restoreProbe(player,id);restorePending(player,id);if(model->phase()!=sb::Phase::idle&&model->phase()!=sb::Phase::cancelled)model->cancel();return;}
     if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load()){restoreProbe(player,id);restorePending(player,id);return;}
-    native::NativeHotbar hotbar;if(!reader.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
+    bedrock::NativeHotbar hotbar;if(!worldAccess.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
     processTitles(hotbar,position);model->observeHotbar(hotbar.copied);
     if(removalCheck&&removalCheck->candidates.token!=model->token())removalCheck.reset();
     if(model->phase()==sb::Phase::capturing||(model->phase()==sb::Phase::waiting&&!removalCheck))capture(source);
@@ -316,7 +316,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
             const auto deadline=Clock::now()+std::chrono::microseconds(1500);unsigned checked=0;bool invalid=false;
             auto& check=*removalCheck;
             while(check.cursor<check.candidates.removed.size()&&checked++<128){
-                const auto cell=reader.getBlock(source,check.candidates.removed[check.cursor].position);
+                const auto cell=worldAccess.getBlock(source,check.candidates.removed[check.cursor].position);
                 if(cell.kind==sb::CellKind::unknown)break;
                 if(cell.kind!=sb::CellKind::air){invalid=true;break;}
                 ++check.cursor;if(Clock::now()>=deadline)break;
@@ -335,40 +335,40 @@ void tickGame(const bedrock::LevelTickEvent& event){
         else if(tick<=pending->prepared){
             // Retain the selected main hand and pose through preparation; dispatch
             // on the next client tick, rechecking the exact prediction first.
-            auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-            if(!native::write(rot,bindings.actors.rotationYawOffset,pending->yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,pending->pitch)){
+            auto* rot=worldAccess.component(player,worldAccess.actors().actorRotationComponentHash);
+            if(!worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,pending->yaw)||!worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,pending->pitch)){
                 model->deferPlacement(pending->request.token,pending->request.actionId,tick);restorePending(player,id);
             }
         }
         else {
             auto& action=*pending;const auto token=action.request.token;const auto aid=action.request.actionId;
-            float yaw{},pitch{};auto* rot=bindings.component(player,bindings.actors.actorRotationComponentHash);
-            const auto target=reader.getBlock(source,action.request.target);const auto support=reader.getBlock(source,action.request.support,true);void* predicted{};
+            float yaw{},pitch{};auto* rot=worldAccess.component(player,worldAccess.actors().actorRotationComponentHash);
+            const auto target=worldAccess.getBlock(source,action.request.target);const auto support=worldAccess.getBlock(source,action.request.support,true);void* predicted{};
             const auto desired=model->recordedState(action.request.target).value_or(0);
             const auto& recipe=action.request.recipe;const unsigned slot=action.request.hotbarSlot;
             const double dx=double(action.hit.x)-eye.x,dy=double(action.hit.y)-eye.y,dz=double(action.hit.z)-eye.z;
             const char* reason=nullptr;
             if(generation!=epoch.load()||!model->actionPending(token,aid)||action.runtime!=id||action.source!=source)reason="expired_action";
-            else if(slot>=9||bindings.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier||!hotbar.types[slot]||reader.typeName(hotbar.types[slot])!=recipe.itemIdentifier)reason="main_hand_changed";
+            else if(slot>=9||worldAccess.selected(player)!=static_cast<int>(slot)||!hotbar.copied[slot].count||hotbar.copied[slot].identifier!=recipe.itemIdentifier||!hotbar.types[slot]||worldAccess.typeName(hotbar.types[slot])!=recipe.itemIdentifier)reason="main_hand_changed";
             else if(recipe.augment?(!model->recordedCell(action.request.target)||!sb::canAugment(*model->recordedCell(action.request.target),target)):target.kind!=sb::CellKind::air)reason="target_changed";
             else if(!recipe.augment&&(support.kind!=sb::CellKind::block||
                     (!support.supportsPlacement&&(!model->recordedCell(action.request.target)||!model->recordedCell(action.request.target)->nativePlacementCandidate))))reason="no_support";
             else if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)reason="out_of_reach";
-            else if(!native::read(rot,bindings.actors.rotationYawOffset,yaw)||!native::read(rot,bindings.actors.rotationPitchOffset,pitch))reason="rotation_read_failed";
+            else if(!worldAccess.readField(rot,worldAccess.actors().rotationYawOffset,yaw)||!worldAccess.readField(rot,worldAccess.actors().rotationPitchOffset,pitch))reason="rotation_read_failed";
             if(!reason){
                 if(!action.rotationApplied){action.oldYaw=yaw;action.oldPitch=pitch;action.rotationApplied=true;}
-                if(!native::write(rot,bindings.actors.rotationYawOffset,action.yaw)||!native::write(rot,bindings.actors.rotationPitchOffset,action.pitch))reason="rotation_write_failed";
+                if(!worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,action.yaw)||!worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,action.pitch))reason="rotation_write_failed";
                 else if(!recipe.augment){
-                    if(!bindings.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
+                    if(!worldAccess.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
                     else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
-                    else if(recipe.deferredState){auto* wanted=reader.describe(reinterpret_cast<void*>(desired));auto* got=reader.describe(predicted);
+                    else if(recipe.deferredState){auto* wanted=worldAccess.describe(reinterpret_cast<void*>(desired));auto* got=worldAccess.describe(predicted);
                         if(!sameBlockType(wanted,got))reason="prediction_type_changed";
-                        else if(!neighborDerived(recipe.itemIdentifier)&&(!model->recordedCell(action.request.target)||!sb::samePlacementBasis(*model->recordedCell(action.request.target),reader.describeCell(predicted,action.request.target))))reason="prediction_basis_changed";}
+                        else if(!neighborDerived(recipe.itemIdentifier)&&(!model->recordedCell(action.request.target)||!sb::samePlacementBasis(*model->recordedCell(action.request.target),worldAccess.describeCell(predicted,action.request.target))))reason="prediction_basis_changed";}
                 }
             }
             if(!reason){
-                bool accepted=false;auto* gm=bindings.gameMode(player);
-                const bool dispatched=gm&&bindings.build(player,gm,action.request.support,static_cast<unsigned>(recipe.face),eye,action.hit,&accepted);
+                bool accepted=false;auto* gm=worldAccess.gameMode(player);
+                const bool dispatched=gm&&worldAccess.build(player,gm,action.request.support,static_cast<unsigned>(recipe.face),eye,action.hit,&accepted);
                 if(dispatched)++nativeCalls;if(dispatched&&accepted)++nativeAccepted;
                 model->placementResult(token,aid,dispatched&&accepted,tick);action.dispatched=true;
                 note(std::string("placement native: called=")+(dispatched?"1":"0")+" accepted="+(accepted?"1":"0")+" game_mode="+(gm?"valid":"unavailable")+
@@ -382,7 +382,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     if(model->phase()==sb::Phase::building&&!pending){
         if(!probe){sb::BuildFrame frame;frame.world=generation;frame.tick=tick;frame.eye={eye.x,eye.y,eye.z};frame.hotbar=hotbar.copied;
             for(const auto& pos:model->inspectionPositions()){
-                auto observed=reader.getBlock(source,pos,true);
+                auto observed=worldAccess.getBlock(source,pos,true);
                 if(const auto* goal=model->recordedCell(pos);goal&&sb::sameType(*goal,observed)&&!sb::sameState(*goal,observed)){
                     auto& last=mismatchLogs[pos];const auto state=observed.stateIdentity.value_or(0);
                     if(last.first!=state||tick-last.second>=100){last={state,tick};
@@ -476,15 +476,15 @@ DWORD WINAPI start(void*){
                     titleOnlyMode=true;
                     const auto& world=root.at("native_world");
                     if(world.contains("select_hotbar")&&world.contains("get_hit_result")&&world.contains("build_block")&&world.contains("base_placement_state")&&world.contains("game_mode_vtables")){
-                        bindings.loadWorld(selected.json());titleOnlyMode=!bindings.placementReady;
+                        worldAccess.loadWorld(selected.json());titleOnlyMode=!worldAccess.placementReady();
                     }
-                }else{bindings.load(selected.json());titleOnlyMode=false;}
+                }else{worldAccess.load(selected.json());titleOnlyMode=false;}
                 return true;
             }catch(const std::exception& e){failure=e.what();return false;}
         },error))throw std::runtime_error(error);
         const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
         gameVersion=bedrock::parseNativeProfile(profile).at("target").value("version",std::string("unknown"));
-        reader.states.reserve(4096);reader.names.reserve(512);
+        worldAccess.reserveCaches(4096,512);
         if(!packetTitles.install(profile,bedrock::generated::kSymbolDatabase,receiveTitle,error))throw std::runtime_error(error);
         api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
         api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});

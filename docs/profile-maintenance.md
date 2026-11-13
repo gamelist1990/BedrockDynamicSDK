@@ -124,7 +124,7 @@ LocalPlayer取得も`NativeLocalPlayerGetter::load(profile)` / `get(client)`を�
 | Freecam | ネイティブ描画の一部（Tessellator・materialの直接呼出し）。culler・view factory・カメラ描画観測・visibility診断はNativeCameraVisualへ移行済み。InsideBlockEffect・Actor component・Player bounds追跡もSDKへ移行済み |
 | HitBox | 描画・名前キャプチャの一部。EnTT/Actorレジストリ取得（component・runtime ID・一括取得・追跡ポーズ）はNativeActorRegistryへ移行済み |
 | TabList | NativeGameAccess / ProfileManager / typed GameHooksへ移行済み。Modはコピー済み値と表示設定を扱う |
-| SpeedBuilder | タイトル受信は旧版fallbackも含めTitlePacketsへ移行済み。設置・world読取はSDK detailを使用 |
+| SpeedBuilder | タイトル受信は旧版fallbackも含めTitlePacketsへ移行済み。設置・world読取はNativeWorldAccessへ移行済み（detailのworld_native直接利用と互換ヘッダnative.hppを廃止） |
 | その他のexamples | 各native呼出しをSDK APIへ移す際に調査。UI用座標や色、入力キーはnative layoutとは区別する |
 
 これらへ新しい版別数値を足して拡張せず、触る機能単位でSDKアダプターへ移してください。
