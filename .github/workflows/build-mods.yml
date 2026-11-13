@@ -9,7 +9,7 @@ on:
         description: Minecraft version to embed
         type: choice
         options: ['1.26.52.3', '1.26.60.5']
-        default: '1.26.52.3'
+        default: '1.26.60.5'
       mods:
         description: all, or comma separated Mod names (for example CheckSig,Fake)
         type: string
@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: build-${{ github.ref }}-${{ inputs.version || '1.26.52.3' }}-${{ inputs.mods || 'all' }}
+  group: build-${{ github.ref }}-${{ inputs.version || '1.26.60.5' }}-${{ inputs.mods || 'all' }}
   cancel-in-progress: false
 jobs:
   plan:
@@ -32,7 +32,7 @@ jobs:
     steps:
       - id: plan
         env:
-          GAME_VERSION: ${{ inputs.version || '1.26.52.3' }}
+          GAME_VERSION: ${{ inputs.version || '1.26.60.5' }}
           MODS: ${{ inputs.mods || 'all' }}
         run: |
           python3 - <<'PYCODE'
