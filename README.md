@@ -8,23 +8,41 @@ Minecraft Bedrock **Windows x64** 向けのC++ SDKとMod DLLです。
 [バージョン別リリース](https://github.com/gamelist1990/BedrockDynamicSDK/releases) からModのZIPを取得します。
 同じゲームバージョンの更新は、同じリリース内のZIPを上書きします。
 
+**サポート方針：常に対象は最新版のみです。** 現在の対象は **1.26.60.5** で、全Modの対応と動作確認が完了し、正式リリースとして公開しています。
+1.26.52.3 は旧版としてリリースを残しますが、今後のビルド・更新の対象外です。
+
 | ゲーム | 対応状況 |
 | --- | --- |
-| 1.26.52.3 | 既存アダプターを新しいSDK構造でビルド |
-| 1.26.60.5 | Freecam・Zoom・Fakeの正常動作をユーザー確認済み。使用経路をverifiedへ反映 |
+| 1.26.60.5 | **全10 Mod対応・動作確認済み（正式リリース）** |
+| 1.26.52.3 | 旧版（レガシー）。新しいSDK構造でビルド済み。以後の更新対象外 |
 
 [1.26.60.5の確認済み関数・入口特定・未検証項目](data/1.26.60.5/README.md)をチェックリストで管理しています。
 
-### 今回の変更
-
-- **TabList**：Packet ID別の仮想デコーダーを共有Hookし、PlayerList・skinをSDKの専用ワーカーで解析。新経路の受信と画面表示は実機確認待ちです。
-- **SDK**：公開型・GameAccess・イベント・Actor component・Player bounds・TitlePacketsを分割。旧includeの転送ヘッダーを削除。
-- **CheckSig**：commands内のJSONでメモリ範囲を読み、実測バイト列・保護属性・読めなかった理由を入力別resultへ出力。
-- **定義**：クラス別JSONとmanifestを配布。旧windows-x64.jsonの自動生成とScanClientを廃止。
-- **未確認**：HitBoxの実表示、SpeedBuilderの新版設置処理、Freecamの未解決culler/view経路等はチェックリストを参照。
-
 **共有runtimeは4.8.0。併用するModを同じリリースへ更新し、Minecraftを完全終了して再起動してください。**
 TabListはDLLロード後にワールドへ入り直すと、初回のPlayerListを受信できます。
+
+## 1.26.60.5のMod対応状況
+
+2026-11-13〜14に、自動テスト環境（BedrockOnLinux＋DLL注入）での無人検証と、外部サーバー（The Hive）・ローカルワールドでの実地検証で確認しました。
+
+| Mod | 状況 | 確認内容 |
+| --- | --- | --- |
+| Freecam | 対応・実証済み | terrain culling／view factory の定義を解決。外部サーバーで wire PacketHook 確立、Mキーでの有効化、パケット位置固定、カメラ飛行、解除時の復元まで実証 |
+| HitBox | 対応・実証済み | ワールド内で対象取得（native capture）、NameTag描画、実名表示を確認 |
+| TabList | 対応・実証済み | ワールド内で PlayerList の受信・解析を確認（通信PlayerList経由） |
+| SpeedBuilder | 対応・実証済み | 設置ABIを解決。native builder 起動、タイトル記録、範囲キャプチャ、ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す |
+| Top | 対応・実証済み | `/top` の登録・実行、テレポート文脈の解決、安全ゲートのゲーム内表示まで実証 |
+| Zoom | 対応・実証済み | ユーザー確認済み。自動検証でもワールド内動作（FOV取得）を確認 |
+| AutoSprint | 対応・実証済み | ワールド内で動作を確認（HIDController経路） |
+| CheckSig | 対応・実証済み | 1.26.60.5の定義解決作業全体で使用し、ジョブ実行・auto-dev生成・portを確認 |
+| Fake | 対応・実証済み | ユーザー確認済み。ワールド内で `/fake` のCommandRegistry登録を確認 |
+| GlobalResourcePack | 対応・実証済み | ユーザー確認済み（v21）。自動検証でプロファイル一致・Hook導入・ワールド内有効を確認 |
+
+### 1.26.60.5対応で完了した作業
+
+- **ModのSDK移行**：Freecamのカメラvisual経路を `NativeCameraVisual`、HitBoxのEnTTレジストリ取得を `NativeActorRegistry`、SpeedBuilderのworld読取・設置を `NativeWorldAccess` へ移行。Mod側に版別数値を追加していません。
+- **未解決定義の解決**：GuiDataレイアウト（`client_gui_offset=0x668`）、CommandRegistry一式（登録・検索・任意引数。`make_parameter` は単体関数が存在しないためSDK側でインライン構築へ変更）、SpeedBuilder設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）、Freecam terrain culling／view factory（selector・spectator vtable・create_view入口）。
+- **自動検証**：HomePC上のBedrockOnLinuxで「起動→DLL注入→メニュー／ワールド内ログ判定」を無人化し、全Modを 1.26.60.5 実機相当環境で検証。Freecamの有効化は外部サーバーで移動パケットが流れる条件が必要なため、The Hiveで実証しました。
 
 ## SDKと版別定義の更新
 
@@ -60,7 +78,7 @@ PlayerList・名前/UUID・顔画像・LocalPlayer取得はSDK APIを使い、Mo
 
 [global resourcepack v21](exsample/GlobalResourcePack/README_ja.md) は1.26.60.5向けです。設定を開いたままグローバルリソースを適用し、カスタムブロックのUV・モデルの描画参照を更新します。既存v21の動作はユーザー確認済みです。まれな未読み込みに対する完了待ち・再試行の追加修正は、自動テスト済み・実機確認待ちとして区別しています。[SDK API保守ガイド](docs/resource-packs.md)も参照してください。
 
-[Fake](exsample/Fake/README_ja.md) は1.26.60.5向けの調査版です。
+[Fake](exsample/Fake/README_ja.md) は1.26.60.5向けです。1.26.60.5での動作を確認済みです。
 `/fake メッセージ` で `/me メッセージ` をOrigin=5で要求し、
 `/fake --origin 0 メッセージ` でOriginを指定できます。
 [共有CommandRequests API](docs/command-requests.md) は `.then(...)` で応答を扱います。

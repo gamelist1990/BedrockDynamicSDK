@@ -1,17 +1,23 @@
 # 1.26.60.5 · Windows x64
 
-更新日：2026-10-29。対象EXE SHA-256：
+更新日：2026-11-14。対象EXE SHA-256：
 `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`
+
+2026-11-13〜14に自動テスト環境（BedrockOnLinux＋DLL注入）と外部サーバー（The Hive）・
+ローカルワールドで全Modの動作を確認し、本バージョンを正式リリースとしました。
 
 ## 動作状況
 
-- [x] **Freecam**：正常動作のユーザー確認済み。カメラ更新・移動状態・送信PacketHook・senderの使用範囲をverifiedへ反映。
-- [x] **Zoom**：正常動作のユーザー確認済み。入力・FOVの使用経路をverifiedへ反映。
-- [x] **Fake**：正常動作のユーザー確認済み。`/fake`登録・本文取得・`/me`要求・応答処理を反映。
-- [ ] **TabList**：旧ログは受信0件・行0件。パケット別デコーダーへのHookと専用解析ワーカーを実装。実機で受信・表示を再確認する。
-- [ ] **HitBox**：起動と描画Hook到達の記録あり。実際の対象取得・box表示は未確認。
-- [ ] **SpeedBuilder**：タイトル受信経路を共通PacketApiへ移行。新しい受信経路と設置処理の実機確認が必要。
-- [ ] **Top / AutoSprint / CheckSig**：入口特定と調査記録あり。この版の全機能の正常動作確認とは分けて扱う。Topの追加修正は後回し。
+- [x] **Freecam**：正常動作のユーザー確認済み。カメラ更新・移動状態・送信PacketHook・senderの使用範囲をverifiedへ反映。terrain culling／view factory の定義も解決し ready を確認。2026-11-14に The Hive で wire PacketHook 確立、Mキーでの有効化、パケット位置固定、カメラ飛行、解除時の復元まで実証。
+- [x] **Zoom**：正常動作のユーザー確認済み。入力・FOVの使用経路をverifiedへ反映。自動検証でもワールド内動作を確認。
+- [x] **Fake**：正常動作のユーザー確認済み。`/fake`登録・本文取得・`/me`要求・応答処理を反映。ワールド内でCommandRegistry登録を確認。
+- [x] **TabList**：パケット別デコーダーへのHookと専用解析ワーカーを実装。2026-11-13に The Hive ワールド内で PlayerList の受信・解析を実証。
+- [x] **HitBox**：2026-11-13にワールド内で対象取得（native capture）・NameTag描画・実名表示を確認。
+- [x] **SpeedBuilder**：タイトル受信経路を共通PacketApiへ移行。設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）を解決。2026-11-13にローカルワールドで native builder 起動・タイトル記録・範囲キャプチャ・ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す。
+- [x] **Top**：GuiData・CommandRegistry の定義を解決。2026-11-13にローカルワールドで `/top` の登録・パース・実行、安全ゲートのゲーム内表示まで実証。
+- [x] **AutoSprint**：2026-11-13にワールド内で動作を確認（HIDController経路）。
+- [x] **CheckSig**：2026-11-13の定義解決作業全体で使用し、ジョブ実行・auto-dev生成・portの動作を確認。
+- [x] **GlobalResourcePack**：正常動作のユーザー確認済み（v21）。自動検証でプロファイル一致・Hook導入・ワールド内有効を確認。
 
 ## 関数の確認範囲
 
@@ -20,8 +26,8 @@
 
 | 範囲 | 件数 | 状態 |
 | --- | ---: | --- |
-| 実行・Mod動作の確認あり | 12 | [x] runtime_verified |
-| 入口ガードの確認まで | 28 | [x] 入口特定 / [ ] 動作全体 |
+| 実行・Mod動作の確認あり | 13 | [x] runtime_verified |
+| 入口ガードの確認まで | 27 | [x] 入口特定 / [ ] 動作全体 |
 | 関数確認待ち | 1 | [ ] 未検証 |
 
 ### 実行・Mod動作の確認あり
@@ -31,6 +37,7 @@
 - [x] `ClientInstance::releaseCursor`
 - [x] `CommandRegistry::findCommand`
 - [x] `CommandRegistry::registerCommand`
+- [x] `GuiData::displayClientMessage`：Topの安全ゲート表示で実行を確認（2026-11-13）。
 - [x] `Keyboard::feed`
 - [x] `LevelRendererPlayer::getFov`
 - [x] `MouseDevice::feed`
@@ -51,7 +58,6 @@
 - [x] `GameCore::handleMouseInput`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `GameCore::keyboardEvent`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `GameMode::buildBlock`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
-- [x] `GuiData::displayClientMessage`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `ItemStackBase::getHoverName`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `Level::getRuntimeActorList`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `MovePlayerPacket::isValid`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
@@ -70,14 +76,20 @@
 - [x] `sub_8AB690`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 - [x] `sub_B94CA0`：入口確認済み。実行・ABIの確認範囲は定義内を参照。
 
+### 解決済み（2026-11-13〜14）
+
+- [x] `layouts.GuiData`：getter走査と実メモリ指紋で `client_gui_offset=0x668`・get_gui・display_message を確定し、60.5データへ追加。
+- [x] `layouts.CommandRegistry`：登録・検索・任意引数・factory・integer記述子を確定。`make_parameter` は単体関数が存在しないためSDK側でパラメータをインライン構築する方式へ変更。
+- [x] `Camera.visual.terrain_culling`：set_culler・culler factory・spectator vtable・update を特定し、オフセット（0x9A0／0x9B0）を確定。ready を実機確認。
+- [x] `Camera.visual.create_view`：createViewRenderObject の入口を特定し、view factory ready と生成を確認。`inside_cube_render`（draw_inside_cubes）は根拠が無いため定義を省略し、このサブ機能は無効のまま（推定で埋めない）。
+- [x] `BlockSource`の設置ABI：select_hotbar・get_hit_result・buildBlock・配置状態スロットを特定。
+- [x] `PacketRead` revision2：TabListのワールド内受信実証により、新デコーダー経路での受信を確認。
+
 ### 未検証・残作業
 
-- [ ] `Level::getPlayerList`：候補。
-- [ ] `Camera.visual.terrain_culling`：selector・spectator vtable・updateの対応を未確定。Freecam全体の正常動作から推定で埋めない。
-- [ ] `Camera.visual.create_view` / `inside_cube_render`：新ビルドの一意な関数入口が未特定。
-- [ ] `PacketRead` revision2：ID別vtableでslot15/16を探索し、共通ラッパーの受信0件を修正。静的解析済み、実機での受信確認待ち。
-- [ ] `LocalPlayer`のネイティブPlayerListコンテナ・skin配置：`Level+0x4E8`は版別定義済み。TabListは通信PlayerListを使うため、このコンテナの推測値に依存しない。
-- [ ] `BlockSource`の設置・SubChunk関連：未解決のABI・ゲートは定義中の理由を確認。
+- [ ] `Level::getPlayerList`：候補のまま。TabListは通信PlayerListを使うため、このコンテナの推測値に依存しない。
+- [ ] `LocalPlayer`のネイティブPlayerListコンテナ・skin配置：`Level+0x4E8`は版別定義済み。同上、通信経路で代替済み。
+- [ ] SpeedBuilder再構築フェーズ：設置ABIとbuilder動作は確認済み。ブロック除去の検出から再構築までの一連は、実プレイフローでの確認を残す。
 
 ## 定義の場所と更新順序
 
