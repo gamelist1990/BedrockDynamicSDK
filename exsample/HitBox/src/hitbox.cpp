@@ -15,12 +15,12 @@
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <bedrock/logging/logger.hpp>
+#include <bedrock/native/actor_registry.hpp>
 #include <bedrock/native/actors.hpp>
 #include <bedrock/native/items.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/resolver.hpp>
 #include <bedrock/generated/symbols.hpp>
-#include <entt/entt.hpp>
 #if _ITERATOR_DEBUG_LEVEL != 0
 #error "HitBox must use the release STL layout: build Release with iterator debugging disabled."
 #endif
@@ -58,28 +58,6 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
-
-namespace hitbox_native {
-struct EntityId {
-    std::uint32_t rawId{};
-    [[nodiscard]] constexpr bool operator==(const EntityId&) const = default;
-    [[nodiscard]] constexpr operator std::uint32_t() const { return rawId; }
-};
-struct EntityIdTraits {
-    using value_type = EntityId;
-    using entity_type = std::uint32_t;
-    using version_type = std::uint16_t;
-    static constexpr entity_type entity_mask = 0x3FFFF;
-    static constexpr version_type version_mask = 0x3FFF;
-};
-}
-
-namespace entt {
-template<> struct entt_traits<hitbox_native::EntityId>
-    : basic_entt_traits<hitbox_native::EntityIdTraits> {
-    static constexpr std::size_t page_size = 2048;
-};
-}
 
 namespace {
 enum class Status : unsigned { NotStarted, Loading, Running, Failed, Stopped };
@@ -404,7 +382,7 @@ public:
                     std::size_t actorTypeOffset, std::uint32_t playerType) {
         itemLayout_ = std::move(items);
         actorLayout_ = std::move(actors);
-        actorTypeValueOffset_=actorTypeOffset; playerTypeId_=playerType;
+        registry_.configure(actorLayout_, actorTypeOffset, playerType);
     }
     void loadNativePlayers(std::string_view profile){localGetter_.load(profile);
         try{playerRoster_.load(profile);}catch(const std::exception&){}}
@@ -413,7 +391,7 @@ public:
     void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
     void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
     bool copyNameEntityId(void* actor,std::uint32_t& id) const noexcept {
-        return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextEntityIdOffset,id);
+        return registry_.readEntityId(actor,id);
     }
 
     bool isActorValid(void* actor) const noexcept override { return looksLikeActor(actor); }
@@ -433,16 +411,15 @@ public:
         static thread_local LocalCache cached;
         void* registry = nullptr;
         std::uint32_t entity = 0;
-        const auto context = actorLayout_.actorEntityContextOffset;
         if (cached.adapter == this && cached.client == client && cached.world == world && cached.actor && Clock::now() < cached.expires &&
-            safeRead(cached.actor, context + actorLayout_.contextRegistryOffset, registry) &&
+            (registry = registry_.registryOf(cached.actor)) &&
             registry == cached.registry &&
-            safeRead(cached.actor, context + actorLayout_.contextEntityIdOffset, entity) &&
+            registry_.readEntityId(cached.actor, entity) &&
             entity == cached.entity) return cached.actor;
         cached = {};
         void* actor = localGetter_.get(client);
-        if (actor && safeRead(actor, context + actorLayout_.contextRegistryOffset, registry) && registry &&
-            safeRead(actor, context + actorLayout_.contextEntityIdOffset, entity))
+        if (actor && (registry = registry_.registryOf(actor)) && registry &&
+            registry_.readEntityId(actor, entity))
             cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(50)};
         return actor;
     }
@@ -457,62 +434,70 @@ public:
     }
     std::optional<bedrock::ActorBounds> actorBounds(void* actor) const override {
         bedrock::ActorBounds result{};
-        return readActorBounds(actor, actorLayout_, &result) && result.valid()
+        return registry_.readBounds(actor, result) && result.valid()
             ? std::optional<bedrock::ActorBounds>{result} : std::nullopt;
     }
     std::optional<bedrock::Vec3> actorPosition(void* actor) const override {
         bedrock::Vec3 result{};
-        return readComponentVec3(actor, actorLayout_, actorLayout_.stateVectorComponentHash,
-            actorLayout_.stateVectorComponentHashAlternate, actorLayout_.statePositionOffset,
-            &result) ? std::optional<bedrock::Vec3>{result} : std::nullopt;
+        return registry_.readPosition(actor, result)
+            ? std::optional<bedrock::Vec3>{result} : std::nullopt;
     }
     std::optional<bedrock::ActorRotation> actorRotation(void* actor) const override {
         bedrock::ActorRotation result{};
-        return readActorRotation(actor, actorLayout_, &result)
+        return registry_.readRotation(actor, result)
             ? std::optional<bedrock::ActorRotation>{result} : std::nullopt;
     }
     std::optional<std::uint32_t> actorEntityId(void* actor) const override {
         std::uint32_t entityId = 0;
-        const auto offset = actorLayout_.actorEntityContextOffset +
-                            actorLayout_.contextEntityIdOffset;
-        return isActorValid(actor) && safeRead(actor, offset, entityId)
+        return isActorValid(actor) && registry_.readEntityId(actor, entityId)
             ? std::optional<std::uint32_t>{entityId} : std::nullopt;
     }
 
     std::uint64_t runtimeIdentity(void* actor) const noexcept {
-        __try {
-            void* registry=nullptr;
-            std::uint32_t entity=0;
-            const auto context=actorLayout_.actorEntityContextOffset;
-            if(!safeRead(actor,context+actorLayout_.contextRegistryOffset,registry) || !registry ||
-                !safeRead(actor,context+actorLayout_.contextEntityIdOffset,entity)) return 0;
-            using Registry=entt::basic_registry<hitbox_native::EntityId>;
-            auto* typed=static_cast<Registry*>(registry);
-            const hitbox_native::EntityId handle{entity};
-            auto* storage=typed->storage(actorLayout_.runtimeIdComponentHash);
-            std::uint64_t runtime=0;
-            if(!typed->valid(handle) || !storage || !storage->contains(handle) ||
-                !safeRead(storage->value(handle),actorLayout_.runtimeIdValueOffset,runtime)) return 0;
-            return runtime;
-        } __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return registry_.runtimeIdentity(actor);
     }
     std::uintptr_t registryIdentity(void* actor) const noexcept {
-        void* registry=nullptr;
-        return safeRead(actor,actorLayout_.actorEntityContextOffset+actorLayout_.contextRegistryOffset,registry)
-            ? reinterpret_cast<std::uintptr_t>(registry) : 0;
+        return registry_.registryIdentity(actor);
     }
     bool captureBatch(void* local, std::size_t& cursor, hitbox::CaptureSchedule& schedule, CaptureBatch& batch,
                       std::size_t& visited) const noexcept {
-        // No EnTT iterator/storage/component pointer survives the callback.
+        // No EnTT iterator/storage/component pointer survives the callback;
+        // the SDK registry walk publishes value samples and diagnostics only.
         visited = 0;
-        void* registry = nullptr;
-        const auto& layout = actorLayout_;
-        if (!safeRead(local, layout.actorEntityContextOffset + layout.contextRegistryOffset,
-                      registry) || !registry) {
-            batch.captureFailure="local_registry_unreadable";
-            return false;
-        }
-        return captureRegistryBatch(registry, local, layout, actorTypeValueOffset_, playerTypeId_, &knownPlayers_, &cursor, &schedule, &batch, &visited);
+        bedrock::ActorRegistryCaptureStats stats;
+        const auto publish = [&] {
+            batch.captureStage = stats.stage;
+            batch.captureFailure = stats.failure;
+            batch.faultCode = stats.faultCode;
+            batch.faultAddress = stats.faultAddress;
+            batch.population = stats.population;
+            batch.missingRuntime = stats.missingRuntime;
+            batch.filteredActors = stats.filteredActors;
+            batch.invalidOwner = stats.invalidOwner;
+            batch.nativePlayers = stats.nativePlayers;
+            batch.rememberedPlayers = stats.rememberedPlayers;
+            batch.missingShape = stats.missingShape;
+            batch.invalidBounds = stats.invalidBounds;
+        };
+        if (!registry_.registryPopulation(local, stats)) { publish(); return false; }
+        if (!stats.population) { cursor = 0; schedule.beginTick(0); publish(); return true; }
+        const auto count = schedule.beginTick(stats.population);
+        bedrock::ActorRegistryCapturePolicy policy;
+        policy.playersOnly = batch.config->playersOnly;
+        policy.knownPlayer = [](void* context, std::uint64_t runtimeId) noexcept {
+            return static_cast<const hitbox::PlayerIdentityCache*>(context)->known(runtimeId);
+        };
+        policy.classifyPlayer = [](void* context, std::uint64_t runtimeId) noexcept {
+            static_cast<hitbox::PlayerIdentityCache*>(context)->classify(runtimeId, true);
+        };
+        policy.context = &knownPlayers_;
+        std::size_t sampleCount = 0;
+        const bool ok = registry_.captureBatch(local, policy, count, cursor, batch.samples.data(),
+                                               batch.samples.size(), sampleCount, visited, stats);
+        batch.count = sampleCount;
+        schedule.visited(visited);
+        publish();
+        return ok;
     }
     void capturePlayerNames(void* world,std::uint64_t epoch,int minutes) const noexcept {
         if(!playerRoster_.ready())return;
@@ -538,9 +523,8 @@ public:
             if(i==poseCount_) {if(poseCount_==poseHandles_.size())continue;++poseCount_;}
             poseHandles_[i]=sample;
         }
-        void* registry=nullptr;
-        if(!safeRead(local,actorLayout_.actorEntityContextOffset+actorLayout_.contextRegistryOffset,registry)||!registry)return;
-        batch.tickPoseCount=copyTrackedPoses(registry,actorLayout_,poseHandles_.data(),&poseCount_,poseCopies_.data());
+        if(!registry_.registryOf(local))return;
+        batch.tickPoseCount=registry_.copyTrackedPoses(local,poseHandles_.data(),poseCount_,poseCopies_.data());
         latestPoses.publish(batch.camera.epoch,poseCopies_.data(),batch.tickPoseCount);
         batch.tickPoseUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-begin).count());
     }
@@ -548,225 +532,14 @@ private:
     bedrock::NativePlayerList playerRoster_;
     mutable Clock::time_point nextRoster_{};mutable std::uint64_t rosterEpoch_{};
     mutable std::array<hitbox::CopiedPlayerName,512> rosterCopies_{};
-    static std::size_t copyTrackedPoses(void* registry,const bedrock::NativeActorLayout& layout,
-        hitbox::Sample* handles,std::size_t* count,hitbox::Sample* copies) noexcept {
-        std::size_t copied=0;
-        __try {
-            using Registry=entt::basic_registry<hitbox_native::EntityId>;
-            auto* typed=static_cast<Registry*>(registry);
-            auto* runtime=typed->storage(layout.runtimeIdComponentHash);
-            auto* shape=typed->storage(layout.aabbShapeComponentHash);
-            if(!runtime || !shape)return 0;
-            const auto now=Clock::now();
-            for(std::size_t i=0;i<*count;) {
-                auto sample=handles[i];const hitbox_native::EntityId entity{sample.entityId};
-                std::uint64_t id=0;
-                if(!typed->valid(entity) || !runtime->contains(entity) ||
-                   !safeRead(runtime->value(entity),layout.runtimeIdValueOffset,id) || id!=sample.runtimeId) {
-                    handles[i]=handles[--*count];continue;
-                }
-                ++i;
-                if(!shape->contains(entity))continue;
-                auto* value=shape->value(entity);
-                if(layout.aabbMaximumOffset==layout.aabbMinimumOffset+sizeof(bedrock::Vec3)) {
-                    if(!safeRead(value,layout.aabbMinimumOffset,sample.bounds))continue;
-                } else if(!safeRead(value,layout.aabbMinimumOffset,sample.bounds.minimum)||
-                          !safeRead(value,layout.aabbMaximumOffset,sample.bounds.maximum))continue;
-                const auto& b=sample.bounds;
-                if(!b.valid() || b.maximum.x<=b.minimum.x || b.maximum.y<=b.minimum.y || b.maximum.z<=b.minimum.z)continue;
-                sample.seenAt=now;handles[i-1]=sample;copies[copied++]=sample;
-            }
-        } __except(EXCEPTION_EXECUTE_HANDLER) {}
-        return copied;
-    }
     mutable std::uint64_t poseEpoch_{};
     bedrock::NativeLocalPlayerGetter localGetter_;
     mutable std::size_t poseCount_{};
     mutable std::array<hitbox::Sample,hitbox::TrackingBudget::maximumActors> poseHandles_{},poseCopies_{};
-    static bool captureRegistryBatch(void* registry, void* local, const bedrock::NativeActorLayout& layout,
-        std::size_t typeOffset, std::uint32_t playerType, hitbox::PlayerIdentityCache* identities, std::size_t* cursor, hitbox::CaptureSchedule* schedule, CaptureBatch* batch, std::size_t* visited) noexcept {
-        __try {
-            using Registry = entt::basic_registry<hitbox_native::EntityId>;
-            auto* typed = static_cast<Registry*>(registry);
-            batch->captureStage="lookup_actor_owner_storage";
-            auto* owner = typed->storage(layout.actorOwnerComponentHash);
-            if (!owner) { batch->captureFailure="actor_owner_storage_missing"; return false; }
-            batch->captureStage="lookup_runtime_id_storage";
-            auto* runtime = typed->storage(layout.runtimeIdComponentHash);
-            auto* unique = typed->storage(layout.actorUniqueIdComponentHash);
-            if (!runtime) { batch->captureFailure="runtime_id_storage_missing"; return false; }
-            batch->captureStage="lookup_aabb_storage";
-            auto* shape = typed->storage(layout.aabbShapeComponentHash);
-            batch->captureStage="lookup_actor_type_storage";
-            auto* actorType = typed->storage(layout.actorTypeComponentHash);
-            auto* candidates = owner;
-            // A fixed source keeps the incremental cursor stable when pool sizes change.
-            batch->captureStage="owner_pool_size";
-            batch->population = candidates->size();
-            if (batch->population > 16384) {
-                batch->captureFailure="owner_pool_size_out_of_range"; return false;
-            }
-            if (!batch->population) { *cursor = 0; schedule->beginTick(0); return true; }
-            const auto begin = Clock::now();
-            const auto count = schedule->beginTick(batch->population);
-            for (std::size_t n = 0; n < count; ++n) {
-                // Cooperative 250us budget; a single native read cannot be preempted.
-                if (n && Clock::now() - begin >= std::chrono::microseconds(250)) break;
-                if (*cursor >= batch->population) *cursor = 0;
-                batch->captureStage="owner_pool_entry";
-                const auto entity = candidates->data()[(*cursor)++];
-                ++*visited;
-                schedule->visited(1);
-                batch->captureStage="validate_registry_entity";
-                if (!typed->valid(entity) || !owner->contains(entity)) continue;
-                batch->captureStage="read_runtime_id_component";
-                std::uint64_t runtimeId=0;
-                if (!runtime->contains(entity) ||
-                    !safeRead(runtime->value(entity), layout.runtimeIdValueOffset, runtimeId) || !runtimeId) {
-                    ++batch->missingRuntime; continue;
-                }
-                batch->captureStage="read_actor_type_component";
-                std::uint32_t type=0;
-                const bool nativePlayer=actorType && actorType->contains(entity) &&
-                    safeRead(actorType->value(entity),typeOffset,type) && type==playerType;
-                const bool isPlayer=nativePlayer || identities->known(runtimeId);
-                if(batch->config->playersOnly && !isPlayer) { ++batch->filteredActors; continue; }
-                // Validate the owner against the exact registry/entity once, rather
-                // than validating the Actor vtable for every property wrapper.
-                batch->captureStage="read_actor_owner_component";
-                void* actor = nullptr;
-                if (!safeRead(owner->value(entity), layout.actorOwnerPointerOffset, actor) || !actor) {
-                    ++batch->invalidOwner; continue;
-                }
-                // Exclude self before AABB/name reads, tracking and retention.
-                if(actor==local) continue;
-                batch->captureStage="validate_actor_context";
-                void* actorRegistry = nullptr;
-                std::uint32_t actorEntity = 0;
-                const auto context = layout.actorEntityContextOffset;
-                if (!safeRead(actor, context + layout.contextRegistryOffset, actorRegistry) ||
-                    actorRegistry != registry ||
-                    !safeRead(actor, context + layout.contextEntityIdOffset, actorEntity) ||
-                    actorEntity != static_cast<std::uint32_t>(entity)) {
-                    ++batch->invalidOwner; continue;
-                }
-                if (nativePlayer) {
-                    identities->classify(runtimeId,true);
-                    ++batch->nativePlayers;
-                }
-                else if (isPlayer) ++batch->rememberedPlayers;
-                batch->captureStage="read_aabb_component";
-                if (!shape || !shape->contains(entity)) { ++batch->missingShape; continue; }
-                auto& sample = batch->samples[batch->count];
-                sample.isPlayer=isPlayer;
-                sample.runtimeId=runtimeId;
-                sample.actorKey=reinterpret_cast<std::uintptr_t>(actor);
-                sample.entityId=static_cast<std::uint32_t>(entity);
-                sample.uniqueId=0;
-                if(unique && unique->contains(entity))
-                    safeRead(unique->value(entity),layout.actorUniqueIdValueOffset,sample.uniqueId);
-                auto* aabb = shape->value(entity);
-                if (layout.aabbMaximumOffset == layout.aabbMinimumOffset + sizeof(bedrock::Vec3)) {
-                    if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds)) {
-                        ++batch->invalidBounds; continue;
-                    }
-                } else if (!safeRead(aabb, layout.aabbMinimumOffset, sample.bounds.minimum) ||
-                           !safeRead(aabb, layout.aabbMaximumOffset, sample.bounds.maximum)) {
-                    ++batch->invalidBounds; continue;
-                }
-                if (!sample.bounds.valid()) { ++batch->invalidBounds; continue; }
-                const auto& b = sample.bounds;
-                if (b.maximum.x - b.minimum.x <= 0 ||
-                    b.maximum.y - b.minimum.y <= 0 ||
-                    b.maximum.z - b.minimum.z <= 0) { ++batch->invalidBounds; continue; }
-                sample.seenAt = Clock::now();
-                ++batch->count;
-            }
-            batch->captureStage="complete";
-            return true;
-        } __except(captureFault(GetExceptionInformation(),batch)) {
-            return batch->count != 0; // Publish any rows copied before the failed read.
-        }
-    }
-    static int captureFault(EXCEPTION_POINTERS* exception,CaptureBatch* batch) noexcept {
-        batch->captureFailure="guarded_native_exception";
-        if (exception && exception->ExceptionRecord) {
-            batch->faultCode=exception->ExceptionRecord->ExceptionCode;
-            batch->faultAddress=reinterpret_cast<std::uintptr_t>(exception->ExceptionRecord->ExceptionAddress);
-        }
-        return EXCEPTION_EXECUTE_HANDLER;
-    }
-
-    static void* callLocalPlayer(void* target, void* client) noexcept {
-        using Function = void*(__fastcall*)(void*);
-        __try {
-            auto* player = reinterpret_cast<Function>(target)(client);
-            return looksLikeActor(player) ? player : nullptr;
-        } __except(EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
-    }
-    void* registryFor(void* actor) const noexcept {
-        void* registry = nullptr;
-        const auto offset = actorLayout_.actorEntityContextOffset +
-                            actorLayout_.contextRegistryOffset;
-        if (!isActorValid(actor) || !safeRead(actor, offset, registry)) return nullptr;
-        return registry;
-    }
-    static void* component(void* actor, const bedrock::NativeActorLayout& layout,
-        std::uint32_t hash, std::uint32_t alternate) noexcept {
-        void* registry = nullptr;
-        std::uint32_t rawId = 0;
-        const auto registryOffset = layout.actorEntityContextOffset + layout.contextRegistryOffset;
-        const auto entityIdOffset = layout.actorEntityContextOffset + layout.contextEntityIdOffset;
-        if (!actor || !safeRead(actor, registryOffset, registry) || !registry ||
-            !safeRead(actor, entityIdOffset, rawId)) return nullptr;
-        __try {
-            using Registry = entt::basic_registry<hitbox_native::EntityId>;
-            auto* typed = static_cast<Registry*>(registry);
-            auto* storage = typed->storage(hash);
-            hitbox_native::EntityId entity{rawId};
-            if ((!storage || !storage->contains(entity)) && alternate) {
-                storage = typed->storage(alternate);
-            }
-            if (!storage || !storage->contains(entity)) return nullptr;
-            return storage->value(entity);
-        } __except(EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
-    }
-    static bool readActorBounds(void* actor, const bedrock::NativeActorLayout& layout,
-                                bedrock::ActorBounds* output) noexcept {
-        if (!output) return false;
-        void* shape = component(actor, layout, layout.aabbShapeComponentHash,
-                                layout.aabbShapeComponentHashAlternate);
-        if (!shape || !safeRead(shape, layout.aabbMinimumOffset, output->minimum) ||
-            !safeRead(shape, layout.aabbMaximumOffset, output->maximum) || !output->valid())
-            return false;
-        const float width = output->maximum.x - output->minimum.x;
-        const float height = output->maximum.y - output->minimum.y;
-        const float depth = output->maximum.z - output->minimum.z;
-        return width > 0.0f && width <= 64.0f && height > 0.0f && height <= 64.0f &&
-               depth > 0.0f && depth <= 64.0f;
-    }
-    static bool readComponentVec3(void* actor, const bedrock::NativeActorLayout& layout,
-        std::uint32_t hash, std::uint32_t alternate, std::size_t offset,
-        bedrock::Vec3* output) noexcept {
-        if (!output) return false;
-        void* value = component(actor, layout, hash, alternate);
-        return value && safeRead(value, offset, *output) &&
-               std::isfinite(output->x) && std::isfinite(output->y) && std::isfinite(output->z);
-    }
-    static bool readActorRotation(void* actor, const bedrock::NativeActorLayout& layout,
-                                  bedrock::ActorRotation* output) noexcept {
-        if (!output) return false;
-        void* rotation = component(actor, layout, layout.actorRotationComponentHash,
-                                   layout.actorRotationComponentHashAlternate);
-        return rotation && safeRead(rotation, layout.rotationPitchOffset, output->pitch) &&
-               safeRead(rotation, layout.rotationYawOffset, output->yaw) &&
-               std::isfinite(output->pitch) && std::isfinite(output->yaw);
-    }
 
     bedrock::NativeItemLayout itemLayout_{};
     bedrock::NativeActorLayout actorLayout_{};
-    std::size_t actorTypeValueOffset_{};
-    std::uint32_t playerTypeId_{};
+    bedrock::NativeActorRegistry registry_;
     mutable hitbox::PlayerIdentityCache knownPlayers_;
     std::atomic<void*> client_{};
     std::atomic<void*> world_{};

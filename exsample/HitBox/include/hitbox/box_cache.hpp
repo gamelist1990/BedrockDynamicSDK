@@ -1,4 +1,5 @@
 #pragma once
+#include <bedrock/api/actor_samples.hpp>
 #include <bedrock/api/game_api.hpp>
 #include <algorithm>
 #include <array>
@@ -13,15 +14,9 @@
 
 namespace hitbox {
 using Clock = std::chrono::steady_clock;
-struct Sample {
-    std::uint64_t runtimeId{};
-    bedrock::ActorBounds bounds{};
-    Clock::time_point seenAt{};
-    bool isPlayer{};
-    std::uintptr_t actorKey{};
-    std::uint32_t entityId{};
-    std::uint64_t uniqueId{};
-};
+// The capture sample itself is the SDK's value type; HitBox adds policy
+// (caching, blending, retention) around it, never native pointers.
+using Sample = bedrock::ActorRegistrySample;
 struct BoxRecord : Sample {
     std::array<bedrock::Vec3, 8> corners{};
     bedrock::ActorBounds blendFrom{};
