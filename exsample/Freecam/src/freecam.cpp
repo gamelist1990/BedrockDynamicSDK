@@ -15,6 +15,7 @@
 #include <bedrock/native/inside_block_effect.hpp>
 #include <bedrock/runtime/module_identity.hpp>
 #include <bedrock/native/camera.hpp>
+#include <bedrock/native/camera_visual.hpp>
 #include <bedrock/native/game_type.hpp>
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/generated/symbols.hpp>
@@ -69,61 +70,10 @@ std::uint32_t hurtHash{};
 BDS_HookToken renderToken{};
 bedrock::NativeBrightness brightness;
 bedrock::NativeCamera nativeCamera;
+bedrock::NativeCameraVisual cameraVisual;
 bedrock::NativeGameType gameTypes;
-using CameraRenderFn = void(__fastcall *)(void *, void *, void *, void *);
-CameraRenderFn originalCameraRender{};
-BDS_HookToken cameraRenderToken{};
-std::atomic<bool> cameraRenderReady{};
-using CreateViewFn = void *(__fastcall *)(void *, void *, void *, unsigned char);
-CreateViewFn originalCreateView{};
-BDS_HookToken createViewToken{};
-std::atomic<bool> createViewReady{};
 bedrock::NativeInsideBlockEffect insideBlockEffect;
-std::atomic<unsigned> cameraRenderCalls{}, viewCreated{}, viewChanged{}, viewWriteFailed{};
-
-// All culler ownership bookkeeping below belongs to the native render callback.
-// Workers only read atomic diagnostics; they never access camera/culler pointers.
-using SetCullerFn = void(__fastcall *)(void *, unsigned char);
-SetCullerFn setCuller{}, originalSetCuller{};
-BDS_HookToken cullerToken{};
-std::size_t cameraCullerOffset{}, cameraCullerTypeOffset{};
-std::uintptr_t spectatorCullerVtable{};
-std::atomic<bool> terrainReady{};
-std::atomic<unsigned> terrainCalls{}, terrainChanges{}, terrainRestores{}, terrainFaults{};
-std::atomic<int> terrainObservedMode{-1};
-std::atomic<bool> terrainPending{};
-struct CullerLease {
-    void *camera{};
-    std::uint64_t epoch{};
-    unsigned char previous{};
-    bool owned{};
-    std::uint64_t nativeModeContext{};
-};
-CullerLease cullerLease;
-std::mutex terrainLeaseMutex;
-std::atomic<std::uint64_t> nativeModeContext{};
-std::atomic<bool> terrainLeaseActive{};
-constexpr unsigned char spectatorCullerMode = 5;
-std::atomic<void *> primaryCamera{};
-std::atomic<std::uint64_t> primaryCameraEpoch{}, flightSerial{};
-std::atomic<unsigned> selectorRequests{}, selectorRewrites{};
-std::atomic<std::uintptr_t> selectorCaller{};
-std::atomic<bool> terrainRejected{};
-std::uint64_t budgetFlight{};
-unsigned budgetSwitches{};
-void resetCullerBudgetLocked() {
-    const auto serial = flightSerial.load();
-    if (serial != budgetFlight) {
-        budgetFlight = serial;
-        budgetSwitches = 0;
-        terrainRejected.store(false);
-    }
-}
-void recordCullerSwitchLocked() {
-    terrainChanges.fetch_add(1, std::memory_order_relaxed);
-    if (++budgetSwitches >= 8)
-        terrainRejected.store(true);
-}
+std::atomic<std::uint64_t> flightSerial{};
 
 std::atomic<bool> gammaReady{};
 
@@ -176,261 +126,9 @@ template <class T> bool write(void *p, std::size_t offset, const T &value) noexc
         return false;
     }
 }
-// Opt-in bounded observations. Native reads remain on the owning callbacks;
-// the worker serializes only scalar copies. These fields do not alter rendering.
-struct VisibilitySample {
-    std::uint64_t epoch{}, milliseconds{};
-    int gameType = -1;
-    bool flying{}, valid{};
-    Vec camera654{}, origin{};
-    std::array<unsigned char, 7> fogFlags{};
-    unsigned char cullerType{};
-    std::uintptr_t cullerVtable{};
-    bool viewValid{};
-    std::array<unsigned char, 13> viewFlags{};
-};
-std::mutex visibilityMutex;
-VisibilitySample visibilityMailbox{};
-bool visibilityReady{};
-std::atomic<int> diagnosticGameType{-1};
-std::atomic<std::uint64_t> diagnosticGameEpoch{}, diagnosticGameTime{};
-void captureVisibility(void *renderer, void *view = nullptr, bool directCamera = false) {
-    if (!config.load()->visibilityDiagnostics || stop.load())
-        return;
-    static thread_local Clock::time_point next{};
-    const auto now = Clock::now();
-    if (now < next)
-        return;
-    next = now + std::chrono::milliseconds(500);
-    VisibilitySample s;
-    s.epoch = epoch.load();
-    s.milliseconds =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    s.flying = active.load();
-    if (diagnosticGameEpoch.load() == s.epoch && s.milliseconds - diagnosticGameTime.load() <= 1500)
-        s.gameType = diagnosticGameType.load();
-    void *camera = directCamera ? renderer : nullptr;
-    void *culler{};
-    std::uintptr_t vt{};
-    if (!directCamera && !read(renderer, render.player, camera))
-        return;
-    s.valid = camera && read(camera, 0x654, s.camera654) && finite(s.camera654) &&
-              read(camera, render.origin, s.origin) && finite(s.origin) &&
-              read(camera, 0x970, s.fogFlags) && read(camera, 0x9b8, s.cullerType) &&
-              s.cullerType <= 5 && read(camera, 0x9a8, culler) && read(culler, 0, vt);
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    if (vt >= base && vt - base < 0x20000000)
-        s.cullerVtable = vt - base;
-    s.viewValid =
-        view && read(view, 0x7c, s.viewFlags) &&
-        std::all_of(s.viewFlags.begin(), s.viewFlags.end(), [](unsigned char b) { return b <= 1; });
-    std::unique_lock lock(visibilityMutex, std::try_to_lock);
-    if (lock) {
-        visibilityMailbox = s;
-        visibilityReady = true;
-    }
-}
-// A value-returning native factory owns this output until it returns to its
-// caller. Change only its newly constructed bool, never an already shared view.
-void *__fastcall createViewDetour(void *camera, void *output, void *screen,
-                                  unsigned char subClient) {
-    const auto world = epoch.load();
-    void *result = originalCreateView(camera, output, screen, subClient);
-    if (camera != primaryCamera.load() || primaryCameraEpoch.load() != world ||
-        epoch.load() != world)
-        return result;
-    viewCreated.fetch_add(1, std::memory_order_relaxed);
-    if (!active.load() || stop.load() || !config.load()->spectatorMode)
-        return result;
-    std::array<unsigned char, 13> flags{};
-    if (result != output || !read(output, 0x7c, flags) ||
-        !std::all_of(flags.begin(), flags.end(), [](unsigned char b) { return b <= 1; })) {
-        viewWriteFailed.fetch_add(1, std::memory_order_relaxed);
-        return result;
-    }
-    if (flags[4]) {
-        const unsigned char disabled = 0;
-        if (write(output, 0x80, disabled))
-            viewChanged.fetch_add(1, std::memory_order_relaxed);
-        else
-            viewWriteFailed.fetch_add(1, std::memory_order_relaxed);
-    }
-    return result;
-}
-// Read-only observation after the factory, at the native camera consumer.
-void __fastcall cameraRenderDetour(void *camera, void *context, void *view, void *instance) {
-    if (camera == primaryCamera.load() && primaryCameraEpoch.load() == epoch.load()) {
-        cameraRenderCalls.fetch_add(1, std::memory_order_relaxed);
-        captureVisibility(camera, view, true);
-    }
-    originalCameraRender(camera, context, view, instance);
-}
 bool insideBlockEffectPolicy() noexcept {
     return active.load() && !stop.load() && gameplay.load() &&
-           primaryCameraEpoch.load() == epoch.load() && config.load()->spectatorMode;
-}
-// Intercept the native selector BEFORE its update. Repeated native requests
-// then see an already selected mode5 and do not rebuild the async culler each frame.
-void __fastcall cullerDetour(void *camera, unsigned char requested) {
-    const auto world = epoch.load();
-    const auto context = nativeModeContext.load();
-    bool rewrite = terrainReady.load() && requested == 3 && camera == primaryCamera.load() &&
-                   primaryCameraEpoch.load() == world && (context >> 8) == world &&
-                   (context & 0xff) != 7 && active.load() && !stop.load() &&
-                   config.load()->spectatorMode;
-    if (!rewrite) {
-        originalSetCuller(camera, requested);
-        return;
-    }
-    selectorRequests.fetch_add(1, std::memory_order_relaxed);
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-    if (caller >= base && caller - base < 0x20000000)
-        selectorCaller.store(caller - base);
-    std::unique_lock guard(terrainLeaseMutex, std::try_to_lock);
-    if (!guard) {
-        originalSetCuller(camera, requested);
-        return;
-    }
-    resetCullerBudgetLocked();
-    if (terrainRejected.load()) {
-        originalSetCuller(camera, requested);
-        return;
-    }
-    unsigned char before{};
-    if (!read(camera, cameraCullerTypeOffset, before) || before > 5) {
-        originalSetCuller(camera, requested);
-        return;
-    }
-    if (cullerLease.owned && (cullerLease.camera != camera || cullerLease.epoch != world ||
-                              cullerLease.nativeModeContext != context))
-        cullerLease = {};
-    if (!cullerLease.owned) {
-        cullerLease = {camera, world, requested, true, context};
-        terrainLeaseActive.store(true);
-    }
-    selectorRewrites.fetch_add(1, std::memory_order_relaxed);
-    originalSetCuller(camera, spectatorCullerMode);
-    unsigned char after{};
-    if (read(camera, cameraCullerTypeOffset, after)) {
-        terrainObservedMode.store(after);
-        terrainPending.store(after != spectatorCullerMode);
-        if (before != spectatorCullerMode && after == spectatorCullerMode)
-            recordCullerSwitchLocked();
-    }
-}
-bool invokeCuller(void *camera, unsigned char mode) noexcept {
-    if (!setCuller)
-        return false;
-    __try {
-        setCuller(camera, mode);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-void updateTerrainCulling(void *renderer) {
-    if (!terrainReady.load(std::memory_order_relaxed))
-        return;
-    std::unique_lock leaseLock(terrainLeaseMutex, std::try_to_lock);
-    if (!leaseLock)
-        return;
-    resetCullerBudgetLocked();
-    const auto world = epoch.load();
-    void *camera{};
-    unsigned char mode{};
-    if (cullerLease.epoch != world) {
-        cullerLease = {};
-        terrainLeaseActive.store(false);
-    }
-    if (!read(renderer, render.player, camera) || !camera ||
-        !read(camera, cameraCullerTypeOffset, mode) || mode > 5)
-        return;
-    if (cullerLease.camera && cullerLease.camera != camera) {
-        cullerLease = {};
-        terrainLeaseActive.store(false);
-    }
-    const auto nativeContext = nativeModeContext.load();
-    // A native game-mode change surrenders ownership to the engine. In
-    // particular, never restore mode3 over a newly entered real spectator.
-    if (cullerLease.owned && nativeContext && nativeContext != cullerLease.nativeModeContext) {
-        cullerLease = {};
-        terrainLeaseActive.store(false);
-    }
-    terrainObservedMode.store(mode, std::memory_order_relaxed);
-    const bool want = active.load(std::memory_order_relaxed) &&
-                      !stop.load(std::memory_order_relaxed) && config.load()->spectatorMode &&
-                      !terrainRejected.load();
-    // Native setter checks that its asynchronous culler is idle, constructs
-    // the replacement and resets visibility caches. A busy culler is retried
-    // on a later frame; no spin/wait and no manual native shared_ptr swap.
-    if (want) {
-        if (mode != 3 && mode != spectatorCullerMode) {
-            terrainPending.store(true);
-            return;
-        }
-        if (mode == spectatorCullerMode) {
-            void *culler{};
-            std::uintptr_t table{};
-            const bool expected = read(camera, cameraCullerOffset, culler) &&
-                                  read(culler, 0, table) && table == spectatorCullerVtable;
-            terrainPending.store(!expected, std::memory_order_relaxed);
-            return;
-        }
-        if ((nativeContext >> 8) != world) {
-            terrainPending.store(true);
-            return;
-        }
-        if (!cullerLease.owned) {
-            cullerLease = {camera, world, mode, true, nativeContext};
-            terrainLeaseActive.store(true);
-        }
-        if (epoch.load() != world)
-            return;
-        terrainCalls.fetch_add(1, std::memory_order_relaxed);
-        if (!invokeCuller(camera, spectatorCullerMode)) {
-            terrainFaults.fetch_add(1);
-            terrainReady.store(false);
-            return;
-        }
-        unsigned char after{};
-        if (read(camera, cameraCullerTypeOffset, after)) {
-            terrainObservedMode.store(after, std::memory_order_relaxed);
-            if (after == spectatorCullerMode)
-                recordCullerSwitchLocked();
-            terrainPending.store(after != spectatorCullerMode, std::memory_order_relaxed);
-        }
-    } else if (cullerLease.owned) {
-        // A different mode means another native caller has already changed it;
-        // do not overwrite that caller's choice with a stale saved value.
-        if (mode != spectatorCullerMode) {
-            if (mode == cullerLease.previous)
-                terrainRestores.fetch_add(1);
-            cullerLease = {};
-            terrainLeaseActive.store(false);
-            terrainPending.store(false);
-            return;
-        }
-        if (epoch.load() != world)
-            return;
-        if (!invokeCuller(camera, cullerLease.previous)) {
-            terrainFaults.fetch_add(1);
-            terrainReady.store(false);
-            return;
-        }
-        unsigned char after{};
-        if (read(camera, cameraCullerTypeOffset, after)) {
-            terrainObservedMode.store(after, std::memory_order_relaxed);
-            if (after == cullerLease.previous) {
-                cullerLease = {};
-                terrainLeaseActive.store(false);
-                terrainRestores.fetch_add(1);
-                terrainPending.store(false);
-            } else
-                terrainPending.store(true);
-        }
-    } else
-        terrainPending.store(false, std::memory_order_relaxed);
+           cameraVisual.primaryCameraEpoch() == epoch.load() && config.load()->spectatorMode;
 }
 void disable(unsigned reason = Disabled) {
     brightness.reset();
@@ -774,10 +472,10 @@ void borionTick(const bedrock::LevelTickEvent &) {
     void *player = cameraScope ? nativeCamera.localActor() : nullptr;
     local.store(player);
     auto typeScope = gameTypes.tick(client.load(), bedrock::WorldEpoch{epoch.load()});
-    if ((c->spectatorMode || terrainLeaseActive.load()) && gameplay.load() && player) {
+    if ((c->spectatorMode || cameraVisual.leaseActive()) && gameplay.load() && player) {
         if (const auto type = gameTypes.gameType())
-            nativeModeContext.store((epoch.load() << 8) |
-                                    static_cast<std::uint64_t>(static_cast<int>(*type) + 1));
+            cameraVisual.noteNativeModeContext(
+                (epoch.load() << 8) | static_cast<std::uint64_t>(static_cast<int>(*type) + 1));
     }
     if (c->visibilityDiagnostics && !stop.load()) {
         static Clock::time_point next{};
@@ -789,11 +487,11 @@ void borionTick(const bedrock::LevelTickEvent &) {
                 if (const auto current = gameTypes.gameType())
                     type = static_cast<int>(*current);
             }
-            diagnosticGameType.store(type);
-            diagnosticGameTime.store(
-                std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
-                    .count());
-            diagnosticGameEpoch.store(epoch.load());
+            cameraVisual.setDiagnosticGameType(
+                type, epoch.load(),
+                static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
+                        .count()));
         }
     }
     if (borion.saved &&
@@ -1002,12 +700,11 @@ void BDS_HOOK_CALL renderSubscriber(void *, void *raw, BDS_HookNext next, void *
     auto &args = *static_cast<BDS_RenderLevelArgs *>(raw);
     void *camera{};
     if (read(args.renderer, render.player, camera) && camera) {
-        primaryCamera.store(camera);
-        primaryCameraEpoch.store(epoch.load());
+        cameraVisual.notePrimaryCamera(camera);
     }
-    updateTerrainCulling(args.renderer);
-    if (!cameraRenderReady.load())
-        captureVisibility(args.renderer);
+    cameraVisual.updateTerrain(args.renderer);
+    if (!cameraVisual.observeReady())
+        cameraVisual.captureFromRenderer(args.renderer);
     next(frame, raw);
     if (!active.load() || stop.load() || !config.load()->playerHitboxes)
         return;
@@ -1167,15 +864,11 @@ void worker(const std::filesystem::path &path) {
                                                              {3, 7}}};
     while (!stop.load()) {
         const auto now = Clock::now();
-        VisibilitySample sample;
+        bedrock::CameraVisibilitySample sample;
         bool observed = false;
-        {
-            std::unique_lock lock(visibilityMutex, std::try_to_lock);
-            if (lock && visibilityReady) {
-                sample = visibilityMailbox;
-                visibilityReady = false;
-                observed = true;
-            }
+        if (const auto taken = cameraVisual.takeSample()) {
+            sample = *taken;
+            observed = true;
         }
         if (config.load()->visibilityDiagnostics && observed) {
             if (!observations.is_open())
@@ -1191,16 +884,16 @@ void worker(const std::filesystem::path &path) {
                                                {"freecam", sample.flying},
                                                {"actor_game_type", sample.gameType},
                                                {"valid_camera_read", sample.valid},
-                                               {"candidate_camera_654", vector(sample.camera654)},
+                                               {"candidate_camera_654", vector(sample.cameraPosition)},
                                                {"render_origin", vector(sample.origin)},
-                                               {"raw_camera_970_976", sample.fogFlags},
+                                               {"raw_camera_970_976", sample.rawFlags},
                                                {"culler_type", sample.cullerType},
                                                {"culler_vtable_rva", sample.cullerVtable},
                                                {"camera_view_flags_valid", sample.viewValid},
                                                {"raw_view_flags_7c_88", sample.viewFlags},
                                                {"draw_inside_cubes",
-                                                sample.viewValid
-                                                    ? nlohmann::json(bool(sample.viewFlags[4]))
+                                                sample.drawInsideCubes
+                                                    ? nlohmann::json(*sample.drawInsideCubes)
                                                     : nlohmann::json(nullptr)}}
                                     .dump()
                              << '\n';
@@ -1258,27 +951,29 @@ void worker(const std::filesystem::path &path) {
         }
         if (!active.load())
             mesh.store(nullptr);
+        const auto visualPeek = cameraVisual.statistics();
         if ((active.load() || interactionPackets.load() || blockedPackets.load() ||
-             terrainPending.load() || terrainRestores.load() || terrainFaults.load()) &&
+             visualPeek.terrainPending || visualPeek.terrainRestores || visualPeek.terrainFaults) &&
             now >= nextPacketLog) {
             nextPacketLog = now + std::chrono::seconds(5);
-            log("Freecam spectator culler: ready=" + std::to_string(terrainReady.load()) +
-                " mode=" + std::to_string(terrainObservedMode.load()) +
-                " pending=" + std::to_string(terrainPending.load()) +
-                " calls=" + std::to_string(terrainCalls.exchange(0)) +
-                " changed=" + std::to_string(terrainChanges.exchange(0)) +
-                " restored=" + std::to_string(terrainRestores.exchange(0)) +
-                " faults=" + std::to_string(terrainFaults.exchange(0)) +
-                " native_requests=" + std::to_string(selectorRequests.exchange(0)) +
-                " rewritten=" + std::to_string(selectorRewrites.exchange(0)) +
-                " caller_rva=" + std::to_string(selectorCaller.load()) +
-                " churn_guard=" + std::to_string(terrainRejected.load()) +
+            const auto visualStats = cameraVisual.takeStatistics();
+            log("Freecam spectator culler: ready=" + std::to_string(cameraVisual.terrainReady()) +
+                " mode=" + std::to_string(visualStats.terrainObservedMode) +
+                " pending=" + std::to_string(visualStats.terrainPending) +
+                " calls=" + std::to_string(visualStats.terrainCalls) +
+                " changed=" + std::to_string(visualStats.terrainChanges) +
+                " restored=" + std::to_string(visualStats.terrainRestores) +
+                " faults=" + std::to_string(visualStats.terrainFaults) +
+                " native_requests=" + std::to_string(visualStats.selectorRequests) +
+                " rewritten=" + std::to_string(visualStats.selectorRewrites) +
+                " caller_rva=" + std::to_string(visualStats.selectorCaller) +
+                " churn_guard=" + std::to_string(visualStats.terrainRejected) +
                 " [native selector mode5; underground view needs live confirmation]");
-            log("Freecam view factory: ready=" + std::to_string(createViewReady.load()) +
-                " created=" + std::to_string(viewCreated.exchange(0)) +
-                " changed=" + std::to_string(viewChanged.exchange(0)) +
-                " failed=" + std::to_string(viewWriteFailed.exchange(0)) +
-                " camera_calls=" + std::to_string(cameraRenderCalls.exchange(0)) +
+            log("Freecam view factory: ready=" + std::to_string(cameraVisual.createViewReady()) +
+                " created=" + std::to_string(visualStats.viewCreated) +
+                " changed=" + std::to_string(visualStats.viewChanged) +
+                " failed=" + std::to_string(visualStats.viewWriteFailed) +
+                " camera_calls=" + std::to_string(visualStats.cameraRenderCalls) +
                 " [fresh output only; 5s; visual_revision=" + std::to_string(visualRevision) + "]");
             const auto effectStats = insideBlockEffect.takeStatistics();
             log("Freecam RenderDragon inside effect: ready=" +
@@ -1300,7 +995,7 @@ void worker(const std::filesystem::path &path) {
                 "interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c = config.load();
             log(std::string("Freecam view: spectator_mode=") + (c->spectatorMode ? "on" : "off") +
-                " spectator_culler=" + (terrainReady.load() ? "mode5 ready" : "unavailable") +
+                " spectator_culler=" + (cameraVisual.terrainReady() ? "mode5 ready" : "unavailable") +
                 " visual_revision=" + std::to_string(visualRevision) + " full_bright=" +
                 (c->fullBright ? (gammaReady.load() ? "gamma 25" : "unavailable") : "off"));
         }
@@ -1434,68 +1129,34 @@ DWORD WINAPI start(void *) {
         } catch (const std::exception &e) {
             log(std::string("Freecam full brightness unavailable: ") + e.what());
         }
-        try {
-            if (f.at("visual").value("spectator_mode_behavior", std::string{}) !=
-                "native_spectator_culler_mode5")
-                throw std::runtime_error(
-                    "spectator terrain profile is unresolved; basic Freecam remains available");
-            if (!renderReady)
-                throw std::runtime_error("exact-build renderer layout unavailable");
-            const auto &culling = f.at("visual").at("terrain_culling");
-            if (culling.at("schema") != 1 ||
-                number(culling.at("spectator_mode")) != spectatorCullerMode)
-                throw std::runtime_error("unsupported terrain culler schema");
-            setCuller = reinterpret_cast<SetCullerFn>(checkedFunction(culling.at("set_culler")));
-            checkedFunction(culling.at("factory_check"));
-            const auto updateSpectator = checkedFunction(culling.at("spectator_update_check"));
-            cameraCullerOffset = number(culling.at("camera_culler_offset"));
-            cameraCullerTypeOffset = number(culling.at("camera_culler_type_offset"));
-            spectatorCullerVtable = base + number(culling.at("spectator_vtable_rva"));
-            void *updateEntry{};
-            if (cameraCullerOffset != 0x9a8 || cameraCullerTypeOffset != 0x9b8 ||
-                !read(reinterpret_cast<void *>(spectatorCullerVtable), 8, updateEntry) ||
-                updateEntry != updateSpectator)
-                throw std::runtime_error("terrain culler identity mismatch");
-            if (!BDS_HookDirectInstall(reinterpret_cast<void *>(setCuller),
-                                       reinterpret_cast<void *>(&cullerDetour),
-                                       reinterpret_cast<void **>(&originalSetCuller), &cullerToken))
-                throw std::runtime_error("native culler selector hook conflict");
-            setCuller = originalSetCuller;
-            terrainReady.store(true);
+        const bedrock::NativeCameraVisual::Policy visualPolicy{
+            []() noexcept { return active.load(); },
+            []() noexcept { return stop.load(); },
+            []() noexcept { return config.load()->spectatorMode; },
+            []() noexcept { return config.load()->visibilityDiagnostics; },
+            []() noexcept { return epoch.load(); },
+            []() noexcept { return flightSerial.load(); }};
+        std::string visualError;
+        if (!cameraVisual.load(j, render.player, render.origin, visualPolicy, visualError))
+            log("Freecam camera visual unavailable: " + visualError);
+        std::string terrainError;
+        if (cameraVisual.installTerrain(renderReady, terrainError))
             log("Freecam spectator culler ready [native selector hook; profile-defined vtable; game "
                 "mode unchanged; visual revision9]");
-        } catch (const std::exception &e) {
-            terrainReady.store(false);
-            log(std::string("Freecam terrain culling unavailable: ") + e.what());
-        }
-        try {
-            if (!renderReady)
-                throw std::runtime_error("exact-build renderer layout unavailable");
-            void *target = checkedFunction(f.at("visual").at("camera_render_observe"));
-            cameraRenderReady.store(
-                BDS_HookDirectInstall(target, reinterpret_cast<void *>(&cameraRenderDetour),
-                                      reinterpret_cast<void **>(&originalCameraRender),
-                                      &cameraRenderToken) != 0);
-            log(cameraRenderReady.load()
-                    ? "Freecam native ViewRenderData observer ready [read only; no overlay "
-                      "suppression]"
-                    : "Freecam ViewRenderData observer unavailable: hook conflict");
-        } catch (const std::exception &e) {
-            log(std::string("Freecam ViewRenderData observer unavailable: ") + e.what());
-        }
-        try {
-            void *target = checkedFunction(f.at("visual").at("create_view"));
-            createViewReady.store(
-                BDS_HookDirectInstall(target, reinterpret_cast<void *>(&createViewDetour),
-                                      reinterpret_cast<void **>(&originalCreateView),
-                                      &createViewToken) != 0);
-            log(createViewReady.load()
-                    ? "Freecam view factory ready [new output draw_inside_cubes=false; no "
-                      "game-mode/ability writes; visual revision9]"
-                    : "Freecam view factory unavailable: hook conflict");
-        } catch (const std::exception &e) {
-            log(std::string("Freecam view factory unavailable: ") + e.what());
-        }
+        else
+            log("Freecam terrain culling unavailable: " + terrainError);
+        std::string observeError;
+        if (cameraVisual.installRenderObserve(renderReady, observeError))
+            log("Freecam native ViewRenderData observer ready [read only; no overlay "
+                "suppression]");
+        else
+            log("Freecam ViewRenderData observer unavailable: " + observeError);
+        std::string createViewError;
+        if (cameraVisual.installCreateView(createViewError))
+            log("Freecam view factory ready [new output draw_inside_cubes=false; no "
+                "game-mode/ability writes; visual revision9]");
+        else
+            log("Freecam view factory unavailable: " + createViewError);
         if (insideBlockEffect.install(*selected, bedrock::generated::kSymbolDatabase,
                                       &insideBlockEffectPolicy, error))
             log("Freecam RenderDragon InsideBlockEffect filter ready [SDK tag + paired extraction "

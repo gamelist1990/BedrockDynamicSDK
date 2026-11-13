@@ -121,7 +121,7 @@ LocalPlayer取得も`NativeLocalPlayerGetter::load(profile)` / `get(client)`を�
 
 | 箇所 | 残っている処理 |
 | --- | --- |
-| Freecam | culler、view factoryのHook管理・ネイティブ描画の一部。InsideBlockEffect・Actor component・Player bounds追跡はSDKへ移行済み |
+| Freecam | ネイティブ描画の一部（Tessellator・materialの直接呼出し）。culler・view factory・カメラ描画観測・visibility診断はNativeCameraVisualへ移行済み。InsideBlockEffect・Actor component・Player bounds追跡もSDKへ移行済み |
 | HitBox | EnTT/Actorコピー、描画・名前キャプチャの一部 |
 | TabList | NativeGameAccess / ProfileManager / typed GameHooksへ移行済み。Modはコピー済み値と表示設定を扱う |
 | SpeedBuilder | タイトル受信は旧版fallbackも含めTitlePacketsへ移行済み。設置・world読取はSDK detailを使用 |

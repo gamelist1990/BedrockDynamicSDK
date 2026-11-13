@@ -4,7 +4,7 @@
     "1.26.52.3": {
       "windows-x64": {
         "path": "data/1.26.52.3/windows-x64/manifest.json",
-        "sha256": "fcbee9e07e862f47551a05ea247dcd3e95445bbe0ccd7b135c1f794cbf35974c",
+        "sha256": "93de9f1f0cfc57b13663bf0fce3dc9acdbe6a09d30a089e38707c18ea21606dd",
         "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
         "symbols": 17,
         "protocol": {
@@ -24,7 +24,7 @@
     "1.26.60.5": {
       "windows-x64": {
         "path": "data/1.26.60.5/windows-x64/manifest.json",
-        "sha256": "87181e7af0490f5ac35f094e28adfd5effb3b937240cfd8d900ea701e2cda2e7",
+        "sha256": "5854f236b707641e840ae1725d7ade65725125a631648a85abb6ab1bcd2125f8",
         "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
         "symbols": 74,
         "protocol": {
