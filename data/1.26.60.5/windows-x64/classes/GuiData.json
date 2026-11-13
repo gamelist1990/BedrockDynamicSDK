@@ -33,5 +33,31 @@
       "verification_scope": "entry-guard",
       "name_status": "inferred"
     }
+  },
+  "layouts": {
+    "GuiData": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "client_gui_offset": "0x668",
+      "get_gui": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0x65B3290",
+        "entry_check": "56 57 53 48 83 EC 20 48 8B B9 68 06 00 00 48 85 FF 0F 84 90 00 00 00 0F",
+        "abi": "NotNullNonOwnerPtr<GuiData>* __fastcall(ClientInstance*, hidden_result*)",
+        "evidence": "IClientInstance getter-family member reading ClientInstance+0x668; prologue shape identical to the 1.26.52.3 get_gui reading +0x650. Entry bytes read from the running 1.26.60.5 image via CheckSig (2026-11-13)."
+      },
+      "display_message": {
+        "status": "candidate",
+        "runtime_verified": false,
+        "rva": "0xE94410",
+        "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 88 02 00 00 48",
+        "abi": "void __fastcall(GuiData*, std::string const*, std::optional<std::string> const*, std::string const* tts, int filter_context)",
+        "evidence": "Same function as the entry-verified symbol GuiData::displayClientMessage (prologue and 0x288 stack frame match 1.26.52.3); CheckSig maps this symbol to native_gui.display_message with the identical ABI string."
+      },
+      "evidence": "Resolved 2026-11-13 on the BedrockOnLinux 1.26.60.5 runtime (image file_sha256 1d6ad5c217e9305442c353ba3e9bca623d5719134e1cc8a84fb1233f7145e85c): getter-family scan (63 members) + live ClientInstance memory dump + per-candidate object fingerprint via CheckSig. The object at ClientInstance+0x668 is the only candidate whose +0x98 owner back-pointer equals the ClientInstance and whose +0x30 life pointer holds a nonzero alive byte (1) - the SDK GuiData structural checks. Mod-level display validation pending (Top)."
+    }
   }
 }
