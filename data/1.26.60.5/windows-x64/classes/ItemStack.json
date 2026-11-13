@@ -32,11 +32,12 @@
    },
    "local_player": {
     "get_local_player_vtable_slot": 30,
-    "supplies_offset": "0x5B8",
+    "supplies_offset": "0x5E0",
     "selected_slot_offset": "0x10",
     "inventory_offset": "0xB8",
     "evidence": "Slot 30 verified by exact-build vtable analysis: the ClientInstance vtable at RVA 0xF2B9330 holds getRegion (RVA 0x659E2F0) at slot 29 and getLocalPlayer (RVA 0x659E470) at slot 30, with onDimensionChangedEvent (RVA 0x65AC680) at slot 132 in the same table. The earlier slot-34 candidate used a table origin 0x20 bytes too low (0xF2B9310, preceded by non-pointer data) and pointed at an unrelated virtual (RVA 0x659E9C0); using it made NativeSafeTeleport read a non-player object and crash. Other supplies/inventory offsets are carried from 1.26.52.3.",
-    "getter_symbol": "ClientInstance::getLocalPlayer"
+    "getter_symbol": "ClientInstance::getLocalPlayer",
+    "supplies_offset_evidence": "Runtime scan 2026-11-13: among all player member objects whose +0x10 dword held a plausible hotbar slot (0..8), exactly one tracked controlled selection changes (number keys 4 and 7 -> values 3 and 6): the object at player+0x5E0. The 1.26.52.3 value 0x5B8 points at a different member on this build; using it made SpeedBuilder read a wrong inventory chain and crash on its first build tick."
    },
    "item_stack": {
     "item_reference_offset": "0x8",

@@ -65,11 +65,11 @@
     },
     {
       "path": "classes/BlockSource.json",
-      "sha256": "e5e15a178fe759edfccaecce58c560d6f006c5f6d70a24bd56edb06c3293da76"
+      "sha256": "22a56d0fa94c98fd90cf1ee8e4615ee4c447d7198ac5a0ce1e1b5fb675354904"
     },
     {
       "path": "classes/Camera.json",
-      "sha256": "f38cbcd4a4b803edeb55161da46a4ff38b8ee23e62994b3ecca1be2ac5066bd6"
+      "sha256": "b89f22974755f3e2bf7013be3de4bf24fb921dafb02b8f5d864f540d4451803f"
     },
     {
       "path": "classes/ClientInstance.json",
@@ -101,7 +101,7 @@
     },
     {
       "path": "classes/ItemStack.json",
-      "sha256": "b1a304c290b97292abd46a23c6ef5e5abe0eab64b053ca1d0b0317ea767254d0"
+      "sha256": "cc4e77ca0359379b1573acbc232c4b9e4d43aa6e83ab3df3ce27307d9bb91b4f"
     },
     {
       "path": "classes/ItemStackBase.json",

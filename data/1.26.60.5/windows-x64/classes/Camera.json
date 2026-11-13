@@ -79,7 +79,7 @@
     },
     "gamma_abi": "float __fastcall(Options*)",
     "legacy_game_type_fields_unused": true,
-    "spectator_mode_behavior": "unverified_legacy_candidate_from_1.26.52.3",
+    "spectator_mode_behavior": "native_spectator_culler_mode5",
     "terrain_visibility_status": "unresolved for 1.26.60.5; legacy behavior is not carried as verified evidence",
     "diagnostics": {
      "status": "candidate",
@@ -94,13 +94,16 @@
      "status": "candidate",
      "runtime_verified": false,
      "spectator_mode": 5,
-     "camera_culler_offset": "0x9A8",
-     "camera_culler_type_offset": "0x9B8",
-     "spectator_vtable_rva": null,
+     "camera_culler_offset": "0x9A0",
+     "camera_culler_type_offset": "0x9B0",
+     "spectator_vtable_rva": "0xF2485E0",
      "set_culler": {
-      "status": "unresolved",
+      "status": "candidate",
       "runtime_verified": false,
-      "candidate_evidence": "No 1.26.60.5 function-start match; do not use old RVA."
+      "rva": "0x53340C0",
+      "entry_check": "55 56 57 53 48 83 EC 58 48 8D 6C 24 50 48 C7 45 00 FE FF FF FF 89 D3 48",
+      "abi": "void __fastcall(LevelRendererPlayer*, unsigned char)",
+      "evidence": "Entry bytes identical to the 1.26.52.3 set_culler. Body: builds the owner shared_ptr from [this+0xC98]/[this+0xCA0], calls the culler factory (0x537E6E0) with the mode in DL, stores the result at [this+0x9A0], releases the old control block, writes the mode byte at [this+0x9B0] and a flag at [this+0x9B1]."
      },
      "factory_check": {
       "status": "candidate",
@@ -112,13 +115,14 @@
       "candidate_evidence": "anchor-port:1.26.52.3 (1/2 source-unique anchors)"
      },
      "spectator_update_check": {
-      "status": "unresolved",
-      "runtime_verified": false,
-      "candidate_evidence": "No 1.26.60.5 function-start match; do not use old RVA."
+      "rva": "0x5346FB0",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 78 01 00 00 48 8D AC 24 80",
+      "evidence": "Slot 1 of the spectator culler vtable 0xF2485E0, which the factory's mode-5 branch installs on the 0x210-byte culler object it constructs (object at control-block+0x10)."
      },
      "abi": "void __fastcall(LevelRendererPlayer*, unsigned char mode)",
      "observed_vanilla_modes": {},
-     "evidence": "Unresolved in 1.26.60.5: function and vtable candidates from 1.26.52.3 are not carried forward as callable addresses."
+     "evidence": "Unresolved in 1.26.60.5: function and vtable candidates from 1.26.52.3 are not carried forward as callable addresses.",
+     "culler_offset_evidence": "The set_culler function (0x53340C0) stores the factory-produced shared_ptr at LevelRendererPlayer+0x9A0 (object) / +0x9A8 (control block) and the mode byte at +0x9B0, verified from its instruction stream; the 1.26.52.3 pair 0x9A8/0x9B8 sits one shared_ptr half later."
     },
     "camera_render_observe": {
      "status": "candidate",
@@ -140,9 +144,12 @@
      "candidate_evidence": "No 1.26.60.5 .pdata-bounded candidate; old RVA is intentionally not used."
     },
     "create_view": {
-     "status": "unresolved",
+     "status": "candidate",
      "runtime_verified": false,
-     "candidate_evidence": "No unique 1.26.60.5 .pdata function-start match; old RVA is intentionally not used."
+     "rva": "0x5391810",
+     "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 B8 F8 30 00 00 E8 4A 55 65 09 48 29",
+     "abi": "ViewRenderObject* __fastcall(LevelRendererPlayer* RCX, ViewRenderObject* hidden_return RDX, ScreenContext* R8, unsigned char SubClientId R9B)",
+     "evidence": "Identified by the 1.26.52.3 function's signature pattern in the LevelRendererPlayer code cluster: identical push prologue + __chkstk frame (0x30F8 here, 0x3C28 in 1.26.52.3) and a ~0x46C5-byte body (1.26.52.3: ~0x48DD). The head saves the hidden return (RDX) and the renderer (RCX), saves the ScreenContext (R8), and temporarily writes the SubClientId (R9B) into the ScreenContext byte at +0x74 (1.26.52.3: +0x7C) before reading renderer members - the createViewRenderObject ABI exactly. output_draw_inside_cubes_offset is intentionally omitted: no 1.26.60.5 evidence yet, and the SDK treats its absence as the sub-feature being unavailable."
     },
     "render_dragon_inside_effect": {
      "schema": 1,
@@ -234,7 +241,8 @@
      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 80 05 00 00 FE FF FF FF 41 89 D6",
      "candidate_evidence": "analysis.native_function_candidates: old 0x1e1570 -> new 0x2b9ab0",
      "player_level_offset_evidence": "Runtime pointer scan 2026-11-13: NativeSafeTeleport context() read a non-pointer value (0x0000000100000000) at the carried-over 0x1D8, while the Level* supplied by the LevelTick hook was found verbatim at actor offset 0x200 (unique hit scanning 0..0x2000). 1.26.52.3 used 0x1D8."
-    }
+    },
+    "spectator_mode_behavior_evidence": "The 1.26.60.5 culler factory (0x537E6E0) dispatches modes 0..5 through the same jump table; its mode-5 branch constructs the spectator culler (vtable 0xF2485E0), matching the 1.26.52.3 native mode-5 behavior the SDK implements."
    },
    "evidence": "Exact EXE static candidates plus user-reported Freecam operation on 2026-10-29. Verification scope is recorded per sub-feature; unresolved optional culler/create_view fields remain unresolved.",
    "verification_scope": "user-reported-mod-operation",
