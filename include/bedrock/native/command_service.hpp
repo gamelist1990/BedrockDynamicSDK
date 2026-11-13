@@ -1,6 +1,7 @@
 #pragma once
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/native/client_commands.hpp>
+#include <bedrock/native/packet_sender.hpp>
 #include <bedrock/commands/command_queue.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <atomic>
@@ -38,12 +39,11 @@ public:
             textBegin_ = base_ + number(root.at("target").at("text_rva"));
             textEnd_ = textBegin_ + number(root.at("target").at("text_size"));
             const auto& packets = root.at("native_packets");
-            senderOffset_ = number(packets.at("sender").at("client_packet_sender_offset"));
-            senderSlot_ = number(packets.at("sender").at("sender_send_to_server_slot"));
+            senderResolver_.load(root);
             const auto& command = packets.at("command_request");
             commandVtable_ = base_ + number(command.at("vtable_rva"));
             commandOffset_ = number(command.at("command_offset"));
-            if (senderOffset_ > 65536 || senderSlot_ > 4096 || commandOffset_ > 4096)
+            if (commandOffset_ > 4096)
                 throw std::runtime_error("invalid command transport layout");
             loaded_ = native_.load(profile, error);
             return loaded_;
@@ -124,10 +124,8 @@ private:
     }
     void observeSender(void* client) {
         sender_.store(nullptr);
-        void* sender{}; void** vtable{}; void* target{};
-        if (!command_native::read(client, senderOffset_, sender) || !sender ||
-            !command_native::read(sender, 0, vtable) ||
-            !command_native::read(vtable, senderSlot_ * sizeof(void*), target)) { sender_.store(nullptr); return; }
+        void* sender{}; void* target{};
+        if (!senderResolver_.resolve(client, sender, target) || !sender || !target) { sender_.store(nullptr); return; }
         const auto address = reinterpret_cast<std::uintptr_t>(target);
         if (address < textBegin_ || address >= textEnd_ || (packetToken_ && target != installedTarget_)) {
             sender_.store(nullptr); return;
@@ -150,6 +148,7 @@ private:
     }
     void note(const std::string& text) { if (diagnostic_) diagnostic_(text); }
     CommandQueue queue_;
+    NativePacketSender senderResolver_;
     NativeClientCommands native_;
     Diagnostic diagnostic_;
     Rejection rejection_;
@@ -158,7 +157,7 @@ private:
     std::atomic<unsigned> warnings_{};
     std::atomic<DWORD> ownerThread_{};
     std::uintptr_t base_{}, textBegin_{}, textEnd_{}, commandVtable_{};
-    std::uint32_t senderOffset_{}, senderSlot_{}, commandOffset_{};
+    std::uint32_t commandOffset_{};
     BDS_HookToken packetToken_{};
     void* installedTarget_{};
     std::uint64_t epoch_{};

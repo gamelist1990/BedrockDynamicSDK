@@ -56,7 +56,12 @@ inline bool acceptOutput(void* output)noexcept{
 }
 class Command {
 public:
-    explicit Command(std::size_t slot):routeIndex(slot){}
+    // The native parser writes the argument value only when a token was
+    // supplied; it exposes no separate "was set" flag to the command object.
+    // A fresh command therefore starts from a sentinel the parser overwrites,
+    // and execute() derives presence from the sentinel still being intact.
+    static constexpr int noArgumentValue = 2147483647;
+    explicit Command(std::size_t slot):routeIndex(slot){ argument = noArgumentValue; }
     virtual ~Command()=default;
     virtual bool collectOptionalArguments(){return true;}
     virtual void execute(const void*,void* output)const{
@@ -64,7 +69,8 @@ public:
             if(routeIndex>=routes.size())return;
             const auto route=routes[routeIndex].load(std::memory_order_acquire);
             if(!route||!registry||registry!=route->registry.load(std::memory_order_acquire))return;
-            const NativeCommandInvocation invocation{route->name,hasArgument?std::optional<int>{argument}:std::nullopt};
+            const bool provided = argument != noArgumentValue;
+            const NativeCommandInvocation invocation{route->name,provided?std::optional<int>{argument}:std::nullopt};
             if(route->handler(invocation))acceptOutput(output);
         }catch(...){/* exceptions must not cross the native command ABI */}
     }
@@ -140,7 +146,7 @@ private:
             if(c.at("schema")!=1)throw std::runtime_error("unsupported native command schema");
             base_=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));textBegin_=base_+number(j.at("target").at("text_rva"));textEnd_=textBegin_+number(j.at("target").at("text_size"));
             const auto& layout=c.at("layout");
-            clientMinecraft_=number(layout.at("client_minecraft_offset"));minecraftCommands_=number(layout.at("minecraft_commands_offset"));commandsRegistry_=number(layout.at("commands_registry_offset"));
+            clientMinecraft_=number(layout.at("client_minecraft_offset"));minecraftCommands_=number(layout.at("minecraft_commands_offset"));commandsRegistry_=number(layout.at("commands_registry_offset"));argumentOffset_=number(layout.at("argument_offset"));
             if(clientMinecraft_>65536||minecraftCommands_>65536||commandsRegistry_>65536)throw std::runtime_error("invalid command registry path");
             // This adapter implements this Command/ParameterData/callable ABI.
             // Different shapes require a new adapter, not blind offset changes.
@@ -151,7 +157,12 @@ private:
             command_native::Command probe(0);
             if(reinterpret_cast<const std::byte*>(&probe.argument)-reinterpret_cast<const std::byte*>(&probe)!=0x20||
                reinterpret_cast<const std::byte*>(&probe.hasArgument)-reinterpret_cast<const std::byte*>(&probe)!=0x24)throw std::runtime_error("compiler command ABI mismatch");
-            registerFn_=checked(c.at("register_command"));findFn_=checked(c.at("find_command"));parameterFn_=checked(c.at("make_parameter"));overloadFn_=checked(c.at("register_optional_parameter"));
+            registerFn_=checked(c.at("register_command"));findFn_=checked(c.at("find_command"));
+            // Some builds inline parameter construction at every game
+            // registration site and ship no standalone constructor; the
+            // adapter then builds the parameter itself in registerOne().
+            parameterFn_=c.contains("make_parameter")?checked(c.at("make_parameter")):nullptr;
+            overloadFn_=checked(c.at("register_optional_parameter"));
             factoryTable_=reinterpret_cast<void*>(base_+number(c.at("factory_vtable_rva")));
             const auto copy=checked(c.at("factory_copy")),destroy=checked(c.at("factory_destroy")),invoke=checked(c.at("factory_invoke"));
             std::array<void*,4> actual{};
@@ -202,7 +213,7 @@ private:
     std::vector<Entry> entries_;
     bool ready_{};std::string error_;std::atomic<DWORD> ownerThread_{0};
     std::uintptr_t base_{},textBegin_{},textEnd_{};
-    std::size_t clientMinecraft_{},minecraftCommands_{},commandsRegistry_{};
+    std::size_t clientMinecraft_{},minecraftCommands_{},commandsRegistry_{},argumentOffset_{};
     void *registerFn_{},*findFn_{},*parameterFn_{},*overloadFn_{},*factoryTable_{},*integerType_{},*integerRule_{};
     static std::uint32_t number(const nlohmann::json& j){const auto n=j.is_string()?std::stoull(j.get<std::string>(),nullptr,0):j.get<std::uint64_t>();if(n>UINT32_MAX)throw std::runtime_error("command profile overflow");return std::uint32_t(n);}
     bool executable(void* p)const noexcept{const auto v=reinterpret_cast<std::uintptr_t>(p);return v>=textBegin_&&v<textEnd_;}
@@ -220,13 +231,36 @@ private:
             reinterpret_cast<std::uintptr_t>(last)>=reinterpret_cast<std::uintptr_t>(first)+0x80&&
             command_native::read(first,8,table)&&table==factoryTable_&&command_native::read(first,16,fn)&&fn==reinterpret_cast<void*>(command_native::factoryFunctions[slot]);
     }
+    bool buildParameter(std::array<std::byte,0x78>& parameter,const command_native::Route& route)const noexcept{
+        // Inline CommandParameterData construction for builds whose game
+        // code inlines the constructor at every registration site. Field
+        // values mirror the game's own integer-parameter construction:
+        // the live type id from the descriptor, the rule pointer, the SSO
+        // name, -1 defaults, and this adapter's Command value offset.
+        std::uint16_t type{};
+        if(!command_native::read(integerType_,0,type)||!type)return false;
+        const auto put=[&](std::size_t offset,const auto& value){std::memcpy(parameter.data()+offset,&value,sizeof(value));};
+        put(0,type);put(8,integerRule_);
+        std::memcpy(parameter.data()+0x18,route.parameter.name.data(),route.parameter.name.size());
+        put(0x28,static_cast<std::uint64_t>(route.parameter.name.size()));put(0x30,std::uint64_t{15});
+        put(0x40,std::int32_t{-1});put(0x50,std::int32_t{-1});
+        put(0x58,static_cast<std::int32_t>(argumentOffset_));put(0x5c,std::int32_t{-1});
+        // +0x60 is the parameter's optional flag in the game's own
+        // construction (the /help "command" parameter carries 1 there);
+        // setting it makes the parser accept the command with no token
+        // and renders the parameter as [name: int] in autocomplete.
+        if(route.parameter.optional)parameter[0x60]=std::byte{1};
+        return true;
+    }
     bool registerOne(void* registry,const command_native::Route& route,std::size_t slot)const noexcept{
         alignas(8) std::array<std::byte,0x78> parameter{};
         alignas(8) std::array<std::uintptr_t,8> factory{};
         factory[0]=reinterpret_cast<std::uintptr_t>(factoryTable_);factory[1]=reinterpret_cast<std::uintptr_t>(command_native::factoryFunctions[slot]);
         __try{
-            reinterpret_cast<void*(__fastcall*)(void*,const void*,const void*,const char*,int,const char*,const char*,int,bool,int)>(parameterFn_)(
-                parameter.data(),integerType_,integerRule_,route.parameter.name.c_str(),0,nullptr,nullptr,0x20,route.parameter.optional,0x24);
+            if(parameterFn_){
+                reinterpret_cast<void*(__fastcall*)(void*,const void*,const void*,const char*,int,const char*,const char*,int,bool,int)>(parameterFn_)(
+                    parameter.data(),integerType_,integerRule_,route.parameter.name.c_str(),0,nullptr,nullptr,0x20,route.parameter.optional,0x24);
+            }else if(!buildParameter(parameter,route))return false;
             std::size_t size{},capacity{};
             if(!command_native::read(parameter.data(),0x28,size)||!command_native::read(parameter.data(),0x30,capacity)||size!=route.parameter.name.size()||capacity!=15)return false;
             reinterpret_cast<void(__fastcall*)(void*,const std::string*,const char*,unsigned char,unsigned short,unsigned short)>(registerFn_)(
