@@ -28,7 +28,7 @@ TOOLCHAIN=$ROOT/linux-xwin-toolchain.cmake
 
 LATEST=1.26.60.5
 LEGACY=1.26.52.3
-ALL_MODS="CheckSig Top Freecam HitBox SpeedBuilder TabList Zoom AutoSprint Fake GlobalResourcePack"
+ALL_MODS="CheckSig Top Freecam HitBox SpeedBuilder TabList Zoom AutoSprint AutoMine Fake GlobalResourcePack"
 LEGACY_MODS="CheckSig Top Freecam HitBox SpeedBuilder TabList Zoom AutoSprint"
 
 command -v clang-cl >/dev/null || { echo "clang-cl missing: sudo apt-get install -y clang"; exit 1; }
