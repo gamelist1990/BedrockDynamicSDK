@@ -13,7 +13,7 @@
 - [x] **Fake**：正常動作のユーザー確認済み。`/fake`登録・本文取得・`/me`要求・応答処理を反映。ワールド内でCommandRegistry登録を確認。
 - [x] **TabList**：パケット別デコーダーへのHookと専用解析ワーカーを実装。2026-11-13に The Hive ワールド内で PlayerList の受信・解析を実証。
 - [x] **HitBox**：2026-11-13にワールド内で対象取得（native capture）・NameTag描画・実名表示を確認。
-- [x] **SpeedBuilder**：タイトル受信経路を共通PacketAPIへ移行。設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）を解決。2026-11-13にローカルワールドで native builder 起動・タイトル記録・範囲キャプチャ・ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す。
+- [x] **SpeedBuilder**：タイトル受信経路を共通PacketAPIへ移行。設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）を解決。2026-11-13にローカルワールドで native builder 起動・タイトル記録・範囲キャプチャ・ホットバー読取りを確認。再構築フェーズは2026-11-14に自前BDSで実証済み（下記）。
 - [x] **Top**：GuiData・CommandRegistry の定義を解決。2026-11-13にローカルワールドで `/top` の登録・パース・実行、安全ゲートのゲーム内表示まで実証。
 - [x] **AutoSprint**：2026-11-13にワールド内で動作を確認（HIDController経路）。
 - [x] **CheckSig**：2026-11-13の定義解決作業全体で使用し、ジョブ実行・auto-dev生成・portの動作を確認。
@@ -89,7 +89,7 @@
 
 - [ ] `Level::getPlayerList`：候補のまま。TabListは通信PlayerListを使うため、このコンテナの推測値に依存しない。
 - [ ] `LocalPlayer`のネイティブPlayerListコンテナ・skin配置：`Level+0x4E8`は版別定義済み。同上、通信経路で代替済み。
-- [ ] SpeedBuilder再構築フェーズ：設置ABIとbuilder動作は確認済み。ブロック除去の検出から再構築までの一連は、実プレイフローでの確認を残す。
+- [x] SpeedBuilder再構築フェーズ：2026-11-14に自前BDS（1.26.60.6）で実証。player_game_mode_offset は52.3引継ぎ候補 0xAA0 が誤りで、実機スキャンで 0xAC8 と特定（GameMode vtable 0xF1A8F30＋owner逆参照で一意）。capture 9261セル→土ブロック手掘り→diff確定（removed=1）→ドロップ拾得→設置計画→placement native accepted=1、復元を目視確認。
 
 ## 定義の場所と更新順序
 

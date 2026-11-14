@@ -56,7 +56,7 @@
     "evidence": "Exact 1.26.60.5 static analysis of getBlock and read-only .rdata: height fields +0x3A/+0x38; LevelChunk section array +0x1C8/+0x1D0, stride 0x68, storage +0x30; layer-0 storage virtual slot 3. Direct traversal is disabled until the storage getter target and ABI can be guarded. Loaded object layout and lifetime remain unverified."
    },
    "candidate_layouts": {
-    "player_game_mode_offset": "0xAA0",
+    "player_game_mode_offset": "0xAC8",
     "player_level_offset": "0x200",
     "block_type_offset": "0x68",
     "block_type_full_name_string_offset": "0xE8",
@@ -105,7 +105,7 @@
     "candidate_layouts values for Actor, BlockType, ItemStack, placement, and NBT structures are carried forward from 1.26.52.3. They remain unverified in 1.26.60.5; no placement functions or game-mode vtables are exposed in this profile.",
     "Read-only world access is candidate-only and must be explicitly enabled with CandidatePolicy::AllowCandidates or NativeWorld::load(..., true). No live runtime validation has been performed."
    ],
-   "placement_status": "select_hotbar/get_hit_result/build_block/base_placement_state and game_mode_vtables resolved 2026-11-13 (see per-entry evidence); placementReady now depends on runtime validation of the carried candidate offsets (player_game_mode_offset, drag offsets, inventory offsets).",
+   "placement_status": "select_hotbar/get_hit_result/build_block/base_placement_state and game_mode_vtables resolved 2026-11-13 (see per-entry evidence); player_game_mode_offset runtime-validated 2026-11-14 on a live client (field scan of LocalPlayer: unique hit 0xAC8 -> object with game_mode vtable 0xF1A8F30 and owner back-pointer to the player; the carried 0xAA0 candidate pointed elsewhere and made gameMode() return unavailable). placementReady still depends on runtime validation of the remaining carried candidate offsets (drag offsets, inventory offsets).",
    "select_hotbar": {
     "status": "candidate",
     "runtime_verified": false,

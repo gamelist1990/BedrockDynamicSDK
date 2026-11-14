@@ -30,7 +30,7 @@ TabListはDLLロード後にワールドへ入り直すと、初回のPlayerList
 | Freecam | 対応・実証済み | terrain culling／view factory の定義を解決。外部サーバーで wire PacketHook 確立、Mキーでの有効化、パケット位置固定、カメラ飛行、解除時の復元まで実証 |
 | HitBox | 対応・実証済み | ワールド内で対象取得（native capture）、NameTag描画、実名表示を確認 |
 | TabList | 対応・実証済み | ワールド内で PlayerList の受信・解析を確認（通信PlayerList経由） |
-| SpeedBuilder | 対応・実証済み | 設置ABIを解決。native builder 起動、タイトル記録、範囲キャプチャ、ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す |
+| SpeedBuilder | 対応・実証済み | 設置ABIを解決。native builder 起動、タイトル記録、範囲キャプチャ、ホットバー読取りを確認。再構築フェーズも自前BDSで capture→破壊→diff→拾得→ネイティブ設置（accepted）まで実証済み |
 | Top | 対応・実証済み | `/top` の登録・実行、テレポート文脈の解決、安全ゲートのゲーム内表示まで実証 |
 | Zoom | 対応・実証済み | ユーザー確認済み。自動検証でもワールド内動作（FOV取得）を確認 |
 | AutoSprint | 対応・実証済み | ワールド内で動作を確認（HIDController経路） |
