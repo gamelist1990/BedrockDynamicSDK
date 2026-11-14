@@ -13,7 +13,7 @@
 - [x] **Fake**：正常動作のユーザー確認済み。`/fake`登録・本文取得・`/me`要求・応答処理を反映。ワールド内でCommandRegistry登録を確認。
 - [x] **TabList**：パケット別デコーダーへのHookと専用解析ワーカーを実装。2026-11-13に The Hive ワールド内で PlayerList の受信・解析を実証。
 - [x] **HitBox**：2026-11-13にワールド内で対象取得（native capture）・NameTag描画・実名表示を確認。
-- [x] **SpeedBuilder**：タイトル受信経路を共通PacketApiへ移行。設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）を解決。2026-11-13にローカルワールドで native builder 起動・タイトル記録・範囲キャプチャ・ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す。
+- [x] **SpeedBuilder**：タイトル受信経路を共通PacketAPIへ移行。設置ABI（hotbar選択・ヒット結果・buildBlock・配置状態）を解決。2026-11-13にローカルワールドで native builder 起動・タイトル記録・範囲キャプチャ・ホットバー読取りを確認。再構築フェーズは実プレイフローでの確認を残す。
 - [x] **Top**：GuiData・CommandRegistry の定義を解決。2026-11-13にローカルワールドで `/top` の登録・パース・実行、安全ゲートのゲーム内表示まで実証。
 - [x] **AutoSprint**：2026-11-13にワールド内で動作を確認（HIDController経路）。
 - [x] **CheckSig**：2026-11-13の定義解決作業全体で使用し、ジョブ実行・auto-dev生成・portの動作を確認。

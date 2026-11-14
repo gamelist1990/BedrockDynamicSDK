@@ -12,7 +12,7 @@ namespace bedrock {
 // and Actor sampling. No native pointer crosses the queue.
 class PlayerRosterService {
   public:
-    void start(PacketApi &packets) {
+    void start(PacketAPI &packets) {
         (void)ProtocolCodec::types();
         {
             std::lock_guard lock(mutex_);
@@ -29,8 +29,8 @@ class PlayerRosterService {
             subscriptions_.push_back(
                 packets.onReceive(id, [this](const PacketReadEvent &event) { enqueue(event); }));
     }
-    void stop(PacketApi &packets) {
-        // Owner stops PacketApi first to drain in-flight native callbacks.
+    void stop(PacketAPI &packets) {
+        // Owner stops PacketAPI first to drain in-flight native callbacks.
         for (const auto token : subscriptions_)
             packets.unsubscribe(token);
         subscriptions_.clear();
@@ -121,7 +121,7 @@ class PlayerRosterService {
     std::size_t queuedBytes_{};
     bool stopping_{}, resetPending_{};
     std::thread worker_;
-    std::vector<PacketApi::Subscription> subscriptions_;
+    std::vector<PacketAPI::Subscription> subscriptions_;
     std::atomic<std::uint64_t> dropped_{};
 };
 } // namespace bedrock

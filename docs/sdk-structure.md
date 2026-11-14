@@ -6,7 +6,7 @@
 | --- | --- |
 | `api/` | GameApi、Actor/World等の公開ファサード、値型 |
 | `enums/` | PacketId、コマンドOrigin、入力、Actor、機能、更新方針等のEnum |
-| `packets/` | PacketApi、wire読書き、protocol codec、PlayerList名簿 |
+| `packets/` | PacketAPI、wire読書き、protocol codec、PlayerList名簿 |
 | `native/` | MinecraftのABI、ゲームスレッドでの読取・書込、構造体検査 |
 | `profiles/` | 定義の選択・取得・分割ファイルの結合・Resolver |
 | `runtime/` | 共有Hook、クライアント観測、ロード済みDLL識別 |

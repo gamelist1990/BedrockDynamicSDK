@@ -766,7 +766,7 @@ int BDS_HOOK_CALL leaderSubscribe(BDS_HookPoint point, void *target, BDS_HookCal
         return 0;
     auto *selected = &stateFor(point);
     void *detour = detourFor(point);
-    // CommandOutput's existing observer and PacketApi use the identical
+    // CommandOutput's existing observer and PacketAPI use the identical
     // hidden-result decoder ABI. Share one native trampoline in either order.
     if (point == BDS_HOOK_PACKET_READ || point == BDS_HOOK_COMMAND_OUTPUT_READ) {
         for (auto &route : packetReadStates)

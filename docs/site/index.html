@@ -118,10 +118,10 @@ const bedrock::ProfileSource source = selected-&gt;choice().source;</code></pre>
 <p>取得先は既存SDKのGitHubカタログに固定。HTTPS、リダイレクト制限、manifestのJSONチェックサム、EXE指紋、PE形状の確認を維持します。更新対象はデータです。稼働中のHookを背景で書き換えず、新しい定義は初期化時に適用します。単なる「最新バージョン」のプロファイルを別ビルドへ流用しません。</p>
 <p><code>CandidatePolicy::VerifiedOnly</code> が既定です。候補のnative機能を利用するModは <code>AllowCandidates</code> を明示します。<code>supports</code> は必要なメタデータの存在確認であり、実機動作の確認ではありません。</p>
 </section>
-<section id="packets" data-title="PacketApi PlayerList PlayerRosterService TitlePackets memory CheckSig runtime 4.8">
+<section id="packets" data-title="PacketAPI PlayerList PlayerRosterService TitlePackets memory CheckSig runtime 4.8">
 <p class="eyebrow">PACKETS AND COPIED DATA</p><h2>Packet / PlayerList</h2>
 <p><code>bedrock/packets/packet_api.hpp</code>からID別に受信を購読し、送信前のコピーを編集・キャンセルできます。受信はゲームdecode成功後の観測です。</p>
-<pre><code>bedrock::PacketApi packets;
+<pre><code>bedrock::PacketAPI packets;
 bedrock::PlayerRosterService roster;
 roster.start(packets);
 std::string error;

@@ -15,7 +15,7 @@ namespace bedrock {
 // decoding and borrows its copied payload for this callback only. Send runs
 // before batching and may edit event.packet() or cancel the packet.
 // Callbacks may be on networking threads: retain copies, never native Actors.
-class PacketApi {
+class PacketAPI {
   public:
     using Subscription = std::uint64_t;
     using ReceiveHandler = std::function<void(const PacketReadEvent &)>;
@@ -157,7 +157,7 @@ class PacketApi {
             }
         }
         if (targets.empty())
-            throw std::runtime_error("register receive handlers before installing PacketApi");
+            throw std::runtime_error("register receive handlers before installing PacketAPI");
         for (auto *target : targets)
             if (!receiveRoutes_.contains(target)) {
                 BDS_HookToken token{};
@@ -179,7 +179,7 @@ class PacketApi {
         receiveTargetCount_ = 0;
     }
     static void BDS_HOOK_CALL receive(void *user, void *raw, BDS_HookNext next, void *frame) {
-        auto &self = *static_cast<PacketApi *>(user);
+        auto &self = *static_cast<PacketAPI *>(user);
         const auto handlers = self.handlers_.load();
         self.reads_.dispatchFiltered(
             *static_cast<BDS_PacketReadArgs *>(raw),
@@ -200,7 +200,7 @@ class PacketApi {
             });
     }
     static void BDS_HOOK_CALL send(void *user, void *raw, BDS_HookNext next, void *frame) {
-        auto &self = *static_cast<PacketApi *>(user);
+        auto &self = *static_cast<PacketAPI *>(user);
         auto &args = *static_cast<BDS_PacketWireArgs *>(raw);
         if (!self.sends_.dispatch(
                 args,

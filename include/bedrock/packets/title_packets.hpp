@@ -139,7 +139,7 @@ class TitlePackets {
         return value;
     }
     inline static TitlePackets *active_{};
-    PacketApi packets_;
+    PacketAPI packets_;
     Handler handler_;
     Read original_{};
     BDS_HookToken token_{};

@@ -45,7 +45,7 @@ bool prepared = packets.dispatch(args, [](bedrock::PacketWireSendEvent& event) {
 #include <bedrock/packets/protocol_codec.hpp>
 
 // Modの寿命を通して保持し、停止時はDllMain外でstop()する。
-bedrock::PacketApi packets;
+bedrock::PacketAPI packets;
 bedrock::ProtocolCodec codec;
 auto incoming = packets.onReceive(bedrock::PacketId::PlayerList,
     [&](const bedrock::PacketReadEvent& event) {
@@ -128,7 +128,7 @@ runtime 4.8では`PacketRead` revision2のvtable情報から、Packet IDごと�
 PlayerListはSDKの`PlayerRosterService`で扱えます。
 
 ```cpp
-bedrock::PacketApi packets;
+bedrock::PacketAPI packets;
 bedrock::PlayerRosterService roster;
 roster.start(packets); // schemaの準備、ID別購読、解析ワーカー開始
 std::string error;
