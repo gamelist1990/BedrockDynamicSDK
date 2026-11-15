@@ -6,10 +6,8 @@
 //
 // /mine is registered in the client CommandRegistry (NativeMessageCommands,
 // message-type argument labelled "block", optional), so it appears in the
-// game's command suggestions/autocomplete and executes locally. The packet
-// capture below stays as a fallback for when native registration cannot
-// take over (name collision, registry not ready); identical lines arriving
-// from both routes within a short window are handled only once.
+// game's command suggestions/autocomplete and executes locally. That is the
+// only command route; there is no packet-capture path.
 //
 // Movement and breaking go through the game's own input routes (native key
 // sends, mouse attack hold, view turning), so the server sees an ordinary
@@ -24,8 +22,8 @@
 #include <bedrock/native/world_access.hpp>
 #include <bedrock/native/camera.hpp>
 #include <bedrock/native/safe_teleport.hpp>
-#include <bedrock/native/packet_sender.hpp>
 #include <bedrock/native/message_commands.hpp>
+#include <bedrock/native/outline_renderer.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <knownfolders.h>
@@ -33,6 +31,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -202,113 +201,6 @@ CraftPlan planPickaxe(const std::unordered_map<std::string, int>& items) {
 }
 
 // ---------------------------------------------------------------------------
-// /mine command capture on the packet-send route — the fallback path, kept
-// for when the native CommandRegistry registration (NativeMessageCommands,
-// the primary route) cannot take over. Parses the raw command line here,
-// exactly like NativeCommandService's fallback path.
-// ---------------------------------------------------------------------------
-class MineCommandHook {
-public:
-    bool load(const bedrock::RuntimeProfile& profile, std::string& error) {
-        if (!profile.supports({bedrock::Feature::CommandPackets, bedrock::Feature::PacketSender}, error))
-            return false;
-        try {
-            const auto root = bedrock::parseNativeProfile(profile.json());
-            base_ = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-            textBegin_ = base_ + number(root.at("target").at("text_rva"));
-            textEnd_ = textBegin_ + number(root.at("target").at("text_size"));
-            senderResolver_.load(root);
-            const auto& command = root.at("native_packets").at("command_request");
-            commandVtable_ = base_ + number(command.at("vtable_rva"));
-            commandOffset_ = static_cast<std::uint32_t>(number(command.at("command_offset")));
-            if (commandOffset_ > 4096) throw std::runtime_error("invalid command transport layout");
-            loaded_ = true;
-            return true;
-        } catch (const std::exception& e) { error = e.what(); return false; }
-    }
-    void stop() {
-        stopped_.store(true);
-        if (packetToken_) { BDS_HookUnsubscribe(packetToken_); packetToken_ = nullptr; }
-    }
-    void update(void* client) {
-        if (stopped_.load() || !loaded_) return;
-        void* sender{}; void* target{};
-        if (!senderResolver_.resolve(client, sender, target) || !sender || !target) return;
-        const auto address = reinterpret_cast<std::uintptr_t>(target);
-        if (address < textBegin_ || address >= textEnd_) return;
-        if (!packetToken_) {
-            if (!BDS_HookOwnsTarget(BDS_HOOK_PACKET_SEND_TO_SERVER, target)) {
-                DWORD64 image{};
-                const auto* function = RtlLookupFunctionEntry(address, &image, nullptr);
-                if (!function || image + function->BeginAddress != address) return;
-            }
-            if (!BDS_HookSubscribe(BDS_HOOK_PACKET_SEND_TO_SERVER, target, &onPacket, this, &packetToken_))
-                return;
-            installedTarget_ = target;
-        }
-        sender_.store(sender);
-    }
-    bool poll(std::string& line) {
-        std::lock_guard lock(mutex_);
-        if (lines_.empty()) return false;
-        line = std::move(lines_.front()); lines_.pop_front();
-        return true;
-    }
-private:
-    static std::uint64_t number(const nlohmann::json& value) {
-        return value.is_string() ? std::stoull(value.get<std::string>(), nullptr, 0)
-                                 : value.get<std::uint64_t>();
-    }
-    struct Line { char bytes[1024]; std::size_t size{}; };
-    static bool copyLine(const std::byte* value, std::uint32_t offset, Line& out) {
-        if (!value) return false;
-        __try {
-            const auto* p = value + offset;
-            std::size_t size{}, capacity{};
-            std::memcpy(&size, p + 16, 8); std::memcpy(&capacity, p + 24, 8);
-            if (size > sizeof(out.bytes) - 1 || capacity < size || capacity > 0x1000000) return false;
-            const char* data = reinterpret_cast<const char*>(p);
-            if (capacity > 15) std::memcpy(&data, p, 8);
-            if (!data) return false;
-            std::memcpy(out.bytes, data, size); out.size = size; return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    }
-    static bool readPtr(const void* object, std::size_t offset, std::uintptr_t& out) noexcept {
-        __try { std::memcpy(&out, static_cast<const std::byte*>(object) + offset, sizeof(out)); return true; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    }
-    static void BDS_HOOK_CALL onPacket(void* context, void* raw, BDS_HookNext next, void* frame) noexcept {
-        auto& self = *static_cast<MineCommandHook*>(context);
-        const auto& args = *static_cast<BDS_PacketSendArgs*>(raw);
-        if (self.stopped_.load() || !args.sender || args.sender != self.sender_.load()) { next(frame, raw); return; }
-        std::uintptr_t vtable{}; Line line;
-        if (!readPtr(args.packet, 0, vtable) || vtable != self.commandVtable_ ||
-            !copyLine(static_cast<const std::byte*>(args.packet), self.commandOffset_, line)) {
-            next(frame, raw); return;
-        }
-        std::string text(line.bytes, line.size);
-        while (!text.empty() && (text.front() == '/' || text.front() == ' ')) text.erase(text.begin());
-        const auto word = text.substr(0, text.find(' '));
-        if (lower(word) != "mine") { next(frame, raw); return; }
-        // Ours: swallow the packet so the server never sees it, queue the line.
-        try {
-            std::lock_guard lock(self.mutex_);
-            if (self.lines_.size() < 16) self.lines_.push_back(std::move(text));
-        } catch (...) {}
-    }
-    bedrock::NativePacketSender senderResolver_;
-    std::atomic<void*> sender_{};
-    std::atomic<bool> stopped_{};
-    std::uintptr_t base_{}, textBegin_{}, textEnd_{}, commandVtable_{};
-    std::uint32_t commandOffset_{};
-    BDS_HookToken packetToken_{};
-    void* installedTarget_{};
-    bool loaded_{};
-    std::mutex mutex_;
-    std::deque<std::string> lines_;
-};
-
-// ---------------------------------------------------------------------------
 // The mod itself
 // ---------------------------------------------------------------------------
 struct BlockPos3 {
@@ -325,7 +217,7 @@ public:
     void signalStop() { stopped_ = true; }
     void stop() {
         signalStop();
-        hook_.stop();
+        if (renderToken_) { BDS_HookUnsubscribe(renderToken_); renderToken_ = nullptr; }
         if (mouseToken_) { BDS_HookUnsubscribe(mouseToken_); mouseToken_ = nullptr; }
         gui_.stop();
         releaseInputs();
@@ -383,11 +275,12 @@ private:
         nlohmann::json config;
         if (std::filesystem::exists(path)) { std::ifstream file(path); file >> config; }
         else {
-            config = {{"enabled", true}, {"radius", 24}};
+            config = {{"enabled", true}, {"radius", 24}, {"show_path", true}};
             std::ofstream file(path); file << config.dump(2) << '\n';
         }
         enabled_ = config.value("enabled", true);
         radius_ = std::clamp(config.value("radius", 24), 4, 48);
+        showPath_ = config.value("show_path", true);
     }
 
     // -- setup ---------------------------------------------------------------
@@ -408,7 +301,6 @@ private:
         const bedrock::ProfileRequirements required{
             bedrock::Feature::Gameplay, bedrock::Feature::LevelTick, bedrock::Feature::World,
             bedrock::Feature::Motion, bedrock::Feature::Gui, bedrock::Feature::WorldHeight,
-            bedrock::Feature::PacketSender, bedrock::Feature::CommandPackets,
             bedrock::Feature::ClientCommands, bedrock::Feature::WorldEvents,
             bedrock::Feature::Camera};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,
@@ -416,9 +308,14 @@ private:
         std::string error;
         if (!profiles.prepare(required, options,
                 [this](const bedrock::RuntimeProfile& profile, std::string& failure) {
-                    return gui_.load(profile, failure) && registration_.load(profile, failure) &&
-                           hook_.load(profile, failure) &&
-                           camera_.load(profile, failure) && loadWorld(profile, failure);
+                    if (!gui_.load(profile, failure) || !registration_.load(profile, failure) ||
+                        !camera_.load(profile, failure) || !loadWorld(profile, failure))
+                        return false;
+                    // Path display is cosmetic: never fail startup over it.
+                    std::string outlineError;
+                    outlineReady_ = outline_.load(profile, outlineError);
+                    if (!outlineReady_) note("path renderer unavailable: " + outlineError);
+                    return true;
                 }, error))
             throw std::runtime_error(error);
 
@@ -438,7 +335,6 @@ private:
                 auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
                 snap_ = camera_.readPlayerProxy();
                 updateRegistration();
-                hook_.update(client_.load());
                 tick();
             } catch (const std::exception& e) {
                 releaseInputs();
@@ -454,7 +350,12 @@ private:
             !hooks_->installInput(selected->resolver(), error))
             throw std::runtime_error(error);
         installMouseCapture(selected->resolver());
-        note("AutoMine v2: /mine [block] registered in CommandRegistry (autocomplete) + packet fallback");
+        if (outlineReady_) {
+            if (BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL, outline_.renderTarget(), &onRenderLevel, this, &renderToken_))
+                note("path renderer: subscribed");
+            else { outlineReady_ = false; note("path renderer: subscribe failed"); }
+        }
+        note("AutoMine v2: /mine [block] registered in CommandRegistry (autocomplete)");
         note(BDS_HookRuntimeDiagnostic());
     }
     bool loadWorld(const bedrock::RuntimeProfile& profile, std::string& failure) {
@@ -720,8 +621,13 @@ private:
     }
     // Aim the view at a world point: closed loop on the live rotation read,
     // feeding mouse motion through the game's own MouseDevice::feed (see
-    // feedMouse). The degrees-per-pixel gain is adapted online because it
-    // depends on the client's mouse sensitivity.
+    // feedMouse). The degrees-per-pixel gains are adapted online, per axis,
+    // because they depend on the client's mouse sensitivity. Each tick moves
+    // only a damped fraction of the remaining error with a hard per-tick
+    // cap, so the view eases onto the target instead of snapping the full
+    // error in one tick and hunting around it (the old behaviour read as
+    // wandering/lost). Fractional pixels are accumulated across ticks so
+    // small corrections neither quantise into jitter nor stall.
     bool faceToward(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance = 3.f) {
         const double dx = target.x - eye.x, dy = target.y - eye.y, dz = target.z - eye.z;
         const double horiz = std::hypot(dx, dz);
@@ -733,7 +639,7 @@ private:
             const float moved = wrapDeg(yaw - lastYaw_);
             if (moved * static_cast<float>(lastPx_) > 0.f) {
                 const float g = moved / static_cast<float>(lastPx_);
-                if (g > 0.02f && g < 3.f) aimGain_ = aimGain_ * 0.6f + g * 0.4f;
+                if (g > 0.02f && g < 3.f) gainYaw_ = std::clamp(gainYaw_ * 0.75f + g * 0.25f, 0.03f, 2.f);
             }
             lastPx_ = 0;
         }
@@ -741,20 +647,38 @@ private:
             const float moved = pitch - lastPitch_;
             if (moved * static_cast<float>(lastPy_) > 0.f) {
                 const float g = moved / static_cast<float>(lastPy_);
-                if (g > 0.02f && g < 3.f) aimGain_ = aimGain_ * 0.6f + g * 0.4f;
+                if (g > 0.02f && g < 3.f) gainPitch_ = std::clamp(gainPitch_ * 0.75f + g * 0.25f, 0.03f, 2.f);
             }
             lastPy_ = 0;
         }
         const float dyaw = wrapDeg(wantYaw - yaw);
         const float dpitch = std::clamp(wantPitch - pitch, -89.f, 89.f);
-        if (std::abs(dyaw) <= tolerance && std::abs(dpitch) <= tolerance) return true;
-        const int maxPx = std::max(4, static_cast<int>(std::lround(22.f / aimGain_)));
-        const int px = std::clamp(static_cast<int>(std::lround(dyaw / aimGain_)), -maxPx, maxPx);
-        const int py = std::clamp(static_cast<int>(std::lround(dpitch / aimGain_)), -maxPx, maxPx);
+        const bool within = std::abs(dyaw) <= tolerance && std::abs(dpitch) <= tolerance;
+        if (std::abs(dyaw) <= 0.8f && std::abs(dpitch) <= 0.8f) { resX_ = resY_ = 0.f; return true; }
+        const float stepYaw = std::clamp(dyaw * 0.45f, -7.f, 7.f);
+        const float stepPitch = std::clamp(dpitch * 0.45f, -7.f, 7.f);
+        const float wantPx = stepYaw / gainYaw_ + resX_;
+        const float wantPy = stepPitch / gainPitch_ + resY_;
+        const int px = static_cast<int>(std::lround(wantPx));
+        const int py = static_cast<int>(std::lround(wantPy));
+        resX_ = wantPx - static_cast<float>(px);
+        resY_ = wantPy - static_cast<float>(py);
         if ((px || py) && feedMove(px, py)) {
             lastPx_ = px; lastPy_ = py; lastYaw_ = yaw; lastPitch_ = pitch;
         }
-        return false;
+        return within;
+    }
+    // Aim through a smoothed point while travelling: the bearing to a block
+    // swings hard as the player moves (and movement is view-relative, so a
+    // hunting view weaves the whole walk). Chasing a low-passed aim point
+    // keeps both the view and the path calm. Mining aims directly instead:
+    // its target is static and precision matters there.
+    bool faceAim(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance, float smoothing) {
+        if (!aimSmoothInit_) { aimSmooth_ = target; aimSmoothInit_ = true; }
+        aimSmooth_.x += (target.x - aimSmooth_.x) * smoothing;
+        aimSmooth_.y += (target.y - aimSmooth_.y) * smoothing;
+        aimSmooth_.z += (target.z - aimSmooth_.z) * smoothing;
+        return faceToward(eye, aimSmooth_, tolerance);
     }
 
     // -- tools -----------------------------------------------------------------
@@ -801,6 +725,7 @@ private:
         blacklist_.clear();
         hasTarget_ = false;
         mined_ = 0;
+        aimSmoothInit_ = false;
     }
     void startMining(std::string arg) {
         resetRun();
@@ -826,6 +751,9 @@ private:
         const auto arg = lower(rest.substr(0, rest.find(' ')));
         if (arg.empty() || arg == "status") {
             reply(statusText());
+        } else if (arg == "path") {
+            showPath_ = !showPath_;
+            reply(showPath_ ? "経路表示を ON にしたよ" : "経路表示を OFF にしたよ");
         } else if (arg == "stop") {
             stopMining("");
         } else if (enabled_) {
@@ -855,24 +783,16 @@ private:
         registrationState_ = state;
         using State = bedrock::NativeMessageCommands::State;
         if (state == State::Registered) note("/mine registered in CommandRegistry [autocomplete + local execution]");
-        else if (state == State::Collision) note("/mine registration collision; packet fallback active: " + registration_.error());
-        else if (state == State::Failed) note("/mine registration failed; packet fallback active: " + registration_.error());
+        else if (state == State::Collision) note("/mine registration collision: " + registration_.error());
+        else if (state == State::Failed) note("/mine registration failed: " + registration_.error());
         else note("/mine registration waiting");
     }
-    // One entry point for both command routes (native registry execution and
-    // the packet fallback). The same line can arrive from both routes when a
-    // locally executed command also produces a command-request packet, so an
-    // identical line inside a short window is handled once (the pairing
-    // window NativeCommandService uses, widened a little).
+
+    // Entry point for lines queued by the native CommandRegistry execution.
     void dispatchLine(std::string line) {
         while (!line.empty() && (line.front() == '/' || line.front() == ' ')) line.erase(line.begin());
         while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) line.pop_back();
         if (line.empty()) return;
-        const auto now = std::chrono::steady_clock::now();
-        if (haveLastLine_ && line == lastLine_ &&
-            now - lastLineAt_ < std::chrono::milliseconds{500})
-            return;
-        haveLastLine_ = true; lastLine_ = line; lastLineAt_ = now;
         handleLine(line);
     }
 
@@ -883,9 +803,7 @@ private:
             { std::lock_guard lock(nativeMutex_); native.swap(nativeLines_); }
             for (auto& line : native) dispatchLine(std::move(line));
         }
-        std::string line;
-        while (hook_.poll(line)) dispatchLine(line);
-        if (phase_ == Phase::Idle) return;
+        if (phase_ == Phase::Idle) { clearPath(); return; }
         if (!game_.gameplayActive()) { releaseInputs(); return; }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
@@ -897,6 +815,96 @@ private:
         case Phase::NeedTool: tickNeedTool(); break;
         case Phase::Idle: break;
         }
+        updatePath(feet);
+    }
+
+    // -- path display ----------------------------------------------------------
+    // The selected route, drawn in the world: a terrain-following line from
+    // the player's feet to the target block, plus an outline box on the
+    // target itself. Points are rebuilt on the tick thread in world space;
+    // the render-thread callback converts them against the live render
+    // origin and submits them through the SDK outline renderer.
+    void clearPath() {
+        std::lock_guard lock(pathMutex_);
+        pathLine_.clear(); pathBox_ = false;
+    }
+    void updatePath(const bedrock::Vec3& feet) {
+        std::vector<bedrock::Vec3> points;
+        bool box = false; BlockPos3 boxPos{};
+        if (showPath_ && hasTarget_ && (phase_ == Phase::Navigate || phase_ == Phase::Mine)) {
+            const bedrock::Vec3 goal{target_.x + .5f, target_.y + .5f, target_.z + .5f};
+            const double dx = goal.x - feet.x, dz = goal.z - feet.z;
+            const double horiz = std::hypot(dx, dz);
+            const int steps = std::clamp(static_cast<int>(horiz / 0.7), 1, 48);
+            const int baseY = static_cast<int>(std::floor(feet.y));
+            for (int i = 0; i <= steps; ++i) {
+                const double t = steps ? static_cast<double>(i) / steps : 1.0;
+                const float px = static_cast<float>(feet.x + dx * t);
+                const float pz = static_cast<float>(feet.z + dz * t);
+                float py = feet.y + 0.25f;
+                const int cx = static_cast<int>(std::floor(px));
+                const int cz = static_cast<int>(std::floor(pz));
+                for (int y = baseY + 2; y >= baseY - 3; --y) {
+                    const auto id = blockAt({cx, y, cz});
+                    if (!id.empty() && !isAir(id)) { py = static_cast<float>(y) + 1.25f; break; }
+                }
+                points.push_back({px, py, pz});
+            }
+            points.push_back(goal);
+            box = true; boxPos = target_;
+        }
+        std::lock_guard lock(pathMutex_);
+        pathLine_ = std::move(points); pathBox_ = box; pathBoxPos_ = boxPos;
+    }
+    static void BDS_HOOK_CALL onRenderLevel(void* user, void* raw, BDS_HookNext next, void* frame) {
+        auto& self = *static_cast<AutoMineMod*>(user);
+        // Draw AFTER the native world pass: it is what supplies this frame's
+        // view/projection, render origin and depth state. Drawing before it
+        // (the first attempt) projected the lines through the previous pass
+        // and they came out as huge black wireframes.
+        next(frame, raw);
+        try { self.drawPath(raw); } catch (...) {}
+    }
+    void drawPath(void* raw) {
+        if (!outlineReady_ || !showPath_) return;
+        const auto& args = *static_cast<BDS_RenderLevelArgs*>(raw);
+        if (!args.renderer || !args.screen) return;
+        std::vector<bedrock::Vec3> line; bool box{}; BlockPos3 boxPos{};
+        { std::lock_guard lock(pathMutex_); line = pathLine_; box = pathBox_; boxPos = pathBoxPos_; }
+        if (line.size() < 2 && !box) return;
+        const auto origin = outline_.renderOrigin(args.renderer);
+        if (!origin) return;
+        auto rel = [&](const bedrock::Vec3& p) {
+            return bedrock::Vec3{p.x - origin->x, p.y - origin->y, p.z - origin->z};
+        };
+        bedrock::WorldOutlineGeometry geometry;
+        geometry.origin = *origin;
+        if (line.size() >= 2) {
+            bedrock::WorldGeometryBatch batch;
+            batch.color = {0.25f, 1.f, 0.45f, 1.f};
+            for (std::size_t i = 1; i < line.size(); ++i) {
+                batch.vertices.push_back(rel(line[i - 1]));
+                batch.vertices.push_back(rel(line[i]));
+            }
+            geometry.lines.push_back(std::move(batch));
+        }
+        if (box) {
+            bedrock::WorldGeometryBatch batch;
+            batch.color = {1.f, 0.75f, 0.2f, 1.f};
+            const float x0 = static_cast<float>(boxPos.x), y0 = static_cast<float>(boxPos.y),
+                        z0 = static_cast<float>(boxPos.z);
+            const float x1 = x0 + 1.f, y1 = y0 + 1.f, z1 = z0 + 1.f;
+            const bedrock::Vec3 c[8]{{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1},
+                                     {x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}};
+            constexpr int edges[12][2]{{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                                       {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+            for (const auto& e : edges) {
+                batch.vertices.push_back(rel(c[e[0]]));
+                batch.vertices.push_back(rel(c[e[1]]));
+            }
+            geometry.lines.push_back(std::move(batch));
+        }
+        outline_.draw(args.renderer, args.screen, geometry);
     }
 
     void tickScan(bedrock::Vec3 feet) {
@@ -967,7 +975,7 @@ private:
             phase_ = Phase::Mine; mineTicks_ = 0;
             return;
         }
-        faceToward(eye, center, 10.f);
+        faceAim(eye, center, 10.f, 0.25f);
         // Cliff guard: do not step into a >2 block drop straight ahead.
         const double hx = center.x - feet.x, hz = center.z - feet.z;
         const double hl = std::hypot(hx, hz);
@@ -1102,7 +1110,7 @@ private:
         }
         const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
         const bedrock::Vec3 center{target_.x + .5f, feet.y + .5f, target_.z + .5f};
-        faceToward(eye, center, 12.f);
+        faceAim(eye, center, 12.f, 0.3f);
         pressKey(kKeyW, true);
         if (++collectTicks_ >= 7) {
             pressKey(kKeyW, false);
@@ -1141,10 +1149,6 @@ private:
     unsigned registrationTicks_{};
     std::mutex nativeMutex_;
     std::deque<std::string> nativeLines_;
-    std::string lastLine_;
-    std::chrono::steady_clock::time_point lastLineAt_{};
-    bool haveLastLine_{};
-    MineCommandHook hook_;
     std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void*> client_{};
     std::atomic<std::uint64_t> epoch_{1};
@@ -1162,9 +1166,20 @@ private:
     std::mutex mouseMutex_;
     BDS_MouseArgs lastMouse_{};
     bool haveMouse_{};
-    float aimGain_{0.15f};
+    float gainYaw_{0.15f}, gainPitch_{0.15f};
+    float resX_{}, resY_{};
     int lastPx_{}, lastPy_{};
     float lastYaw_{}, lastPitch_{};
+    bedrock::Vec3 aimSmooth_{};
+    bool aimSmoothInit_{};
+    bedrock::NativeOutlineRenderer outline_;
+    bool outlineReady_{};
+    BDS_HookToken renderToken_{};
+    std::mutex pathMutex_;
+    std::vector<bedrock::Vec3> pathLine_;
+    bool pathBox_{};
+    BlockPos3 pathBoxPos_{};
+    bool showPath_{true};
     Phase phase_{Phase::Idle};
     std::string targetId_;
     BlockPos3 target_{};
