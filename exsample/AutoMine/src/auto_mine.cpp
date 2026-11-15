@@ -275,12 +275,13 @@ private:
         nlohmann::json config;
         if (std::filesystem::exists(path)) { std::ifstream file(path); file >> config; }
         else {
-            config = {{"enabled", true}, {"radius", 24}, {"show_path", true}};
+            config = {{"enabled", true}, {"radius", 24}, {"show_path", true}, {"skip_underwater", true}};
             std::ofstream file(path); file << config.dump(2) << '\n';
         }
         enabled_ = config.value("enabled", true);
         radius_ = std::clamp(config.value("radius", 24), 4, 48);
         showPath_ = config.value("show_path", true);
+        skipUnderwater_ = config.value("skip_underwater", true);
     }
 
     // -- setup ---------------------------------------------------------------
@@ -717,12 +718,13 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
         targetId_.clear();
         blacklist_.clear();
+        hazardZones_.clear();
         hasTarget_ = false;
         mined_ = 0;
         aimSmoothInit_ = false;
@@ -770,6 +772,7 @@ private:
         case Phase::Mine: return targetId_ + " を採掘中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Collect: return "ドロップ回収中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::NeedTool: return "ツール待ち（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Escape: return "水から浮上中…（掘った数: " + std::to_string(mined_) + "）";
         }
         return "";
     }
@@ -807,15 +810,66 @@ private:
         if (!game_.gameplayActive()) { releaseInputs(); return; }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
+        // Drowning safety net: in any working phase, if the head stays
+        // submerged for a few ticks, abandon the target and swim up.
+        // Target selection already avoids water, but the standpoint next
+        // to a dry-column target can still be below the waterline (e.g.
+        // digging into a shore face), and waiting there in NeedTool is
+        // what actually drowned the player during verification.
+        if (phase_ == Phase::Escape) { tickEscape(feet); updatePath(feet); return; }
+        if (phase_ == Phase::Navigate || phase_ == Phase::Mine ||
+            phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
+            if (headInWater(feet)) {
+                if (++submergedTicks_ >= 3) { startEscape(); tickEscape(feet); updatePath(feet); return; }
+            } else submergedTicks_ = 0;
+        }
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
         case Phase::Mine: tickMine(feet); break;
         case Phase::Collect: tickCollect(feet); break;
         case Phase::NeedTool: tickNeedTool(); break;
-        case Phase::Idle: break;
+        case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
+    }
+
+    bool headInWater(const bedrock::Vec3& feet) {
+        void* src = region();
+        if (!src) return false;
+        bedrock::BlockPos bp;
+        bp.x = static_cast<int>(std::floor(feet.x));
+        bp.y = static_cast<int>(std::floor(feet.y + 1.62f));
+        bp.z = static_cast<int>(std::floor(feet.z));
+        return contains(world_.getBlock(src, bp).identifier, "water");
+    }
+    void startEscape() {
+        if (hasTarget_) {
+            blacklist_.insert(target_);
+            hazardZones_.push_back({target_.x, target_.y, target_.z, 6});
+            hasTarget_ = false;
+        }
+        setAttack(false);
+        pressKey(kKeyW, false); pressKey(kKeyA, false);
+        pressKey(kKeyS, false); pressKey(kKeyD, false);
+        phase_ = Phase::Escape;
+        escapeTicks_ = 0; dryTicks_ = 0; submergedTicks_ = 0;
+        note("escape: head underwater; abandoning target and surfacing");
+        reply("水に潜っちゃったから浮上するね。そのブロックは諦めるよ");
+    }
+    void tickEscape(const bedrock::Vec3& feet) {
+        ++escapeTicks_;
+        pressKey(kKeySpace, true); // hold jump: swim up / bob at the surface
+        if (!headInWater(feet)) {
+            if (++dryTicks_ >= 10 || escapeTicks_ > 240) {
+                pressKey(kKeySpace, false);
+                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            }
+        } else dryTicks_ = 0;
+        if (escapeTicks_ > 240 && phase_ == Phase::Escape) {
+            pressKey(kKeySpace, false);
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+        }
     }
 
     // -- path display ----------------------------------------------------------
@@ -930,6 +984,31 @@ private:
             auto cell = world_.getBlock(src, bp);
             if (cell.identifier.empty() || isAir(cell.identifier)) continue;
             if (localPart(cell.identifier) != targetId_) continue;
+            // Underwater guard: the player cannot swim, so a target that
+            // can only be reached through water ends in a drowning loop.
+            // Skip it when any water sits in the column above (up to 16
+            // cells: seabed dirt, and dirt buried under the seabed alike).
+            // This also skips dry caves under lakes, which is the safe
+            // side to err on; dry-land mining is unaffected.
+            if (skipUnderwater_) {
+                bool underWater = false;
+                for (int wy = pos.y + 1; wy <= pos.y + 16; ++wy) {
+                    bedrock::BlockPos above; above.x = pos.x; above.y = wy; above.z = pos.z;
+                    auto aboveCell = world_.getBlock(src, above);
+                    if (contains(aboveCell.identifier, "water")) { underWater = true; break; }
+                }
+                if (underWater) continue;
+            }
+            // Hazard zones: spots where an escape already fired (the dry
+            // column passed selection, but the only standpoint was in the
+            // water). Skip the whole patch so the bot does not chew along
+            // a shoreline one escape at a time.
+            bool inHazard = false;
+            for (const auto& z : hazardZones_) {
+                if (std::abs(pos.x - z.x) <= z.r && std::abs(pos.y - z.y) <= z.r &&
+                    std::abs(pos.z - z.z) <= z.r) { inHazard = true; break; }
+            }
+            if (inHazard) continue;
             const double ddx = pos.x + .5 - feet.x, ddy = pos.y + .5 - feet.y, ddz = pos.z + .5 - feet.z;
             const double d2 = ddx * ddx + ddy * ddy + ddz * ddz;
             if (d2 < bestDist2_) {
@@ -1180,6 +1259,12 @@ private:
     bool pathBox_{};
     BlockPos3 pathBoxPos_{};
     bool showPath_{true};
+    bool skipUnderwater_{true};
+    int submergedTicks_{0};
+    int escapeTicks_{0};
+    int dryTicks_{0};
+    struct HazardZone { int x, y, z, r; };
+    std::vector<HazardZone> hazardZones_;
     Phase phase_{Phase::Idle};
     std::string targetId_;
     BlockPos3 target_{};
