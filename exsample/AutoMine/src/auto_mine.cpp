@@ -729,6 +729,8 @@ private:
         hazardZones_.clear();
         path_.clear(); pathDig_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
+        swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
+        savedId_.clear();
         hasTarget_ = false;
         mined_ = 0;
         aimSmoothInit_ = false;
@@ -814,15 +816,16 @@ private:
         if (!game_.gameplayActive()) { releaseInputs(); return; }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
-        // Drowning safety net: in any working phase, if the head stays
-        // submerged for a few ticks, abandon the target and swim up.
-        // Target selection already avoids water, but the standpoint next
-        // to a dry-column target can still be below the waterline (e.g.
-        // digging into a shore face), and waiting there in NeedTool is
-        // what actually drowned the player during verification.
+        // Drowning safety net: in the stationary working phases, if the
+        // head stays submerged for a few ticks, abandon the target and
+        // swim up. Target selection already avoids water, but the
+        // standpoint next to a dry-column target can still be below the
+        // waterline (e.g. digging into a shore face), and waiting there
+        // in NeedTool is what actually drowned the player during
+        // verification. Navigate is excluded: crossing water by swimming
+        // is intentional there and has its own air management.
         if (phase_ == Phase::Escape) { tickEscape(feet); updatePath(feet); return; }
-        if (phase_ == Phase::Navigate || phase_ == Phase::Mine ||
-            phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
+        if (phase_ == Phase::Mine || phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
             if (headInWater(feet)) {
                 if (++submergedTicks_ >= 3) { startEscape(); tickEscape(feet); updatePath(feet); return; }
             } else submergedTicks_ = 0;
@@ -847,7 +850,20 @@ private:
         bp.z = static_cast<int>(std::floor(feet.z));
         return contains(world_.getBlock(src, bp).identifier, "water");
     }
+    bool inWaterNow(const bedrock::Vec3& feet) {
+        const auto feetId = blockAt({static_cast<int>(std::floor(feet.x)),
+                                     static_cast<int>(std::floor(feet.y)),
+                                     static_cast<int>(std::floor(feet.z))});
+        return contains(localPart(feetId), "water") || headInWater(feet);
+    }
     void startEscape() {
+        if (!savedId_.empty()) {
+            // Abandoning a mine-through detour: blame the real goal, and
+            // restore the run's block type — otherwise the next scan
+            // would hunt the detour's block (e.g. seabed stone).
+            target_ = savedTarget_; targetId_ = savedId_; savedId_.clear();
+            hasTarget_ = true;
+        }
         if (hasTarget_) {
             blacklist_.insert(target_);
             hazardZones_.push_back({target_.x, target_.y, target_.z, 6});
@@ -1255,6 +1271,30 @@ private:
             } else pathFor_ = {INT_MIN, 0, 0}; // force a re-plan next tick
             return;
         }
+        if (inWaterNow(feet)) {
+            // Fell in, or the route starts in water: swim at the surface
+            // toward the current waypoint, then resume walking it.
+            // Submerged means surface first (backing out from under a
+            // ceiling if there is one), exactly as in legacy swimming.
+            const BlockPos3 wp0 = path_[pathIdx_];
+            const bedrock::Vec3 eye0{feet.x, feet.y + 1.62f, feet.z};
+            faceAim(eye0, {wp0.x + .5f, eye0.y, wp0.z + .5f}, 10.f, 0.25f);
+            if (headInWater(feet)) {
+                pressKey(kKeyW, false);
+                pressKey(kKeySpace, true);
+                const auto above = blockAt({static_cast<int>(std::floor(feet.x)),
+                                            static_cast<int>(std::floor(feet.y + 2.62f)),
+                                            static_cast<int>(std::floor(feet.z))});
+                const bool ceiling = !above.empty() && !isAir(above) &&
+                                     !contains(localPart(above), "water");
+                pressKey(kKeyS, ceiling);
+            } else {
+                pressKey(kKeyS, false);
+                pressKey(kKeyW, true); pressKey(kKeySpace, true);
+                if (std::hypot(wp0.x + .5 - feet.x, wp0.z + .5 - feet.z) < 1.2) ++pathIdx_;
+            }
+            return;
+        }
         const BlockPos3 wp = path_[pathIdx_];
         if (pathDig_[pathIdx_]) {
             // Mine out this waypoint's blocking cell, then re-plan (the
@@ -1329,6 +1369,59 @@ private:
         // the legacy straight-line navigation below.
         if (!(pathFor_ == target_)) planPath(feet);
         if (!path_.empty()) { tickFollowPath(feet); return; }
+        // Swimming: no land route — cross the water at the surface.
+        // Travel happens only with the head at the surface; whenever
+        // the head is submerged, surfacing comes first. If a ceiling
+        // blocks the way up (swam under an overhang — a real drowning
+        // trap observed in verification), back out from under it while
+        // rising, and strafe along it if backing out takes too long.
+        if (inWaterNow(feet)) {
+            if (!wasInWater_) note("swimming to target");
+            wasInWater_ = true;
+            faceAim(eye, {center.x, eye.y, center.z}, 10.f, 0.25f);
+            if (headInWater(feet)) {
+                ++swimSubmerged_;
+                pressKey(kKeyW, false);
+                pressKey(kKeySpace, true);
+                const auto above = blockAt({static_cast<int>(std::floor(feet.x)),
+                                            static_cast<int>(std::floor(feet.y + 2.62f)),
+                                            static_cast<int>(std::floor(feet.z))});
+                const bool ceiling = !above.empty() && !isAir(above) &&
+                                     !contains(localPart(above), "water");
+                pressKey(kKeyS, ceiling);
+                pressKey(kKeyD, ceiling && swimSubmerged_ > 20 * 6);
+            } else {
+                swimSubmerged_ = 0;
+                pressKey(kKeyS, false); pressKey(kKeyD, false);
+                pressKey(kKeyW, true); pressKey(kKeySpace, true);
+            }
+            ++navTicks_;
+            if (navTicks_ % 10 == 0) {
+                const double moved = std::hypot(feet.x - lastX_, feet.z - lastZ_);
+                if (moved < 0.12) {
+                    if (++stuckTicks_ >= 10) {
+                        note("swim stuck; blacklist target");
+                        blacklist_.insert(target_); hasTarget_ = false;
+                        pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                        phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                        return;
+                    }
+                } else stuckTicks_ = 0;
+                lastX_ = feet.x; lastZ_ = feet.z;
+            }
+            if (navTicks_ > 20 * 45) {
+                note("navigate timeout (swim); blacklist target");
+                blacklist_.insert(target_); hasTarget_ = false;
+                pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            }
+            return;
+        }
+        if (wasInWater_) { // reached land: re-plan from the shore
+            wasInWater_ = false; swimSubmerged_ = 0; surfacing_ = false;
+            pressKey(kKeyS, false); pressKey(kKeyD, false);
+            pathFor_ = {INT_MIN, 0, 0};
+        }
         faceAim(eye, center, 10.f, 0.25f);
         // Cliff guard: do not step into a >2 block drop straight ahead.
         const double hx = center.x - feet.x, hz = center.z - feet.z;
@@ -1340,11 +1433,24 @@ private:
             const auto below1 = blockAt({fx, fy - 1, fz});
             const auto below2 = blockAt({fx, fy - 2, fz});
             if (!below1.empty() && isAir(below1) && !below2.empty() && isAir(below2)) {
-                pressKey(kKeyW, false);
-                note("cliff guard: target unreachable on foot");
-                blacklist_.insert(target_); hasTarget_ = false;
-                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
-                return;
+                // A drop that lands in water is a swim entry, not a
+                // cliff: walk in and let the swim branch take over.
+                // The first non-air cell down the column decides (the
+                // sea surface can be far below a high shore).
+                bool waterBelow = false;
+                for (int y = fy - 1; y >= fy - 24; --y) {
+                    const auto id = blockAt({fx, y, fz});
+                    if (id.empty()) break;
+                    if (contains(localPart(id), "water")) { waterBelow = true; break; }
+                    if (!isAir(id)) break;
+                }
+                if (!waterBelow) {
+                    pressKey(kKeyW, false);
+                    note("cliff guard: target unreachable on foot");
+                    blacklist_.insert(target_); hasTarget_ = false;
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    return;
+                }
             }
         }
         pressKey(kKeyW, true);
@@ -1400,7 +1506,10 @@ private:
     }
 
     void tickMine(bedrock::Vec3 feet) {
-        pressKey(kKeyW, false); pressKey(kKeySpace, false);
+        pressKey(kKeyW, false);
+        // Mining from the water is fine, but stay at the surface:
+        // without jump held the player sinks mid-mine and drowns.
+        pressKey(kKeySpace, inWaterNow(feet));
         const auto current = blockAt(target_);
         if (current.empty()) { setAttack(false); return; } // chunk hiccup: wait
         if (isAir(current) || localPart(current) != targetId_) {
@@ -1466,6 +1575,7 @@ private:
         const bedrock::Vec3 center{target_.x + .5f, feet.y + .5f, target_.z + .5f};
         faceAim(eye, center, 12.f, 0.3f);
         pressKey(kKeyW, true);
+        pressKey(kKeySpace, inWaterNow(feet)); // swim at the surface to the drop
         if (++collectTicks_ >= 7) {
             pressKey(kKeyW, false);
             hasTarget_ = false;
@@ -1545,6 +1655,9 @@ private:
     std::size_t pathIdx_{0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
     int replans_{0};
+    int swimSubmerged_{0};
+    bool surfacing_{false};
+    bool wasInWater_{false};
     Phase phase_{Phase::Idle};
     std::string targetId_;
     BlockPos3 target_{};
