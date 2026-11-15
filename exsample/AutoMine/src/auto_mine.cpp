@@ -4,6 +4,13 @@
 //   /mine stop         stop and release every synthetic input
 //   /mine status       report the current state in chat
 //
+// /mine is registered in the client CommandRegistry (NativeMessageCommands,
+// message-type argument labelled "block", optional), so it appears in the
+// game's command suggestions/autocomplete and executes locally. The packet
+// capture below stays as a fallback for when native registration cannot
+// take over (name collision, registry not ready); identical lines arriving
+// from both routes within a short window are handled only once.
+//
 // Movement and breaking go through the game's own input routes (native key
 // sends, mouse attack hold, view turning), so the server sees an ordinary
 // player: walking, turning, and holding attack on the targeted block.
@@ -18,6 +25,7 @@
 #include <bedrock/native/camera.hpp>
 #include <bedrock/native/safe_teleport.hpp>
 #include <bedrock/native/packet_sender.hpp>
+#include <bedrock/native/message_commands.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <knownfolders.h>
@@ -25,6 +33,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <deque>
@@ -193,9 +202,10 @@ CraftPlan planPickaxe(const std::unordered_map<std::string, int>& items) {
 }
 
 // ---------------------------------------------------------------------------
-// /mine command capture on the packet-send route (the SDK command builder
-// supports integer arguments only, so the block name is parsed here from the
-// raw command line, exactly like NativeCommandService's fallback path).
+// /mine command capture on the packet-send route — the fallback path, kept
+// for when the native CommandRegistry registration (NativeMessageCommands,
+// the primary route) cannot take over. Parses the raw command line here,
+// exactly like NativeCommandService's fallback path.
 // ---------------------------------------------------------------------------
 class MineCommandHook {
 public:
@@ -382,6 +392,18 @@ private:
 
     // -- setup ---------------------------------------------------------------
     void initialize() {
+        // Primary command route: register /mine in the client CommandRegistry
+        // so it shows in command suggestions and executes locally. The
+        // message-type argument carries the whole rest of the line ("dirt",
+        // "stop", "status", ...); it is labelled "block" and optional so a
+        // bare /mine also executes (and reports status). The handler only
+        // queues the line; handling happens on the tick thread.
+        if (!registration_.add("mine", "AutoMine: find and mine nearby blocks",
+                [this](bedrock::NativeMessageInvocation invocation) {
+                    std::lock_guard lock(nativeMutex_);
+                    if (nativeLines_.size() < 16) nativeLines_.push_back(std::move(invocation.line));
+                }, "block", true))
+            throw std::runtime_error("/mine native command definition rejected");
         bedrock::ProfileManager profiles;
         const bedrock::ProfileRequirements required{
             bedrock::Feature::Gameplay, bedrock::Feature::LevelTick, bedrock::Feature::World,
@@ -394,7 +416,8 @@ private:
         std::string error;
         if (!profiles.prepare(required, options,
                 [this](const bedrock::RuntimeProfile& profile, std::string& failure) {
-                    return gui_.load(profile, failure) && hook_.load(profile, failure) &&
+                    return gui_.load(profile, failure) && registration_.load(profile, failure) &&
+                           hook_.load(profile, failure) &&
                            camera_.load(profile, failure) && loadWorld(profile, failure);
                 }, error))
             throw std::runtime_error(error);
@@ -414,6 +437,7 @@ private:
                 if (!scope) return;
                 auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
                 snap_ = camera_.readPlayerProxy();
+                updateRegistration();
                 hook_.update(client_.load());
                 tick();
             } catch (const std::exception& e) {
@@ -430,7 +454,7 @@ private:
             !hooks_->installInput(selected->resolver(), error))
             throw std::runtime_error(error);
         installMouseCapture(selected->resolver());
-        note("AutoMine v1: /mine <block-id> | /mine stop | /mine status");
+        note("AutoMine v2: /mine [block] registered in CommandRegistry (autocomplete) + packet fallback");
         note(BDS_HookRuntimeDiagnostic());
     }
     bool loadWorld(const bedrock::RuntimeProfile& profile, std::string& failure) {
@@ -822,10 +846,45 @@ private:
         return "";
     }
 
+    // Poll the native CommandRegistry registration at a low rate (same
+    // cadence as Fake) and log only state changes.
+    void updateRegistration() {
+        if (registrationTicks_++ % 20) return;
+        const auto state = registration_.update(client_.load());
+        if (registrationState_ && *registrationState_ == state) return;
+        registrationState_ = state;
+        using State = bedrock::NativeMessageCommands::State;
+        if (state == State::Registered) note("/mine registered in CommandRegistry [autocomplete + local execution]");
+        else if (state == State::Collision) note("/mine registration collision; packet fallback active: " + registration_.error());
+        else if (state == State::Failed) note("/mine registration failed; packet fallback active: " + registration_.error());
+        else note("/mine registration waiting");
+    }
+    // One entry point for both command routes (native registry execution and
+    // the packet fallback). The same line can arrive from both routes when a
+    // locally executed command also produces a command-request packet, so an
+    // identical line inside a short window is handled once (the pairing
+    // window NativeCommandService uses, widened a little).
+    void dispatchLine(std::string line) {
+        while (!line.empty() && (line.front() == '/' || line.front() == ' ')) line.erase(line.begin());
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) line.pop_back();
+        if (line.empty()) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (haveLastLine_ && line == lastLine_ &&
+            now - lastLineAt_ < std::chrono::milliseconds{500})
+            return;
+        haveLastLine_ = true; lastLine_ = line; lastLineAt_ = now;
+        handleLine(line);
+    }
+
     void tick() {
         if (pendingReset_) { pendingReset_ = false; gui_.reset(epoch_.load()); camera_.reset(); resetRun(); }
+        {
+            std::deque<std::string> native;
+            { std::lock_guard lock(nativeMutex_); native.swap(nativeLines_); }
+            for (auto& line : native) dispatchLine(std::move(line));
+        }
         std::string line;
-        while (hook_.poll(line)) handleLine(line);
+        while (hook_.poll(line)) dispatchLine(line);
         if (phase_ == Phase::Idle) return;
         if (!game_.gameplayActive()) { releaseInputs(); return; }
         bedrock::Vec3 feet;
@@ -1077,6 +1136,14 @@ private:
     bedrock::NativeCamera camera_;
     std::optional<bedrock::CameraPlayerSnapshot> snap_;
     bedrock::NativeSafeTeleport gui_; // message route only; never requested to teleport
+    bedrock::NativeMessageCommands registration_;
+    std::optional<bedrock::NativeMessageCommands::State> registrationState_;
+    unsigned registrationTicks_{};
+    std::mutex nativeMutex_;
+    std::deque<std::string> nativeLines_;
+    std::string lastLine_;
+    std::chrono::steady_clock::time_point lastLineAt_{};
+    bool haveLastLine_{};
     MineCommandHook hook_;
     std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void*> client_{};

@@ -118,17 +118,23 @@ inline constexpr auto factoryFunctions=factories(std::make_index_sequence<32>{})
 class NativeMessageCommands {
 public:
     enum class State { WaitingClient, WaitingRegistry, WaitingTemplate, Registered, Collision, Failed };
-    bool add(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler) {
+    // parameterName is only the label autocomplete shows for the message
+    // argument (defaults to "message", as in /me); the parser type is the
+    // CommandMessage type regardless of the label.
+    bool add(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler,
+             std::string parameterName = "message", bool parameterOptional = false) {
         if (loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
             name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
+        if (parameterName.empty() || parameterName.size()>15 ||
+            parameterName.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos) return false;
         for (const auto& entry:entries_) if (entry.name==name) return false;
         if (message_command_native::nextSlot>=32) return false;
         const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
         message_command_native::routes[slot]=route;
-        entries_.push_back({std::move(name),std::move(description),slot,std::move(route)}); return true;
+        entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
     }
     bool load(const RuntimeProfile& profile, std::string& error) {
         loaded_=false;
@@ -193,14 +199,20 @@ public:
         std::uint16_t type{}; void* parser{};
         if (!native_profile::read(type_,0,type) || !type || type>4096 || !native_profile::read(rule_,0,parser) || !parser)
             return State::WaitingTemplate;
-        alignas(8) std::array<std::byte,0x78> parameter{};
-        const auto put=[&](std::size_t offset,const auto& value) { std::memcpy(parameter.data()+offset,&value,sizeof(value)); };
-        put(0,type); put(8,rule_);
-        std::memcpy(parameter.data()+0x18,"message",7);
-        put(0x28,std::uint64_t{7}); put(0x30,std::uint64_t{15});
-        put(0x40,std::int32_t{-1}); put(0x50,std::int32_t{-1});
-        put(0x58,std::int32_t{0x28}); put(0x5c,std::int32_t{-1});
         for (auto& entry:entries_) {
+            // CommandParameterData is built per entry so each command can
+            // label its message argument (the name lives in the parameter).
+            alignas(8) std::array<std::byte,0x78> parameter{};
+            const auto put=[&](std::size_t offset,const auto& value) { std::memcpy(parameter.data()+offset,&value,sizeof(value)); };
+            put(0,type); put(8,rule_);
+            std::memcpy(parameter.data()+0x18,entry.parameterName.data(),entry.parameterName.size());
+            put(0x28,static_cast<std::uint64_t>(entry.parameterName.size())); put(0x30,std::uint64_t{15});
+            put(0x40,std::int32_t{-1}); put(0x50,std::int32_t{-1});
+            put(0x58,std::int32_t{0x28}); put(0x5c,std::int32_t{-1});
+            // Same optional flag the integer adapter uses (+0x60): the
+            // parser then accepts the command with no token and renders
+            // the argument as [name: string] in autocomplete.
+            if (entry.parameterOptional) parameter[0x60]=std::byte{1};
             void* existing{};
             if (!lookup(find_,registry,&entry.name,&existing)) { error_="CommandRegistry lookup failed: "+entry.name; return State::Failed; }
             if (existing) {
@@ -226,6 +238,7 @@ public:
 private:
     struct Entry {
         std::string name,description; std::size_t slot{}; std::shared_ptr<message_command_native::Route> route;
+        std::string parameterName{"message"}; bool parameterOptional{};
         void* registry{}; void* signature{}; void* failedRegistry{};
     };
     bool ownsOverload(void* signature,std::size_t slot) const noexcept {
