@@ -60,6 +60,7 @@ using namespace std::chrono_literals;
 // Win32 virtual keys, matching the values the native HID route uses.
 constexpr unsigned kKeyW = 0x57, kKeyA = 0x41, kKeyS = 0x53, kKeyD = 0x44;
 constexpr unsigned kKeySpace = 0x20;
+constexpr unsigned kKeySneak = 0x10; // VK_SHIFT: dismount / sneak
 
 std::string lower(std::string value) {
     for (auto& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -549,7 +550,7 @@ private:
             attackHeld_ = down;
     }
     void releaseInputs() {
-        for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace}) {
+        for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace, kKeySneak}) {
             if (heldKeys_.erase(key)) { try { keyboard().release(key); } catch (...) {} }
         }
         if (attackHeld_) { try { feedButton(false); mouse().setDown(bedrock::MouseButton::Left, false); } catch (...) {} attackHeld_ = false; }
@@ -999,8 +1000,227 @@ private:
         }
     }
 
+    // -- boat ------------------------------------------------------------------
+    // Long water crossings are faster (and safer) by boat when the hotbar
+    // carries one: place it on the water, board it with the use button,
+    // steer it with the view + forward key, and sneak to dismount at the
+    // far shore. Every step has a timeout back to plain swimming, and a
+    // target gets at most one boat attempt per run.
+    int boatSlot() {
+        const auto slots = hotbarItems();
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (it.count && contains(localPart(it.id), "_boat")) return i;
+        }
+        return -1;
+    }
+    // Boats are actor type 90 (measured live). A shape-based fallback —
+    // the only wide, flat actor on open water: 1.2-1.7 blocks wide and
+    // at most 1 block tall, not an item and not a hostile — covers the
+    // id shifting. Boats persist in the world across sessions, so
+    // Deploy must only accept a hull that was NOT already floating
+    // nearby when the attempt began (preBoatEids_); Board/Ride then
+    // track that exact hull by eid (boatEid_).
+    std::optional<MobInfo> findBoat(const bedrock::Vec3& feet, double maxDist,
+                                    std::uint32_t onlyEid = 0, bool freshOnly = false) {
+        if (!actorsReady_) return std::nullopt;
+        const auto snap = runtimeActors_.snapshot(level_.load());
+        if (!snap) return std::nullopt;
+        void* self = world_.localPlayer(client_.load());
+        std::optional<MobInfo> best, bestTyped;
+        for (void* a : *snap) {
+            if (a == self) continue;
+            const auto type = actorTypeOf(a);
+            if (!type || *type == 64 || isHostileType(*type)) continue;
+            std::uint32_t eid = 0;
+            actorRegistry_.readEntityId(a, eid);
+            if (onlyEid && eid != onlyEid) continue;
+            if (freshOnly && eid &&
+                std::find(preBoatEids_.begin(), preBoatEids_.end(), eid) != preBoatEids_.end())
+                continue;
+            bedrock::ActorBounds b{};
+            if (!actorRegistry_.readBounds(a, b)) continue;
+            const float w = b.maximum.x - b.minimum.x, h = b.maximum.y - b.minimum.y;
+            if (*type != 90 && (w < 1.2f || w > 1.7f || h > 1.0f)) continue;
+            MobInfo m; m.type = *type; m.eid = eid; m.hasBounds = true; m.bmin = b.minimum; m.bmax = b.maximum;
+            m.center = {(b.minimum.x + b.maximum.x) * .5f, (b.minimum.y + b.maximum.y) * .5f,
+                        (b.minimum.z + b.maximum.z) * .5f};
+            m.dist = std::hypot(m.center.x - feet.x, m.center.z - feet.z);
+            if (m.dist > maxDist) continue;
+            if (*type == 90) { if (!bestTyped || m.dist < bestTyped->dist) bestTyped = m; }
+            else if (!best || m.dist < best->dist) best = m;
+        }
+        return bestTyped ? bestTyped : best;
+    }
+    enum class BoatStep { Deploy, Board, Ride, Dismount };
+    void enterBoat() {
+        releaseInputs();
+        phase_ = Phase::Boat; boatStep_ = BoatStep::Deploy;
+        boatTicks_ = 0; boatStepTicks_ = 0; boatPulse_ = 0; boatCd_ = 0; boatLockTicks_ = 0;
+        boatTriedFor_ = target_;
+        boatEid_ = 0; preBoatEids_.clear();
+        boatGlueTicks_ = 0; boatProbeTicks_ = 0;
+        // Remember every hull already afloat nearby: boats persist in
+        // the world, and accepting a stale one as "just placed" sent a
+        // verification run chasing a boat from an earlier session.
+        if (actorsReady_) {
+            if (auto snap = runtimeActors_.snapshot(level_.load())) {
+                void* self = world_.localPlayer(client_.load());
+                for (void* a : *snap) {
+                    if (a == self) continue;
+                    const auto type = actorTypeOf(a);
+                    if (!type || *type != 90) continue;
+                    std::uint32_t eid = 0;
+                    actorRegistry_.readEntityId(a, eid);
+                    if (eid) preBoatEids_.push_back(eid);
+                }
+            }
+        }
+        note("boat: deploying for the crossing");
+        reply("ボートで渡るね");
+    }
+    void giveUpBoat() {
+        releaseInputs();
+        note("boat: gave up; swimming instead");
+        phase_ = Phase::Navigate; navTicks_ = 0;
+    }
+    void tickBoat(const bedrock::Vec3& feet) {
+        ++boatTicks_; ++boatStepTicks_;
+        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::Vec3 center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
+        const double distT = std::hypot(center.x - feet.x, center.z - feet.z);
+        if (!hasTarget_ || localPart(blockAt(target_)) != targetId_) {
+            if (boatStep_ == BoatStep::Ride) { boatStep_ = BoatStep::Dismount; boatStepTicks_ = 0; }
+            else { releaseInputs(); phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; }
+            if (boatStep_ != BoatStep::Dismount) return;
+        }
+        if (boatPulse_ > 0 && --boatPulse_ == 0) setUse(false);
+        if (boatCd_ > 0) --boatCd_;
+        switch (boatStep_) {
+        case BoatStep::Deploy: {
+            selectSlot(boatSlot());
+            const double hl = std::max(0.001, distT);
+            const bedrock::Vec3 aim{feet.x + static_cast<float>((center.x - feet.x) / hl * 2.5),
+                                    feet.y + .4f,
+                                    feet.z + static_cast<float>((center.z - feet.z) / hl * 2.5)};
+            faceToward(eye, aim, 4.f);
+            pressKey(kKeySpace, true); // stay at the surface while placing
+            if (auto boat = findBoat(feet, 5.0, 0, true)) {
+                boatEid_ = boat->eid;
+                note("boat: placed (actor type=" + std::to_string(boat->type) + ")");
+                boatStep_ = BoatStep::Board; boatStepTicks_ = 0;
+                break;
+            }
+            if (boatCd_ == 0 && boatStepTicks_ > 10) { setUse(true); boatPulse_ = 3; boatCd_ = 14; }
+            if (boatStepTicks_ > 20 * 8) giveUpBoat();
+            break;
+        }
+        case BoatStep::Board: {
+            auto boat = findBoat(feet, 6.0, boatEid_);
+            if (!boat) { if (boatStepTicks_ > 20 * 6) giveUpBoat(); break; }
+            boatCenter_ = boat->center;
+            const double d = std::hypot(boat->center.x - feet.x, boat->center.z - feet.z);
+            // Riding locks the player onto the boat at deck height;
+            // swimming alongside keeps the feet well below the centre.
+            if (d < 1.3 && feet.y > boat->center.y - .2f) {
+                if (++boatLockTicks_ >= 6) {
+                    boatStep_ = BoatStep::Ride; boatStepTicks_ = 0;
+                    pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                    note("boat: boarded");
+                    break;
+                }
+            } else boatLockTicks_ = 0;
+            // Glue probe: live diagnostics showed the player parked at
+            // d=0.05 with feet exactly at the hull's AABB bottom for the
+            // whole Board window — a signature that fits RIDING (the
+            // ride system glues the rider's hitbox into the hull) just
+            // as well as a swimmer wedged inside it, and no AABB test
+            // separates the two. Behaviour does: hold position glued
+            // for 12 ticks, then row at the target for 2s. A ridden
+            // boat carries its passenger several blocks; a pushed hull
+            // barely moves. One failed probe ends the attempt.
+            if (boatProbeTicks_ > 0) {
+                faceAim(eye, {center.x, eye.y, center.z}, 6.f, .3f);
+                pressKey(kKeyW, true); pressKey(kKeySpace, false);
+                if (d > 1.6) { // separated without riding: resume Board
+                    boatProbeTicks_ = 0; boatGlueTicks_ = 0;
+                    pressKey(kKeyW, false);
+                } else if (++boatProbeTicks_ > 40) {
+                    const double movedB = std::hypot(boat->center.x - boatProbeStart_.x,
+                                                     boat->center.z - boatProbeStart_.z);
+                    pressKey(kKeyW, false);
+                    if (movedB > 2.5) {
+                        boatStep_ = BoatStep::Ride; boatStepTicks_ = 0;
+                        note("boat: boarded (probe: hull carried player " +
+                             std::to_string(movedB) + " blocks)");
+                        break;
+                    }
+                    note("boat: probe failed (hull moved " + std::to_string(movedB) +
+                         "); not riding");
+                    giveUpBoat();
+                }
+                break;
+            }
+            if (d < 0.8) {
+                pressKey(kKeyW, false); pressKey(kKeyS, false); pressKey(kKeySpace, true);
+                if (++boatGlueTicks_ >= 12) {
+                    boatProbeTicks_ = 1; boatProbeStart_ = boat->center;
+                    note("boat: glued to hull; probing ride state");
+                }
+                break;
+            }
+            boatGlueTicks_ = 0;
+            // Aim at the gunwale above the waterline, and keep the eye
+            // OUTSIDE the hull (reach 1.5-3.0): the game's entity pick
+            // ray does not register a boat whose AABB already contains
+            // the camera — a swimmer who drifts into the hull (d=0.00,
+            // verified live) can pulse use forever without boarding.
+            // Boarding is only attempted with the head above water:
+            // submerged, the downward aim drags the swimmer under the
+            // hull instead (also verified live).
+            faceAim(eye, {boat->center.x, boat->center.y + .35f, boat->center.z}, 4.f, .3f);
+            const double reach = distToMob(eye, *boat);
+            const bool submerged = headInWater(feet);
+            if (submerged) { pressKey(kKeyW, false); pressKey(kKeyS, false); pressKey(kKeySpace, true); }
+            else if (reach > 3.0) { pressKey(kKeyS, false); pressKey(kKeyW, true); pressKey(kKeySpace, true); }
+            else if (reach < 1.5) { pressKey(kKeyW, false); pressKey(kKeyS, true); pressKey(kKeySpace, true); }
+            else {
+                pressKey(kKeyW, false); pressKey(kKeyS, false); pressKey(kKeySpace, true);
+                if (boatCd_ == 0) { setUse(true); boatPulse_ = 3; boatCd_ = 10; }
+            }
+            if (boatStepTicks_ > 20 * 20) giveUpBoat();
+            break;
+        }
+        case BoatStep::Ride: {
+            auto boat = findBoat(feet, 4.0, boatEid_);
+            if (!boat) { boatStep_ = BoatStep::Board; boatStepTicks_ = 0; pressKey(kKeyW, false); break; }
+            boatCenter_ = boat->center;
+            if (distT <= 4.5) {
+                boatStep_ = BoatStep::Dismount; boatStepTicks_ = 0;
+                pressKey(kKeyW, false);
+                break;
+            }
+            faceAim(eye, {center.x, eye.y, center.z}, 6.f, .3f);
+            pressKey(kKeyW, true);
+            if (boatTicks_ > 20 * 75) { boatStep_ = BoatStep::Dismount; boatStepTicks_ = 0; note("boat: ride timeout"); }
+            break;
+        }
+        case BoatStep::Dismount: {
+            pressKey(kKeyW, false);
+            pressKey(kKeySneak, true);
+            if (boatStepTicks_ > 6) {
+                pressKey(kKeySneak, false);
+                phase_ = Phase::Navigate; pathFor_ = {INT_MIN, 0, 0}; navTicks_ = 0;
+                wasInWater_ = false;
+                note("boat: dismounted");
+            }
+            break;
+        }
+        }
+    }
+
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -1011,6 +1231,7 @@ private:
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
+        boatTriedFor_ = {INT_MIN, 0, 0};
         savedId_.clear();
         hasTarget_ = false;
         mined_ = 0;
@@ -1126,6 +1347,7 @@ private:
         case Phase::NeedTool: return "ツール待ち（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Escape: return "水から浮上中…（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Combat: return "敵と戦闘中！（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Boat: return "ボートで移動中（掘った数: " + std::to_string(mined_) + "）";
         }
         return "";
     }
@@ -1209,6 +1431,7 @@ private:
         case Phase::Collect: tickCollect(feet); break;
         case Phase::NeedTool: tickNeedTool(); break;
         case Phase::Combat: tickCombat(feet); break;
+        case Phase::Boat: tickBoat(feet); break;
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
@@ -1759,6 +1982,10 @@ private:
         if (inWaterNow(feet)) {
             if (!wasInWater_) note("swimming to target");
             wasInWater_ = true;
+            // A long crossing with a boat in the hotbar: ride instead.
+            if (boatSlot() >= 0 && dist > 10.0 && !(boatTriedFor_ == target_)) {
+                enterBoat(); tickBoat(feet); return;
+            }
             faceAim(eye, {center.x, eye.y, center.z}, 10.f, 0.25f);
             if (headInWater(feet)) {
                 ++swimSubmerged_;
@@ -2024,6 +2251,15 @@ private:
     int lastEngageTick_{};
     long long tickCount_{};
     std::unordered_map<std::uint32_t, long long> combatIgnore_;
+    // boat state
+    BoatStep boatStep_{BoatStep::Deploy};
+    int boatTicks_{}; int boatStepTicks_{}; int boatPulse_{}; int boatCd_{}; int boatLockTicks_{};
+    std::uint32_t boatEid_{};
+    std::vector<std::uint32_t> preBoatEids_;
+    int boatGlueTicks_{}; int boatProbeTicks_{};
+    bedrock::Vec3 boatProbeStart_{};
+    bedrock::Vec3 boatCenter_{};
+    BlockPos3 boatTriedFor_{INT_MIN, 0, 0};
     bool pendingReset_{};
 
     BDS_HookToken mouseToken_{};
