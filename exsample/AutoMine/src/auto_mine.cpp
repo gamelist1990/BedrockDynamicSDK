@@ -23,6 +23,7 @@
 #include <bedrock/native/camera.hpp>
 #include <bedrock/native/safe_teleport.hpp>
 #include <bedrock/native/message_commands.hpp>
+#include "block_values.hpp"
 #include <bedrock/native/outline_renderer.hpp>
 #include <bedrock/native/game_access.hpp>
 #include <bedrock/native/runtime_actors.hpp>
@@ -305,6 +306,27 @@ private:
                     if (nativeLines_.size() < 16) nativeLines_.push_back(std::move(invocation.line));
                 }, "block", true))
             throw std::runtime_error("/mine native command definition rejected");
+        // EXPERIMENT (block-id completion): a probe command whose argument
+        // is a real hard enum registered into the client's own enum store,
+        // built exactly like a packet-converted parameter. If the enum
+        // shows candidates and the invocation arrives here with the chosen
+        // value, /mine switches to this flavour.
+        {
+            bedrock::NativeMessageCommands::EnumParameter probe;
+            probe.registerEnumRva = 0x55A8430u;
+            probe.enumRuleRva = 0x557B040u;
+            probe.sharedSymbolSlotRva = 0x129C72F4u;
+            probe.symbolCounterRva = 0x129C73E0u;
+            probe.enumName = "MineBlock";
+            probe.values.assign(kMineBlockValues, kMineBlockValues + kMineBlockValueCount);
+            probe.hasPresetIndex = true;  // EXPERIMENT B: reference the packet store's Block enum
+            probe.presetIndex = 13;
+            if (!registration_.add("mineprobe", "AutoMine enum completion probe",
+                    [this](bedrock::NativeMessageInvocation invocation) {
+                        note("probe invocation: " + invocation.line);
+                    }, "block", true, nullptr, &probe))
+                throw std::runtime_error("/mineprobe native command definition rejected");
+        }
         bedrock::ProfileManager profiles;
         const bedrock::ProfileRequirements required{
             bedrock::Feature::Gameplay, bedrock::Feature::LevelTick, bedrock::Feature::World,
@@ -1357,6 +1379,8 @@ private:
     void updateRegistration() {
         if (registrationTicks_++ % 20) return;
         const auto state = registration_.update(client_.load());
+        const std::string& diag = registration_.enumDiagnostic;
+        if (!diag.empty() && diag != lastDiag_) { lastDiag_ = diag; note(diag); }
         if (registrationState_ && *registrationState_ == state) return;
         registrationState_ = state;
         using State = bedrock::NativeMessageCommands::State;
@@ -2224,6 +2248,7 @@ private:
     bedrock::NativeSafeTeleport gui_; // message route only; never requested to teleport
     bedrock::NativeMessageCommands registration_;
     std::optional<bedrock::NativeMessageCommands::State> registrationState_;
+    std::string lastDiag_;
     unsigned registrationTicks_{};
     std::mutex nativeMutex_;
     std::deque<std::string> nativeLines_;

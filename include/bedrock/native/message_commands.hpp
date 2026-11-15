@@ -28,6 +28,7 @@ struct Route {
     std::atomic<const void*> registry{};
     void *resolve{},*destroy{},*free{};
     std::uintptr_t textBegin{},textEnd{};
+    bool enumFlavor{};
 };
 inline std::array<std::shared_ptr<Route>,32> routes;
 inline std::size_t nextSlot{}; // definitions are added before hooks start
@@ -70,6 +71,35 @@ public:
     virtual void execute(const void* origin,void*) const {
         const auto route=routes[routeIndex];
         if (!route || !registry || route->registry.load()!=registry) return;
+        if (route->enumFlavor) {
+            // Enum-parsed argument storage is not a CommandMessage: report
+            // what the parser left in the argument slot so the handler can
+            // log it. Only an SSO string (inline bytes, capacity<16) may be
+            // read as text — never follow a heap pointer out of the slot: a
+            // parsed enum result can masquerade as a string header with a
+            // wild data pointer, and dereferencing it crashes the game
+            // (observed 2026-11-16). Everything else is reported as raw hex.
+            try {
+                const auto* slot=reinterpret_cast<const unsigned char*>(message.data());
+                static constexpr char digits[]="0123456789abcdef";
+                std::string hex; hex.reserve(64);
+                for (int i=0;i<0x20;++i) { hex+=digits[slot[i]>>4]; hex+=digits[slot[i]&15]; }
+                std::size_t length{},capacity{};
+                std::memcpy(&length,slot+0x10,8); std::memcpy(&capacity,slot+0x18,8);
+                bool sso = capacity<16 && length<=capacity;
+                if (sso) for (std::size_t i=0;i<length;++i)
+                    if (slot[i]<0x20 || slot[i]>=0x7f) { sso=false; break; }
+                NativeMessageInvocation invocation;
+                if (sso && length>0) {
+                    invocation.line="/"+route->name+" "+std::string(reinterpret_cast<const char*>(slot),length)+" [raw "+hex+"]";
+                } else {
+                    invocation.line="/"+route->name+" __raw "+hex;
+                }
+                invocation.version=version;
+                route->handler(std::move(invocation));
+            } catch (...) {}
+            return;
+        }
         alignas(8) std::array<std::byte,0x28> result{};
         const bool resolved=resolveMessage(route->resolve,message.data(),result.data(),origin);
         try {
@@ -118,11 +148,55 @@ inline constexpr auto factoryFunctions=factories(std::make_index_sequence<32>{})
 class NativeMessageCommands {
 public:
     enum class State { WaitingClient, WaitingRegistry, WaitingTemplate, Registered, Collision, Failed };
+    // Optional raw parameter override: build the CommandParameterData the
+    // way a vanilla command setup does for a non-message type (e.g. an enum
+    // parameter), given the descriptor object RVA, the type's symbol slot
+    // RVA, the global symbol counter RVA, the +0x58 type id and the +0x60
+    // flags word. The symbol id is allocated from the shared counter on
+    // first use, exactly like the vanilla lazy allocation.
+    struct RawParameter {
+        std::uint32_t descriptorRva{};
+        std::uint32_t symbolSlotRva{};
+        std::uint32_t symbolCounterRva{};
+        std::int32_t typeId{};
+        std::uint32_t flags60{};
+        // Written into the descriptor object (with the message rule as a
+        // stand-in parser) when the client left it zero-initialised, so
+        // the type resolves in autocomplete: the descriptor flags word is
+        // the parameter's wire type (e.g. 0x300018 = hard enum #24).
+        std::uint32_t descriptorFlags{};
+    };
+    // EXPERIMENT (packet-style enum parameter): register a hard enum into
+    // the registry's own enum store with the native registration function
+    // the AvailableCommands conversion uses (RVA 0x55A8430: appends a
+    // {name, values} entry to the vector at registry+0x230 and indexes it
+    // in the map at registry+0x248), then build the parameter exactly the
+    // way the conversion builds packet-command parameters: shared symbol,
+    // no descriptor, the category rule function at +0x10 (hard enum:
+    // RVA 0x557B040), type word (enum index | 0x300000) at +0x40,
+    // 0xFFFFFFFF at +0x50, kind 1 at +0x54, -1 at +0x58, options byte
+    // at +0x61.
+    struct EnumParameter {
+        std::uint32_t registerEnumRva{};
+        std::uint32_t enumRuleRva{};
+        std::uint32_t sharedSymbolSlotRva{};
+        std::uint32_t symbolCounterRva{};
+        std::string enumName;
+        std::vector<std::string> values;
+        std::uint8_t optionsByte{2};
+        // Experiment: instead of registering a new enum, reference an
+        // existing enum index in the packet-converted store (e.g. the
+        // Block enum) directly.
+        std::uint32_t presetIndex{};
+        bool hasPresetIndex{};
+    };
     // parameterName is only the label autocomplete shows for the message
     // argument (defaults to "message", as in /me); the parser type is the
     // CommandMessage type regardless of the label.
     bool add(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler,
-             std::string parameterName = "message", bool parameterOptional = false) {
+             std::string parameterName = "message", bool parameterOptional = false,
+             const RawParameter* rawParameter = nullptr,
+             const EnumParameter* enumParameter = nullptr) {
         if (loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
             name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
@@ -133,8 +207,12 @@ public:
         const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
+        if (enumParameter) route->enumFlavor=true;
         message_command_native::routes[slot]=route;
-        entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
+        Entry entry{std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional};
+        if (rawParameter) { entry.hasRaw=true; entry.raw=*rawParameter; }
+        if (enumParameter) { entry.hasEnum=true; entry.enumSpec=*enumParameter; }
+        entries_.push_back(std::move(entry)); return true;
     }
     bool load(const RuntimeProfile& profile, std::string& error) {
         loaded_=false;
@@ -204,6 +282,86 @@ public:
             // label its message argument (the name lives in the parameter).
             alignas(8) std::array<std::byte,0x78> parameter{};
             const auto put=[&](std::size_t offset,const auto& value) { std::memcpy(parameter.data()+offset,&value,sizeof(value)); };
+            if (entry.hasEnum) {
+                // Register the enum into this registry once (the native
+                // registration moves the values vector into the registry's
+                // enum store and returns index | 0x4100000 for a new enum),
+                // allocate the shared conversion symbol if needed, then
+                // build the parameter in the converted packet layout.
+                if (entry.enumSpec.hasPresetIndex) {
+                    entry.enumIndex=entry.enumSpec.presetIndex;
+                    entry.enumRegistry=registry;
+                    enumDiagnostic="enumpreset: idx="+std::to_string(entry.enumIndex);
+                } else if (entry.enumRegistry!=registry) {
+                    struct EnumData { std::string name; std::vector<std::string> values; };
+                    EnumData data; data.name=entry.enumSpec.enumName;
+                    std::vector<std::string> values=entry.enumSpec.values;
+                    std::uint64_t result{};
+                    if (!registerEnum(reinterpret_cast<void*>(base_+entry.enumSpec.registerEnumRva),
+                                      registry,&data,&values,result)) {
+                        error_="hard enum registration faulted: "+entry.name; return State::Failed;
+                    }
+                    entry.enumIndex=static_cast<std::uint32_t>(result)&0xe00fffffu;
+                    entry.enumRegistry=registry;
+                    { char buf[160]; std::snprintf(buf,sizeof(buf),
+                        "enumreg: raw=0x%llx idx=%u name='%s' values=%zu",
+                        static_cast<unsigned long long>(result),entry.enumIndex,
+                        entry.enumSpec.enumName.c_str(),entry.enumSpec.values.size());
+                      enumDiagnostic=buf; }
+                }
+                std::uint16_t sharedSymbol{};
+                __try {
+                    auto* slot=reinterpret_cast<std::uint16_t*>(base_+entry.enumSpec.sharedSymbolSlotRva);
+                    auto* counter=reinterpret_cast<std::uint16_t*>(base_+entry.enumSpec.symbolCounterRva);
+                    if (*slot==0) { *slot=*counter; *counter=static_cast<std::uint16_t>(*counter+1); }
+                    sharedSymbol=*slot;
+                } __except(EXCEPTION_EXECUTE_HANDLER) { error_="enum symbol allocation faulted: "+entry.name; return State::Failed; }
+                put(0,sharedSymbol);
+                put(8,static_cast<void*>(nullptr));
+                put(0x10,reinterpret_cast<void*>(base_+entry.enumSpec.enumRuleRva));
+                std::memcpy(parameter.data()+0x18,entry.parameterName.data(),entry.parameterName.size());
+                put(0x28,static_cast<std::uint64_t>(entry.parameterName.size())); put(0x30,std::uint64_t{15});
+                put(0x40,static_cast<std::uint32_t>(entry.enumIndex|0x300000u));
+                put(0x50,std::uint32_t{0xffffffffu}); put(0x54,std::uint32_t{1});
+                put(0x58,std::int32_t{-1});
+                if (entry.parameterOptional) parameter[0x60]=std::byte{1};
+                parameter[0x61]=static_cast<std::byte>(entry.enumSpec.optionsByte);
+            } else if (entry.hasRaw) {
+                // Vanilla-style parameter for a non-message type: allocate
+                // the type symbol from the shared counter on first use
+                // (the vanilla lazy allocation writes the id into the
+                // type's slot and bumps the counter), then reference the
+                // type's own descriptor object.
+                if (!entry.rawAllocated) {
+                    auto* slot=reinterpret_cast<std::uint16_t*>(base_+entry.raw.symbolSlotRva);
+                    auto* counter=reinterpret_cast<std::uint16_t*>(base_+entry.raw.symbolCounterRva);
+                    __try {
+                        if (*slot==0) { *slot=*counter; *counter=static_cast<std::uint16_t>(*counter+1); }
+                        entry.rawSymbol=*slot; entry.rawAllocated=true;
+                        // If the client never initialised this type's
+                        // descriptor (server-only enum types are zero on
+                        // the client), fill it so the type resolves:
+                        // rule = the message parser (stores the token as a
+                        // string, which the invocation path already
+                        // extracts), flags = the wire type, symWord = the
+                        // per-type handle ((0x80002884 + id) << 32) | id
+                        // observed on every built-in descriptor.
+                        auto* desc=reinterpret_cast<std::uint64_t*>(base_+entry.raw.descriptorRva);
+                        if (desc[0]==0 && parser) {
+                            desc[2]=((0x80002884ull+entry.rawSymbol)<<32)|entry.rawSymbol;
+                            desc[1]=entry.raw.descriptorFlags;
+                            desc[0]=reinterpret_cast<std::uint64_t>(parser);
+                        }
+                    } __except(EXCEPTION_EXECUTE_HANDLER) { error_="raw parameter symbol allocation faulted: "+entry.name; return State::Failed; }
+                }
+                put(0,entry.rawSymbol);
+                put(8,reinterpret_cast<void*>(base_+entry.raw.descriptorRva));
+                std::memcpy(parameter.data()+0x18,entry.parameterName.data(),entry.parameterName.size());
+                put(0x28,static_cast<std::uint64_t>(entry.parameterName.size())); put(0x30,std::uint64_t{15});
+                put(0x40,std::int32_t{-1}); put(0x50,std::int32_t{-1});
+                put(0x58,entry.raw.typeId); put(0x5c,std::int32_t{-1});
+                put(0x60,entry.raw.flags60);
+            } else {
             put(0,type); put(8,rule_);
             std::memcpy(parameter.data()+0x18,entry.parameterName.data(),entry.parameterName.size());
             put(0x28,static_cast<std::uint64_t>(entry.parameterName.size())); put(0x30,std::uint64_t{15});
@@ -213,6 +371,7 @@ public:
             // parser then accepts the command with no token and renders
             // the argument as [name: string] in autocomplete.
             if (entry.parameterOptional) parameter[0x60]=std::byte{1};
+            }
             void* existing{};
             if (!lookup(find_,registry,&entry.name,&existing)) { error_="CommandRegistry lookup failed: "+entry.name; return State::Failed; }
             if (existing) {
@@ -232,14 +391,124 @@ public:
             }
             entry.registry=registry; entry.signature=created; entry.route->registry=registry;
         }
+        for (auto& entry:entries_) {
+            if (!entry.hasEnum || entry.enumRegistry!=registry || entry.enumSpec.hasPresetIndex) continue;
+            EnumStoreProbe probe{};
+            if (probeEnumStore(registry,entry.enumIndex,0,probe)) {
+                if (std::strcmp(probe.myName,entry.enumSpec.enumName.c_str())!=0) {
+                    // The client rebuilt the enum store under the same
+                    // registry object (session join): our index now names a
+                    // different enum. Re-register and patch the stored
+                    // parameter's type word to the fresh index.
+                    struct EnumData { std::string name; std::vector<std::string> values; };
+                    EnumData data; data.name=entry.enumSpec.enumName;
+                    std::vector<std::string> values=entry.enumSpec.values;
+                    std::uint64_t result{};
+                    if (registerEnum(reinterpret_cast<void*>(base_+entry.enumSpec.registerEnumRva),
+                                     registry,&data,&values,result)) {
+                        const auto newIndex=static_cast<std::uint32_t>(result)&0xe00fffffu;
+                        const bool patched=entry.signature &&
+                            patchStoredEnumParam(entry.signature,entry.parameterName.c_str(),
+                                entry.parameterName.size(),
+                                reinterpret_cast<void*>(base_+entry.enumSpec.enumRuleRva),
+                                newIndex|0x300000u);
+                        entry.enumIndex=newIndex;
+                        enumDiagnostic="enumfix: store rebuilt (was '"+std::string(probe.myName)+
+                            "'); re-registered idx="+std::to_string(newIndex)+
+                            (patched?" param patched":" PARAM PATCH FAILED");
+                        diagRegistry_=registry; diagCount_=probe.count;
+                        diagVals_=static_cast<std::uint32_t>(entry.enumSpec.values.size());
+                        diagName_=entry.enumSpec.enumName;
+                    }
+                } else if (diagRegistry_!=registry || diagCount_!=probe.count ||
+                           diagVals_!=probe.myVals || diagName_!=probe.myName) {
+                    diagRegistry_=registry; diagCount_=probe.count;
+                    diagVals_=probe.myVals; diagName_=probe.myName;
+                    char buf[512];
+                    std::snprintf(buf,sizeof(buf),
+                        "enumdiag: count=%zu myIdx=%u name='%s' vals=%u w38=0x%x w40=0x%x | idx0 name='%s' vals=%u",
+                        probe.count,entry.enumIndex,probe.myName,probe.myVals,probe.myW38,probe.myW40,
+                        probe.altName,probe.altVals);
+                    enumDiagnostic=buf;
+                }
+            }
+            break;
+        }
         error_.clear(); return State::Registered;
     }
     const std::string& error() const noexcept { return error_; }
+    // TEMP DIAGNOSTIC (E3): human-readable probe of the registry enum
+    // store for the first enum entry; updated when the store changes.
+    std::string enumDiagnostic;
 private:
+    struct EnumStoreProbe {
+        std::size_t count{};
+        std::uint32_t myVals{}; char myName[24]{}; std::uint32_t myW38{}; std::uint32_t myW40{};
+        std::uint32_t altVals{}; char altName[24]{};
+    };
+    static void readEnumEntryRaw(const std::byte* begin, std::uint32_t i, char* nameOut,
+                                 std::uint32_t& valsOut, std::uint32_t* w38, std::uint32_t* w40) noexcept {
+        const auto* e = begin + static_cast<std::size_t>(i) * 0x38;
+        std::uint64_t sz{}; std::memcpy(&sz, e + 0x10, 8);
+        const std::byte* data = e;
+        if (sz > 15) std::memcpy(&data, e, 8);
+        const std::size_t n = sz < 23 ? static_cast<std::size_t>(sz) : 23;
+        if (data) std::memcpy(nameOut, data, n);
+        nameOut[n] = 0;
+        void* vb{}; void* ve{};
+        std::memcpy(&vb, e + 0x20, 8); std::memcpy(&ve, e + 0x28, 8);
+        valsOut = (vb && ve && ve >= vb)
+            ? static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(ve) - reinterpret_cast<std::uintptr_t>(vb)) / 0x20) : 0;
+        if (w38) std::memcpy(w38, e + 0x38, 4);
+        if (w40) std::memcpy(w40, e + 0x40, 4);
+    }
+    static bool probeEnumStore(void* registry, std::uint32_t index, std::uint32_t altIndex, EnumStoreProbe& out) noexcept {
+        __try {
+            const auto* base = static_cast<const std::byte*>(registry);
+            void* begin{}; void* end{};
+            std::memcpy(&begin, base + 0x230, 8); std::memcpy(&end, base + 0x238, 8);
+            if (!begin || end < begin) return false;
+            out.count = (reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(begin)) / 0x38;
+            if (index < out.count) readEnumEntryRaw(static_cast<const std::byte*>(begin), index, out.myName, out.myVals, &out.myW38, &out.myW40);
+            else { std::memcpy(out.myName, "<oob>", 6); out.myVals = 0; }
+            if (altIndex < out.count) readEnumEntryRaw(static_cast<const std::byte*>(begin), altIndex, out.altName, out.altVals, nullptr, nullptr);
+            else { std::memcpy(out.altName, "<oob>", 6); out.altVals = 0; }
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    // Rewrite the type word of the first stored parameter of a signature
+    // (signature -> first overload record -> params vector at +0x48).
+    // Verifies the stored rule pointer and parameter name before writing.
+    static bool patchStoredEnumParam(void* signature, const char* paramName, std::size_t paramNameLen,
+                                     void* ruleVa, std::uint32_t typeWord) noexcept {
+        __try {
+            void* ovBegin{}; void* ovEnd{};
+            std::memcpy(&ovBegin, static_cast<std::byte*>(signature) + 0x40, 8);
+            std::memcpy(&ovEnd, static_cast<std::byte*>(signature) + 0x48, 8);
+            if (!ovBegin || ovEnd < ovBegin) return false;
+            auto* record = static_cast<std::byte*>(ovBegin);
+            void* pBegin{}; void* pEnd{};
+            std::memcpy(&pBegin, record + 0x48, 8);
+            std::memcpy(&pEnd, record + 0x50, 8);
+            if (!pBegin || pEnd < pBegin) return false;
+            auto* param = static_cast<std::byte*>(pBegin);
+            void* rule{}; std::memcpy(&rule, param + 0x10, 8);
+            if (rule != ruleVa) return false;
+            std::uint64_t nameSize{}; std::memcpy(&nameSize, param + 0x28, 8);
+            if (nameSize != paramNameLen || nameSize > 15) return false;
+            if (std::memcmp(param + 0x18, paramName, paramNameLen) != 0) return false;
+            std::memcpy(param + 0x40, &typeWord, 4);
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void* diagRegistry_{}; std::size_t diagCount_{static_cast<std::size_t>(-1)};
+    std::uint32_t diagVals_{}; std::string diagName_;
     struct Entry {
         std::string name,description; std::size_t slot{}; std::shared_ptr<message_command_native::Route> route;
         std::string parameterName{"message"}; bool parameterOptional{};
         void* registry{}; void* signature{}; void* failedRegistry{};
+        bool hasRaw{}; RawParameter raw{}; std::uint16_t rawSymbol{}; bool rawAllocated{};
+        bool hasEnum{}; EnumParameter enumSpec{}; void* enumRegistry{}; std::uint32_t enumIndex{};
     };
     bool ownsOverload(void* signature,std::size_t slot) const noexcept {
         std::uintptr_t begin{},end{}; void* table{}; message_command_native::Factory factory{};
@@ -255,6 +524,10 @@ private:
     static bool registerName(void* fn,void* registry,const std::string* name,const char* description) noexcept {
         // Same local routing as Top: SyncLocal (0x10), NotCheat (0x80).
         __try { reinterpret_cast<void(__fastcall*)(void*,const std::string*,const char*,unsigned char,unsigned short,unsigned short)>(fn)(registry,name,description,0,0x10,0x80); return true; }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    static bool registerEnum(void* fn,void* registry,void* enumData,void* values,std::uint64_t& result) noexcept {
+        __try { result=reinterpret_cast<std::uint64_t(__fastcall*)(void*,void*,void*)>(fn)(registry,enumData,values); return true; }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     static bool addOverload(void* fn,void* registry,const char* name,void* factory,const void* parameter) noexcept {
