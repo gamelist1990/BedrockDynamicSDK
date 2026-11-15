@@ -33,12 +33,14 @@
 #include <cctype>
 #include <cstdio>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <functional>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <queue>
 #include <set>
 #include <string>
 #include <thread>
@@ -725,6 +727,8 @@ private:
         targetId_.clear();
         blacklist_.clear();
         hazardZones_.clear();
+        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
         hasTarget_ = false;
         mined_ = 0;
         aimSmoothInit_ = false;
@@ -887,6 +891,17 @@ private:
         bool box = false; BlockPos3 boxPos{};
         if (showPath_ && hasTarget_ && (phase_ == Phase::Navigate || phase_ == Phase::Mine)) {
             const bedrock::Vec3 goal{target_.x + .5f, target_.y + .5f, target_.z + .5f};
+            if (!path_.empty() && phase_ == Phase::Navigate) {
+                // Draw the actual A* route: remaining waypoints, then goal.
+                points.push_back({feet.x, feet.y + 0.25f, feet.z});
+                for (std::size_t i = pathIdx_; i < path_.size(); ++i)
+                    points.push_back({path_[i].x + .5f, path_[i].y + 0.3f, path_[i].z + .5f});
+                points.push_back(goal);
+                box = true; boxPos = target_;
+                std::lock_guard lock(pathMutex_);
+                pathLine_ = std::move(points); pathBox_ = box; pathBoxPos_ = boxPos;
+                return;
+            }
             const double dx = goal.x - feet.x, dz = goal.z - feet.z;
             const double horiz = std::hypot(dx, dz);
             const int steps = std::clamp(static_cast<int>(horiz / 0.7), 1, 48);
@@ -1023,6 +1038,7 @@ private:
                  std::to_string(target_.y) + "," + std::to_string(target_.z));
             phase_ = Phase::Navigate;
             stuckTicks_ = 0; lastX_ = feet.x; lastZ_ = feet.z; navTicks_ = 0;
+            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0; path_.clear(); pathDig_.clear(); pathIdx_ = 0;
         } else {
             // Nothing in range: wait ~2s, then rescan (the player may move,
             // or a fresh area may load).
@@ -1031,6 +1047,260 @@ private:
             if (++emptyScans_ == 3)
                 reply("近くに " + targetId_ + " が見つからないよ。場所を変えてみて");
             scanWait_ = 40;
+        }
+    }
+
+    // -- pathfinding (A*) ----------------------------------------------------
+    // A navigation cell is the block position of the player's feet. Stand =
+    // can stand/walk there now; Dig = the feet or head cell must be mined
+    // out first (solid ground present); anything else is Blocked. Moves:
+    // walk (1.0), step up one block (1.6, needs headroom above the current
+    // cell), drop 1-3 blocks (1.0 + 0.3/level, Stand landing, clear shaft),
+    // and entering a Dig cell (25.0+: a long detour still beats tunneling,
+    // per the design goal of following real paths). Fluids are never
+    // entered, so routes
+    // stay on land and go around water instead of through it.
+    enum class CellKind : std::uint8_t { Stand, Dig, Blocked };
+    struct CellKey {
+        int x{}, y{}, z{};
+        bool operator==(const CellKey&) const noexcept = default;
+    };
+    struct CellKeyHash {
+        std::size_t operator()(const CellKey& k) const noexcept {
+            return std::hash<long long>{}((static_cast<long long>(k.x) * 73856093LL) ^
+                                          (static_cast<long long>(k.y) * 19349663LL) ^
+                                          (static_cast<long long>(k.z) * 83492791LL));
+        }
+    };
+    bool isPassableCell(const std::string& id) {
+        if (id.empty()) return false;
+        if (isAir(id)) return true;
+        const auto l = localPart(id);
+        return l == "grass" || l == "short_grass" || l == "tall_grass" || l == "fern" ||
+               l == "large_fern" || l == "snow_layer" || l == "dead_bush" ||
+               contains(l, "flower") || contains(l, "sapling") || contains(l, "carpet") ||
+               l == "torch" || l == "wall_torch";
+    }
+    bool isFluidCell(const std::string& id) {
+        const auto l = localPart(id);
+        return contains(l, "water") || contains(l, "lava");
+    }
+    bool isSolidCell(const std::string& id) {
+        return !id.empty() && !isAir(id) && !isFluidCell(id) && !isPassableCell(id);
+    }
+    bool isDiggableCell(const std::string& id) {
+        return isSolidCell(id) && localPart(id) != "bedrock";
+    }
+    CellKind classifyCell(CellKey c, std::unordered_map<CellKey, CellKind, CellKeyHash>& cache) {
+        if (auto it = cache.find(c); it != cache.end()) return it->second;
+        CellKind kind = CellKind::Blocked;
+        const auto ground = blockAt({c.x, c.y - 1, c.z});
+        const auto feetB = blockAt({c.x, c.y, c.z});
+        const auto headB = blockAt({c.x, c.y + 1, c.z});
+        if (!ground.empty() && !feetB.empty() && !headB.empty() &&
+            !isFluidCell(ground) && !isFluidCell(feetB) && !isFluidCell(headB) &&
+            isSolidCell(ground)) {
+            const bool fP = isPassableCell(feetB), hP = isPassableCell(headB);
+            if (fP && hP) kind = CellKind::Stand;
+            else if ((fP || isDiggableCell(feetB)) && (hP || isDiggableCell(headB)))
+                kind = CellKind::Dig;
+        }
+        cache.emplace(c, kind);
+        return kind;
+    }
+
+    bool planPath(bedrock::Vec3 feet) {
+        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        pathFor_ = target_;
+        std::unordered_map<CellKey, CellKind, CellKeyHash> cache;
+        const CellKey start{static_cast<int>(std::floor(feet.x)),
+                            static_cast<int>(std::floor(feet.y)),
+                            static_cast<int>(std::floor(feet.z))};
+        // Goal cells: Stand/Dig cells around the target whose eye point is
+        // within mining reach (4.2) of the target centre.
+        std::vector<CellKey> goals;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 2; ++dy)
+                for (int dz = -1; dz <= 1; ++dz) {
+                    const CellKey g{target_.x + dx, target_.y + dy, target_.z + dz};
+                    if (classifyCell(g, cache) == CellKind::Blocked) continue;
+                    const double ex = dx, ey = g.y + 1.62 - (target_.y + .5), ez = dz;
+                    if (ex * ex + ey * ey + ez * ez <= 4.2 * 4.2) goals.push_back(g);
+                }
+        if (goals.empty()) { note("path: no standpoint near target"); return false; }
+        auto heuristic = [&](const CellKey& c) {
+            double best = 1e18;
+            for (const auto& g : goals) {
+                const double d = std::sqrt(static_cast<double>(
+                    (c.x - g.x) * (c.x - g.x) + (c.y - g.y) * (c.y - g.y) + (c.z - g.z) * (c.z - g.z)));
+                if (d < best) best = d;
+            }
+            return best;
+        };
+        struct OpenNode {
+            double f; CellKey c;
+            bool operator<(const OpenNode& o) const noexcept { return f > o.f; } // min-heap
+        };
+        std::priority_queue<OpenNode> open;
+        std::unordered_map<CellKey, double, CellKeyHash> gScore;
+        std::unordered_map<CellKey, CellKey, CellKeyHash> cameFrom;
+        std::unordered_map<CellKey, bool, CellKeyHash> digFlag;
+        gScore[start] = 0;
+        open.push({heuristic(start), start});
+        constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        constexpr int kMaxExpansions = 9000;
+        int expansions = 0;
+        CellKey found{}; bool haveFound = false;
+        while (!open.empty() && expansions < kMaxExpansions) {
+            const OpenNode cur = open.top(); open.pop();
+            const double cg = gScore.count(cur.c) ? gScore[cur.c] : 1e18;
+            if (cur.f > cg + heuristic(cur.c) + 1e-9) continue; // stale entry
+            ++expansions;
+            if (std::find(goals.begin(), goals.end(), cur.c) != goals.end()) {
+                found = cur.c; haveFound = true; break;
+            }
+            auto relax = [&](const CellKey& next, double cost, CellKind kind) {
+                const double ng = cg + cost;
+                if (!gScore.count(next) || ng < gScore[next] - 1e-9) {
+                    gScore[next] = ng;
+                    cameFrom[next] = cur.c;
+                    digFlag[next] = (kind == CellKind::Dig);
+                    open.push({ng + heuristic(next), next});
+                }
+            };
+            for (const auto& d : kDirs) {
+                const int nx = cur.c.x + d[0], nz = cur.c.z + d[1];
+                {   // walk, same level
+                    const CellKey n{nx, cur.c.y, nz};
+                    const auto k = classifyCell(n, cache);
+                    if (k != CellKind::Blocked) relax(n, k == CellKind::Dig ? 25.0 : 1.0, k);
+                }
+                {   // step up one block (headroom above the current cell)
+                    const CellKey n{nx, cur.c.y + 1, nz};
+                    const auto k = classifyCell(n, cache);
+                    if (k != CellKind::Blocked &&
+                        isPassableCell(blockAt({cur.c.x, cur.c.y + 2, cur.c.z})))
+                        relax(n, k == CellKind::Dig ? 25.6 : 1.6, k);
+                }
+                // drop 1-3 blocks onto a Stand cell, fall shaft passable
+                if (isPassableCell(blockAt({nx, cur.c.y + 1, nz}))) {
+                    for (int drop = 1; drop <= 3; ++drop) {
+                        const CellKey n{nx, cur.c.y - drop, nz};
+                        if (classifyCell(n, cache) != CellKind::Stand) break;
+                        bool shaft = true;
+                        for (int k2 = 0; k2 < drop; ++k2)
+                            if (!isPassableCell(blockAt({nx, cur.c.y - k2, nz}))) { shaft = false; break; }
+                        if (!shaft) break;
+                        relax(n, 1.0 + 0.3 * drop, CellKind::Stand);
+                    }
+                }
+            }
+        }
+        if (!haveFound) {
+            note("path: no route (" + std::to_string(expansions) + " expansions)");
+            return false;
+        }
+        std::vector<CellKey> cells;
+        for (CellKey c = found;; c = cameFrom[c]) {
+            cells.push_back(c);
+            if (c == start) break;
+        }
+        std::reverse(cells.begin(), cells.end());
+        // Keep every Dig cell and every direction/height change; compress
+        // straight same-level walking runs to their endpoints.
+        for (std::size_t i = 1; i < cells.size(); ++i) {
+            const bool dig = digFlag.count(cells[i]) && digFlag[cells[i]];
+            const bool last = (i + 1 == cells.size());
+            bool keep = last || dig;
+            if (!keep) {
+                const auto& a = cells[i - 1]; const auto& b = cells[i]; const auto& n = cells[i + 1];
+                keep = !(a.y == b.y && b.y == n.y && (b.x - a.x) == (n.x - b.x) &&
+                         (b.z - a.z) == (n.z - b.z));
+            }
+            if (keep) {
+                path_.push_back({cells[i].x, cells[i].y, cells[i].z});
+                pathDig_.push_back(dig);
+            }
+        }
+        note("path: " + std::to_string(path_.size()) + " waypoints (" +
+             std::to_string(expansions) + " expansions)");
+        return true;
+    }
+
+    void enterMineCell(BlockPos3 cell, const std::string& id) {
+        savedTarget_ = target_; savedId_ = targetId_;
+        target_ = cell; targetId_ = localPart(id);
+        hasTarget_ = true; phase_ = Phase::Mine; mineTicks_ = 0;
+        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        pathFor_ = {INT_MIN, 0, 0};
+        note("mine-through: " + targetId_);
+    }
+
+    void tickFollowPath(bedrock::Vec3 feet) {
+        ++navTicks_;
+        if (navTicks_ > 20 * 45) { // same overall budget as legacy navigation
+            note("navigate timeout (path); blacklist target");
+            blacklist_.insert(target_); hasTarget_ = false;
+            pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            path_.clear(); pathDig_.clear();
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            return;
+        }
+        if (pathIdx_ >= path_.size()) {
+            pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            if (++replans_ > 2) {
+                note("path exhausted; blacklist target");
+                blacklist_.insert(target_); hasTarget_ = false;
+                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            } else pathFor_ = {INT_MIN, 0, 0}; // force a re-plan next tick
+            return;
+        }
+        const BlockPos3 wp = path_[pathIdx_];
+        if (pathDig_[pathIdx_]) {
+            // Mine out this waypoint's blocking cell, then re-plan (the
+            // Mine phase restores the real target via the saved goal).
+            pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            const auto feetId = blockAt({wp.x, wp.y, wp.z});
+            const auto headId = blockAt({wp.x, wp.y + 1, wp.z});
+            if (isDiggableCell(feetId)) { enterMineCell({wp.x, wp.y, wp.z}, feetId); return; }
+            if (isDiggableCell(headId)) { enterMineCell({wp.x, wp.y + 1, wp.z}, headId); return; }
+            ++pathIdx_; // already cleared somehow: move on
+            return;
+        }
+        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::Vec3 wpC{wp.x + .5f, wp.y + .5f, wp.z + .5f};
+        faceAim(eye, {wpC.x, eye.y, wpC.z}, 10.f, 0.25f);
+        pressKey(kKeyW, true);
+        const int feetCellY = static_cast<int>(std::floor(feet.y));
+        if (wp.y > feetCellY) pressKey(kKeySpace, true);
+        else pressKey(kKeySpace, false);
+        const double horiz = std::hypot(wpC.x - feet.x, wpC.z - feet.z);
+        bool advance = false;
+        if (wp.y == feetCellY) advance = horiz < 0.7;
+        else if (wp.y > feetCellY) advance = (feetCellY == wp.y && horiz < 0.9);
+        else advance = (feet.y <= wp.y + 0.6 && horiz < 1.0);
+        if (advance) {
+            ++pathIdx_;
+            stuckTicks_ = 0;
+            return;
+        }
+        // Stuck on this waypoint: re-plan a few times, then give up on it.
+        if (navTicks_ % 10 == 0) {
+            const double moved = std::hypot(feet.x - lastX_, feet.z - lastZ_);
+            if (moved < 0.12) {
+                if (++stuckTicks_ >= 3) {
+                    stuckTicks_ = 0;
+                    pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                    if (++replans_ > 2) {
+                        note("path follow stuck; blacklist target");
+                        blacklist_.insert(target_); hasTarget_ = false;
+                        path_.clear(); pathDig_.clear();
+                        phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    } else pathFor_ = {INT_MIN, 0, 0};
+                    return;
+                }
+            } else stuckTicks_ = 0;
+            lastX_ = feet.x; lastZ_ = feet.z;
         }
     }
 
@@ -1054,6 +1324,11 @@ private:
             phase_ = Phase::Mine; mineTicks_ = 0;
             return;
         }
+        // Planned route (A*): plan once per target and follow the waypoints
+        // when a route exists. No route (or a failed plan) falls back to
+        // the legacy straight-line navigation below.
+        if (!(pathFor_ == target_)) planPath(feet);
+        if (!path_.empty()) { tickFollowPath(feet); return; }
         faceAim(eye, center, 10.f, 0.25f);
         // Cliff guard: do not step into a >2 block drop straight ahead.
         const double hx = center.x - feet.x, hz = center.z - feet.z;
@@ -1265,6 +1540,11 @@ private:
     int dryTicks_{0};
     struct HazardZone { int x, y, z, r; };
     std::vector<HazardZone> hazardZones_;
+    std::vector<BlockPos3> path_;
+    std::vector<bool> pathDig_;
+    std::size_t pathIdx_{0};
+    BlockPos3 pathFor_{INT_MIN, 0, 0};
+    int replans_{0};
     Phase phase_{Phase::Idle};
     std::string targetId_;
     BlockPos3 target_{};
