@@ -24,6 +24,10 @@
 #include <bedrock/native/safe_teleport.hpp>
 #include <bedrock/native/message_commands.hpp>
 #include <bedrock/native/outline_renderer.hpp>
+#include <bedrock/native/game_access.hpp>
+#include <bedrock/native/runtime_actors.hpp>
+#include <bedrock/native/actor_registry.hpp>
+#include <bedrock/native/actors.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <knownfolders.h>
@@ -305,7 +309,7 @@ private:
             bedrock::Feature::Gameplay, bedrock::Feature::LevelTick, bedrock::Feature::World,
             bedrock::Feature::Motion, bedrock::Feature::Gui, bedrock::Feature::WorldHeight,
             bedrock::Feature::ClientCommands, bedrock::Feature::WorldEvents,
-            bedrock::Feature::Camera};
+            bedrock::Feature::Actors, bedrock::Feature::Camera};
         const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,
                                               bedrock::CandidatePolicy::AllowCandidates};
         std::string error;
@@ -318,6 +322,13 @@ private:
                     std::string outlineError;
                     outlineReady_ = outline_.load(profile, outlineError);
                     if (!outlineReady_) note("path renderer unavailable: " + outlineError);
+                    // Actor access (combat) is optional too.
+                    std::string actorError;
+                    actorsReady_ = loadActors(profile, actorError);
+                    if (!actorsReady_) note("actor access unavailable: " + actorError);
+                    std::string accessError;
+                    if (!access_.load(profile, accessError))
+                        note("game access unavailable: " + accessError);
                     return true;
                 }, error))
             throw std::runtime_error(error);
@@ -333,6 +344,7 @@ private:
         game_.Event.Enum.LevelTick.then([this](const bedrock::LevelTickEvent& event) {
             if (stopped_.load()) return;
             try {
+                level_.store(event.level);
                 auto scope = gui_.tick(client_.load(), event.level, epoch_.load());
                 if (!scope) return;
                 auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
@@ -516,6 +528,16 @@ private:
     }
     bool feedMove(int dx, int dy) { return feedMouse(0, 0, dx, dy); }
     bool feedButton(bool down) { return feedMouse(1, down ? 1 : 0, 0, 0); }
+    // Right button ("use item": bow draw, block placement). The encoding
+    // (action=2, state=1/0) was confirmed against real captured events
+    // from the live client; the GameApi route runs in parallel, exactly
+    // like setAttack does for the left button.
+    bool feedUseButton(bool down) { return feedMouse(2, down ? 1 : 0, 0, 0); }
+    void setUse(bool down) {
+        if (useHeld_ == down) return;
+        if (feedUseButton(down) || mouse().setDown(bedrock::MouseButton::Right, down))
+            useHeld_ = down;
+    }
     void pressKey(unsigned key, bool down) {
         auto kb = keyboard();
         if (down) { if (!heldKeys_.count(key) && kb.press(key)) heldKeys_.insert(key); }
@@ -531,6 +553,7 @@ private:
             if (heldKeys_.erase(key)) { try { keyboard().release(key); } catch (...) {} }
         }
         if (attackHeld_) { try { feedButton(false); mouse().setDown(bedrock::MouseButton::Left, false); } catch (...) {} attackHeld_ = false; }
+        if (useHeld_) { try { feedUseButton(false); mouse().setDown(bedrock::MouseButton::Right, false); } catch (...) {} useHeld_ = false; }
     }
 
     // -- world helpers ---------------------------------------------------------
@@ -719,8 +742,265 @@ private:
         return items;
     }
 
+    // -- combat --------------------------------------------------------------
+    // Mob type ids read from the actor type component on the live client
+    // (1.26.60.5, verified by controlled summons on the test server —
+    // see README). 199534/199540 are the zombie-family neighbours of the
+    // zombie id (199456): every live sighting fit drowned (in water) and
+    // a zombie variant (a 0.49x0.98 baby form exists), so both count as
+    // hostile.
+    static bool isHostileType(std::uint32_t t) {
+        switch (t) {
+        case 199456:  // zombie
+        case 1116962: // skeleton
+        case 264995:  // spider
+        case 2849:    // creeper
+        case 199534:  // drowned (zombie family)
+        case 199540:  // zombie variant (zombie family)
+            return true;
+        default: return false;
+        }
+    }
+    static bool isCreeperType(std::uint32_t t) { return t == 2849; }
+    struct MobInfo {
+        std::uint32_t eid{}; std::uint32_t type{};
+        bedrock::Vec3 center{}; bedrock::Vec3 bmin{}; bedrock::Vec3 bmax{};
+        bool hasBounds{}; double dist{1e18};
+    };
+    // Nearest hostile actor within maxDist of `feet` (3D, to the mob
+    // centre). onlyEid != 0 restricts the search to that one actor.
+    std::optional<MobInfo> scanHostile(const bedrock::Vec3& feet, double maxDist,
+                                       std::uint32_t onlyEid = 0) {
+        if (!actorsReady_) return std::nullopt;
+        const auto snap = runtimeActors_.snapshot(level_.load());
+        if (!snap) return std::nullopt;
+        void* self = world_.localPlayer(client_.load());
+        std::optional<MobInfo> best;
+        for (void* a : *snap) {
+            if (a == self) continue;
+            const auto type = actorTypeOf(a);
+            if (!type || !isHostileType(*type)) continue;
+            std::uint32_t eid = 0;
+            actorRegistry_.readEntityId(a, eid);
+            if (onlyEid && eid != onlyEid) continue;
+            bedrock::Vec3 pos;
+            if (!actorRegistry_.readPosition(a, pos)) continue;
+            MobInfo m; m.eid = eid; m.type = *type;
+            bedrock::ActorBounds b{};
+            if (actorRegistry_.readBounds(a, b)) {
+                m.hasBounds = true; m.bmin = b.minimum; m.bmax = b.maximum;
+                m.center = {(b.minimum.x + b.maximum.x) * .5f,
+                            (b.minimum.y + b.maximum.y) * .5f,
+                            (b.minimum.z + b.maximum.z) * .5f};
+            } else {
+                m.center = {pos.x, pos.y + .9f, pos.z};
+            }
+            m.dist = std::sqrt((m.center.x - feet.x) * (m.center.x - feet.x) +
+                               (m.center.y - feet.y) * (m.center.y - feet.y) +
+                               (m.center.z - feet.z) * (m.center.z - feet.z));
+            if (!onlyEid && combatIgnore_.count(eid)) continue; // gave up on it recently
+            if (m.dist <= maxDist && (!best || m.dist < best->dist)) best = m;
+        }
+        return best;
+    }
+    // Distance from a point to the mob's AABB (0 when inside): the reach
+    // metric — a hit counts when this is within the game's ~3 block reach.
+    static double distToMob(const bedrock::Vec3& p, const MobInfo& m) {
+        if (!m.hasBounds) {
+            return std::sqrt((m.center.x - p.x) * (m.center.x - p.x) +
+                             (m.center.y - p.y) * (m.center.y - p.y) +
+                             (m.center.z - p.z) * (m.center.z - p.z));
+        }
+        const double dx = p.x < m.bmin.x ? m.bmin.x - p.x : (p.x > m.bmax.x ? p.x - m.bmax.x : 0);
+        const double dy = p.y < m.bmin.y ? m.bmin.y - p.y : (p.y > m.bmax.y ? p.y - m.bmax.y : 0);
+        const double dz = p.z < m.bmin.z ? m.bmin.z - p.z : (p.z > m.bmax.z ? p.z - m.bmax.z : 0);
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    struct Weapon { int slot{-1}; int kind{0}; int tier{-1}; }; // kind: 1 sword, 2 axe, 3 bow
+    static int weaponTierOf(const std::string& lp) {
+        if (lp.rfind("netherite_", 0) == 0) return 5;
+        if (lp.rfind("diamond_", 0) == 0) return 4;
+        if (lp.rfind("iron_", 0) == 0) return 3;
+        if (lp.rfind("stone_", 0) == 0) return 2;
+        if (lp.rfind("golden_", 0) == 0) return 1;
+        if (lp.rfind("wooden_", 0) == 0) return 1;
+        return 0;
+    }
+    Weapon bestMelee() {
+        Weapon best;
+        const auto slots = hotbarItems();
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (!it.count || it.id.empty()) continue;
+            const auto lp = localPart(it.id);
+            int kind = 0;
+            if (lp.size() > 6 && lp.compare(lp.size() - 6, 6, "_sword") == 0) kind = 1;
+            // "pickaxe" cannot false-match: it ends in "kaxe", not "_axe".
+            else if (lp.size() > 4 && lp.compare(lp.size() - 4, 4, "_axe") == 0) kind = 2;
+            if (!kind) continue;
+            const int tier = weaponTierOf(lp);
+            // Swords win ties (faster swing); then higher tier.
+            if (best.slot < 0 || tier > best.tier || (tier == best.tier && kind < best.kind)) {
+                best.slot = i; best.kind = kind; best.tier = tier;
+            }
+        }
+        return best;
+    }
+    int bowSlot() {
+        const auto slots = hotbarItems();
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (it.count && localPart(it.id) == "bow") return i;
+        }
+        return -1;
+    }
+    bool hasArrows() {
+        for (const auto& it : hotbarItems())
+            if (it.count && localPart(it.id) == "arrow") return true;
+        return false;
+    }
+    void selectSlot(int slot) {
+        if (slot < 0) return;
+        void* p = player();
+        if (p && world_.selected(p) != slot) world_.select(p, static_cast<unsigned>(slot));
+    }
+    enum class CombatMode { Melee, Bow, Flee };
+    void enterCombat(const MobInfo& mob) {
+        releaseInputs();
+        setAttack(false);
+        resumePhase_ = phase_;
+        phase_ = Phase::Combat;
+        combatEid_ = mob.eid; combatType_ = mob.type;
+        combatTicks_ = 0; attackCd_ = 0; attackPulse_ = 0; retreatTicks_ = 0;
+        bowDraw_ = 0; bowCd_ = 0; landedHits_ = 0; lastEngageTick_ = 0; clearPath();
+        const int bow = bowSlot();
+        const Weapon melee = bestMelee();
+        if (isCreeperType(mob.type) && bow >= 0 && hasArrows()) {
+            combatMode_ = CombatMode::Bow; selectSlot(bow);
+        } else if (melee.slot >= 0 || !isCreeperType(mob.type)) {
+            combatMode_ = CombatMode::Melee;
+            if (melee.slot >= 0) selectSlot(melee.slot);
+        } else {
+            combatMode_ = CombatMode::Flee; // creeper, no bow, no weapon
+        }
+        note("combat: start type=" + std::to_string(mob.type) +
+             " mode=" + std::to_string(static_cast<int>(combatMode_)));
+        reply("敵が来た！応戦するよ");
+    }
+    void exitCombat(bool won) {
+        releaseInputs();
+        setAttack(false);
+        setUse(false);
+        if (!won && combatEid_) // unreachable or timed out: don't retrigger at once
+            combatIgnore_[combatEid_] = tickCount_ + 20 * 60;
+        if (won && landedHits_ > 0) reply("やっつけたよ");
+        note("combat: end won=" + std::to_string(won ? 1 : 0));
+        combatEid_ = 0;
+        if ((resumePhase_ == Phase::Navigate || resumePhase_ == Phase::Mine ||
+             resumePhase_ == Phase::Collect || resumePhase_ == Phase::NeedTool) &&
+            hasTarget_ && !targetId_.empty() &&
+            localPart(blockAt(target_)) == targetId_) {
+            phase_ = resumePhase_;
+            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
+        } else {
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+        }
+        resumePhase_ = Phase::Scan;
+    }
+    void tickCombat(const bedrock::Vec3& feet) {
+        ++combatTicks_;
+        if (combatTicks_ > 20 * 90) { exitCombat(false); return; } // 90 s cap
+        // No engagement for 25 s (never got in reach / never had a clear
+        // shot): the target is unreachable from here — give up on it for
+        // a minute instead of re-entering combat forever.
+        if (combatTicks_ - lastEngageTick_ > 20 * 25) { exitCombat(false); return; }
+        auto mob = scanHostile(feet, 40.0, combatEid_);
+        if (!mob) {
+            // Target died or left: retarget to any other nearby hostile,
+            // otherwise the fight is over.
+            if (auto other = scanHostile(feet, 14.0)) {
+                combatEid_ = other->eid; combatType_ = other->type; mob = other;
+                note("combat: retarget type=" + std::to_string(other->type));
+            } else { exitCombat(true); return; }
+        }
+        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+        BlockPos3 hitCell{};
+        const BlockPos3 mobCell{static_cast<int>(std::floor(mob->center.x)),
+                                static_cast<int>(std::floor(mob->center.y)),
+                                static_cast<int>(std::floor(mob->center.z))};
+        const bool los = lineOfSight(eye, mobCell, hitCell);
+        const double reach = distToMob(eye, *mob);
+        const bool wet = inWaterNow(feet);
+        if (attackCd_ > 0) --attackCd_;
+        if (attackPulse_ > 0 && --attackPulse_ == 0) {
+            setAttack(false);
+            if (retreatAfterHit_) { retreatAfterHit_ = false; retreatTicks_ = 10; }
+        }
+        if (combatMode_ == CombatMode::Flee) {
+            // Run directly away from the mob until it is far enough.
+            lastEngageTick_ = combatTicks_; // fleeing is the engagement
+            bedrock::Vec3 away{feet.x * 2 - mob->center.x, mob->center.y, feet.z * 2 - mob->center.z};
+            faceAim(eye, away, 6.f, .4f);
+            pressKey(kKeyW, true);
+            if (wet) pressKey(kKeySpace, true);
+            if (mob->dist > 16.0) exitCombat(true);
+            return;
+        }
+        if (combatMode_ == CombatMode::Bow) {
+            const double d = std::sqrt((mob->center.x - eye.x) * (mob->center.x - eye.x) +
+                                       (mob->center.y - eye.y) * (mob->center.y - eye.y) +
+                                       (mob->center.z - eye.z) * (mob->center.z - eye.z));
+            if (bowDraw_ > 0) {
+                // Drawing: hold still, track the mob, release at full draw.
+                pressKey(kKeyW, false); pressKey(kKeyS, false);
+                if (wet) pressKey(kKeySpace, true);
+                bedrock::Vec3 aim = mob->center; aim.y += static_cast<float>(d * 0.02);
+                faceToward(eye, aim, 2.5f);
+                if (!los) { setUse(false); bowDraw_ = 0; bowCd_ = 6; }
+                else if (--bowDraw_ == 0) { setUse(false); bowCd_ = 9; ++landedHits_; lastEngageTick_ = combatTicks_; }
+                return;
+            }
+            if (bowCd_ > 0) --bowCd_;
+            faceAim(eye, mob->center, 4.f, .35f);
+            if (!los || d > 14.0) { // close in until the shot is clear
+                pressKey(kKeyS, false); pressKey(kKeyW, true);
+                if (wet) pressKey(kKeySpace, true);
+            } else if (d < 7.0) {   // too close: back off while facing it
+                pressKey(kKeyW, false); pressKey(kKeyS, true);
+            } else {
+                pressKey(kKeyW, false); pressKey(kKeyS, false);
+                if (bowCd_ == 0) { setUse(true); bowDraw_ = 22; }
+            }
+            return;
+        }
+        // Melee.
+        if (retreatTicks_ > 0) {
+            --retreatTicks_;
+            faceAim(eye, mob->center, 5.f, .4f);
+            pressKey(kKeyW, false); pressKey(kKeyS, true);
+            if (wet) pressKey(kKeySpace, true);
+            return;
+        }
+        pressKey(kKeyS, false);
+        if (reach > 2.9 || !los) {
+            faceAim(eye, mob->center, 5.f, .35f);
+            pressKey(kKeyW, true);
+            if (wet || mob->center.y > feet.y + .6f) pressKey(kKeySpace, true);
+            else pressKey(kKeySpace, false);
+            return;
+        }
+        pressKey(kKeyW, false);
+        pressKey(kKeySpace, wet); // stay at the surface while striking
+        faceToward(eye, mob->center, 3.f);
+        if (attackCd_ == 0) {
+            setAttack(true);
+            attackPulse_ = 2; attackCd_ = 11; ++landedHits_; lastEngageTick_ = combatTicks_;
+            if (isCreeperType(combatType_)) retreatAfterHit_ = true;
+        }
+    }
+
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -730,6 +1010,7 @@ private:
         path_.clear(); pathDig_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
+        combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
         savedId_.clear();
         hasTarget_ = false;
         mined_ = 0;
@@ -764,11 +1045,76 @@ private:
             reply(showPath_ ? "経路表示を ON にしたよ" : "経路表示を OFF にしたよ");
         } else if (arg == "stop") {
             stopMining("");
+        } else if (arg == "mobs") {
+            probePending_ = true; // actor reads must run on the tick thread
+            reply("probe: queued");
         } else if (enabled_) {
             startMining(arg);
         } else {
             reply("設定で無効になっているよ");
         }
+    }
+    bool loadActors(const bedrock::RuntimeProfile& profile, std::string& failure) {
+        if (!bedrock::parseNativeActorLayout(profile.json(), actorLayout_, failure))
+            return false;
+        if (!runtimeActors_.load(profile.json(), failure)) return false;
+        try {
+            const auto root = bedrock::parseNativeProfile(profile.json());
+            const auto& at = root.at("layouts").at("Actor").at("actor_type");
+            actorTypeOffset_ = bedrock::native_profile::number(at.at("value_offset"));
+            actorRegistry_.configure(
+                actorLayout_, actorTypeOffset_,
+                static_cast<std::uint32_t>(bedrock::native_profile::number(at.at("player_type_id"))));
+        } catch (const std::exception& e) {
+            failure = e.what();
+            return false;
+        }
+        return true;
+    }
+    std::optional<std::uint32_t> actorTypeOf(void* actor) {
+        void* comp = actorRegistry_.component(actor, actorLayout_.actorTypeComponentHash, 0);
+        if (!comp) return std::nullopt;
+        std::uint32_t v = 0;
+        __try {
+            std::memcpy(&v, static_cast<const char*>(comp) + actorTypeOffset_, sizeof(v));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return std::nullopt;
+        }
+        return v;
+    }
+    // Debug aid (/mine mobs): dump everything readable about nearby
+    // actors — this is how the combat mob type ids were identified.
+    void probeActors(const bedrock::Vec3& feet) {
+        if (!actorsReady_) { note("probe: actor access not ready"); return; }
+        const auto snap = runtimeActors_.snapshot(level_.load());
+        if (!snap) { note("probe: snapshot failed"); return; }
+        note("probe: raw actors=" + std::to_string(snap->size()));
+        void* self = world_.localPlayer(client_.load());
+        int n = 0;
+        for (void* a : *snap) {
+            bedrock::Vec3 pos;
+            if (!actorRegistry_.readPosition(a, pos)) continue;
+            const double d = std::hypot(pos.x - feet.x, pos.z - feet.z);
+            if (d > 40) continue;
+            ++n;
+            bedrock::ActorBounds b{};
+            const bool hasB = actorRegistry_.readBounds(a, b);
+            std::uint32_t eid = 0;
+            actorRegistry_.readEntityId(a, eid);
+            const auto type = actorTypeOf(a);
+            const bedrock::Actor apiActor{game_, a};
+            const auto ident = apiActor.getIdentity();
+            char buf[640];
+            std::snprintf(buf, sizeof(buf),
+                "actor d=%.1f self=%d type=%d eid=%u bounds=%.2fx%.2f pos=%.1f,%.1f,%.1f name='%s' tag='%s' player=%d",
+                d, a == self ? 1 : 0, type ? static_cast<int>(*type) : -1, eid,
+                hasB ? (b.maximum.x - b.minimum.x) : -1.f,
+                hasB ? (b.maximum.y - b.minimum.y) : -1.f,
+                pos.x, pos.y, pos.z,
+                ident.name.c_str(), ident.nameTag.c_str(), ident.isPlayer ? 1 : 0);
+            note(buf);
+        }
+        reply("probe: " + std::to_string(n) + " actors logged");
     }
     std::string statusText() const {
         switch (phase_) {
@@ -779,6 +1125,7 @@ private:
         case Phase::Collect: return "ドロップ回収中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::NeedTool: return "ツール待ち（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Escape: return "水から浮上中…（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Combat: return "敵と戦闘中！（掘った数: " + std::to_string(mined_) + "）";
         }
         return "";
     }
@@ -806,11 +1153,21 @@ private:
     }
 
     void tick() {
+        ++tickCount_;
+        if ((tickCount_ % 200) == 0) // expire combat give-up entries
+            for (auto it = combatIgnore_.begin(); it != combatIgnore_.end();)
+                if (it->second <= tickCount_) it = combatIgnore_.erase(it); else ++it;
         if (pendingReset_) { pendingReset_ = false; gui_.reset(epoch_.load()); camera_.reset(); resetRun(); }
         {
             std::deque<std::string> native;
             { std::lock_guard lock(nativeMutex_); native.swap(nativeLines_); }
             for (auto& line : native) dispatchLine(std::move(line));
+        }
+        if (probePending_) {
+            probePending_ = false;
+            bedrock::Vec3 pf;
+            if (feetPos(pf)) probeActors(pf);
+            else note("probe: no feet");
         }
         if (phase_ == Phase::Idle) { clearPath(); return; }
         if (!game_.gameplayActive()) { releaseInputs(); return; }
@@ -825,10 +1182,25 @@ private:
         // verification. Navigate is excluded: crossing water by swimming
         // is intentional there and has its own air management.
         if (phase_ == Phase::Escape) { tickEscape(feet); updatePath(feet); return; }
-        if (phase_ == Phase::Mine || phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
+        if (phase_ == Phase::Mine || phase_ == Phase::Collect || phase_ == Phase::NeedTool ||
+            phase_ == Phase::Combat) {
             if (headInWater(feet)) {
                 if (++submergedTicks_ >= 3) { startEscape(); tickEscape(feet); updatePath(feet); return; }
             } else submergedTicks_ = 0;
+        }
+        // Hostile interruption: a mob that gets close during work preempts
+        // the run — fight first, then resume (exitCombat restores the run).
+        if (phase_ == Phase::Scan || phase_ == Phase::Navigate || phase_ == Phase::Mine ||
+            phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
+            if ((++threatScanTick_ % 4) == 0) {
+                // Relevance: within 12 blocks and near the player's level,
+                // or point-blank at any height. A drowned in the sea far
+                // below a platform is not a threat to a miner on top of it.
+                if (auto mob = scanHostile(feet, 12.0)) {
+                    const double dy = std::abs(mob->center.y - feet.y);
+                    if (dy <= 4.0 || mob->dist <= 6.0) { enterCombat(*mob); tickCombat(feet); updatePath(feet); return; }
+                }
+            }
         }
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
@@ -836,6 +1208,7 @@ private:
         case Phase::Mine: tickMine(feet); break;
         case Phase::Collect: tickCollect(feet); break;
         case Phase::NeedTool: tickNeedTool(); break;
+        case Phase::Combat: tickCombat(feet); break;
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
@@ -857,6 +1230,14 @@ private:
         return contains(localPart(feetId), "water") || headInWater(feet);
     }
     void startEscape() {
+        if (combatEid_) {
+            // Surfacing abandons the fight: ignore that mob for a while,
+            // or the threat scan re-enters combat the moment we surface
+            // and the two states chase each other forever.
+            combatIgnore_[combatEid_] = tickCount_ + 20 * 60;
+            combatEid_ = 0;
+            note("combat: abandoned by surfacing");
+        }
         if (!savedId_.empty()) {
             // Abandoning a mine-through detour: blame the real goal, and
             // restore the run's block type — otherwise the next scan
@@ -1603,8 +1984,14 @@ private:
     }
 
     // -- members -----------------------------------------------------------------
-    bedrock::GameApi game_;
+    bedrock::NativeGameAccess access_;
+    bedrock::GameApi game_{access_};
     bedrock::NativeWorldAccess world_;
+    bedrock::NativeRuntimeActors runtimeActors_;
+    bedrock::NativeActorRegistry actorRegistry_;
+    bedrock::NativeActorLayout actorLayout_{};
+    std::size_t actorTypeOffset_{0};
+    bool actorsReady_{false};
     bedrock::NativeCamera camera_;
     std::optional<bedrock::CameraPlayerSnapshot> snap_;
     bedrock::NativeSafeTeleport gui_; // message route only; never requested to teleport
@@ -1615,6 +2002,7 @@ private:
     std::deque<std::string> nativeLines_;
     std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void*> client_{};
+    std::atomic<void*> level_{};
     std::atomic<std::uint64_t> epoch_{1};
     std::atomic<bool> stopped_{};
     bool enabled_{true};
@@ -1624,6 +2012,18 @@ private:
     std::deque<std::string> logs_;
     std::set<unsigned> heldKeys_;
     bool attackHeld_{};
+    bool useHeld_{};
+    // combat state
+    Phase resumePhase_{Phase::Scan};
+    CombatMode combatMode_{CombatMode::Melee};
+    std::uint32_t combatEid_{}; std::uint32_t combatType_{};
+    int combatTicks_{}; int attackCd_{}; int attackPulse_{};
+    int retreatTicks_{}; bool retreatAfterHit_{};
+    int bowDraw_{}; int bowCd_{}; int landedHits_{};
+    int threatScanTick_{};
+    int lastEngageTick_{};
+    long long tickCount_{};
+    std::unordered_map<std::uint32_t, long long> combatIgnore_;
     bool pendingReset_{};
 
     BDS_HookToken mouseToken_{};
@@ -1644,6 +2044,7 @@ private:
     bool pathBox_{};
     BlockPos3 pathBoxPos_{};
     bool showPath_{true};
+    bool probePending_{false};
     bool skipUnderwater_{true};
     int submergedTicks_{0};
     int escapeTicks_{0};
