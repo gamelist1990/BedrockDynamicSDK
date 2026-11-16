@@ -677,9 +677,16 @@ private:
             else { cz += stepZ; t = tZ; tZ += dtZ; }
             if (cx == targetCell.x && cy == targetCell.y && cz == targetCell.z) return true;
             const auto id = blockAt({cx, cy, cz});
-            // Fluids do not block the game's targeting ray.
+            // Fluids and no-collision ground cover (grass, leaf
+            // litter, ...) do not block the targeting ray: treating
+            // leaf_litter as opaque made the mine phase dig at a
+            // decoration it cannot break (its hitbox sits at the
+            // cell's floor, under the aim point) and loop forever
+            // on one log (measured 2026-11-17 on fresh3).
             if (!id.empty() && !isAir(id) && !contains(localPart(id), "water") &&
-                !contains(localPart(id), "lava")) { hit = {cx, cy, cz}; return false; }
+                !contains(localPart(id), "lava") && !isPassableCell(id)) {
+                hit = {cx, cy, cz}; return false;
+            }
         }
         return true; // reached the goal distance without entering the cell
     }
@@ -2049,6 +2056,7 @@ private:
         const auto l = localPart(id);
         return l == "grass" || l == "short_grass" || l == "tall_grass" || l == "fern" ||
                l == "large_fern" || l == "snow_layer" || l == "dead_bush" ||
+               l == "leaf_litter" || l == "bush" ||
                contains(l, "flower") || contains(l, "sapling") || contains(l, "carpet") ||
                l == "torch" || l == "wall_torch";
     }
@@ -2339,6 +2347,24 @@ private:
             setUse(false);
             note("bridge: placement failed; replanning without it");
             pathFor_ = {INT_MIN, 0, 0};
+            // Escalation: if every replan for the same target keeps
+            // producing bridge runs that cannot be placed (measured
+            // 2026-11-17 on fresh3: 51 failed runs in a tight dirt
+            // pocket, ~11 min, zero progress — each replan found a
+            // neighbouring bridge cell and failed the same way, and
+            // tickBridge returning "working" starved the navigate
+            // timeout), abandon the target itself and rescan.
+            if (!navReturn_) {
+                if (!(bridgeFailFor_ == target_)) { bridgeFailFor_ = target_; bridgeFailStreak_ = 0; }
+                if (++bridgeFailStreak_ >= 3 && hasTarget_) {
+                    note("bridge: giving up on this target after repeated failures");
+                    blacklist_.insert(target_);
+                    hasTarget_ = false;
+                    path_.clear();
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    bridgeFailStreak_ = 0;
+                }
+            }
             return true;
         }
         const int slot = spareSlot();
@@ -3111,6 +3137,8 @@ private:
     std::int32_t moveEvictNet_{};
     std::string moveEvictId_; // full id being evicted
     bool moveNeedEvict_{};
+    int moveAttempts_{};
+    bool moveEvictDone_{};
     bool moveFailPending_{};
     long long moveStageStart_{};
     long long moveDeadline_{};
@@ -3159,6 +3187,7 @@ private:
             if (src < 0) { moveFailed_ = true; return false; }
             moveItem_ = fullId; moveSrc_ = src; moveSrcNet_ = srcNet; moveCount_ = srcCount;
             moveNeedEvict_ = false; moveFailPending_ = false;
+            moveAttempts_ = 0; moveEvictDone_ = false;
             int dst = -1;
             for (int i = 0; i < 9; ++i)
                 if (!occupied[i]) { dst = i; break; }
@@ -3209,22 +3238,46 @@ private:
             return false;
         }
         case MoveStage::OpenInv: {
-            if (!game_.gameplayActive()) {
-                const bool ok = moveNeedEvict_
+            // The gameplay-active event does not reliably flip for
+            // the player inventory screen (measured 2026-11-17 on
+            // fresh3: the E pulse visibly opened the inventory, yet
+            // the event stayed "active" for the whole 300-tick wait
+            // and every hotbar move failed without dispatching a
+            // single transfer). After a short warmup, dispatch
+            // anyway: with the screen open the transfer succeeds;
+            // without one the server rejects it and Evict/Bring
+            // retries the move from here.
+            if (!game_.gameplayActive() || stageTicks >= 25) {
+                const bool evicting = moveNeedEvict_ && !moveEvictDone_;
+                const bool ok = evicting
                     ? craft_.startTransfer(invContainer(moveEvict_), moveEvict_, moveEvictNet_,
                                            invContainer(moveFreeMain_), moveFreeMain_,
                                            moveEvictCount_, moveEvictId_)
                     : craft_.startTransfer(invContainer(moveSrc_), moveSrc_, moveSrcNet_,
                                            invContainer(moveDst_), moveDst_,
                                            moveCount_, moveItem_);
-                if (!ok) { moveFailed_ = true; moveStage_ = MoveStage::None; return false; }
-                moveStage_ = moveNeedEvict_ ? MoveStage::Evict : MoveStage::Bring;
-                moveDeadline_ = tickCount_ + 20 * 15;
+                if (ok) {
+                    moveStage_ = evicting ? MoveStage::Evict : MoveStage::Bring;
+                    moveDeadline_ = tickCount_ + 20 * 15;
+                    return false;
+                }
+                // Adapter gate busy (an earlier transfer is still
+                // resolving): keep waiting rather than failing.
+                if (stageTicks > 300) {
+                    note("hotbar move: transfer never dispatched");
+                    moveFailed_ = true; moveStage_ = MoveStage::None;
+                }
                 return false;
             }
-            if ((stageTicks % 45) == 1) pressKey(0x45, true);  // VK_E
-            if ((stageTicks % 45) == 3) pressKey(0x45, false);
-            if (stageTicks > 300) { moveFailed_ = true; moveStage_ = MoveStage::None; }
+            // Pulse E only on the first attempt: on a retry the
+            // screen may still be open from the failed attempt, and
+            // E would close it again.
+            if (moveAttempts_ == 0 && (stageTicks % 45) == 1) pressKey(0x45, true);  // VK_E
+            if (moveAttempts_ == 0 && (stageTicks % 45) == 3) pressKey(0x45, false);
+            if (stageTicks > 300) {
+                note("hotbar move: inventory screen did not open");
+                moveFailed_ = true; moveStage_ = MoveStage::None;
+            }
             return false;
         }
         case MoveStage::Evict:
@@ -3235,6 +3288,7 @@ private:
                 craft_.clearTransferStatus();
                 if (st != bedrock::CraftJobStatus::Failed) {
                     if (moveStage_ == MoveStage::Evict) {
+                        moveEvictDone_ = true;
                         if (craft_.startTransfer(invContainer(moveSrc_), moveSrc_, moveSrcNet_,
                                                  invContainer(moveDst_), moveDst_,
                                                  moveCount_, moveItem_)) {
@@ -3249,6 +3303,15 @@ private:
                     }
                 }
                 note("hotbar move: transfer failed");
+            } else {
+                note("hotbar move: transfer timed out");
+            }
+            if (moveAttempts_ < 2) {
+                ++moveAttempts_;
+                note("hotbar move: retrying");
+                moveStage_ = MoveStage::OpenInv;
+                moveStageStart_ = tickCount_;
+                return false;
             }
             moveFailPending_ = true;
             moveStage_ = MoveStage::CloseUi;
@@ -4672,6 +4735,8 @@ private:
     std::vector<bool> pathDig_;
     std::vector<bool> pathBridge_;
     int bridgeTicks_{};
+    int bridgeFailStreak_{};
+    BlockPos3 bridgeFailFor_{INT_MIN, 0, 0};
     int bridgeJumpTicks_{};
     double bridgeLastX_{1e18};
     double bridgeLastZ_{};
