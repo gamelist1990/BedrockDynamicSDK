@@ -28,6 +28,7 @@
 #include <bedrock/native/runtime_actors.hpp>
 #include <bedrock/native/actor_registry.hpp>
 #include <bedrock/native/actors.hpp>
+#include <bedrock/native/item_stack_requests.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <knownfolders.h>
@@ -226,6 +227,7 @@ public:
         signalStop();
         if (renderToken_) { BDS_HookUnsubscribe(renderToken_); renderToken_ = nullptr; }
         if (mouseToken_) { BDS_HookUnsubscribe(mouseToken_); mouseToken_ = nullptr; }
+        craft_.stop();
         gui_.stop();
         releaseInputs();
     }
@@ -305,6 +307,7 @@ private:
                     if (nativeLines_.size() < 16) nativeLines_.push_back(std::move(invocation.line));
                 }, "block", true))
             throw std::runtime_error("/mine native command definition rejected");
+        craft_.onDiagnostic([this](const std::string& text) { note("craft: " + text); });
         bedrock::ProfileManager profiles;
         const bedrock::ProfileRequirements required{
             bedrock::Feature::Gameplay, bedrock::Feature::LevelTick, bedrock::Feature::World,
@@ -319,6 +322,12 @@ private:
                     if (!gui_.load(profile, failure) || !registration_.load(profile, failure) ||
                         !camera_.load(profile, failure) || !loadWorld(profile, failure))
                         return false;
+                    // AutoCraft (real ItemStackRequest crafting) is
+                    // optional: mining keeps working without it.
+                    std::string craftError;
+                    craftReady_ = craft_.load(profile, craftError);
+                    if (!craftReady_) note("craft adapter unavailable: " + craftError);
+                    else craftProfileJson_ = profile.json();
                     // Path display is cosmetic: never fail startup over it.
                     std::string outlineError;
                     outlineReady_ = outline_.load(profile, outlineError);
@@ -351,12 +360,23 @@ private:
                 auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
                 snap_ = camera_.readPlayerProxy();
                 updateRegistration();
+                if (craftReady_) {
+                    try { craft_.update(client_.load(), event.level); }
+                    catch (...) { note("craft adapter update failed"); }
+                }
                 tick();
             } catch (const std::exception& e) {
                 releaseInputs();
                 note(std::string("tick failed: ") + e.what());
             }
         });
+        if (craftReady_) {
+            std::string packetError;
+            if (!craft_.installPackets(craftProfileJson_, packetError)) {
+                craftReady_ = false;
+                note("craft packets unavailable: " + packetError);
+            }
+        }
         const auto selected = profiles.snapshot();
         hooks_ = std::make_unique<bedrock::GameHooks>(game_);
         if (!hooks_->installGameplay(selected->resolver(), error) ||
@@ -473,6 +493,22 @@ private:
             std::uint8_t count{};
             if (!world_.readField(stack, items_.countOffset, count) || !count) continue;
             out[static_cast<std::size_t>(i)] = {stackItemId(stack), static_cast<int>(count)};
+        }
+        // The client inventory model never applies the responses to the
+        // craft adapter's forged requests, so after a craft it is stale
+        // (a crafted pickaxe/table is invisible here). The adapter's
+        // snapshot merges memory with its response-tracked overlay and
+        // is the server truth; prefer it for the hotbar whenever the
+        // adapter is up.
+        if (craftReady_) {
+            std::array<InvSlot, 9> merged;
+            bool any{};
+            for (const auto& slot : craft_.snapshot()) {
+                if (slot.slot < 0 || slot.slot >= 9) continue;
+                merged[static_cast<std::size_t>(slot.slot)] = {slot.item, slot.count};
+                any = true;
+            }
+            if (any) return merged;
         }
         return out;
     }
@@ -1220,7 +1256,7 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -1232,6 +1268,10 @@ private:
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
         boatTriedFor_ = {INT_MIN, 0, 0};
+        chainActive_ = false; chainJobStarted_ = false; chainWaitingCobble_ = false;
+        wantPickaxeChain_ = false; chainSteps_.clear(); chainStep_ = 0;
+        chainRetries_ = 0; chainNextRetryTick_ = 0;
+        navReturn_ = false; chainReturnTrips_ = 0;
         savedId_.clear();
         hasTarget_ = false;
         mined_ = 0;
@@ -1348,6 +1388,7 @@ private:
         case Phase::Escape: return "水から浮上中…（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Combat: return "敵と戦闘中！（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Boat: return "ボートで移動中（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Craft: return "クラフト中（掘った数: " + std::to_string(mined_) + "）";
         }
         return "";
     }
@@ -1392,7 +1433,7 @@ private:
             else note("probe: no feet");
         }
         if (phase_ == Phase::Idle) { clearPath(); return; }
-        if (!game_.gameplayActive()) { releaseInputs(); return; }
+        if (!game_.gameplayActive() && phase_ != Phase::Craft) { releaseInputs(); return; }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
         // Drowning safety net: in the stationary working phases, if the
@@ -1412,8 +1453,9 @@ private:
         }
         // Hostile interruption: a mob that gets close during work preempts
         // the run — fight first, then resume (exitCombat restores the run).
-        if (phase_ == Phase::Scan || phase_ == Phase::Navigate || phase_ == Phase::Mine ||
-            phase_ == Phase::Collect || phase_ == Phase::NeedTool) {
+        if (game_.gameplayActive() &&
+            (phase_ == Phase::Scan || phase_ == Phase::Navigate || phase_ == Phase::Mine ||
+             phase_ == Phase::Collect || phase_ == Phase::NeedTool || phase_ == Phase::Craft)) {
             if ((++threatScanTick_ % 4) == 0) {
                 // Relevance: within 12 blocks and near the player's level,
                 // or point-blank at any height. A drowned in the sea far
@@ -1424,6 +1466,72 @@ private:
                 }
             }
         }
+        if (chainWaitingCobble_ && phase_ == Phase::Scan) {
+            if (countAllItems("cobblestone") >= 3) {
+                // The mining that gathered the cobble may have wandered
+                // far from the placed table (seabed stone, this run): the
+                // table grid only answers while its screen is open, and
+                // the screen only opens within reach — walk back first.
+                const double tdx = chainTablePos_.x + .5 - feet.x;
+                const double tdy = chainTablePos_.y + .5 - feet.y;
+                const double tdz = chainTablePos_.z + .5 - feet.z;
+                const double tableDist = std::sqrt(tdx * tdx + tdy * tdy + tdz * tdz);
+                if (!chainTablePlaced_ && countAllItems("crafting_table") >= 1) {
+                    // The placed table is gone but the player carries one
+                    // (crafted earlier and never placed, or the drop from
+                    // the broken one): put it down right here first.
+                    chainSteps_.insert(chainSteps_.begin() + chainStep_,
+                                        ChainStep{ChainStep::Kind::PlaceTable});
+                    chainWaitingCobble_ = false;
+                    phase_ = Phase::Craft; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                    note("craft chain: placing carried table for the stone pickaxe");
+                } else if (!chainTablePlaced_) {
+                    chainFail("作業台が無い");
+                } else if (tableDist <= 4.0) {
+                    chainWaitingCobble_ = false;
+                    phase_ = Phase::Craft; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                    note("craft chain: cobblestone ready, resuming");
+                } else if (countAllItems("crafting_table") >= 1) {
+                    // Far from the placed table but carrying a spare: put
+                    // it down here instead of walking back across mined-
+                    // out terrain (the return walk kept timing out around
+                    // the holes that mining leaves behind).
+                    chainSteps_.insert(chainSteps_.begin() + chainStep_,
+                                        ChainStep{ChainStep::Kind::PlaceTable});
+                    chainWaitingCobble_ = false;
+                    phase_ = Phase::Craft; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                    note("craft chain: placing carried table for the stone pickaxe");
+                } else if (countAllItems("planks") >= 4) {
+                    // No table at hand, but enough planks to make one on
+                    // the spot (personal grid) and place it right here.
+                    chainSteps_.insert(chainSteps_.begin() + chainStep_,
+                                       {ChainStep{ChainStep::Kind::OpenInventory},
+                                        ChainStep{ChainStep::Kind::Craft,
+                                                  "minecraft:WorkBench_recipeId",
+                                                  "minecraft:crafting_table", 1, false},
+                                        ChainStep{ChainStep::Kind::CloseUi},
+                                        ChainStep{ChainStep::Kind::PlaceTable}});
+                    chainWaitingCobble_ = false;
+                    phase_ = Phase::Craft; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                    note("craft chain: crafting a fresh table on the spot");
+                } else if (++chainReturnTrips_ <= 3) {
+                    target_ = chainTablePos_; hasTarget_ = true; navReturn_ = true;
+                    path_.clear(); pathFor_ = {INT_MIN, 0, 0};
+                    phase_ = Phase::Navigate;
+                    note("craft chain: returning to the crafting table");
+                } else {
+                    chainWaitingCobble_ = false;
+                    chainActive_ = false;
+                    reply("作業台に戻れないから、石のツルハシは諦めるね");
+                    note("craft chain: could not return to the table");
+                }
+            } else if (++chainCobbleTicks_ > 20 * 180) {
+                chainWaitingCobble_ = false;
+                chainActive_ = false;
+                reply("丸石が集まらないから、石のツルハシは諦めるね");
+                note("craft chain: cobblestone wait timed out");
+            }
+        }
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -1432,6 +1540,7 @@ private:
         case Phase::NeedTool: tickNeedTool(); break;
         case Phase::Combat: tickCombat(feet); break;
         case Phase::Boat: tickBoat(feet); break;
+        case Phase::Craft: tickCraft(feet); break;
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
@@ -1615,6 +1724,12 @@ private:
             const int dz = (i / (spanX * spanY)) - radius_;
             BlockPos3 pos{cx + dx, cy + dy, cz + dz};
             if (blacklist_.count(pos)) continue;
+            // The chain's crafting table stands on this block: mining it
+            // (or the table itself via dig-through) would strand the
+            // chain, so the cell under the table is never a target.
+            if (chainTablePlaced_ && pos.x == chainTablePos_.x &&
+                pos.y == chainTablePos_.y - 1 && pos.z == chainTablePos_.z)
+                continue;
             bedrock::BlockPos bp; bp.x = pos.x; bp.y = pos.y; bp.z = pos.z;
             auto cell = world_.getBlock(src, bp);
             if (cell.identifier.empty() || isAir(cell.identifier)) continue;
@@ -1714,6 +1829,12 @@ private:
     CellKind classifyCell(CellKey c, std::unordered_map<CellKey, CellKind, CellKeyHash>& cache) {
         if (auto it = cache.find(c); it != cache.end()) return it->second;
         CellKind kind = CellKind::Blocked;
+        // Never plan a dig through the chain's crafting table.
+        if (chainTablePlaced_ && c.x == chainTablePos_.x && c.z == chainTablePos_.z &&
+            (c.y == chainTablePos_.y || c.y + 1 == chainTablePos_.y)) {
+            cache.emplace(c, kind);
+            return kind;
+        }
         const auto ground = blockAt({c.x, c.y - 1, c.z});
         const auto feetB = blockAt({c.x, c.y, c.z});
         const auto headB = blockAt({c.x, c.y + 1, c.z});
@@ -1952,7 +2073,18 @@ private:
         if (!hasTarget_) { phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; return; }
         // Target may have changed (another player mined it, physics, ...).
         const auto targetNow = blockAt(target_);
-        if (targetNow.empty() || localPart(targetNow) != targetId_) {
+        // A return trip abandoned by a navigate timeout leaves the flag
+        // set while a fresh mining target gets assigned; that is not the
+        // table vanishing — just drop the stale flag.
+        if (navReturn_ && !(target_ == chainTablePos_)) navReturn_ = false;
+        if (navReturn_) {
+            if (!contains(localPart(targetNow), "crafting_table")) {
+                note("craft chain: table gone; abandoning return");
+                navReturn_ = false; chainTablePlaced_ = false;
+                hasTarget_ = false; phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                releaseInputs(); return;
+            }
+        } else if (targetNow.empty() || localPart(targetNow) != targetId_) {
             note("target vanished; rescan");
             hasTarget_ = false; phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
             releaseInputs(); return;
@@ -1962,9 +2094,16 @@ private:
         const double dx = center.x - eye.x, dy = center.y - eye.y, dz = center.z - eye.z;
         const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         // Tool first: if we will need a tool we cannot provide, stop early.
-        if (!ensureTool(targetId_)) { enterNeedTool(); return; }
+        if (!navReturn_ && !ensureTool(targetId_)) { enterNeedTool(); return; }
         if (dist <= 4.0) {
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            if (navReturn_) {
+                navReturn_ = false; hasTarget_ = false;
+                chainWaitingCobble_ = false;
+                phase_ = Phase::Craft; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                note("craft chain: back at the table, resuming");
+                return;
+            }
             phase_ = Phase::Mine; mineTicks_ = 0;
             return;
         }
@@ -1973,6 +2112,14 @@ private:
         // the legacy straight-line navigation below.
         if (!(pathFor_ == target_)) planPath(feet);
         if (!path_.empty()) { tickFollowPath(feet); return; }
+        // No land route and open water ahead on a long crossing: craft a
+        // boat here on the shore while there is still ground to work on
+        // (one attempt per target; failure falls through to swimming).
+        if (!navReturn_ && !inWaterNow(feet) && boatSlot() < 0 && dist > 10.0 &&
+            !(boatChainTriedFor_ == target_) &&
+            routeCrossesWater(feet, center) && tryStartBoatChain()) {
+            tickCraft(feet); return;
+        }
         // Swimming: no land route — cross the water at the surface.
         // Travel happens only with the head at the surface; whenever
         // the head is submerged, surfacing comes first. If a ceiling
@@ -2143,6 +2290,19 @@ private:
             BlockPos3 occluder;
             if (!lineOfSight(eye, target_, occluder)) {
                 const auto occId = blockAt(occluder);
+                if (chainTablePlaced_ && occluder.x == chainTablePos_.x &&
+                    occluder.y == chainTablePos_.y && occluder.z == chainTablePos_.z) {
+                    // The only thing between us and the target is the
+                    // chain's own crafting table: abandon this target
+                    // rather than break the table.
+                    note("target occluded by the crafting table; rescan");
+                    setAttack(false);
+                    blacklist_.insert(savedId_.empty() ? target_ : savedTarget_);
+                    if (!savedId_.empty()) { targetId_ = savedId_; savedId_.clear(); }
+                    hasTarget_ = false;
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    return;
+                }
                 if (!occId.empty() && localPart(occId) != "bedrock") {
                     setAttack(false);
                     if (savedId_.empty()) { savedTarget_ = target_; savedId_ = targetId_; }
@@ -2198,19 +2358,480 @@ private:
             const auto plan = planPickaxe(visibleItems());
             reply("ツルハシがホットバーに無いよ。" + plan.summary);
             note("needtool: " + plan.summary + " possible=" + std::to_string(plan.possible));
+            if (plan.possible) { wantPickaxeChain_ = true; tryStartPickaxeChain(); }
         } else {
             reply("このブロック用のツールがホットバーに無いよ");
         }
     }
     void tickNeedTool() {
         if (++needTicks_ % 20) return;
+        if (wantPickaxeChain_ && tickCount_ >= chainNextRetryTick_ &&
+            tryStartPickaxeChain())
+            return;
         if (ensureTool(targetId_)) {
             reply("ツールを確認。再開するね");
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
         }
     }
 
+    // -- AutoCraft chain -------------------------------------------------------
+    // Real crafting through the NativeItemStackRequests adapter: a queue of
+    // small steps (adapter craft jobs, placing/opening a crafting table,
+    // closing the UI) executed by the Craft phase. Built for the pickaxe
+    // chain (NeedTool) and for boats (long water crossings). Any failure
+    // falls back to the pre-AutoCraft behaviour: NeedTool waits for a manual
+    // tool, navigation swims.
+    struct ChainStep {
+        enum class Kind { Craft, PlaceTable, OpenTable, CloseUi, WaitCobble, OpenInventory };
+        Kind kind{Kind::Craft};
+        std::string recipeId, outputName;
+        int times{1};
+        bool tableGrid{};
+    };
+    std::vector<ChainStep> chainSteps_;
+    std::size_t chainStep_{};
+    bool chainActive_{};
+    bool chainJobStarted_{};
+    int chainStepTicks_{};
+    int chainAimedTick_{-1};
+    bool chainRetriedOpen_{};
+    Phase chainReturn_{Phase::Scan};
+    bool chainForPickaxe_{};
+    bool wantPickaxeChain_{};
+    long long chainNextRetryTick_{};
+    int chainRetries_{};
+    bool chainWaitingCobble_{};
+    bool navReturn_{};
+    int chainReturnTrips_{};
+    int chainSubmerged_{};
+    int chainCobbleTicks_{};
+    BlockPos3 chainTablePos_{INT_MIN, 0, 0};
+    bool chainTablePlaced_{};
+    BlockPos3 chainPlaceCell_{INT_MIN, 0, 0};
+    BlockPos3 boatChainTriedFor_{INT_MIN, 0, 0};
+
+    // Does the straight route toward the target cross water within the
+    // next few blocks? Used to start the boat chain while still on land.
+    bool routeCrossesWater(const bedrock::Vec3& feet, const bedrock::Vec3& center) {
+        const double dx = center.x - feet.x, dz = center.z - feet.z;
+        const double len = std::hypot(dx, dz);
+        if (len < 6.0) return false;
+        const int by = static_cast<int>(std::floor(feet.y));
+        for (double d = 2.0; d <= std::min(len, 9.0); d += 1.5) {
+            const int bx = static_cast<int>(std::floor(feet.x + dx / len * d));
+            const int bz = static_cast<int>(std::floor(feet.z + dz / len * d));
+            if (contains(localPart(blockAt({bx, by, bz})), "water") ||
+                contains(localPart(blockAt({bx, by - 1, bz})), "water"))
+                return true;
+        }
+        return false;
+    }
+    int countAllItems(std::string_view key) {
+        int total = 0;
+        if (craftReady_)
+            for (const auto& s : craft_.snapshot())
+                if (contains(localPart(s.item), key)) total += s.count;
+        return total;
+    }
+    // Item counts over ALL 36 slots from the adapter snapshot (its
+    // response-tracked overlay keeps forged-craft results visible, which
+    // the plain memory view would miss until a relog).
+    std::unordered_map<std::string, int> chainCounts() {
+        std::unordered_map<std::string, int> have;
+        if (craftReady_)
+            for (const auto& s : craft_.snapshot())
+                if (s.count > 0 && !s.item.empty()) have[localPart(s.item)] += s.count;
+        return have;
+    }
+    static int countIn(const std::unordered_map<std::string, int>& items, std::string_view key) {
+        int total = 0;
+        for (const auto& [id, count] : items) if (contains(id, key)) total += count;
+        return total;
+    }
+    bool placedTableExists() {
+        if (!chainTablePlaced_ ||
+            !contains(localPart(blockAt(chainTablePos_)), "crafting_table"))
+            return false;
+        // The remembered table may be far away (placed for an earlier
+        // chain in another area): its screen cannot be opened from here,
+        // so for chain purposes it does not exist and a new one must be
+        // placed nearby.
+        bedrock::Vec3 feet;
+        if (feetPos(feet)) {
+            const double dx = chainTablePos_.x + .5 - feet.x;
+            const double dy = chainTablePos_.y + .5 - feet.y;
+            const double dz = chainTablePos_.z + .5 - feet.z;
+            if (dx * dx + dy * dy + dz * dz > 36.0) return false;
+        }
+        return true;
+    }
+    int findTableHotbarSlot() {
+        const auto slots = hotbarItems();
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (it.count && localPart(it.id) == "crafting_table") return i;
+        }
+        return -1;
+    }
+    // The wood ("oak" of oak_log) carrying the most logs, for per-wood
+    // planks recipes.
+    static std::string chainWood(const std::unordered_map<std::string, int>& items, int& logCount) {
+        std::string best;
+        logCount = 0;
+        for (const auto& [id, count] : items) {
+            std::string wood;
+            for (const char* suffix : {"_log", "_wood", "_stem", "_hyphae"})
+                if (id.size() > std::string_view(suffix).size() &&
+                    id.compare(id.size() - std::string_view(suffix).size(),
+                               std::string_view(suffix).size(), suffix) == 0)
+                    wood = id.substr(0, id.size() - std::string_view(suffix).size());
+            if (!wood.empty() && count > logCount) { logCount = count; best = wood; }
+        }
+        return best;
+    }
+    bool tryStartPickaxeChain() {
+        if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
+        if (craft_.status() == bedrock::CraftJobStatus::Running) return false; // retry later
+        craft_.clearStatus();
+        const auto have = chainCounts();
+        const int planks = countIn(have, "planks");
+        const int sticks = countIn(have, "stick");
+        const int tables = countIn(have, "crafting_table");
+        const int cobble = countIn(have, "cobblestone");
+        if (countIn(have, "stone_pickaxe") || countIn(have, "iron_pickaxe") ||
+            countIn(have, "diamond_pickaxe"))
+            return false; // a usable pickaxe exists somewhere; not our problem
+        int logCount = 0;
+        const std::string wood = chainWood(have, logCount);
+        std::vector<ChainStep> steps;
+        const int plankNeed = 3 + (sticks < 2 ? 2 : 0) + (tables < 1 ? 4 : 0);
+        const int deficit = plankNeed - planks;
+        const int logCrafts = deficit > 0 ? (deficit + 3) / 4 : 0;
+        if (logCrafts > 0) {
+            if (wood.empty() || logCount < logCrafts) return false;
+            steps.push_back(ChainStep{ChainStep::Kind::Craft,
+                                      "minecraft:" + wood + "_planks",
+                                      "minecraft:" + wood + "_planks", logCrafts, false});
+        }
+        if (sticks < 2)
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stick",
+                                      "minecraft:stick", 1, false});
+        if (tables < 1)
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
+                                      "minecraft:crafting_table", 1, false});
+        if (!steps.empty()) {
+            // Personal-grid crafts need the inventory screen open: the
+            // server rejects places into the 2x2 grid (status 49) while no
+            // screen is attached (measured 2026-11-16; the real client only
+            // ever crafts with a screen open).
+            steps.insert(steps.begin(), ChainStep{ChainStep::Kind::OpenInventory});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        }
+        if (!placedTableExists())
+            steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
+        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:wooden_pickaxe",
+                                  "minecraft:wooden_pickaxe", 1, true});
+        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        if (cobble < 3) steps.push_back(ChainStep{ChainStep::Kind::WaitCobble});
+        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stone_pickaxe",
+                                  "minecraft:stone_pickaxe", 1, true});
+        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        chainSteps_ = std::move(steps);
+        chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
+        chainWaitingCobble_ = false;
+        chainForPickaxe_ = true; chainReturn_ = Phase::Scan;
+        phase_ = Phase::Craft;
+        reply("材料があるから、ツルハシをクラフトするね");
+        note("craft chain: pickaxe (" + std::to_string(chainSteps_.size()) + " steps)");
+        return true;
+    }
+    bool tryStartBoatChain() {
+        if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
+        if (craft_.status() == bedrock::CraftJobStatus::Running) return false;
+        craft_.clearStatus();
+        boatChainTriedFor_ = target_; // one attempt per target from here on
+        const auto have = chainCounts();
+        const int planks = countIn(have, "planks");
+        const int tables = countIn(have, "crafting_table");
+        const bool placed = placedTableExists();
+        int logCount = 0;
+        const std::string wood = chainWood(have, logCount);
+        // Boat wood follows the planks that will actually be consumed: the
+        // most plentiful planks, else the logs this chain turns into planks.
+        std::string boatWood = wood;
+        int bestPlanks = 0;
+        for (const auto& [id, count] : have)
+            if (contains(id, "_planks") && count > bestPlanks) {
+                bestPlanks = count;
+                boatWood = id.substr(0, id.size() - std::string_view("_planks").size());
+            }
+        if (boatWood.empty()) return false;
+        std::vector<ChainStep> steps;
+        const int plankNeed = 5 + ((tables < 1 && !placed) ? 4 : 0);
+        const int deficit = plankNeed - planks;
+        const int logCrafts = deficit > 0 ? (deficit + 3) / 4 : 0;
+        if (logCrafts > 0) {
+            if (wood.empty() || logCount < logCrafts) return false;
+            steps.push_back(ChainStep{ChainStep::Kind::Craft,
+                                      "minecraft:" + wood + "_planks",
+                                      "minecraft:" + wood + "_planks", logCrafts, false});
+        }
+        if (tables < 1 && !placed)
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
+                                      "minecraft:crafting_table", 1, false});
+        if (!steps.empty()) {
+            steps.insert(steps.begin(), ChainStep{ChainStep::Kind::OpenInventory});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        }
+        if (!placed) steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
+        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:boat",
+                                  "minecraft:" + boatWood + "_boat", 1, true});
+        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        chainSteps_ = std::move(steps);
+        chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
+        chainWaitingCobble_ = false;
+        chainForPickaxe_ = false; chainReturn_ = Phase::Navigate;
+        phase_ = Phase::Craft;
+        reply("ボートが無いから、木からクラフトするね");
+        note("craft chain: boat (" + std::to_string(chainSteps_.size()) + " steps)");
+        return true;
+    }
+    void chainAdvance() {
+        ++chainStep_;
+        chainStepTicks_ = 0; chainAimedTick_ = -1; chainJobStarted_ = false;
+        chainPlaceCell_ = {INT_MIN, 0, 0};
+        if (chainStep_ >= chainSteps_.size()) chainFinish();
+    }
+    void chainFinish() {
+        chainActive_ = false;
+        chainRetries_ = 0; chainNextRetryTick_ = 0;
+        setUse(false);
+        pressKey(kKeySpace, false);
+        if (chainForPickaxe_) {
+            wantPickaxeChain_ = false;
+            reply("ツルハシ完成！採掘を再開するね");
+            note("craft chain: pickaxe done");
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
+        } else {
+            reply("ボート完成！");
+            note("craft chain: boat done");
+            phase_ = chainReturn_;
+        }
+    }
+    void chainFail(const std::string& why) {
+        note("craft chain failed: " + why);
+        chainActive_ = false; chainJobStarted_ = false; chainWaitingCobble_ = false;
+        setUse(false);
+        pressKey(kKeySpace, false);
+        if (chainForPickaxe_) {
+            // Transient failures (a screen that had not finished opening, a
+            // lagging response) recover on their own: retry a few times on a
+            // cooldown before falling back to waiting for a manual tool.
+            if (++chainRetries_ <= 5) {
+                chainNextRetryTick_ = tickCount_ + 20 * 20;
+                if (chainRetries_ == 1)
+                    reply("クラフト失敗（" + why + "）。少し待って再挑戦するね");
+            } else {
+                wantPickaxeChain_ = false;
+                reply("クラフト失敗（" + why + "）。手でツルハシを用意してね");
+            }
+            phase_ = Phase::NeedTool; needTicks_ = 0;
+        } else {
+            phase_ = chainReturn_;
+        }
+    }
+    void dispatchCraftStep(const ChainStep& step) {
+        bedrock::CraftRecipe recipe;
+        if (!craft_.copyRecipe(step.recipeId, recipe)) {
+            chainFail("レシピ未取得: " + step.recipeId);
+            return;
+        }
+        const int base = step.tableGrid ? 32 : 28;
+        const int width = step.tableGrid ? 3 : 2;
+        if (!craft_.startCraft(recipe, step.outputName, step.times, base, width)) {
+            std::string why = "クラフト開始失敗";
+            if (craft_.status() == bedrock::CraftJobStatus::Failed) {
+                why = craft_.statusDetail();
+                craft_.clearStatus();
+            }
+            chainFail(why);
+            return;
+        }
+        chainJobStarted_ = true;
+        chainStepTicks_ = 0;
+    }
+    void tickCraft(bedrock::Vec3 feet) {
+        // A chain can start at the water's edge (boat) or be caught by a
+        // rising shore: hold the swim-up key while wet and only abandon the
+        // chain after 3 s fully submerged.
+        if (inWaterNow(feet)) pressKey(kKeySpace, true);
+        if (headInWater(feet)) {
+            if (++chainSubmerged_ >= 60) {
+                pressKey(kKeySpace, false);
+                chainFail("水中");
+                startEscape();
+                return;
+            }
+        } else chainSubmerged_ = 0;
+        if (!chainActive_) { phase_ = chainReturn_; return; }
+        ++chainStepTicks_;
+        if (chainJobStarted_) {
+            const auto st = craft_.status();
+            if (st == bedrock::CraftJobStatus::Running) {
+                if (chainStepTicks_ > 20 * 240) chainFail("クラフト応答なし");
+                return;
+            }
+            chainJobStarted_ = false;
+            if (st == bedrock::CraftJobStatus::Failed) {
+                const std::string why = craft_.statusDetail();
+                craft_.clearStatus();
+                // A table-grid craft failing usually means the table UI
+                // never opened: rewind to the open step and retry once.
+                if (chainStep_ < chainSteps_.size() && chainSteps_[chainStep_].tableGrid &&
+                    !chainRetriedOpen_) {
+                    for (std::size_t i = chainStep_; i-- > 0;)
+                        if (chainSteps_[i].kind == ChainStep::Kind::OpenTable) {
+                            chainRetriedOpen_ = true;
+                            chainStep_ = i; chainStepTicks_ = 0; chainAimedTick_ = -1;
+                            note("craft chain: reopening table after failure: " + why);
+                            return;
+                        }
+                }
+                chainFail(why);
+                return;
+            }
+            craft_.clearStatus(); // Done
+            chainAdvance();
+            return;
+        }
+        if (chainStep_ >= chainSteps_.size()) { chainFinish(); return; }
+        const ChainStep& step = chainSteps_[chainStep_];
+        switch (step.kind) {
+        case ChainStep::Kind::Craft: dispatchCraftStep(step); break;
+        case ChainStep::Kind::PlaceTable: tickPlaceTable(feet); break;
+        case ChainStep::Kind::OpenTable: tickOpenTable(feet); break;
+        case ChainStep::Kind::CloseUi: tickCloseUi(); break;
+        case ChainStep::Kind::OpenInventory: tickOpenInventory(); break;
+        case ChainStep::Kind::WaitCobble:
+            ++chainStep_; chainStepTicks_ = 0;
+            chainWaitingCobble_ = true; chainCobbleTicks_ = 0; chainReturnTrips_ = 0;
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
+            reply("木のツルハシ完成。丸石を3つ集めるね");
+            note("craft chain: waiting for cobblestone");
+            break;
+        }
+    }
+    void tickPlaceTable(bedrock::Vec3 feet) {
+        if (chainStepTicks_ > 20 * 10) { chainFail("作業台を置けなかった"); return; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        if (chainPlaceCell_.x == INT_MIN) {
+            const int fx = static_cast<int>(std::floor(feet.x));
+            const int fy = static_cast<int>(std::floor(feet.y));
+            const int fz = static_cast<int>(std::floor(feet.z));
+            // Try every horizontal neighbour, the target direction first.
+            // A neighbour that already holds a crafting table (left over
+            // from an earlier run — the world persists) is adopted as-is.
+            std::array<BlockPos3, 4> dirs{{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}}};
+            if (hasTarget_) {
+                bedrock::Vec3 want{target_.x + .5f - feet.x, 0, target_.z + .5f - feet.z};
+                std::stable_sort(dirs.begin(), dirs.end(),
+                                 [&](const BlockPos3& a, const BlockPos3& b) {
+                                     return (a.x * want.x + a.z * want.z) >
+                                            (b.x * want.x + b.z * want.z);
+                                 });
+            }
+            bool found = false;
+            for (const auto& d : dirs) {
+                const BlockPos3 cell{fx + d.x, fy, fz + d.z};
+                const auto at = blockAt(cell);
+                if (contains(localPart(at), "crafting_table")) {
+                    chainTablePos_ = cell;
+                    chainTablePlaced_ = true;
+                    note("craft chain: adopting existing table");
+                    chainAdvance();
+                    return;
+                }
+                const auto ground = blockAt({cell.x, cell.y - 1, cell.z});
+                if (ground.empty() || isAir(ground) || contains(localPart(ground), "water") ||
+                    (!isAir(at) && !contains(localPart(at), "water")))
+                    continue;
+                chainPlaceCell_ = cell;
+                found = true;
+                break;
+            }
+            if (!found) {
+                chainFail("作業台を置く場所が無い");
+                return;
+            }
+        }
+        if (contains(localPart(blockAt(chainPlaceCell_)), "crafting_table")) {
+            chainTablePos_ = chainPlaceCell_;
+            chainTablePlaced_ = true;
+            note("craft chain: table placed");
+            chainAdvance();
+            return;
+        }
+        const int slot = findTableHotbarSlot();
+        if (slot < 0) { chainFail("作業台がホットバーに無い"); return; }
+        selectSlot(slot);
+        const bedrock::Vec3 aim{chainPlaceCell_.x + .5f, static_cast<float>(chainPlaceCell_.y),
+                                chainPlaceCell_.z + .5f};
+        // Keep re-aiming and pulse the use button on a cycle until the
+        // block appears: a single pulse right after the inventory screen
+        // closes is often eaten — at the mesa and at the shore alike,
+        // the first placement attempt failed and the second succeeded.
+        faceToward(eye, aim, 3.f);
+        setUse((chainStepTicks_ % 12) < 2);
+    }
+    void tickOpenTable(bedrock::Vec3 feet) {
+        if (!chainTablePlaced_) { chainFail("作業台が無い"); return; }
+        if (chainStepTicks_ > 20 * 6) { chainFail("作業台を開けなかった"); return; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        const bedrock::Vec3 center{chainTablePos_.x + .5f, chainTablePos_.y + .5f,
+                                   chainTablePos_.z + .5f};
+        if (chainAimedTick_ < 0) {
+            if (faceToward(eye, center, 3.f)) chainAimedTick_ = chainStepTicks_;
+            return;
+        }
+        const int since = chainStepTicks_ - chainAimedTick_;
+        setUse(since < 2);
+        if (!game_.gameplayActive()) { setUse(false); chainAdvance(); return; }
+        if (since > 15) chainAdvance();
+    }
+    void tickOpenInventory() {
+        // E toggles the inventory screen (and with it the personal 2x2
+        // crafting grid the server validates grid places against).
+        // gameplayActive() == false means a screen is open, so poll it
+        // instead of assuming one pulse landed (the first feed after
+        // joining can be eaten by device capture warm-up).
+        if (!game_.gameplayActive()) { chainAdvance(); return; }
+        if (chainStepTicks_ == 1 || chainStepTicks_ == 45 || chainStepTicks_ == 90)
+            pressKey(0x45, true);  // VK_E
+        if (chainStepTicks_ == 3 || chainStepTicks_ == 47 || chainStepTicks_ == 92)
+            pressKey(0x45, false);
+        if (chainStepTicks_ > 150) chainAdvance();  // craft will fail; retry loop handles it
+    }
+    void tickCloseUi() {
+        if (game_.gameplayActive()) { chainAdvance(); return; }
+        if (chainStepTicks_ == 1 || chainStepTicks_ == 30)
+            pressKey(0x1B, true);  // VK_ESCAPE
+        if (chainStepTicks_ == 3 || chainStepTicks_ == 32)
+            pressKey(0x1B, false);
+        if (chainStepTicks_ > 70) chainAdvance();
+    }
+
+
     // -- members -----------------------------------------------------------------
+    bedrock::NativeItemStackRequests craft_;
+    bool craftReady_{};
+    std::string craftProfileJson_;
     bedrock::NativeGameAccess access_;
     bedrock::GameApi game_{access_};
     bedrock::NativeWorldAccess world_;

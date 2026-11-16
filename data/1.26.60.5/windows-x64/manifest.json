@@ -101,7 +101,11 @@
     },
     {
       "path": "classes/ItemStack.json",
-      "sha256": "cc4e77ca0359379b1573acbc232c4b9e4d43aa6e83ab3df3ce27307d9bb91b4f"
+      "sha256": "22f6a0cab1f08cab47e3d801c812174ff83e884a43f2db8b15a2217d2c7b550e"
+    },
+    {
+      "path": "classes/ItemStackRequest.json",
+      "sha256": "6a88cfbeff590d70e53a368c16e65b72b6d79afaf9012a4ce5142e996ef82ed7"
     },
     {
       "path": "classes/ItemStackBase.json",

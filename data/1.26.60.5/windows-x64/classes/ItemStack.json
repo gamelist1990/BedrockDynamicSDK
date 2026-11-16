@@ -48,7 +48,9 @@
     "string_capacity_offset": "0x18",
     "max_string_bytes": 256,
     "hover_name_abi_verified": false,
-    "evidence": "ItemStack fields and string layout are carried forward from 1.26.52.3 and remain candidate-only; hover-name ABI is unverified."
+    "evidence": "ItemStack fields and string layout are carried forward from 1.26.52.3 and remain candidate-only; hover-name ABI is unverified.",
+    "stack_net_id_offset": "0x80",
+    "stack_net_id_note": "Server-assigned stack network id (i32). Verified live 2026-11-16: always equals the stack_id carried on the wire for the same stack."
    },
    "evidence": "Candidate layout for exact 1.26.60.5 executable. New-build evidence: Equipment hash byte pattern appears 16 times in .text; ClientInstance local-player getter candidate is table slot 34 / RVA 0x659E470. Actor context absolute offsets are supported only by candidate static reads. Remaining inventory, supplies, equipment, slot, and ItemStack offsets are carried forward from 1.26.52.3. runtime_verified=false.",
    "runtime_verified": false,

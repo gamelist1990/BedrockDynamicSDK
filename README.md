@@ -34,7 +34,7 @@ TabListはDLLロード後にワールドへ入り直すと、初回のPlayerList
 | Top | 対応・実証済み | `/top` の登録・実行、テレポート文脈の解決、安全ゲートのゲーム内表示まで実証。実移動はクライアント側の状態書換え方式のため、サーバー権威移動（BDS既定）のリモートではサーバーに巻き戻され定着しない（2026-11-14 自前BDSで確認） |
 | Zoom | 対応・実証済み | ユーザー確認済み。自動検証でもワールド内動作（FOV取得）を確認 |
 | AutoSprint | 対応・実証済み | ワールド内で動作を確認（HIDController経路） |
-| AutoMine | 対応・実証済み | 新規Mod。`/mine <ブロック名>` で探索→移動→採掘を自前BDSで実証（連続採掘・長距離移動・AutoTool切替・NeedTool計画＆自動再開）。入力は MouseDevice::feed 経路、位置はAABB基準 |
+| AutoMine | 対応・実証済み | 新規Mod。`/mine <ブロック名>` で探索→移動→採掘を自前BDSで実証（連続採掘・長距離移動・AutoTool切替・AutoCraft実クラフト＝原木のみから石ツルハシまで＋ボートのクラフト＆乗船航行）。入力は MouseDevice::feed 経路、位置はAABB基準 |
 | CheckSig | 対応・実証済み | 1.26.60.5の定義解決作業全体で使用し、ジョブ実行・auto-dev生成・portを確認 |
 | Fake | 対応・実証済み | ユーザー確認済み。ワールド内で `/fake` のCommandRegistry登録を確認 |
 | GlobalResourcePack | 対応・実証済み | ユーザー確認済み（v21）。自動検証でプロファイル一致・Hook導入・ワールド内有効を確認 |
