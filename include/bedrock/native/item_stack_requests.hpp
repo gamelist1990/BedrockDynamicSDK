@@ -215,6 +215,18 @@ public:
         return netId;
     }
 
+    // The stack count the client model shows for a slot, 0 when the
+    // model has no stack there. Companion to memoryNetId().
+    std::int32_t memoryCount(int slot) {
+        void* player = world_.localPlayer(client_);
+        if (!player) return 0;
+        void* stack = itemStack(player, slot);
+        if (!stack) return 0;
+        std::uint8_t count{};
+        if (!world_.readField(stack, items_.countOffset, count)) return 0;
+        return count;
+    }
+
     // Memory snapshot of inventory slots 0..35 with the response-tracked
     // overlay applied (the overlay wins: the memory view is stale for every
     // slot a forged request has touched).
@@ -239,12 +251,14 @@ public:
             auto mem = merged.find(slot);
             const std::int32_t memNet =
                 mem == merged.end() ? 0 : mem->second.netId;
+            const std::int32_t memCount =
+                mem == merged.end() ? 0 : mem->second.count;
             // The merged map holds exactly what the model shows (empty
             // slots are absent), except slots a still-valid entry below
             // has not overwritten yet — this loop is the only writer, so
             // reading `merged` here is the raw memory view.
-            if (memNet != it->second.memNetId) {
-                it = shadow_.erase(it); // gameplay replaced the stack
+            if (memNet != it->second.memNetId || memCount != it->second.memCount) {
+                it = shadow_.erase(it); // gameplay replaced or grew the stack
                 continue;
             }
             merged[slot] = it->second.item;
@@ -308,6 +322,47 @@ public:
         }
     }
 
+    // One-shot place transfer between arbitrary containers (furnace
+    // loading is the first user: inventory -> input 25/0, fuel 24/1 on
+    // 1.26.60.5, response-verified 2026-11-16). A single place action is
+    // dispatched from update(); the caller polls transferStatus(). When
+    // the source is a player inventory container (12 no-screen, 28/29
+    // with a container screen open), the response's authoritative slot
+    // state is folded into the shadow overlay like a craft move.
+    bool startTransfer(std::uint32_t srcContainer, int srcSlot, std::int32_t srcNetId,
+                       std::uint32_t dstContainer, int dstSlot, int count,
+                       std::string srcItemId) {
+        using namespace item_stack_request_native;
+        if (!ready() || transferStatus_ == CraftJobStatus::Running) return false;
+        if (count < 1 || count > 64) return false;
+        auto* actions = new std::byte[0x60]{};
+        actions[0x00] = static_cast<std::byte>(count);
+        putSlotInfo(actions, 0x08, srcContainer, static_cast<std::uint8_t>(srcSlot), srcNetId);
+        putSlotInfo(actions, 0x30, dstContainer, static_cast<std::uint8_t>(dstSlot), 0);
+        actions[0x58] = static_cast<std::byte>(1); // place
+        const std::int32_t reqId = nextRequestId();
+        auto* request = makeRequest(reqId, actions, 1);
+        dispatchRequests(request, 1);
+        delete[] actions;
+        delete[] request;
+        transfer_ = Transfer{srcContainer, srcSlot, std::move(srcItemId), reqId,
+                             std::chrono::steady_clock::now(), dstContainer, dstSlot, count};
+        transferStatus_ = CraftJobStatus::Running;
+        transferDetail_.clear();
+        note("transfer: place " + std::to_string(count) + "x " + transfer_.srcItemId +
+             " c" + std::to_string(srcContainer) + " s" + std::to_string(srcSlot) +
+             " -> c" + std::to_string(dstContainer) + " s" + std::to_string(dstSlot));
+        return true;
+    }
+    CraftJobStatus transferStatus() const noexcept { return transferStatus_; }
+    const std::string& transferDetail() const noexcept { return transferDetail_; }
+    void clearTransferStatus() {
+        if (transferStatus_ == CraftJobStatus::Done || transferStatus_ == CraftJobStatus::Failed) {
+            transferStatus_ = CraftJobStatus::Idle;
+            transferDetail_.clear();
+        }
+    }
+
     static bool ingredientMatches(const CraftIngredient& spec, const std::string& itemName) {
         using Kind = CraftIngredient::Kind;
         if (spec.kind == Kind::Name) return itemName == spec.value;
@@ -324,6 +379,9 @@ public:
         if (tag == "stone_tool_materials")
             return item == "cobblestone" || item == "stone" ||
                    item == "cobbled_deepslate" || item == "blackstone";
+        if (tag == "stone_crafting_materials")
+            return item == "cobblestone" || item == "cobbled_deepslate" ||
+                   item == "blackstone";
         if (item == tag) return true;
         return item.size() > tag.size() + 1 &&
                item.compare(item.size() - tag.size(), tag.size(), tag) == 0 &&
@@ -617,7 +675,10 @@ private:
                 const std::uint32_t nContainers = w.varuint();
                 for (std::uint32_t c = 0; c < nContainers; ++c) {
                     const std::uint32_t container = w.u8();
-                    if (w.u8()) (void)w.varuint(); // dynamic container id
+                    std::uint32_t dynId = 0;
+                    const bool hasDyn = w.u8() != 0;
+                    if (hasDyn) dynId = w.varuint(); // dynamic container id
+                    (void)dynId;
                     const std::uint32_t nSlots = w.varuint();
                     for (std::uint32_t sIdx = 0; sIdx < nSlots; ++sIdx) {
                         RespSlot slot;
@@ -864,7 +925,23 @@ private:
         // would also work, but an empty slot keeps the shadow bookkeeping
         // exact.
         job_.depSlot = -1;
-        for (int s = 0; s < 36; ++s) {
+        // Prefer a free slot the client model still tracks (non-zero
+        // memory net id — typically a stack earlier forged steps just
+        // consumed). Forged results are invisible to the client model,
+        // and a later real "use" of the slot (placing this table,
+        // holding this pickaxe) is built by the client from its model:
+        // with a model-empty slot the hand reads as air and the action
+        // is discarded, while a stale-but-real model stack makes the
+        // server resolve the slot's true (forged) contents instead.
+        // Measured 2026-11-16: a table deposited into a model-empty
+        // slot could never be placed; the same craft deposited onto a
+        // consumed log slot placed fine.
+        for (int s = 0; s < 36 && job_.depSlot < 0; ++s) {
+            auto it = job_.inv.find(s);
+            if ((it == job_.inv.end() || it->second.count == 0) && memoryNetId(s) != 0)
+                job_.depSlot = s;
+        }
+        for (int s = 0; s < 36 && job_.depSlot < 0; ++s) {
             auto it = job_.inv.find(s);
             if (it == job_.inv.end() || it->second.count == 0) { job_.depSlot = s; break; }
         }
@@ -903,7 +980,7 @@ private:
                     item.count = static_cast<int>(s.count);
                     item.netId = s.stackId;
                     std::lock_guard lock(shadowMutex_);
-                    shadow_[job_.srcSlot] = ShadowEntry{item, memoryNetId(job_.srcSlot)};
+                    shadow_[job_.srcSlot] = ShadowEntry{item, memoryNetId(job_.srcSlot), memoryCount(job_.srcSlot)};
                 }
             }
             if (!foundGrid) { failJob("place response missing grid entry"); return; }
@@ -930,7 +1007,7 @@ private:
                 }
             {
                 std::lock_guard lock(shadowMutex_);
-                shadow_[job_.depSlot] = ShadowEntry{deposited, memoryNetId(job_.depSlot)};
+                shadow_[job_.depSlot] = ShadowEntry{deposited, memoryNetId(job_.depSlot), memoryCount(job_.depSlot)};
             }
             if (--job_.timesLeft > 0) { beginIteration(); return; }
             status_ = CraftJobStatus::Done;
@@ -940,6 +1017,7 @@ private:
         }
     }
     void pump() {
+        pumpTransfer();
         if (status_ != CraftJobStatus::Running || !job_.pending) return;
         RespInfo resp;
         if (takeResponse(job_.pending, resp)) {
@@ -947,6 +1025,67 @@ private:
             advanceJob(resp);
         } else if (std::chrono::steady_clock::now() - job_.sentAt > std::chrono::seconds(90)) {
             failJob("timeout waiting for ItemStackResponse");
+        }
+    }
+    void pumpTransfer() {
+        if (transferStatus_ != CraftJobStatus::Running || !transfer_.pending) return;
+        RespInfo resp;
+        if (takeResponse(transfer_.pending, resp)) {
+            const std::int32_t pending = transfer_.pending;
+            transfer_.pending = 0;
+            if (resp.status != 0) {
+                transferStatus_ = CraftJobStatus::Failed;
+                transferDetail_ = "transfer status " + std::to_string(resp.status);
+                note("transfer failed: status " + std::to_string(resp.status));
+                return;
+            }
+            // Fold the source inventory slot's authoritative new state
+            // into the shadow (the client model never applies forged
+            // responses itself). Containers 12/28/29 all address the
+            // player inventory with the plain slot index.
+            if (transfer_.srcContainer == 12 || transfer_.srcContainer == 28 ||
+                transfer_.srcContainer == 29) {
+                for (const auto& s : resp.slots) {
+                    if (s.container != transfer_.srcContainer ||
+                        static_cast<int>(s.slot) != transfer_.srcSlot)
+                        continue;
+                    CraftInventorySlot now{transfer_.srcSlot,
+                                           s.count ? transfer_.srcItemId : std::string{},
+                                           static_cast<int>(s.count), s.stackId};
+                    std::lock_guard lock(shadowMutex_);
+                    shadow_[transfer_.srcSlot] =
+                        ShadowEntry{now, memoryNetId(transfer_.srcSlot), memoryCount(transfer_.srcSlot)};
+                    break;
+                }
+            }
+            // Fold the DESTINATION slot too: without it the snapshot
+            // keeps showing the destination's old contents, and callers
+            // act on the stale state (measured 2026-11-16: after a
+            // hotbar move the table was invisible in the hotbar, and a
+            // craft deposit targeted the "free" slot the table had just
+            // been moved into and was rejected with status 50).
+            if (transfer_.dstContainer == 12 || transfer_.dstContainer == 28 ||
+                transfer_.dstContainer == 29) {
+                for (const auto& s : resp.slots) {
+                    if (s.container != transfer_.dstContainer ||
+                        static_cast<int>(s.slot) != transfer_.dstSlot)
+                        continue;
+                    CraftInventorySlot now{transfer_.dstSlot,
+                                           s.count ? transfer_.srcItemId : std::string{},
+                                           static_cast<int>(s.count), s.stackId};
+                    std::lock_guard lock(shadowMutex_);
+                    shadow_[transfer_.dstSlot] =
+                        ShadowEntry{now, memoryNetId(transfer_.dstSlot), memoryCount(transfer_.dstSlot)};
+                    break;
+                }
+            }
+            transferStatus_ = CraftJobStatus::Done;
+            note("transfer done (req " + std::to_string(pending) + ")");
+        } else if (std::chrono::steady_clock::now() - transfer_.sentAt > std::chrono::seconds(30)) {
+            transfer_.pending = 0;
+            transferStatus_ = CraftJobStatus::Failed;
+            transferDetail_ = "transfer timeout";
+            note("transfer failed: timeout");
         }
     }
 
@@ -980,15 +1119,35 @@ private:
     // was written. The model is frozen for forged-craft results (so the
     // baseline holds), but any gameplay change to the slot — placing
     // the crafted block, a pickup landing there, the tool breaking —
-    // replaces the stack id and retires the entry.
+    // replaces the stack id and retires the entry. A pickup that
+    // MERGES into the slot's stack keeps the stack id, though: only
+    // the model count moves. The entry therefore also baselines the
+    // model count, and a count change retires it too (measured
+    // 2026-11-17: diamonds merged into a shadowed hotbar stack grew
+    // it 2 -> 13 in the model while the snapshot kept reporting the
+    // shadow's stale entry, so the quest goal check never fired).
     struct ShadowEntry {
         CraftInventorySlot item;
         std::int32_t memNetId{};
+        std::int32_t memCount{};
     };
     std::map<int, ShadowEntry> shadow_;
     Job job_;
     CraftJobStatus status_{CraftJobStatus::Idle};
     std::string detail_;
+    struct Transfer {
+        std::uint32_t srcContainer{};
+        int srcSlot{};
+        std::string srcItemId;
+        std::int32_t pending{};
+        std::chrono::steady_clock::time_point sentAt{};
+        std::uint32_t dstContainer{};
+        int dstSlot{};
+        int count{};
+    };
+    Transfer transfer_;
+    CraftJobStatus transferStatus_{CraftJobStatus::Idle};
+    std::string transferDetail_;
 };
 
 } // namespace bedrock

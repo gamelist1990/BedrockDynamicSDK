@@ -1271,7 +1271,7 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -1284,8 +1284,17 @@ private:
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
         boatTriedFor_ = {INT_MIN, 0, 0};
         chainActive_ = false; chainJobStarted_ = false; chainWaitingCobble_ = false;
+        chainForFurnace_ = false;
         wantPickaxeChain_ = false; chainSteps_.clear(); chainStep_ = 0;
         chainRetries_ = 0; chainNextRetryTick_ = 0;
+        expStage_ = ExpStage::None;
+        gatherActive_ = false; gatherDone_ = false; gatherFailed_ = false;
+        scanIds_.clear(); scanOverrideHeld_ = false;
+        huntLegDone_ = false; huntBlocked_ = false;
+        descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+        cobbleNavFails_ = 0; cobbleDescend_ = false;
+        moveStage_ = MoveStage::None; moveFailed_ = false;
+        smeltDone_ = false; smeltFailed_ = false;
         navReturn_ = false; chainReturnTrips_ = 0;
         savedId_.clear();
         hasTarget_ = false;
@@ -1487,8 +1496,58 @@ private:
             if (feetPos(pf)) probeActors(pf);
             else note("probe: no feet");
         }
+        if (phase_ == Phase::Idle &&
+            (descendDone_ || huntLegDone_ || smeltDone_ || smeltFailed_)) {
+            // Descend, Hunt and Smelt finish inside the phase switch,
+            // parking in Idle with their done flags set for the routing hooks
+            // further down — but the Idle early return below used to
+            // swallow every later tick, so a finished descent stranded
+            // the whole run in Idle (measured 2026-11-16: the cobble
+            // shaft reached its depth and nothing ever resumed).
+            // Route those completions onward here first.
+            bedrock::Vec3 pf;
+            if (feetPos(pf)) {
+                if (cobbleDescend_ && descendDone_) {
+                    cobbleDescend_ = false;
+                    descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    hasTarget_ = false; emptyScans_ = 0;
+                    note("craft chain: cobble shaft done, resuming stone scan");
+                }
+                if (huntLegDone_ && gatherActive_ && phase_ == Phase::Idle) {
+                    huntLegDone_ = false;
+                    if (huntBlocked_) {
+                        huntBlocked_ = false;
+                        const int ndx = huntDirZ_, ndz = -huntDirX_;
+                        huntDirX_ = ndx; huntDirZ_ = ndz;
+                        note("gather: hunt direction rotated");
+                    }
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    hasTarget_ = false; emptyScans_ = 0;
+                }
+                if (phase_ == Phase::Idle) tickExpedition(pf);
+            }
+        }
         if (phase_ == Phase::Idle) { clearPath(); return; }
-        if (!game_.gameplayActive() && phase_ != Phase::Craft) { releaseInputs(); return; }
+        if (!game_.gameplayActive() && phase_ != Phase::Craft && phase_ != Phase::Smelt) {
+            if (moveStage_ != MoveStage::None) {
+                // A hotbar move is mid-flight (it opened this screen
+                // itself): keep polling it instead of closing the
+                // screen out from under it.
+                (void)ensureHotbarTick(moveItem_);
+                return;
+            }
+            // A screen left open by an aborted chain freezes every
+            // other phase (they all expect gameplay input): pulse Esc
+            // until it closes instead of waiting forever (measured
+            // 2026-11-16: a failed pickaxe chain left the inventory
+            // open in NeedTool and the retry timer could never run).
+            // Craft and Smelt manage their own screens and are exempt.
+            releaseInputs();
+            if ((tickCount_ % 30) == 1) pressKey(0x1B, true);
+            if ((tickCount_ % 30) == 3) pressKey(0x1B, false);
+            return;
+        }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
         // Drowning safety net: in the stationary working phases, if the
@@ -1580,6 +1639,19 @@ private:
                     reply("作業台に戻れないから、石のツルハシは諦めるね");
                     note("craft chain: could not return to the table");
                 }
+            } else if (cobbleNavFails_ >= 2) {
+                // Surface stone keeps failing to path (swamp pools,
+                // stone buried under dirt): dig straight down to the
+                // stone layer instead — down there stone is adjacent
+                // in every direction and navigation is trivial.
+                cobbleNavFails_ = 0;
+                descendTargetY_ = static_cast<int>(std::floor(feet.y)) - 10;
+                descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+                descendLastY_ = INT_MAX; descendStuck_ = 0;
+                cobbleDescend_ = true;
+                releaseInputs();
+                phase_ = Phase::Descend;
+                note("craft chain: cobble targets unreachable, digging down to stone");
             } else if (++chainCobbleTicks_ > 20 * 180) {
                 chainWaitingCobble_ = false;
                 chainActive_ = false;
@@ -1592,6 +1664,75 @@ private:
                             : invCountOf(goalItem_) - goalBase_;
             if (goalReached()) { finishGoal(); return; }
         }
+        // Scan override housekeeping: an override (the chain's cobble
+        // wait, an expedition gather) owns targetId_ while it runs; give
+        // the original target back once nothing claims the override.
+        if (scanOverrideHeld_ && !chainWaitingCobble_ && !gatherActive_)
+            endScanOverride();
+        // Expedition gather completion / timeout.
+        if (gatherActive_) {
+            int total = 0;
+            for (const auto& id : gatherCountIds_) total += countAllItems(id);
+            if (total >= gatherWant_) {
+                gatherActive_ = false; gatherDone_ = true;
+                releaseInputs(); phase_ = Phase::Idle; hasTarget_ = false;
+                note("gather: done (" + std::to_string(total) + " collected)");
+            } else if (tickCount_ > gatherDeadline_) {
+                gatherActive_ = false; gatherFailed_ = true;
+                releaseInputs(); phase_ = Phase::Idle; hasTarget_ = false;
+                note("gather: timed out");
+            } else if (gatherHunt_ && phase_ == Phase::Scan && emptyScans_ >= 3 &&
+                       !chainActive_) {
+                // Nothing in scan range: tunnel a leg and rescan.
+                huntStage_ = 0; huntCells_ = 0; huntLegDone_ = false; digPos_ = {INT_MIN, 0, 0};
+                phase_ = Phase::Hunt;
+                note("gather: hunt leg (" + std::to_string(huntDirX_) + "," +
+                     std::to_string(huntDirZ_) + ")");
+            }
+        }
+        // Scan stall: nothing of the target in range and the ordinary
+        // flow cannot fix it (no target ever reaches Navigate/Mine, so
+        // NeedTool never fires) — the expedition takes over from here.
+        if (phase_ == Phase::Scan && emptyScans_ >= 6 && !chainActive_ &&
+            !gatherActive_) {
+            if (!expeditionActive()) (void)maybeStartExpedition();
+            if (!expeditionActive() && goalCount_ > 0 &&
+                requiredTier(targetId_) >= 4 && hasPickaxeTier(requiredTier(targetId_))) {
+                needTier_ = requiredTier(targetId_);
+                // Already at diamond depth with the right pickaxe
+                // (e.g. a re-issued /mine after a client crash):
+                // skip the descent and hunt directly — without
+                // this, the plain scan loop rescans forever when
+                // no ore is within radius (measured 2026-11-17 on
+                // fresh2 after a crash at y=-44).
+                startExpedition(feet.y > -40 ? ExpStage::ToDiamondLevel
+                                             : ExpStage::HuntOre);
+            }
+        }
+        if (huntLegDone_ && gatherActive_ && phase_ == Phase::Idle) {
+            huntLegDone_ = false;
+            if (huntBlocked_) {
+                // Rotate 90 degrees: the old heading is a cave edge, a
+                // lava pocket or a wall the advance could not pass.
+                huntBlocked_ = false;
+                const int ndx = huntDirZ_, ndz = -huntDirX_;
+                huntDirX_ = ndx; huntDirZ_ = ndz;
+                note("gather: hunt direction rotated");
+            }
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            hasTarget_ = false; emptyScans_ = 0;
+        }
+        if (cobbleDescend_ && descendDone_) {
+            // The cobble-wait shaft is done (reached depth, cave mouth
+            // or a refusal): hand control back to the cobble scan,
+            // which now runs surrounded by stone.
+            cobbleDescend_ = false;
+            descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+            phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            hasTarget_ = false; emptyScans_ = 0;
+            note("craft chain: cobble shaft done, resuming stone scan");
+        }
+        tickExpedition(feet);
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -1601,6 +1742,9 @@ private:
         case Phase::Combat: tickCombat(feet); break;
         case Phase::Boat: tickBoat(feet); break;
         case Phase::Craft: tickCraft(feet); break;
+        case Phase::Descend: tickDescend(feet); break;
+        case Phase::Hunt: tickHunt(feet); break;
+        case Phase::Smelt: tickSmelt(feet); break;
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
@@ -1811,7 +1955,12 @@ private:
             bedrock::BlockPos bp; bp.x = pos.x; bp.y = pos.y; bp.z = pos.z;
             auto cell = world_.getBlock(src, bp);
             if (cell.identifier.empty() || isAir(cell.identifier)) continue;
-            if (localPart(cell.identifier) != targetId_) continue;
+            if (scanIds_.empty()) {
+                if (localPart(cell.identifier) != targetId_) continue;
+            } else if (std::find(scanIds_.begin(), scanIds_.end(),
+                                 localPart(cell.identifier)) == scanIds_.end()) {
+                continue;
+            }
             // Underwater guard: the player cannot swim, so a target that
             // can only be reached through water ends in a drowning loop.
             // Skip it when any water sits in the column above (up to 16
@@ -1841,12 +1990,21 @@ private:
             const double d2 = ddx * ddx + ddy * ddy + ddz * ddz;
             if (d2 < bestDist2_) {
                 bestDist2_ = d2; target_ = pos; hasTarget_ = true;
+                scanFoundId_ = localPart(cell.identifier);
                 if (d2 < 36.0) { scanCursor_ = total; break; } // close enough: go now
             }
         }
         if (scanCursor_ < total) return;
         if (hasTarget_) {
             emptyScans_ = 0;
+            if (!scanIds_.empty()) {
+                // Override scan (gather / cobble wait): adopt the found
+                // block as the working target so tool/tier logic sees the
+                // real block; the original target is restored when the
+                // override ends.
+                if (!scanOverrideHeld_) { scanSavedId_ = targetId_; scanOverrideHeld_ = true; }
+                targetId_ = scanFoundId_;
+            }
             note("target: " + targetId_ + " at " + std::to_string(target_.x) + "," +
                  std::to_string(target_.y) + "," + std::to_string(target_.z));
             phase_ = Phase::Navigate;
@@ -2304,6 +2462,7 @@ private:
         ++navTicks_;
         if (navTicks_ > 20 * 45) { // same overall budget as legacy navigation
             note("navigate timeout (path); blacklist target");
+            if (chainWaitingCobble_) ++cobbleNavFails_;
             blacklist_.insert(target_); hasTarget_ = false;
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
             path_.clear(); pathDig_.clear(); pathBridge_.clear();
@@ -2495,8 +2654,20 @@ private:
         }
         // Planned route (A*): plan once per target and follow the waypoints
         // when a route exists. No route (or a failed plan) falls back to
-        // the legacy straight-line navigation below.
-        if (!(pathFor_ == target_)) planPath(feet);
+        // the legacy straight-line navigation below. A failed plan is
+        // retried at most every 200 ticks: re-running a 9,000-expansion
+        // search every tick starved the fallback navigation entirely
+        // (measured 2026-11-17: a deepslate target looped "no route"
+        // for 15 minutes without the 45 s navigate timeout ever
+        // accumulating).
+        if (!(pathFor_ == target_)) {
+            if (!(planFailFor_ == target_) || tickCount_ - planFailTick_ >= 200) {
+                if (!planPath(feet) && path_.empty()) {
+                    planFailFor_ = target_;
+                    planFailTick_ = tickCount_;
+                }
+            }
+        }
         if (!path_.empty()) { tickFollowPath(feet); return; }
         // No land route and open water ahead on a long crossing: craft a
         // boat here on the shore while there is still ground to work on
@@ -2552,6 +2723,7 @@ private:
             }
             if (navTicks_ > 20 * 45) {
                 note("navigate timeout (swim); blacklist target");
+                if (chainWaitingCobble_) ++cobbleNavFails_;
                 blacklist_.insert(target_); hasTarget_ = false;
                 pressKey(kKeyW, false); pressKey(kKeySpace, false);
                 phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
@@ -2605,6 +2777,7 @@ private:
                 } else if (stuckTicks_ >= 3) {
                     pressKey(kKeySpace, false);
                     if (!tryMineThrough(feet)) {
+                        if (chainWaitingCobble_) ++cobbleNavFails_;
                         blacklist_.insert(target_); hasTarget_ = false;
                         pressKey(kKeyW, false);
                         phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
@@ -2619,6 +2792,7 @@ private:
         }
         if (navTicks_ > 20 * 45) { // ~45s per target is plenty
             note("navigate timeout; blacklist target");
+            if (chainWaitingCobble_) ++cobbleNavFails_;
             blacklist_.insert(target_); hasTarget_ = false;
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
@@ -2769,10 +2943,32 @@ private:
         }
     }
     void tickNeedTool() {
+        if (moveStage_ != MoveStage::None) { (void)ensureHotbarTick(moveItem_); return; }
         if (++needTicks_ % 20) return;
         if (wantPickaxeChain_ && tickCount_ >= chainNextRetryTick_ &&
             tryStartPickaxeChain())
             return;
+        if (maybeStartExpedition()) return;
+        // A good-enough pickaxe that only exists in the main inventory
+        // (deposited there while the hotbar was full) is invisible to
+        // ensureTool: move it into the hotbar first.
+        if (needTier_ > 0 && !moveFailed_) {
+            bool hotbarHas = false;
+            std::string mainPick;
+            int mainTier = -1;
+            for (const auto& s : craft_.snapshot()) {
+                if (!s.count) continue;
+                int t{};
+                if (classForItem(localPart(s.item), t) != ToolClass::Pickaxe || t < needTier_)
+                    continue;
+                if (s.slot < 9) hotbarHas = true;
+                else if (t > mainTier) { mainTier = t; mainPick = localPart(s.item); }
+            }
+            if (!hotbarHas && !mainPick.empty()) {
+                (void)ensureHotbarTick(mainPick);
+                return;
+            }
+        }
         if (ensureTool(targetId_)) {
             reply("ツールを確認。再開するね");
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
@@ -2802,6 +2998,7 @@ private:
     bool chainRetriedOpen_{};
     Phase chainReturn_{Phase::Scan};
     bool chainForPickaxe_{};
+    bool chainForFurnace_{};
     bool wantPickaxeChain_{};
     int needTier_{};
     long long chainNextRetryTick_{};
@@ -2814,6 +3011,16 @@ private:
     BlockPos3 chainTablePos_{INT_MIN, 0, 0};
     bool chainTablePlaced_{};
     BlockPos3 chainPlaceCell_{INT_MIN, 0, 0};
+    BlockPos3 chainPocket_{INT_MIN, 0, 0};
+    int chainPocketBad_{};
+    int chainPocketStage_{};
+    bool chainPocketing_{};
+    bool chainPocketDug_{};
+    BlockPos3 chainPocketCell_{INT_MIN, 0, 0};
+    int chainNoSlotTicks_{};
+    std::vector<BlockPos3> chainPlaceCells_;
+    std::size_t chainPlaceIdx_{};
+    int placeCellTicks_{};
     BlockPos3 boatChainTriedFor_{INT_MIN, 0, 0};
 
     // Does the straight route toward the target cross water within the
@@ -2878,6 +3085,192 @@ private:
             if (it.count && localPart(it.id) == "crafting_table") return i;
         }
         return -1;
+    }
+    // -- hotbar move -----------------------------------------------------
+    // A crafted table/furnace/pickaxe is deposited into the first free
+    // tracked inventory slot, which is in the MAIN inventory whenever
+    // the hotbar is full of gathered junk — and placement/tool use only
+    // see the hotbar (measured 2026-11-16: the chain crafted a table,
+    // deposited it at main slot 12+, and PlaceTable failed in a retry
+    // loop with "not in hotbar"). Move the item into the hotbar with
+    // the adapter's one-shot transfer, evicting a junk stack first if
+    // every hotbar slot is taken. The transfers only succeed while a
+    // screen is attached (a no-screen place into the inventory is
+    // rejected with status 49, measured 2026-11-16), so the move opens
+    // the inventory screen first and uses the section addressing the
+    // open screen expects (hotbar = container 28, main = 29), then
+    // closes the screen again. Returns true when the item is in the
+    // hotbar; false while the move runs or after giving up
+    // (moveFailed_ distinguishes, caller resets it).
+    enum class MoveStage { None, OpenInv, Evict, Bring, CloseUi };
+    MoveStage moveStage_{MoveStage::None};
+    std::string moveItem_; // full id being moved
+    int moveSrc_{-1}, moveDst_{-1}, moveCount_{};
+    std::int32_t moveSrcNet_{};
+    int moveEvict_{-1}, moveEvictCount_{}, moveFreeMain_{-1};
+    std::int32_t moveEvictNet_{};
+    std::string moveEvictId_; // full id being evicted
+    bool moveNeedEvict_{};
+    bool moveFailPending_{};
+    long long moveStageStart_{};
+    long long moveDeadline_{};
+    bool moveFailed_{};
+    static std::uint32_t invContainer(int slot) { return slot < 9 ? 28u : 29u; }
+    bool ensureHotbarTick(const std::string& localId) {
+        const long long stageTicks = tickCount_ - moveStageStart_;
+        switch (moveStage_) {
+        case MoveStage::None: {
+            const auto snap = craft_.snapshot();
+            bool occupied[36]{};
+            for (const auto& s : snap)
+                if (s.count > 0 && s.slot >= 0 && s.slot < 36) occupied[s.slot] = true;
+            // "Already in the hotbar" must be visible to the memory
+            // hotbar read the placement code uses (hotbarItems()): a
+            // craft result can be deposited into a hotbar slot the
+            // memory read still shows empty (shadow-only) — trusting
+            // the snapshot there stranded PlaceTable on fresh worlds
+            // (measured 2026-11-17) — and selecting that slot would
+            // wipe the stack. A shadow-only hotbar stack is a move
+            // SOURCE instead: a forged transfer moves it server-side
+            // regardless of what the memory read shows.
+            const auto hb = hotbarItems();
+            for (int i = 0; i < 9 && i < static_cast<int>(hb.size()); ++i)
+                if (hb[static_cast<std::size_t>(i)].count > 0 &&
+                    localPart(hb[static_cast<std::size_t>(i)].id) == localId)
+                    return true;
+            int src = -1, srcCount = 0;
+            std::int32_t srcNet = 0;
+            std::string fullId;
+            for (const auto& s : snap)
+                if (s.count > 0 && s.slot >= 9 && localPart(s.item) == localId) {
+                    src = s.slot; srcCount = s.count; srcNet = s.netId; fullId = s.item;
+                    break;
+                }
+            if (src < 0)
+                for (const auto& s : snap)
+                    if (s.count > 0 && s.slot >= 0 && s.slot < 9 &&
+                        localPart(s.item) == localId &&
+                        !(s.slot < static_cast<int>(hb.size()) &&
+                          hb[static_cast<std::size_t>(s.slot)].count > 0 &&
+                          localPart(hb[static_cast<std::size_t>(s.slot)].id) == localId)) {
+                        src = s.slot; srcCount = s.count; srcNet = s.netId; fullId = s.item;
+                        break;
+                    }
+            if (src < 0) { moveFailed_ = true; return false; }
+            moveItem_ = fullId; moveSrc_ = src; moveSrcNet_ = srcNet; moveCount_ = srcCount;
+            moveNeedEvict_ = false; moveFailPending_ = false;
+            int dst = -1;
+            for (int i = 0; i < 9; ++i)
+                if (!occupied[i]) { dst = i; break; }
+            if (dst >= 0) {
+                moveDst_ = dst;
+                note("hotbar move: " + localId + " from main slot " + std::to_string(src) +
+                     " to hotbar " + std::to_string(dst));
+            } else {
+                // Hotbar full: evict the least valuable non-tool stack
+                // to a free main-inventory slot first.
+                int evict = -1, evictScore = -1, evictCount = 0;
+                std::int32_t evictNet = 0;
+                std::string evictId;
+                for (const auto& s : snap) {
+                    if (s.count <= 0 || s.slot >= 9) continue;
+                    const std::string id = localPart(s.item);
+                    if (id == localId || id == "crafting_table" || id == "furnace") continue;
+                    if (contains(id, "sword") || id == "bow") continue;
+                    int t{};
+                    if (classForItem(id, t) != ToolClass::None) continue;
+                    int score = 10;
+                    if (contains(id, "sapling")) score = 100;
+                    else if (contains(id, "seed")) score = 90;
+                    else if (id == "apple") score = 80;
+                    else if (contains(id, "sand")) score = 70;
+                    else if (contains(id, "dirt")) score = 60;
+                    else if (contains(id, "gravel")) score = 50;
+                    else if (contains(id, "flower")) score = 40;
+                    if (score > evictScore) {
+                        evictScore = score; evict = s.slot; evictCount = s.count;
+                        evictNet = s.netId; evictId = s.item;
+                    }
+                }
+                int freeMain = -1;
+                for (int i = 9; i < 36; ++i)
+                    if (!occupied[i]) { freeMain = i; break; }
+                if (evict < 0 || freeMain < 0) { moveFailed_ = true; return false; }
+                moveDst_ = evict;
+                moveEvict_ = evict; moveEvictCount_ = evictCount;
+                moveEvictNet_ = evictNet; moveEvictId_ = evictId;
+                moveFreeMain_ = freeMain;
+                moveNeedEvict_ = true;
+                note("hotbar move: evicting " + localPart(evictId) + " from hotbar " +
+                     std::to_string(evict) + " for " + localId);
+            }
+            moveStage_ = MoveStage::OpenInv;
+            moveStageStart_ = tickCount_;
+            return false;
+        }
+        case MoveStage::OpenInv: {
+            if (!game_.gameplayActive()) {
+                const bool ok = moveNeedEvict_
+                    ? craft_.startTransfer(invContainer(moveEvict_), moveEvict_, moveEvictNet_,
+                                           invContainer(moveFreeMain_), moveFreeMain_,
+                                           moveEvictCount_, moveEvictId_)
+                    : craft_.startTransfer(invContainer(moveSrc_), moveSrc_, moveSrcNet_,
+                                           invContainer(moveDst_), moveDst_,
+                                           moveCount_, moveItem_);
+                if (!ok) { moveFailed_ = true; moveStage_ = MoveStage::None; return false; }
+                moveStage_ = moveNeedEvict_ ? MoveStage::Evict : MoveStage::Bring;
+                moveDeadline_ = tickCount_ + 20 * 15;
+                return false;
+            }
+            if ((stageTicks % 45) == 1) pressKey(0x45, true);  // VK_E
+            if ((stageTicks % 45) == 3) pressKey(0x45, false);
+            if (stageTicks > 300) { moveFailed_ = true; moveStage_ = MoveStage::None; }
+            return false;
+        }
+        case MoveStage::Evict:
+        case MoveStage::Bring: {
+            if (tickCount_ <= moveDeadline_) {
+                const auto st = craft_.transferStatus();
+                if (st == bedrock::CraftJobStatus::Running) return false;
+                craft_.clearTransferStatus();
+                if (st != bedrock::CraftJobStatus::Failed) {
+                    if (moveStage_ == MoveStage::Evict) {
+                        if (craft_.startTransfer(invContainer(moveSrc_), moveSrc_, moveSrcNet_,
+                                                 invContainer(moveDst_), moveDst_,
+                                                 moveCount_, moveItem_)) {
+                            moveStage_ = MoveStage::Bring;
+                            moveDeadline_ = tickCount_ + 20 * 15;
+                            return false;
+                        }
+                    } else {
+                        moveStage_ = MoveStage::CloseUi;
+                        moveStageStart_ = tickCount_;
+                        return false;
+                    }
+                }
+                note("hotbar move: transfer failed");
+            }
+            moveFailPending_ = true;
+            moveStage_ = MoveStage::CloseUi;
+            moveStageStart_ = tickCount_;
+            return false;
+        }
+        case MoveStage::CloseUi: {
+            if (game_.gameplayActive() || stageTicks > 70) {
+                moveStage_ = MoveStage::None;
+                if (moveFailPending_) {
+                    moveFailPending_ = false; moveFailed_ = true;
+                    return false;
+                }
+                note("hotbar move: done");
+                return true;
+            }
+            if (stageTicks == 1 || stageTicks == 30) pressKey(0x1B, true);
+            if (stageTicks == 3 || stageTicks == 32) pressKey(0x1B, false);
+            return false;
+        }
+        }
+        return false;
     }
     // The wood ("oak" of oak_log) carrying the most logs, for per-wood
     // planks recipes.
@@ -2972,6 +3365,9 @@ private:
         }
         chainSteps_ = std::move(steps);
         chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainPlaceCell_ = {INT_MIN, 0, 0};
+        chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
         chainWaitingCobble_ = false;
         chainForPickaxe_ = true; chainReturn_ = Phase::Scan;
@@ -3028,6 +3424,9 @@ private:
         steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
         chainSteps_ = std::move(steps);
         chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainPlaceCell_ = {INT_MIN, 0, 0};
+        chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
         chainWaitingCobble_ = false;
         chainForPickaxe_ = false; chainReturn_ = Phase::Navigate;
@@ -3040,6 +3439,8 @@ private:
         ++chainStep_;
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainJobStarted_ = false;
         chainPlaceCell_ = {INT_MIN, 0, 0};
+        chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
         if (chainStep_ >= chainSteps_.size()) chainFinish();
     }
     void chainFinish() {
@@ -3052,6 +3453,10 @@ private:
             reply("ツルハシ完成！採掘を再開するね");
             note("craft chain: pickaxe done");
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
+        } else if (chainForFurnace_) {
+            chainForFurnace_ = false;
+            note("craft chain: furnace done");
+            phase_ = chainReturn_;
         } else {
             reply("ボート完成！");
             note("craft chain: boat done");
@@ -3077,6 +3482,7 @@ private:
             }
             phase_ = Phase::NeedTool; needTicks_ = 0;
         } else {
+            chainForFurnace_ = false;
             phase_ = chainReturn_;
         }
     }
@@ -3147,7 +3553,13 @@ private:
         if (chainStep_ >= chainSteps_.size()) { chainFinish(); return; }
         const ChainStep& step = chainSteps_[chainStep_];
         switch (step.kind) {
-        case ChainStep::Kind::Craft: dispatchCraftStep(step); break;
+        case ChainStep::Kind::Craft:
+            // Give the screen the previous step opened a moment to
+            // attach server-side: a grid place sent the same tick the
+            // client first shows the screen can still be rejected
+            // (status 49, measured 2026-11-16).
+            if (chainStepTicks_ >= 10) dispatchCraftStep(step);
+            break;
         case ChainStep::Kind::PlaceTable: tickPlaceTable(feet); break;
         case ChainStep::Kind::OpenTable: tickOpenTable(feet); break;
         case ChainStep::Kind::CloseUi: tickCloseUi(); break;
@@ -3155,14 +3567,105 @@ private:
         case ChainStep::Kind::WaitCobble:
             ++chainStep_; chainStepTicks_ = 0;
             chainWaitingCobble_ = true; chainCobbleTicks_ = 0; chainReturnTrips_ = 0;
+            cobbleNavFails_ = 0; cobbleDescend_ = false;
+            scanIds_ = {"stone"};
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false;
             reply("木のツルハシ完成。丸石を3つ集めるね");
             note("craft chain: waiting for cobblestone");
             break;
         }
     }
+    // Dig a one-cell side pocket beside the player for a placement
+    // that has no air neighbour at feet level (a 1-wide shaft —
+    // measured 2026-11-17: PlaceTable failed at y=16 inside the
+    // descend shaft with "no place"). The first ticks back the player
+    // against the far wall so the pocket cell clears the player's
+    // AABB (a cell the AABB reaches into can never accept a block).
+    // Returns 0 = working, 1 = pocket open, 2 = every direction
+    // refused.
+    int digPocketTick(bedrock::Vec3 feet, BlockPos3& pocket, int& badMask, int& stage) {
+        static constexpr int kDX[4] = {1, -1, 0, 0};
+        static constexpr int kDZ[4] = {0, 0, 1, -1};
+        const int fx = static_cast<int>(std::floor(feet.x));
+        const int fy = static_cast<int>(std::floor(feet.y));
+        const int fz = static_cast<int>(std::floor(feet.z));
+        if (pocket.x == INT_MIN) {
+            stage = 0;
+            for (int i = 0; i < 4; ++i) {
+                if (badMask & (1 << i)) continue;
+                const BlockPos3 cell{fx + kDX[i], fy, fz + kDZ[i]};
+                const auto at = blockAt(cell);
+                if (contains(localPart(at), "bedrock")) { badMask |= 1 << i; continue; }
+                const auto ground = blockAt({cell.x, cell.y - 1, cell.z});
+                if (ground.empty() || isAir(ground) || contains(localPart(ground), "water")) {
+                    badMask |= 1 << i;
+                    continue;
+                }
+                // Air/water cells are valid pockets too: the blocker
+                // there is the player's own AABB reaching into the
+                // cell, and the back-off stage below is what clears
+                // it (measured 2026-11-17: the only air neighbour at
+                // y=16 was rejected purely for AABB overlap).
+                pocket = cell;
+                break;
+            }
+            if (pocket.x == INT_MIN) return 2;
+        }
+        // Back off until the player's AABB no longer overlaps the
+        // pocket cell's column — a fixed 6 ticks was not enough when
+        // the facing had not converged (S then pushed the player INTO
+        // the pocket block and the cell stayed overlapped, measured
+        // 2026-11-17: feet.x moved only 0.06 of the 0.12 needed).
+        // Only hold S while actually aimed at the pocket, and give up
+        // after 60 ticks (the caller's collection keeps the dug cell
+        // as a candidate and the placement loop keeps retreating).
+        const bool intersects = pocket.x < feet.x + .6f && pocket.x + 1 > feet.x &&
+                                pocket.z < feet.z + .6f && pocket.z + 1 > feet.z;
+        if (intersects && stage < 60) {
+            bedrock::Vec3 eye;
+            bool aimed = false;
+            if (eyePos(eye)) {
+                const bedrock::Vec3 c{pocket.x + .5f, pocket.y + .5f, pocket.z + .5f};
+                aimed = faceToward(eye, c, 0.15f);
+            }
+            pressKey(kKeyS, aimed);
+            ++stage;
+            return 0;
+        }
+        pressKey(kKeyS, false);
+        const auto atNow = blockAt(pocket);
+        if (isAir(atNow) || contains(localPart(atNow), "water")) {
+            pocket = {INT_MIN, 0, 0};
+            return 1;
+        }
+        const int r = digCell(pocket, feet);
+        if (r == 1) { pocket = {INT_MIN, 0, 0}; return 1; }
+        if (r == 2) {
+            const int dx = pocket.x - fx, dz = pocket.z - fz;
+            for (int i = 0; i < 4; ++i)
+                if (kDX[i] == dx && kDZ[i] == dz) badMask |= 1 << i;
+            pocket = {INT_MIN, 0, 0};
+            stage = 0;
+        }
+        return 0;
+    }
     void tickPlaceTable(bedrock::Vec3 feet) {
-        if (chainStepTicks_ > 20 * 10) { chainFail("作業台を置けなかった"); return; }
+        if (chainStepTicks_ > 20 * 25) { chainFail("作業台を置けなかった"); return; }
+        if (!game_.gameplayActive()) {
+            // Same leftover-screen guard as tickPlaceFurnace: a screen
+            // left open by an earlier step eats every placement pulse,
+            // and Phase::Craft is exempt from tick()'s recovery.
+            if (tickCount_ % 30 == 1) pressKey(0x1B, true);
+            if (tickCount_ % 30 == 3) pressKey(0x1B, false);
+            return;
+        }
+        if (chainPocketing_) {
+            const BlockPos3 pocketBefore = chainPocket_;
+            const int r = digPocketTick(feet, chainPocket_, chainPocketBad_, chainPocketStage_);
+            if (r == 2) { chainPocketing_ = false; chainFail("作業台を置く場所が無い"); return; }
+            if (r == 1) { chainPocketing_ = false; chainPocketDug_ = true; chainPocketCell_ = pocketBefore; }
+            else return;
+        }
         bedrock::Vec3 eye;
         if (!eyePos(eye)) return;
         if (chainPlaceCell_.x == INT_MIN) {
@@ -3181,7 +3684,14 @@ private:
                                             (b.x * want.x + b.z * want.z);
                                  });
             }
-            bool found = false;
+            // Collect EVERY viable neighbour, not just the first: the
+            // aim ray for one cell can be shadowed by a diagonal block
+            // or land on a face whose placement cell intersects the
+            // player diagonally, silently eating every pulse (measured
+            // 2026-11-16: wedged against an old table on a slope, one
+            // committed cell failed forever). The pulse loop below
+            // cycles through the candidates.
+            chainPlaceCells_.clear();
             for (const auto& d : dirs) {
                 const BlockPos3 cell{fx + d.x, fy, fz + d.z};
                 // A cell the player's own AABB reaches into can never
@@ -3191,10 +3701,22 @@ private:
                 // 2026-11-16: table placement timed out twice in a row
                 // while the bot stood at the platform edge).
                 if (cell.x < feet.x + .6 && cell.x + 1 > feet.x &&
-                    cell.z < feet.z + .6 && cell.z + 1 > feet.z)
+                    cell.z < feet.z + .6 && cell.z + 1 > feet.z &&
+                    !(chainPocketDug_ && cell.x == chainPocketCell_.x &&
+                      cell.y == chainPocketCell_.y && cell.z == chainPocketCell_.z))
                     continue;
                 const auto at = blockAt(cell);
                 if (contains(localPart(at), "crafting_table")) {
+                    // Only adopt a table the use ray can actually
+                    // reach. A table shadowed by another block (a
+                    // furnace left in the aim path by the smelt
+                    // stage) opens THAT block's screen instead, and
+                    // every craft then fails status 50 at phase 0 —
+                    // measured 2026-11-17 on fresh2 (~900 failed
+                    // crafts against a furnace screen). Skip a
+                    // shadowed table and place a fresh one instead.
+                    BlockPos3 occ;
+                    if (!lineOfSight(eye, cell, occ)) continue;
                     chainTablePos_ = cell;
                     chainTablePlaced_ = true;
                     note("craft chain: adopting existing table");
@@ -3205,14 +3727,29 @@ private:
                 if (ground.empty() || isAir(ground) || contains(localPart(ground), "water") ||
                     (!isAir(at) && !contains(localPart(at), "water")))
                     continue;
-                chainPlaceCell_ = cell;
-                found = true;
-                break;
+                // The placement ray must actually reach the ground
+                // block: a diagonal neighbour can shadow the ray so
+                // every pulse lands on the wrong face and the block
+                // never appears (measured 2026-11-17 in a cave: two
+                // air candidates, 13 pulse cycles, no placement).
+                BlockPos3 occluder;
+                if (!lineOfSight(eye, {cell.x, cell.y - 1, cell.z}, occluder))
+                    continue;
+                chainPlaceCells_.push_back(cell);
             }
-            if (!found) {
-                chainFail("作業台を置く場所が無い");
+            if (chainPlaceCells_.empty()) {
+                if (chainPocketDug_) { chainFail("作業台を置く場所が無い"); return; }
+                // No air neighbour (1-wide shaft): dig a side pocket
+                // and collect candidates again.
+                chainPocketing_ = true;
+                chainPocket_ = {INT_MIN, 0, 0};
+                chainPocketStage_ = 0;
+                note("craft chain: digging a pocket for the table");
                 return;
             }
+            chainPlaceIdx_ = 0;
+            placeCellTicks_ = 0;
+            chainPlaceCell_ = chainPlaceCells_[0];
         }
         if (contains(localPart(blockAt(chainPlaceCell_)), "crafting_table")) {
             chainTablePos_ = chainPlaceCell_;
@@ -3221,8 +3758,28 @@ private:
             chainAdvance();
             return;
         }
-        const int slot = findTableHotbarSlot();
-        if (slot < 0) { chainFail("作業台がホットバーに無い"); return; }
+        int slot = findTableHotbarSlot();
+        if (moveStage_ != MoveStage::None) {
+            // Same orphaned-move guard as tickPlaceFurnace: drive any
+            // in-flight hotbar move to completion before pulsing.
+            if (!ensureHotbarTick("crafting_table")) return;
+            slot = findTableHotbarSlot();
+        } else if (slot < 0 && countAllItems("crafting_table") >= 1 && !moveFailed_) {
+            // The crafted table sits in the main inventory (the
+            // hotbar was full at deposit time): move it in first.
+            if (!ensureHotbarTick("crafting_table")) return;
+            slot = findTableHotbarSlot();
+        }
+        if (slot < 0) {
+            // The memory hotbar read can flicker for a tick (a stack
+            // mid-update reads as a different item): only give up
+            // after 40 consecutive slot-less ticks.
+            if (++chainNoSlotTicks_ <= 40) return;
+            moveFailed_ = false;
+            chainFail("作業台がホットバーに無い");
+            return;
+        }
+        chainNoSlotTicks_ = 0;
         selectSlot(slot);
         const bedrock::Vec3 aim{chainPlaceCell_.x + .5f, static_cast<float>(chainPlaceCell_.y),
                                 chainPlaceCell_.z + .5f};
@@ -3231,7 +3788,19 @@ private:
         // closes is often eaten — at the mesa and at the shore alike,
         // the first placement attempt failed and the second succeeded.
         faceToward(eye, aim, 3.f);
+        // If the target cell still overlaps the player's AABB (a dug
+        // pocket the back-off could not fully clear), keep backing
+        // away while pulsing: the game rejects intersecting
+        // placements, but a pulse lands the moment it clears.
+        pressKey(kKeyS, chainPlaceCell_.x < feet.x + .6f && chainPlaceCell_.x + 1 > feet.x &&
+                        chainPlaceCell_.z < feet.z + .6f && chainPlaceCell_.z + 1 > feet.z);
         setUse((chainStepTicks_ % 12) < 2);
+        if (++placeCellTicks_ > 30 && chainPlaceCells_.size() > 1) {
+            placeCellTicks_ = 0;
+            chainPlaceIdx_ = (chainPlaceIdx_ + 1) % chainPlaceCells_.size();
+            chainPlaceCell_ = chainPlaceCells_[chainPlaceIdx_];
+            note("craft chain: trying another table cell");
+        }
     }
     void tickOpenTable(bedrock::Vec3 feet) {
         if (!chainTablePlaced_) { chainFail("作業台が無い"); return; }
@@ -3240,6 +3809,18 @@ private:
         if (!eyePos(eye)) return;
         const bedrock::Vec3 center{chainTablePos_.x + .5f, chainTablePos_.y + .5f,
                                    chainTablePos_.z + .5f};
+        BlockPos3 occ;
+        if (!lineOfSight(eye, chainTablePos_, occ)) {
+            // Shadowed by another block: the use pulse would open
+            // the WRONG screen and the craft would fail 50 at
+            // phase 0 forever. Forget this table — the chain retry
+            // places a new one at a reachable candidate.
+            note("craft chain: table shadowed by " + localPart(blockAt(occ)) +
+                 "; re-placing");
+            chainTablePlaced_ = false;
+            chainFail("作業台が他のブロックに隠れている");
+            return;
+        }
         if (chainAimedTick_ < 0) {
             if (faceToward(eye, center, 3.f)) chainAimedTick_ = chainStepTicks_;
             return;
@@ -3247,7 +3828,12 @@ private:
         const int since = chainStepTicks_ - chainAimedTick_;
         setUse(since < 2);
         if (!game_.gameplayActive()) { setUse(false); chainAdvance(); return; }
-        if (since > 15) chainAdvance();
+        // The pulse missed (no screen after 15 ticks): re-aim and
+        // pulse again instead of advancing blind — advancing here is
+        // what sent table crafts into status-49 failures on fresh
+        // worlds (measured 2026-11-17). The step timeout above fails
+        // the chain if the table truly cannot be opened.
+        if (since > 15) chainAimedTick_ = -1;
     }
     void tickOpenInventory() {
         // E toggles the inventory screen (and with it the personal 2x2
@@ -3256,11 +3842,12 @@ private:
         // instead of assuming one pulse landed (the first feed after
         // joining can be eaten by device capture warm-up).
         if (!game_.gameplayActive()) { chainAdvance(); return; }
-        if (chainStepTicks_ == 1 || chainStepTicks_ == 45 || chainStepTicks_ == 90)
-            pressKey(0x45, true);  // VK_E
-        if (chainStepTicks_ == 3 || chainStepTicks_ == 47 || chainStepTicks_ == 92)
-            pressKey(0x45, false);
-        if (chainStepTicks_ > 150) chainAdvance();  // craft will fail; retry loop handles it
+        if ((chainStepTicks_ % 45) == 1) pressKey(0x45, true);  // VK_E
+        if ((chainStepTicks_ % 45) == 3) pressKey(0x45, false);
+        // Never advance into a craft whose grid the server will reject
+        // (status 49): if the screen never opened, fail the chain here
+        // and let the retry loop try again from a clean state.
+        if (chainStepTicks_ > 300) chainFail("インベントリを開けなかった");
     }
     void tickCloseUi() {
         if (game_.gameplayActive()) { chainAdvance(); return; }
@@ -3269,6 +3856,735 @@ private:
         if (chainStepTicks_ == 3 || chainStepTicks_ == 32)
             pressKey(0x1B, false);
         if (chainStepTicks_ > 70) chainAdvance();
+    }
+
+    // -- expedition: gather / descend / hunt --------------------------------
+    // The from-zero quest (empty hotbar, vanilla world) is driven by a
+    // supervisor (tickExpedition) on top of these primitives: a gather is
+    // the normal mining loop with a scan override and an inventory-count
+    // finish line; descending digs a 1x1 shaft one safe block at a time;
+    // a hunt leg tunnels a few cells so the next scan sweep sees new rock.
+    void endScanOverride() {
+        if (scanOverrideHeld_) { targetId_ = scanSavedId_; scanOverrideHeld_ = false; }
+        scanIds_.clear();
+    }
+    void startGather(std::vector<std::string> blockIds, std::vector<std::string> countIds,
+                     int want, bool hunt) {
+        gatherActive_ = true; gatherDone_ = false; gatherFailed_ = false;
+        gatherCountIds_ = std::move(countIds); gatherWant_ = want; gatherHunt_ = hunt;
+        gatherDeadline_ = tickCount_ + 20 * 60 * 25;
+        scanIds_ = std::move(blockIds);
+        phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+        hasTarget_ = false; emptyScans_ = 0;
+        note("gather: start, want " + std::to_string(want));
+    }
+    bool lavaAdjacent(const BlockPos3& cell) {
+        static constexpr BlockPos3 kDirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                                               {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (const auto& d : kDirs)
+            if (contains(localPart(blockAt({cell.x + d.x, cell.y + d.y, cell.z + d.z})), "lava"))
+                return true;
+        return false;
+    }
+    // Dig one specific cell with the right tool. 0 = working, 1 = the
+    // cell is air now, 2 = refused (lava next door, no tool, timeout).
+    int digCell(const BlockPos3& cell, bedrock::Vec3 feet) {
+        const auto id = blockAt(cell);
+        // Reset the dig state when the target cell changes OR the
+        // block in it was replaced: the pocket dig and the furnace
+        // break can target the same cell back to back (a table dug
+        // out, a furnace placed into the same hole), and carrying the
+        // tick budget over made the second dig "time out" instantly
+        // (measured 2026-11-17: smelt failed at BreakFurnace).
+        if (!(digPos_ == cell) || digBlockId_ != id) {
+            digPos_ = cell; digBlockId_ = id; digTicks_ = 0; digLavaChecked_ = false;
+        }
+        if (id.empty() || isAir(id)) { setAttack(false); digTicks_ = 0; return 1; }
+        if (!digLavaChecked_) {
+            digLavaChecked_ = true;
+            if (lavaAdjacent(cell)) { setAttack(false); note("dig: lava-adjacent cell refused"); return 2; }
+        }
+        if (!ensureTool(localPart(id))) { setAttack(false); return 2; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return 0;
+        const bedrock::Vec3 center{cell.x + .5f, cell.y + .5f, cell.z + .5f};
+        faceToward(eye, center, 0.02f);
+        setAttack(true);
+        if (++digTicks_ > 20 * 30) { setAttack(false); digTicks_ = 0; return 2; }
+        return 0;
+    }
+    void tickDescend(bedrock::Vec3 feet) {
+        if (feet.y <= descendTargetY_) {
+            setAttack(false); descendDone_ = true; phase_ = Phase::Idle;
+            note("descend: reached y=" + std::to_string(static_cast<int>(feet.y)));
+            return;
+        }
+        const int fy = static_cast<int>(std::floor(feet.y));
+        if (fy < descendLastY_) { descendLastY_ = fy; descendStuck_ = 0; }
+        // Every column the footprint touches, centre first. Digging
+        // only the AABB-min corner's column leaves the player standing
+        // on the neighbouring column — the shaft deepens beside them
+        // and the descent times out (measured 2026-11-16 in a swamp:
+        // a 2-deep hole next to the player, feet.y never moved).
+        const int cx = static_cast<int>(std::floor(feet.x + 0.3));
+        const int cz = static_cast<int>(std::floor(feet.z + 0.3));
+        std::vector<BlockPos3> cols;
+        cols.push_back({cx, fy - 1, cz});
+        const int x0 = static_cast<int>(std::floor(feet.x));
+        const int x1 = static_cast<int>(std::floor(feet.x + 0.599));
+        const int z0 = static_cast<int>(std::floor(feet.z));
+        const int z1 = static_cast<int>(std::floor(feet.z + 0.599));
+        for (int x = x0; x <= x1; ++x)
+            for (int z = z0; z <= z1; ++z)
+                if (x != cx || z != cz) cols.push_back({x, fy - 1, z});
+        for (const auto& c : cols) {
+            if (contains(localPart(blockAt(c)), "lava")) {
+                descendDone_ = true; descendFailed_ = true; phase_ = Phase::Idle;
+                note("descend: lava directly below");
+                return;
+            }
+        }
+        // Cave guard: after the supporting blocks break the player
+        // falls one cell; if the void under the centre column then
+        // continues 3+ cells, the fall becomes a cavern drop — stop
+        // and let the hunt take over here.
+        int voidDepth = 0;
+        for (int y = fy - 2; y > fy - 9; --y) {
+            const auto id = blockAt({cx, y, cz});
+            if (id.empty() || isAir(id) || contains(localPart(id), "water")) ++voidDepth;
+            else break;
+        }
+        if (voidDepth >= 3) {
+            setAttack(false);
+            descendDone_ = true; descendCave_ = true; phase_ = Phase::Idle;
+            note("descend: cave opening below, stopping the shaft");
+            return;
+        }
+        bool refused = false;
+        for (const auto& c : cols) {
+            const auto id = blockAt(c);
+            if (id.empty() || isAir(id) || contains(localPart(id), "water")) continue;
+            if (digCell(c, feet) == 2) { refused = true; continue; }
+            descendStuck_ = 0;
+            return; // working on this column
+        }
+        if (refused) {
+            descendDone_ = true; descendFailed_ = true; phase_ = Phase::Idle;
+            note("descend: dig refused below");
+            return;
+        }
+        // Nothing solid under the footprint: falling (or swimming).
+        setAttack(false);
+        if (++descendStuck_ > 20 * 20) {
+            descendDone_ = true; descendFailed_ = true; phase_ = Phase::Idle;
+            note("descend: no progress, giving up");
+        }
+    }
+    void tickHunt(bedrock::Vec3 feet) {
+        const int fx = static_cast<int>(std::floor(feet.x));
+        const int fy = static_cast<int>(std::floor(feet.y));
+        const int fz = static_cast<int>(std::floor(feet.z));
+        const BlockPos3 ahead{fx + huntDirX_, fy, fz + huntDirZ_};
+        if (huntStage_ == 0) {
+            // No floor ahead means a cave edge or water: end the leg and
+            // let the supervisor pick a new direction.
+            const auto floorId = blockAt({ahead.x, fy - 1, ahead.z});
+            if (floorId.empty() || isAir(floorId) || contains(localPart(floorId), "water") ||
+                contains(localPart(floorId), "lava")) {
+                releaseInputs(); huntLegDone_ = true; huntBlocked_ = true; phase_ = Phase::Idle;
+                note("hunt: no floor ahead, leg over");
+                return;
+            }
+            const BlockPos3 head{ahead.x, fy + 1, ahead.z};
+            const auto headId = blockAt(head);
+            if (headId.empty() || isAir(headId)) { huntStage_ = 1; return; }
+            if (digCell(head, feet) != 0) huntStage_ = 1;
+            return;
+        }
+        if (huntStage_ == 1) {
+            const auto footId = blockAt(ahead);
+            if (footId.empty() || isAir(footId)) { huntStage_ = 2; huntTicks_ = 0; return; }
+            if (digCell(ahead, feet) != 0) { huntStage_ = 2; huntTicks_ = 0; }
+            return;
+        }
+        // Advance one cell into the cleared space.
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        const bedrock::Vec3 want{ahead.x + .5f, feet.y + 1.0f, ahead.z + .5f};
+        faceToward(eye, want, 0.05f);
+        pressKey(kKeyW, true);
+        const int nx = static_cast<int>(std::floor(feet.x));
+        const int nz = static_cast<int>(std::floor(feet.z));
+        if ((nx == ahead.x && nz == ahead.z) || ++huntTicks_ > 70) {
+            pressKey(kKeyW, false);
+            huntStage_ = 0;
+            if (huntTicks_ > 70) { // could not advance: treat as blocked
+                huntLegDone_ = true; huntBlocked_ = true; phase_ = Phase::Idle;
+                note("hunt: advance blocked, leg over");
+                return;
+            }
+            if (++huntCells_ >= 6) {
+                huntLegDone_ = true; phase_ = Phase::Idle;
+                note("hunt: leg complete");
+            }
+        }
+    }
+
+    // -- smelting -------------------------------------------------------------
+    // Craft a furnace, place it, load it through adapter transfers
+    // (input container 25 slot 0, fuel 24 slot 1 — response-verified),
+    // wait out the burn with the screen closed, then break the furnace
+    // and step onto the drops: the result stack's network id is never
+    // revealed to the adapter, so a forged take from the result slot
+    // (26/2) is not possible, but a broken furnace drops everything.
+    enum class SmeltStage { CraftFurnace, PlaceFurnace, OpenFurnace, LoadInput,
+                            LoadFuel, CloseUi, WaitSmelt, BreakFurnace, CollectDrops,
+                            Done, Failed };
+    static std::string smeltYieldOf(const std::string& item) {
+        if (item == "raw_iron") return "iron_ingot";
+        if (item == "raw_gold") return "gold_ingot";
+        if (item == "raw_copper") return "copper_ingot";
+        return item;
+    }
+    int findHotbarSlot(const std::string& localId) {
+        const auto slots = hotbarItems();
+        for (int i = 0; i < 9 && i < static_cast<int>(slots.size()); ++i)
+            if (slots[static_cast<std::size_t>(i)].count > 0 &&
+                localPart(slots[static_cast<std::size_t>(i)].id) == localId)
+                return i;
+        return -1;
+    }
+    std::optional<bedrock::CraftInventorySlot> findInvItem(const std::string& localId) {
+        for (const auto& s : craft_.snapshot())
+            if (s.count > 0 && localPart(s.item) == localId) return s;
+        return std::nullopt;
+    }
+    void startSmelt(const std::string& item, int count) {
+        smeltItem_ = item; smeltCount_ = count;
+        smeltYieldItem_ = smeltYieldOf(item);
+        smeltYieldBase_ = countAllItems(smeltYieldItem_);
+        smeltStage_ = SmeltStage::CraftFurnace; smeltTicks_ = 0;
+        smeltPlaced_ = false; smeltPlaceCell_ = {INT_MIN, 0, 0}; smeltAimedTick_ = -1;
+        smeltPocketing_ = false; smeltPocketDug_ = false; smeltPocketBad_ = 0;
+        smeltPocket_ = {INT_MIN, 0, 0};
+        smeltPlaceCells_.clear(); smeltPlaceIdx_ = 0; smeltCellTicks_ = 0;
+        smeltTransferStarted_ = false; smeltUseAltCont_ = false; smeltMoved_ = 0;
+        furnaceChainTried_ = false; smeltCollectTries_ = 0; smeltBreakRetries_ = 0;
+        smeltDone_ = false; smeltFailed_ = false;
+        phase_ = Phase::Smelt;
+        note("smelt: start " + item + " x" + std::to_string(count));
+    }
+    void smeltAdvance() {
+        smeltStage_ = static_cast<SmeltStage>(static_cast<int>(smeltStage_) + 1);
+        smeltTicks_ = 0; smeltAimedTick_ = -1; smeltTransferStarted_ = false;
+        smeltUseAltCont_ = false;
+    }
+    void smeltFail(const std::string& why) {
+        note("smelt failed: " + why);
+        reply("精錬に失敗したよ（" + why + "）");
+        setUse(false); setAttack(false); releaseInputs();
+        smeltFailed_ = true; smeltStage_ = SmeltStage::Failed; phase_ = Phase::Idle;
+    }
+    bool tryStartFurnaceChain() {
+        if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
+        if (craft_.status() == bedrock::CraftJobStatus::Running) return false;
+        craft_.clearStatus();
+        const auto have = chainCounts();
+        if (countIn(have, "cobblestone") < 8 && countIn(have, "cobbled_deepslate") < 8 &&
+            countIn(have, "blackstone") < 8)
+            return false;
+        std::vector<ChainStep> steps;
+        // A placed table nearby is reused; otherwise craft a fresh one
+        // from planks on the spot (the iron hunt ends far from the
+        // surface camp, so the original table is out of reach).
+        // placedTableExists() also gates on reach: a table left on the
+        // surface still exists as a block, but its screen cannot be
+        // opened from the bottom of the iron shaft, and the craft then
+        // dies with status 49 on the first grid placement (measured
+        // 2026-11-17 on a fresh world). This chain once open-coded the
+        // existence check without the distance gate.
+        const bool localTable = placedTableExists();
+        if (!localTable) {
+            if (countIn(have, "crafting_table") >= 1) {
+                // A table item is already carried (e.g. an earlier
+                // chain crafted it and the hotbar move delivered it):
+                // just place it, no new craft needed.
+                steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
+            } else {
+                const int planks = countIn(have, "planks");
+                steps.push_back(ChainStep{ChainStep::Kind::OpenInventory});
+                if (planks < 4) {
+                    // No planks for a table: mill them from logs on
+                    // the spot first (same pattern as the pickaxe
+                    // chain) instead of refusing to start.
+                    int logCount = 0;
+                    const std::string wood = chainWood(have, logCount);
+                    const int logCrafts = (4 - planks + 3) / 4;
+                    if (wood.empty() || logCrafts > logCount) return false;
+                    steps.push_back(ChainStep{ChainStep::Kind::Craft,
+                                              "minecraft:" + wood + "_planks",
+                                              "minecraft:" + wood + "_planks", logCrafts, false});
+                }
+                steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
+                                          "minecraft:crafting_table", 1, false});
+                steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+                steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
+            }
+        }
+        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:furnace",
+                                  "minecraft:furnace", 1, true});
+        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        chainSteps_ = std::move(steps);
+        chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainPlaceCell_ = {INT_MIN, 0, 0};
+        chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
+        chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
+        chainWaitingCobble_ = false;
+        chainForPickaxe_ = false; chainForFurnace_ = true; chainReturn_ = Phase::Smelt;
+        phase_ = Phase::Craft;
+        note("smelt: furnace craft chain (" + std::to_string(chainSteps_.size()) + " steps)");
+        return true;
+    }
+    // One transfer stage (input or fuel). Returns true when the stage is
+    // finished (advanced or failed) so the caller stops ticking it.
+    bool tickSmeltTransfer(std::uint32_t dstContainer, int dstSlot, bool isFuel) {
+        if (!smeltTransferStarted_) {
+            std::optional<bedrock::CraftInventorySlot> src;
+            int want = 0;
+            if (isFuel) {
+                // Planks burn 1.5 items each; logs the same; coal 8.
+                src = findInvItemPred([](const std::string& id) {
+                    return id.size() > 7 && id.compare(id.size() - 7, 7, "_planks") == 0;
+                });
+                if (src) want = (smeltCount_ * 2 + 2) / 3;
+                if (!src) { src = findInvItemPred([](const std::string& id) {
+                    return id.size() > 4 && id.compare(id.size() - 4, 4, "_log") == 0; });
+                    if (src) want = (smeltCount_ * 2 + 2) / 3; }
+                if (!src) { src = findInvItem("coal"); if (src) want = (smeltCount_ + 7) / 8; }
+                if (!src) { smeltFail("燃料が無い"); return true; }
+            } else {
+                src = findInvItem(smeltItem_);
+                if (!src) { smeltFail("精錬する材料が無い"); return true; }
+                want = smeltCount_;
+            }
+            const int n = std::min(want, src->count);
+            if (!isFuel) smeltMoved_ = n;
+            const std::uint32_t cont = smeltUseAltCont_ ? 12u
+                                       : (src->slot < 9 ? 28u : 29u);
+            if (!craft_.startTransfer(cont, src->slot, src->netId, dstContainer, dstSlot, n,
+                                      src->item))
+                return false; // adapter busy; retry next tick
+            smeltTransferStarted_ = true;
+            return false;
+        }
+        const auto st = craft_.transferStatus();
+        if (st == bedrock::CraftJobStatus::Running) return false;
+        if (st == bedrock::CraftJobStatus::Done) {
+            craft_.clearTransferStatus();
+            note(std::string("smelt: ") + (isFuel ? "fuel" : "input") + " loaded");
+            smeltAdvance();
+            return true;
+        }
+        // Failed: the screen-open inventory may be addressed as the plain
+        // container 12 instead of 28/29 — retry once with the other form.
+        craft_.clearTransferStatus();
+        if (!smeltUseAltCont_) {
+            smeltUseAltCont_ = true; smeltTransferStarted_ = false;
+            note("smelt: transfer failed, retrying with container 12");
+            return false;
+        }
+        smeltFail("アイテム移動に失敗");
+        return true;
+    }
+    std::optional<bedrock::CraftInventorySlot> findInvItemPred(
+        const std::function<bool(const std::string&)>& pred) {
+        for (const auto& s : craft_.snapshot())
+            if (s.count > 0 && pred(localPart(s.item))) return s;
+        return std::nullopt;
+    }
+    void tickSmelt(bedrock::Vec3 feet) {
+        ++smeltTicks_;
+        switch (smeltStage_) {
+        case SmeltStage::CraftFurnace: {
+            if (countAllItems("furnace") >= 1) { smeltAdvance(); return; }
+            if (chainActive_) return; // the furnace chain is running (phase Craft)
+            if (!furnaceChainTried_) {
+                furnaceChainTried_ = true;
+                if (tryStartFurnaceChain()) return;
+            }
+            if (smeltTicks_ > 20 * 30) smeltFail("かまどを作れなかった");
+            return; }
+        case SmeltStage::PlaceFurnace: tickPlaceFurnace(feet); return;
+        case SmeltStage::OpenFurnace: tickOpenFurnace(feet); return;
+        case SmeltStage::LoadInput: (void)tickSmeltTransfer(25, 0, false); return;
+        case SmeltStage::LoadFuel: (void)tickSmeltTransfer(24, 1, true); return;
+        case SmeltStage::CloseUi:
+            if (game_.gameplayActive()) { smeltAdvance(); return; }
+            if (smeltTicks_ == 1 || smeltTicks_ == 30) pressKey(0x1B, true);
+            if (smeltTicks_ == 3 || smeltTicks_ == 32) pressKey(0x1B, false);
+            if (smeltTicks_ > 70) smeltAdvance();
+            return;
+        case SmeltStage::WaitSmelt:
+            if (smeltTicks_ > smeltMoved_ * 200 + 150) smeltAdvance();
+            return;
+        case SmeltStage::BreakFurnace: {
+            const int r = digCell(smeltFurnacePos_, feet);
+            if (r == 1) { note("smelt: furnace broken, collecting"); smeltAdvance(); }
+            else if (r == 2) {
+                // A refused dig here is usually stale dig state or a
+                // transient tool-read failure, not a truly unbreakable
+                // furnace: reset and retry a few times before failing.
+                if (++smeltBreakRetries_ <= 3) {
+                    digPos_ = {INT_MIN, 0, 0}; digBlockId_.clear(); digTicks_ = 0;
+                    note("smelt: break refused, retrying");
+                } else smeltFail("かまどを壊せなかった");
+            }
+            return; }
+        case SmeltStage::CollectDrops: {
+            const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+            const bedrock::Vec3 center{smeltFurnacePos_.x + .5f, feet.y + .5f,
+                                       smeltFurnacePos_.z + .5f};
+            faceAim(eye, center, 12.f, 0.3f);
+            pressKey(kKeyW, true);
+            if (smeltTicks_ >= 25) {
+                pressKey(kKeyW, false);
+                if (countAllItems(smeltYieldItem_) - smeltYieldBase_ >= smeltCount_) {
+                    reply("精錬完了！" + smeltYieldItem_ + " が " +
+                          std::to_string(smeltCount_) + "個できたよ");
+                    note("smelt: done, " + std::to_string(smeltCount_) + "x " + smeltYieldItem_);
+                    smeltDone_ = true; smeltStage_ = SmeltStage::Done; phase_ = Phase::Idle;
+                } else if (++smeltCollectTries_ < 3) {
+                    smeltTicks_ = 0;
+                } else {
+                    smeltFail("精錬物を取りこぼした");
+                }
+            }
+            return; }
+        case SmeltStage::Done: case SmeltStage::Failed:
+            phase_ = Phase::Idle; return;
+        }
+    }
+    void tickPlaceFurnace(bedrock::Vec3 feet) {
+        if (smeltTicks_ > 20 * 25) { smeltFail("かまどを置けなかった"); return; }
+        if (!game_.gameplayActive()) {
+            // A leftover inventory screen eats every use pulse, so
+            // placement "fails" for all candidates (measured 2026-11-17
+            // on a fresh world: the hotbar move's CloseUi gave up with
+            // the screen still open and all 12 candidates cycled).
+            // Phase::Smelt is exempt from tick()'s screen recovery, so
+            // close it here before touching candidates.
+            if (tickCount_ % 30 == 1) pressKey(0x1B, true);
+            if (tickCount_ % 30 == 3) pressKey(0x1B, false);
+            return;
+        }
+        if (smeltPocketing_) {
+            const BlockPos3 pocketBefore = smeltPocket_;
+            const int r = digPocketTick(feet, smeltPocket_, smeltPocketBad_, smeltPocketStage_);
+            if (r == 2) { smeltPocketing_ = false; smeltFail("かまどを置く場所が無い"); return; }
+            if (r == 1) { smeltPocketing_ = false; smeltPocketDug_ = true; smeltPocketCell_ = pocketBefore; }
+            else return;
+        }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        if (smeltPlaceCell_.x == INT_MIN) {
+            const int fx = static_cast<int>(std::floor(feet.x));
+            const int fy = static_cast<int>(std::floor(feet.y));
+            const int fz = static_cast<int>(std::floor(feet.z));
+            std::array<BlockPos3, 4> dirs{{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}}};
+            smeltPlaceCells_.clear();
+            for (const auto& d : dirs) {
+                const BlockPos3 cell{fx + d.x, fy, fz + d.z};
+                if (cell.x < feet.x + .6 && cell.x + 1 > feet.x &&
+                    cell.z < feet.z + .6 && cell.z + 1 > feet.z &&
+                    !(smeltPocketDug_ && cell.x == smeltPocketCell_.x &&
+                      cell.y == smeltPocketCell_.y && cell.z == smeltPocketCell_.z))
+                    continue;
+                const auto at = blockAt(cell);
+                if (contains(localPart(at), "furnace")) {
+                    // Same shadowing rule as the table adoption: a
+                    // furnace the use ray cannot reach opens the
+                    // wrong screen and bricks the smelt.
+                    BlockPos3 occ;
+                    if (!lineOfSight(eye, cell, occ)) continue;
+                    smeltFurnacePos_ = cell; smeltPlaced_ = true;
+                    note("smelt: adopting existing furnace");
+                    smeltAdvance();
+                    return;
+                }
+                const auto ground = blockAt({cell.x, cell.y - 1, cell.z});
+                if (ground.empty() || isAir(ground) || contains(localPart(ground), "water") ||
+                    (!isAir(at) && !contains(localPart(at), "water")))
+                    continue;
+                BlockPos3 occluder;
+                if (!lineOfSight(eye, {cell.x, cell.y - 1, cell.z}, occluder))
+                    continue;
+                smeltPlaceCells_.push_back(cell);
+            }
+            if (smeltPlaceCells_.empty()) {
+                if (smeltPocketDug_) { smeltFail("かまどを置く場所が無い"); return; }
+                smeltPocketing_ = true;
+                smeltPocket_ = {INT_MIN, 0, 0};
+                smeltPocketStage_ = 0;
+                note("smelt: digging a pocket for the furnace");
+                return;
+            }
+            smeltPlaceIdx_ = 0;
+            smeltCellTicks_ = 0;
+            smeltPlaceCell_ = smeltPlaceCells_[0];
+        }
+        if (contains(localPart(blockAt(smeltPlaceCell_)), "furnace")) {
+            smeltFurnacePos_ = smeltPlaceCell_; smeltPlaced_ = true;
+            note("smelt: furnace placed");
+            smeltAdvance();
+            return;
+        }
+        int slot = findHotbarSlot("furnace");
+        // A hotbar move in flight must be driven to completion first:
+        // its Bring transfer already updates the shadow, so
+        // findHotbarSlot() succeeds while the move still sits in
+        // CloseUi with the inventory screen open — and pulses sent
+        // with a screen open are eaten (measured 2026-11-17, fresh
+        // world run 2: the move was orphaned mid-CloseUi and every
+        // candidate cycled). Only a fully idle move may be skipped.
+        if (moveStage_ != MoveStage::None) {
+            if (!ensureHotbarTick("furnace")) return;
+            slot = findHotbarSlot("furnace");
+        } else if (slot < 0 && countAllItems("furnace") >= 1 && !moveFailed_) {
+            if (!ensureHotbarTick("furnace")) return;
+            slot = findHotbarSlot("furnace");
+        }
+        if (slot < 0) {
+            // Same hotbar-read flicker tolerance as tickPlaceTable.
+            if (++smeltNoSlotTicks_ <= 40) return;
+            moveFailed_ = false; smeltFail("かまどがホットバーに無い"); return;
+        }
+        smeltNoSlotTicks_ = 0;
+        selectSlot(slot);
+        const bedrock::Vec3 aim{smeltPlaceCell_.x + .5f,
+                                static_cast<float>(smeltPlaceCell_.y),
+                                smeltPlaceCell_.z + .5f};
+        faceToward(eye, aim, 3.f);
+        pressKey(kKeyS, smeltPlaceCell_.x < feet.x + .6f && smeltPlaceCell_.x + 1 > feet.x &&
+                        smeltPlaceCell_.z < feet.z + .6f && smeltPlaceCell_.z + 1 > feet.z);
+        setUse((smeltTicks_ % 12) < 2);
+        if (++smeltCellTicks_ > 30 && smeltPlaceCells_.size() > 1) {
+            smeltCellTicks_ = 0;
+            smeltPlaceIdx_ = (smeltPlaceIdx_ + 1) % smeltPlaceCells_.size();
+            smeltPlaceCell_ = smeltPlaceCells_[smeltPlaceIdx_];
+            note("smelt: trying another furnace cell");
+        }
+    }
+    void tickOpenFurnace(bedrock::Vec3 feet) {
+        if (!smeltPlaced_) { smeltFail("かまどが無い"); return; }
+        if (smeltTicks_ > 20 * 6) { smeltFail("かまどを開けなかった"); return; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        const bedrock::Vec3 center{smeltFurnacePos_.x + .5f, smeltFurnacePos_.y + .5f,
+                                   smeltFurnacePos_.z + .5f};
+        BlockPos3 occ;
+        if (!lineOfSight(eye, smeltFurnacePos_, occ)) {
+            note("smelt: furnace shadowed by " + localPart(blockAt(occ)) +
+                 "; re-placing");
+            smeltPlaced_ = false;
+            smeltFail("かまどが他のブロックに隠れている");
+            return;
+        }
+        if (smeltAimedTick_ < 0) {
+            if (faceToward(eye, center, 3.f)) smeltAimedTick_ = smeltTicks_;
+            return;
+        }
+        const int since = smeltTicks_ - smeltAimedTick_;
+        setUse(since < 2);
+        if (!game_.gameplayActive()) { setUse(false); smeltAdvance(); return; }
+        // Same blind-advance trap as tickOpenTable: re-aim and pulse
+        // again; the step timeout fails the smelt if it never opens.
+        if (since > 15) smeltAimedTick_ = -1;
+    }
+
+    // -- expedition supervisor --------------------------------------------------
+    // From-zero quest: when the normal flow stalls in NeedTool because a
+    // material is missing, the supervisor takes over and produces it —
+    // gather wood, chain-craft up to a stone pickaxe, descend and hunt
+    // for iron ore, smelt it, chain-craft the iron pickaxe, then descend
+    // to diamond depth and hunt the goal ore. Each stage hands control
+    // back to the ordinary machinery (chains, gathers, mining) and just
+    // watches for its finish line.
+    enum class ExpStage { None, Wood, StonePick, ToIronLevel, HuntIron, Cobble,
+                          Smelt, IronPick, ToDiamondLevel, HuntOre };
+    bool expeditionActive() const { return expStage_ != ExpStage::None; }
+    // Start the from-zero expedition when the ordinary flow is stuck on
+    // a missing material or tool. Returns true when it took over.
+    bool maybeStartExpedition() {
+        if (expeditionActive() || chainActive_) return false;
+        if (classForBlock(targetId_) != ToolClass::Pickaxe) return false;
+        needTier_ = requiredTier(targetId_);
+        const auto have = chainCounts();
+        if (needTier_ >= 4 && countIn(have, "iron_ingot") < 3 && !hasPickaxeTier(4)) {
+            startExpedition(hasPickaxeTier(2) ? ExpStage::ToIronLevel : ExpStage::Wood);
+            return true;
+        }
+        if (needTier_ >= 4 && !hasPickaxeTier(4) && countIn(have, "iron_ingot") >= 3) {
+            // Already holding smelted iron (a previous run's smelt
+            // yield, collected since): go straight to the iron
+            // pickaxe chain. Without this branch the starter fell
+            // through to false and the quest deadlocked in Scan
+            // (measured 2026-11-17 on fresh2: iron_ingot=3, no
+            // tier-4 pickaxe, expedition never started).
+            startExpedition(ExpStage::IronPick);
+            return true;
+        }
+        if (!hasPickaxeTier(1)) {
+            const int wood = countIn(have, "_log") + countIn(have, "_wood") +
+                             countIn(have, "planks") / 4;
+            if (wood < 3) { startExpedition(ExpStage::Wood); return true; }
+        }
+        return false;
+    }
+    bool hasPickaxeTier(int minTier) {
+        for (const auto& s : craft_.snapshot()) {
+            if (!s.count) continue;
+            int t{};
+            if (classForItem(localPart(s.item), t) == ToolClass::Pickaxe && t >= minTier)
+                return true;
+        }
+        return false;
+    }
+    void startExpedition(ExpStage stage) {
+        expStage_ = stage;
+        expNeedTier_ = needTier_;
+        expGoalItem_ = goalItem_; expGoalCount_ = goalCount_;
+        huntDirX_ = 1; huntDirZ_ = 0; huntBlocked_ = false;
+        smeltRetries_ = 0;
+        reply("材料を自分で集めるところからやるね");
+        note("expedition: start (needTier " + std::to_string(expNeedTier_) + ")");
+        enterExpStage(stage);
+    }
+    void expFail(const std::string& why) {
+        note("expedition failed: " + why);
+        reply("自律調達はここまで（" + why + "）");
+        expStage_ = ExpStage::None;
+        gatherActive_ = false;
+        endScanOverride();
+        releaseInputs();
+        if (phase_ != Phase::Craft) phase_ = Phase::Idle;
+    }
+    void enterExpStage(ExpStage stage) {
+        expStage_ = stage;
+        note("expedition: stage " + std::to_string(static_cast<int>(stage)));
+        switch (stage) {
+        case ExpStage::Wood: {
+            static const std::vector<std::string> kLogs = {
+                "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log",
+                "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log"};
+            reply("まず木を集めるね");
+            startGather(kLogs, kLogs, 20, true);
+            return; }
+        case ExpStage::StonePick:
+            needTier_ = 2; wantPickaxeChain_ = true; chainRetries_ = 0;
+            chainNextRetryTick_ = 0;
+            (void)tryStartPickaxeChain();
+            return;
+        case ExpStage::ToIronLevel:
+        case ExpStage::ToDiamondLevel: {
+            const int target = stage == ExpStage::ToIronLevel ? 16 : -53;
+            descendTargetY_ = target;
+            descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+            descendLastY_ = INT_MAX; descendStuck_ = 0; digPos_ = {INT_MIN, 0, 0};
+            phase_ = Phase::Descend;
+            reply(stage == ExpStage::ToIronLevel ? "鉄を探しに降りるね" : "ダイヤ層まで降りるね");
+            return; }
+        case ExpStage::HuntIron:
+            reply("鉄鉱石を探すね");
+            startGather({"iron_ore", "deepslate_iron_ore"}, {"raw_iron"}, 3, true);
+            return;
+        case ExpStage::Cobble:
+            startGather({"stone"}, {"cobblestone"}, 8, true);
+            return;
+        case ExpStage::Smelt:
+            reply("鉄を精錬するね");
+            startSmelt("raw_iron", 3);
+            return;
+        case ExpStage::IronPick:
+            needTier_ = 4; wantPickaxeChain_ = true; chainRetries_ = 0;
+            chainNextRetryTick_ = 0;
+            (void)tryStartPickaxeChain();
+            return;
+        case ExpStage::HuntOre: {
+            reply("ダイヤを探すね");
+            const int want = expGoalCount_ > 0 ? expGoalCount_ : 10;
+            startGather({"diamond_ore", "deepslate_diamond_ore"}, {"diamond"}, want, true);
+            return; }
+        case ExpStage::None:
+            return;
+        }
+    }
+    void tickExpedition(bedrock::Vec3 feet) {
+        if (!expeditionActive()) return;
+        // Gather outcomes are stage transitions wherever they land.
+        if (gatherDone_ || gatherFailed_) {
+            const bool ok = gatherDone_;
+            gatherDone_ = gatherFailed_ = false;
+            if (!ok) { expFail("素材が集まらなかった"); return; }
+            switch (expStage_) {
+            case ExpStage::Wood: enterExpStage(ExpStage::StonePick); return;
+            case ExpStage::HuntIron:
+                if (countAllItems("cobblestone") >= 8) enterExpStage(ExpStage::Smelt);
+                else enterExpStage(ExpStage::Cobble);
+                return;
+            case ExpStage::Cobble: enterExpStage(ExpStage::Smelt); return;
+            case ExpStage::HuntOre: {
+                // The goal check in tick() normally celebrates first;
+                // if the gather line was crossed between its polls, do
+                // it here and disarm the goal so it cannot double-fire.
+                if (expGoalCount_ > 0) {
+                    reply("目標達成！ " + expGoalItem_ + " を " +
+                          std::to_string(expGoalCount_) + " 個集めたよ");
+                    note("expedition: goal reached");
+                    goalCount_ = 0;
+                }
+                expStage_ = ExpStage::None;
+                phase_ = Phase::Idle; hasTarget_ = false;
+                return; }
+            default: return;
+            }
+        }
+        if (gatherActive_ || chainActive_) return;
+        switch (expStage_) {
+        case ExpStage::StonePick:
+            if (hasPickaxeTier(2)) {
+                enterExpStage(expNeedTier_ >= 4 ? ExpStage::ToIronLevel : ExpStage::None);
+                if (expStage_ == ExpStage::None) { phase_ = Phase::Scan; }
+            } else if (tickCount_ % 20 == 0) {
+                needTier_ = 2; wantPickaxeChain_ = true;
+                (void)tryStartPickaxeChain();
+            }
+            return;
+        case ExpStage::ToIronLevel:
+            if (descendDone_) enterExpStage(ExpStage::HuntIron);
+            return;
+        case ExpStage::Smelt:
+            if (smeltDone_) { smeltDone_ = false; enterExpStage(ExpStage::IronPick); }
+            else if (smeltFailed_) {
+                smeltFailed_ = false;
+                if (++smeltRetries_ <= 1) enterExpStage(ExpStage::Smelt);
+                else expFail("精錬できなかった");
+            }
+            return;
+        case ExpStage::IronPick:
+            if (hasPickaxeTier(4)) enterExpStage(ExpStage::ToDiamondLevel);
+            else if (tickCount_ % 20 == 0) {
+                needTier_ = 4; wantPickaxeChain_ = true;
+                (void)tryStartPickaxeChain();
+            }
+            return;
+        case ExpStage::ToDiamondLevel:
+            if (descendDone_) enterExpStage(ExpStage::HuntOre);
+            return;
+        default:
+            return;
+        }
     }
 
 
@@ -3364,6 +4680,8 @@ private:
     std::set<BlockPos3> bridgeBlocked_;
     std::size_t pathIdx_{0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
+    BlockPos3 planFailFor_{INT_MIN, 0, 0};
+    int planFailTick_ = -100000;
     int replans_{0};
     int swimSubmerged_{0};
     bool surfacing_{false};
@@ -3389,6 +4707,55 @@ private:
     std::string subId_;
     BlockPos3 savedTarget_{};
     std::string savedId_;
+    // Scan override (gather / cobble wait)
+    std::vector<std::string> scanIds_;
+    std::string scanFoundId_;
+    std::string scanSavedId_;
+    bool scanOverrideHeld_{};
+    // Gather state
+    bool gatherActive_{}, gatherDone_{}, gatherFailed_{}, gatherHunt_{};
+    std::vector<std::string> gatherCountIds_;
+    int gatherWant_{};
+    long long gatherDeadline_{};
+    // digCell state
+    BlockPos3 digPos_{INT_MIN, 0, 0};
+    std::string digBlockId_;
+    int digTicks_{};
+    bool digLavaChecked_{};
+    int smeltBreakRetries_{};
+    // Descend state
+    int descendTargetY_{};
+    bool descendDone_{}, descendFailed_{}, descendCave_{};
+    int cobbleNavFails_{};
+    bool cobbleDescend_{};
+    int descendLastY_{INT_MAX}, descendStuck_{};
+    // Hunt state
+    int huntDirX_{1}, huntDirZ_{};
+    int huntStage_{}, huntCells_{}, huntTicks_{};
+    bool huntLegDone_{}, huntBlocked_{};
+    // Smelt state
+    SmeltStage smeltStage_{SmeltStage::CraftFurnace};
+    std::string smeltItem_, smeltYieldItem_;
+    int smeltCount_{}, smeltMoved_{}, smeltYieldBase_{}, smeltTicks_{};
+    BlockPos3 smeltPlaceCell_{INT_MIN, 0, 0}, smeltFurnacePos_{};
+    BlockPos3 smeltPocket_{INT_MIN, 0, 0};
+    int smeltPocketBad_{};
+    int smeltPocketStage_{};
+    bool smeltPocketing_{};
+    bool smeltPocketDug_{};
+    BlockPos3 smeltPocketCell_{INT_MIN, 0, 0};
+    int smeltNoSlotTicks_{};
+    std::vector<BlockPos3> smeltPlaceCells_;
+    std::size_t smeltPlaceIdx_{};
+    int smeltCellTicks_{};
+    bool smeltPlaced_{}, smeltTransferStarted_{}, smeltUseAltCont_{};
+    int smeltAimedTick_{-1}, smeltCollectTries_{};
+    bool furnaceChainTried_{}, smeltDone_{}, smeltFailed_{};
+    // Expedition state
+    ExpStage expStage_{ExpStage::None};
+    int expNeedTier_{}, expGoalCount_{};
+    std::string expGoalItem_;
+    int smeltRetries_{};
 };
 AutoMineMod mod;
 
