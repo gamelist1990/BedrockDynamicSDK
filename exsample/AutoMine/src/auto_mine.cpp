@@ -1850,13 +1850,41 @@ private:
         return kind;
     }
 
+    // A failed (re)plan must not throw away a route that is still being
+    // followed: one transient failure (a pocket start, a momentarily
+    // unreadable chunk) used to drop the bot into straight-line legacy
+    // navigation, which walked it into walls and water. Only a path that
+    // has been fully consumed is worthless.
+    void discardPathIfExhausted() {
+        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathIdx_ = 0; }
+    }
+
     bool planPath(bedrock::Vec3 feet) {
-        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
         pathFor_ = target_;
         std::unordered_map<CellKey, CellKind, CellKeyHash> cache;
-        const CellKey start{static_cast<int>(std::floor(feet.x)),
-                            static_cast<int>(std::floor(feet.y)),
-                            static_cast<int>(std::floor(feet.z))};
+        CellKey start{static_cast<int>(std::floor(feet.x)),
+                      static_cast<int>(std::floor(feet.y)),
+                      static_cast<int>(std::floor(feet.z))};
+        // The cell under the player can classify Blocked right after a
+        // mine-through or at a ledge lip; A* then expands only the start
+        // and reports "no route (1 expansions)". Snap the start to the
+        // nearest usable cell instead of failing the whole plan.
+        if (classifyCell(start, cache) == CellKind::Blocked) {
+            double bestD = 1e18;
+            CellKey best = start;
+            bool found = false;
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        if (!dx && !dy && !dz) continue;
+                        const CellKey c{start.x + dx, start.y + dy, start.z + dz};
+                        if (classifyCell(c, cache) == CellKind::Blocked) continue;
+                        const double d = std::hypot(c.x + .5 - feet.x, c.z + .5 - feet.z) +
+                                         std::abs(c.y + .5 - feet.y);
+                        if (d < bestD) { bestD = d; best = c; found = true; }
+                    }
+            if (found) start = best;
+        }
         // Goal cells: Stand/Dig cells around the target whose eye point is
         // within mining reach (4.2) of the target centre.
         std::vector<CellKey> goals;
@@ -1868,7 +1896,11 @@ private:
                     const double ex = dx, ey = g.y + 1.62 - (target_.y + .5), ez = dz;
                     if (ex * ex + ey * ey + ez * ez <= 4.2 * 4.2) goals.push_back(g);
                 }
-        if (goals.empty()) { note("path: no standpoint near target"); return false; }
+        if (goals.empty()) {
+            note("path: no standpoint near target");
+            discardPathIfExhausted();
+            return false;
+        }
         auto heuristic = [&](const CellKey& c) {
             double best = 1e18;
             for (const auto& g : goals) {
@@ -1939,8 +1971,10 @@ private:
         }
         if (!haveFound) {
             note("path: no route (" + std::to_string(expansions) + " expansions)");
+            discardPathIfExhausted();
             return false;
         }
+        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
         std::vector<CellKey> cells;
         for (CellKey c = found;; c = cameFrom[c]) {
             cells.push_back(c);
@@ -2032,30 +2066,82 @@ private:
             ++pathIdx_; // already cleared somehow: move on
             return;
         }
-        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-        const bedrock::Vec3 wpC{wp.x + .5f, wp.y + .5f, wp.z + .5f};
-        faceAim(eye, {wpC.x, eye.y, wpC.z}, 10.f, 0.25f);
-        pressKey(kKeyW, true);
+        // --- pure-pursuit following -------------------------------------
+        // Advance past every waypoint we have effectively passed: within
+        // a generous radius for its level relation, or already behind us.
+        // The previous rule (pass within 0.7 blocks of the cell centre)
+        // let momentum carry the player past waypoints, after which the
+        // damped view control walked a wide U-turn back to them — the
+        // visible circling. Dig waypoints are never skipped this way.
         const int feetCellY = static_cast<int>(std::floor(feet.y));
-        if (wp.y > feetCellY) pressKey(kKeySpace, true);
-        else pressKey(kKeySpace, false);
-        const double horiz = std::hypot(wpC.x - feet.x, wpC.z - feet.z);
-        bool advance = false;
-        if (wp.y == feetCellY) advance = horiz < 0.7;
-        else if (wp.y > feetCellY) advance = (feetCellY == wp.y && horiz < 0.9);
-        else advance = (feet.y <= wp.y + 0.6 && horiz < 1.0);
-        if (advance) {
+        float yawNow{}, pitchNow{};
+        const bool haveYaw = rotation(yawNow, pitchNow);
+        while (pathIdx_ < path_.size() && !pathDig_[pathIdx_]) {
+            const BlockPos3 w = path_[pathIdx_];
+            const double hx = w.x + .5 - feet.x, hz = w.z + .5 - feet.z;
+            const double horiz = std::hypot(hx, hz);
+            bool passed = false;
+            if (w.y == feetCellY) passed = horiz < 1.05;
+            else if (w.y > feetCellY) passed = (feetCellY == w.y && horiz < 1.15);
+            else passed = (feet.y <= w.y + 0.6 && horiz < 1.2);
+            if (!passed && haveYaw && horiz > 1e-6 && horiz < 2.4) {
+                const double rad = yawNow * 3.141592653589793 / 180.0;
+                const double fx = -std::sin(rad), fz = std::cos(rad);
+                if ((fx * hx + fz * hz) / horiz < -0.35) passed = true; // behind us
+            }
+            if (!passed) break;
             ++pathIdx_;
             stuckTicks_ = 0;
-            return;
         }
-        // Stuck on this waypoint: re-plan a few times, then give up on it.
+        if (pathIdx_ >= path_.size()) {
+            pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            pressKey(kKeyA, false); pressKey(kKeyD, false);
+            return; // the exhausted-path branch at the top replans next tick
+        }
+        // Aim at the first waypoint at least ~1.7 blocks out (lookahead),
+        // or at the current one when it is a Dig cell / the last one.
+        std::size_t aimIdx = pathIdx_;
+        if (!pathDig_[pathIdx_]) {
+            for (std::size_t i = pathIdx_; i < path_.size(); ++i) {
+                aimIdx = i;
+                if (std::hypot(path_[i].x + .5 - feet.x, path_[i].z + .5 - feet.z) >= 1.7)
+                    break;
+            }
+        }
+        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::Vec3 aim{path_[aimIdx].x + .5f, eye.y, path_[aimIdx].z + .5f};
+        faceAim(eye, aim, 10.f, 0.25f);
+        // Sharp turns pivot in place instead of arcing wide.
+        bool wDown = true;
+        if (haveYaw) {
+            const double want =
+                std::atan2(-(aim.x - feet.x), aim.z - feet.z) * 180.0 / 3.141592653589793;
+            const double err = std::fmod(want - yawNow + 540.0, 360.0) - 180.0;
+            if (std::abs(err) > 65.0) wDown = false;
+        }
+        pressKey(kKeyW, wDown);
+        // Jump only when the step-up is actually at our feet (the old code
+        // held jump whenever any upcoming waypoint was higher, bunny-
+        // hopping across flat ground toward a distant rise).
+        bool jump = false;
+        for (std::size_t i = pathIdx_; i < path_.size() && i < pathIdx_ + 3; ++i) {
+            if (path_[i].y < feetCellY) break;
+            if (path_[i].y > feetCellY) {
+                jump = std::hypot(path_[i].x + .5 - feet.x, path_[i].z + .5 - feet.z) < 1.7;
+                break;
+            }
+        }
+        pressKey(kKeySpace, jump);
+        // Stuck on this stretch: the first two checks wiggle (jump +
+        // alternating strafe, applied below); only then re-plan, and give
+        // up on the target after the re-plan budget runs out.
         if (navTicks_ % 10 == 0) {
             const double moved = std::hypot(feet.x - lastX_, feet.z - lastZ_);
             if (moved < 0.12) {
                 if (++stuckTicks_ >= 3) {
                     stuckTicks_ = 0;
                     pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                    pressKey(kKeyA, false); pressKey(kKeyD, false);
                     if (++replans_ > 2) {
                         note("path follow stuck; blacklist target");
                         blacklist_.insert(target_); hasTarget_ = false;
@@ -2066,6 +2152,13 @@ private:
                 }
             } else stuckTicks_ = 0;
             lastX_ = feet.x; lastZ_ = feet.z;
+        }
+        if (stuckTicks_ == 1 || stuckTicks_ == 2) {
+            pressKey(kKeySpace, true);
+            pressKey(kKeyD, stuckTicks_ == 1);
+            pressKey(kKeyA, stuckTicks_ == 2);
+        } else {
+            pressKey(kKeyA, false); pressKey(kKeyD, false);
         }
     }
 
