@@ -1263,7 +1263,7 @@ private:
         targetId_.clear();
         blacklist_.clear();
         hazardZones_.clear();
-        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
@@ -1773,7 +1773,7 @@ private:
                  std::to_string(target_.y) + "," + std::to_string(target_.z));
             phase_ = Phase::Navigate;
             stuckTicks_ = 0; lastX_ = feet.x; lastZ_ = feet.z; navTicks_ = 0;
-            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0; path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0; path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         } else {
             // Nothing in range: wait ~2s, then rescan (the player may move,
             // or a fresh area may load).
@@ -1795,7 +1795,7 @@ private:
     // per the design goal of following real paths). Fluids are never
     // entered, so routes
     // stay on land and go around water instead of through it.
-    enum class CellKind : std::uint8_t { Stand, Dig, Blocked };
+    enum class CellKind : std::uint8_t { Stand, Dig, Blocked, Bridge };
     struct CellKey {
         int x{}, y{}, z{};
         bool operator==(const CellKey&) const noexcept = default;
@@ -1846,8 +1846,64 @@ private:
             else if ((fP || isDiggableCell(feetB)) && (hP || isDiggableCell(headB)))
                 kind = CellKind::Dig;
         }
+        if (kind == CellKind::Blocked && planSpares_ > 0 &&
+            !ground.empty() && isAir(ground) &&
+            !feetB.empty() && !headB.empty() &&
+            isPassableCell(feetB) && isPassableCell(headB) &&
+            !bridgeBlocked_.count({c.x, c.y - 1, c.z})) {
+            // Bridge: the floor cell is air, but a spare block can be
+            // placed into it — an anchor face must exist (a solid cell
+            // under the floor, or a solid horizontal neighbour of it).
+            const BlockPos3 g{c.x, c.y - 1, c.z};
+            bool anchor = isSolidCell(blockAt({g.x, g.y - 1, g.z}));
+            if (!anchor) {
+                // One chain hop is allowed: a gap cell whose neighbour is
+                // itself bridgeable (air floor next to a solid cell)
+                // becomes reachable once that neighbour is filled, so
+                // gaps up to 3 wide can be planned across.
+                constexpr int kD[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : kD) {
+                    const BlockPos3 n{g.x + d[0], g.y, g.z + d[1]};
+                    const auto nid = blockAt(n);
+                    if (isSolidCell(nid)) { anchor = true; break; }
+                    if (!isAir(nid)) continue;
+                    for (const auto& e : kD)
+                        if (isSolidCell(blockAt({n.x + e[0], g.y, n.z + e[1]}))) {
+                            anchor = true; break;
+                        }
+                    if (anchor) break;
+                }
+            }
+            if (anchor) kind = CellKind::Bridge;
+        }
         cache.emplace(c, kind);
         return kind;
+    }
+
+    // Spare blocks are whatever mining piles up; bridging consumes them
+    // as scaffolding, so only expendable block types qualify.
+    bool isSpareBlock(const std::string& local) {
+        return local == "cobblestone" || local == "dirt" || local == "stone" ||
+               local == "andesite" || local == "granite" || local == "diorite" ||
+               local == "cobbled_deepslate" || local == "netherrack" || local == "tuff" ||
+               local == "coarse_dirt" || local == "mossy_cobblestone";
+    }
+    int spareCount() {
+        int n = 0;
+        for (const auto& it : hotbarItems())
+            if (isSpareBlock(localPart(it.id))) n += it.count;
+        return n;
+    }
+    int spareSlot() { // hotbar slot holding the largest spare stack, or -1
+        const auto slots = hotbarItems();
+        int best = -1, bestCount = 0;
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (it.count > bestCount && isSpareBlock(localPart(it.id))) {
+                best = i; bestCount = it.count;
+            }
+        }
+        return best;
     }
 
     // A failed (re)plan must not throw away a route that is still being
@@ -1856,11 +1912,12 @@ private:
     // navigation, which walked it into walls and water. Only a path that
     // has been fully consumed is worthless.
     void discardPathIfExhausted() {
-        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathIdx_ = 0; }
+        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0; }
     }
 
     bool planPath(bedrock::Vec3 feet) {
         pathFor_ = target_;
+        planSpares_ = spareCount();
         std::unordered_map<CellKey, CellKind, CellKeyHash> cache;
         CellKey start{static_cast<int>(std::floor(feet.x)),
                       static_cast<int>(std::floor(feet.y)),
@@ -1918,6 +1975,7 @@ private:
         std::unordered_map<CellKey, double, CellKeyHash> gScore;
         std::unordered_map<CellKey, CellKey, CellKeyHash> cameFrom;
         std::unordered_map<CellKey, bool, CellKeyHash> digFlag;
+        std::unordered_map<CellKey, bool, CellKeyHash> bridgeFlag;
         gScore[start] = 0;
         open.push({heuristic(start), start});
         constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
@@ -1938,6 +1996,7 @@ private:
                     gScore[next] = ng;
                     cameFrom[next] = cur.c;
                     digFlag[next] = (kind == CellKind::Dig);
+                    bridgeFlag[next] = (kind == CellKind::Bridge);
                     open.push({ng + heuristic(next), next});
                 }
             };
@@ -1946,12 +2005,13 @@ private:
                 {   // walk, same level
                     const CellKey n{nx, cur.c.y, nz};
                     const auto k = classifyCell(n, cache);
-                    if (k != CellKind::Blocked) relax(n, k == CellKind::Dig ? 25.0 : 1.0, k);
+                    if (k != CellKind::Blocked)
+                        relax(n, k == CellKind::Dig ? 25.0 : k == CellKind::Bridge ? 5.0 : 1.0, k);
                 }
                 {   // step up one block (headroom above the current cell)
                     const CellKey n{nx, cur.c.y + 1, nz};
                     const auto k = classifyCell(n, cache);
-                    if (k != CellKind::Blocked &&
+                    if (k != CellKind::Blocked && k != CellKind::Bridge &&
                         isPassableCell(blockAt({cur.c.x, cur.c.y + 2, cur.c.z})))
                         relax(n, k == CellKind::Dig ? 25.6 : 1.6, k);
                 }
@@ -1974,7 +2034,7 @@ private:
             discardPathIfExhausted();
             return false;
         }
-        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         std::vector<CellKey> cells;
         for (CellKey c = found;; c = cameFrom[c]) {
             cells.push_back(c);
@@ -1985,8 +2045,9 @@ private:
         // straight same-level walking runs to their endpoints.
         for (std::size_t i = 1; i < cells.size(); ++i) {
             const bool dig = digFlag.count(cells[i]) && digFlag[cells[i]];
+            const bool bridge = bridgeFlag.count(cells[i]) && bridgeFlag[cells[i]];
             const bool last = (i + 1 == cells.size());
-            bool keep = last || dig;
+            bool keep = last || dig || bridge;
             if (!keep) {
                 const auto& a = cells[i - 1]; const auto& b = cells[i]; const auto& n = cells[i + 1];
                 keep = !(a.y == b.y && b.y == n.y && (b.x - a.x) == (n.x - b.x) &&
@@ -1995,6 +2056,7 @@ private:
             if (keep) {
                 path_.push_back({cells[i].x, cells[i].y, cells[i].z});
                 pathDig_.push_back(dig);
+                pathBridge_.push_back(bridge);
             }
         }
         note("path: " + std::to_string(path_.size()) + " waypoints (" +
@@ -2006,9 +2068,158 @@ private:
         savedTarget_ = target_; savedId_ = targetId_;
         target_ = cell; targetId_ = localPart(id);
         hasTarget_ = true; phase_ = Phase::Mine; mineTicks_ = 0;
-        path_.clear(); pathDig_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0};
         note("mine-through: " + targetId_);
+    }
+
+    // Fill the current run of bridge waypoints with spare blocks.
+    // Cells are filled far-to-near: from a standing eye, the side face of
+    // the block under the player can never be hit (the ray clips its top
+    // face first and the block lands one cell short, on top of the edge
+    // — measured live), while the far anchor's face is approached across
+    // open air and hits cleanly. Each filled cell then becomes the
+    // anchor for the next one nearer the player. A solid cell under a
+    // gap (a pit floor) is filled through its top face instead. Aiming
+    // and the use pulse reuse the crafting-table placement pattern.
+    // Returns true while work is in progress; false once every floor
+    // cell of the run is solid and normal following can resume.
+    bool tickBridge(bedrock::Vec3 feet) {
+        // The gap run: the current bridge waypoint and the consecutive
+        // bridge waypoints after it.
+        std::vector<BlockPos3> run;
+        for (std::size_t i = pathIdx_; i < path_.size() && pathBridge_[i]; ++i)
+            run.push_back({path_[i].x, path_[i].y - 1, path_[i].z});
+        bool allSolid = true;
+        for (const auto& g : run)
+            if (!isSolidCell(blockAt(g))) { allSolid = false; break; }
+        if (allSolid) { bridgeTicks_ = 0; setUse(false); return false; }
+        pressKey(kKeyW, false); pressKey(kKeySpace, false);
+        pressKey(kKeyA, false); pressKey(kKeyD, false);
+        if (++bridgeTicks_ > 200) {
+            bridgeTicks_ = 0;
+            for (const auto& g : run)
+                if (!isSolidCell(blockAt(g))) bridgeBlocked_.insert(g);
+            setUse(false);
+            note("bridge: placement failed; replanning without it");
+            pathFor_ = {INT_MIN, 0, 0};
+            return true;
+        }
+        const int slot = spareSlot();
+        if (slot < 0) {
+            bridgeTicks_ = 0;
+            for (const auto& g : run) bridgeBlocked_.insert(g);
+            setUse(false);
+            note("bridge: no spare blocks; replanning");
+            pathFor_ = {INT_MIN, 0, 0};
+            return true;
+        }
+        selectSlot(slot);
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return true;
+        // Choose the farthest missing cell that has a usable anchor, and
+        // aim at the anchor face that fills it.
+        bedrock::Vec3 aim{};
+        bool haveAim = false;
+        BlockPos3 fillCell{INT_MIN, 0, 0};
+        double bestDist = -1;
+        constexpr int kD[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (const auto& g : run) {
+            if (isSolidCell(blockAt(g))) continue;
+            const double gd = std::hypot(g.x + .5 - feet.x, g.z + .5 - feet.z);
+            for (const auto& d : kD) {
+                const BlockPos3 a{g.x + d[0], g.y, g.z + d[1]};
+                if (!isSolidCell(blockAt(a))) continue;
+                if (gd > bestDist) {
+                    bestDist = gd;
+                    aim = {a.x + .5f - .5f * static_cast<float>(d[0]), g.y + .5f,
+                           a.z + .5f - .5f * static_cast<float>(d[1])};
+                    fillCell = g;
+                    haveAim = true;
+                }
+            }
+            if (isSolidCell(blockAt({g.x, g.y - 1, g.z})) && gd > bestDist) {
+                bestDist = gd;
+                aim = {g.x + .5f, static_cast<float>(g.y), g.z + .5f};
+                fillCell = g;
+                haveAim = true;
+            }
+        }
+        if (!haveAim) {
+            bridgeTicks_ = 0;
+            for (const auto& g : run)
+                if (!isSolidCell(blockAt(g))) bridgeBlocked_.insert(g);
+            pathFor_ = {INT_MIN, 0, 0};
+            return true;
+        }
+        // Filling a cell the player is standing over: do it the way a
+        // player does — jump, place the block underneath while
+        // airborne, land on it. Placing into the cell while standing in
+        // its space ejects the player sideways (measured live: pushed
+        // off the corner into the water, client died moments later).
+        {
+            const double cdx = fillCell.x + .5 - (feet.x + .3);
+            const double cdz = fillCell.z + .5 - (feet.z + .3);
+            if (std::hypot(cdx, cdz) < 1.05) {
+                faceToward(eye, aim, 3.f);
+                if (bridgeJumpTicks_ == 0) {
+                    pressKey(kKeySpace, true);
+                    bridgeJumpTicks_ = 1;
+                    setUse(false);
+                } else {
+                    pressKey(kKeySpace, false);
+                    setUse(bridgeJumpTicks_ <= 6);
+                    if (++bridgeJumpTicks_ > 9) bridgeJumpTicks_ = 0;
+                }
+                return true;
+            }
+            bridgeJumpTicks_ = 0;
+            pressKey(kKeySpace, false);
+        }
+        // Survival placement reach is ~4.5 blocks from the eye; the far
+        // anchor of a 3-wide gap sits ~4.7 away from where the follower
+        // stops, so the pulses silently hit nothing (measured live).
+        // Creep toward the gap first, probing the floor half a step
+        // ahead of the body centre: the creep stops at the last solid
+        // floor, so the player can never walk off the edge (a plain
+        // distance threshold let the body centre cross it and the
+        // player fell in — measured live twice).
+        const double aimDist = std::hypot(aim.x - eye.x, aim.y - eye.y, aim.z - eye.z);
+        if (aimDist > 4.2) {
+            const double cx = feet.x + .3, cz = feet.z + .3;
+            const double hx = aim.x - cx, hz = aim.z - cz;
+            const double hl = std::hypot(hx, hz);
+            const double px = cx + (hl > 1e-6 ? hx / hl * .45 : 0);
+            const double pz = cz + (hl > 1e-6 ? hz / hl * .45 : 0);
+            const BlockPos3 probe{static_cast<int>(std::floor(px)),
+                                  static_cast<int>(std::floor(feet.y)) - 1,
+                                  static_cast<int>(std::floor(pz))};
+            if (isSolidCell(blockAt(probe))) {
+                // Fail fast when the approach is walled off (a terrain
+                // rise the creep cannot climb): no movement for 30 ticks
+                // means this stance will never reach the anchor.
+                if (std::hypot(feet.x - bridgeLastX_, feet.z - bridgeLastZ_) > .05) {
+                    bridgeLastX_ = feet.x; bridgeLastZ_ = feet.z; bridgeStuckTicks_ = 0;
+                } else if (++bridgeStuckTicks_ > 30) {
+                    bridgeStuckTicks_ = 0;
+                    bridgeTicks_ = 0;
+                    for (const auto& g : run)
+                        if (!isSolidCell(blockAt(g))) bridgeBlocked_.insert(g);
+                    setUse(false);
+                    note("bridge: approach blocked; replanning without it");
+                    pathFor_ = {INT_MIN, 0, 0};
+                    return true;
+                }
+                faceAim(eye, {aim.x, eye.y, aim.z}, 10.f, 0.25f);
+                pressKey(kKeyW, true);
+                setUse(false);
+                return true;
+            }
+        }
+        pressKey(kKeyW, false);
+        faceToward(eye, aim, 3.f);
+        setUse((bridgeTicks_ % 12) < 2);
+        return true;
     }
 
     void tickFollowPath(bedrock::Vec3 feet) {
@@ -2017,7 +2228,7 @@ private:
             note("navigate timeout (path); blacklist target");
             blacklist_.insert(target_); hasTarget_ = false;
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
-            path_.clear(); pathDig_.clear();
+            path_.clear(); pathDig_.clear(); pathBridge_.clear();
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
             return;
         }
@@ -2054,6 +2265,10 @@ private:
             }
             return;
         }
+        if (pathBridge_[pathIdx_]) {
+            if (tickBridge(feet)) { navTicks_ = 0; return; } // bridging is progress
+            // Floor filled: fall through to normal following this tick.
+        }
         const BlockPos3 wp = path_[pathIdx_];
         if (pathDig_[pathIdx_]) {
             // Mine out this waypoint's blocking cell, then re-plan (the
@@ -2076,7 +2291,7 @@ private:
         const int feetCellY = static_cast<int>(std::floor(feet.y));
         float yawNow{}, pitchNow{};
         const bool haveYaw = rotation(yawNow, pitchNow);
-        while (pathIdx_ < path_.size() && !pathDig_[pathIdx_]) {
+        while (pathIdx_ < path_.size() && !pathDig_[pathIdx_] && !pathBridge_[pathIdx_]) {
             const BlockPos3 w = path_[pathIdx_];
             const double hx = w.x + .5 - feet.x, hz = w.z + .5 - feet.z;
             const double horiz = std::hypot(hx, hz);
@@ -2101,7 +2316,7 @@ private:
         // Aim at the first waypoint at least ~1.7 blocks out (lookahead),
         // or at the current one when it is a Dig cell / the last one.
         std::size_t aimIdx = pathIdx_;
-        if (!pathDig_[pathIdx_]) {
+        if (!pathDig_[pathIdx_] && !pathBridge_[pathIdx_]) {
             for (std::size_t i = pathIdx_; i < path_.size(); ++i) {
                 aimIdx = i;
                 if (std::hypot(path_[i].x + .5 - feet.x, path_[i].z + .5 - feet.z) >= 1.7)
@@ -2145,7 +2360,7 @@ private:
                     if (++replans_ > 2) {
                         note("path follow stuck; blacklist target");
                         blacklist_.insert(target_); hasTarget_ = false;
-                        path_.clear(); pathDig_.clear();
+                        path_.clear(); pathDig_.clear(); pathBridge_.clear();
                         phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
                     } else pathFor_ = {INT_MIN, 0, 0};
                     return;
@@ -3003,6 +3218,14 @@ private:
     std::vector<HazardZone> hazardZones_;
     std::vector<BlockPos3> path_;
     std::vector<bool> pathDig_;
+    std::vector<bool> pathBridge_;
+    int bridgeTicks_{};
+    int bridgeJumpTicks_{};
+    double bridgeLastX_{1e18};
+    double bridgeLastZ_{};
+    int bridgeStuckTicks_{};
+    int planSpares_{};
+    std::set<BlockPos3> bridgeBlocked_;
     std::size_t pathIdx_{0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
     int replans_{0};
