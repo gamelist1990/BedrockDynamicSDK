@@ -162,6 +162,21 @@ ToolClass classForItem(const std::string& rawId, int& tier) {
     else if (contains(id, "wooden_")) tier = 1;
     return kind;
 }
+// What a block drops when mined with a sufficient tool (for goal counts).
+std::string dropOf(const std::string& rawId) {
+    const auto id = localPart(rawId);
+    if (contains(id, "diamond_ore")) return "diamond";
+    if (contains(id, "emerald_ore")) return "emerald";
+    if (contains(id, "iron_ore")) return "raw_iron";
+    if (contains(id, "gold_ore")) return "raw_gold";
+    if (contains(id, "copper_ore")) return "raw_copper";
+    if (contains(id, "coal_ore")) return "coal";
+    if (contains(id, "redstone_ore")) return "redstone";
+    if (contains(id, "lapis_ore")) return "lapis_lazuli";
+    if (contains(id, "quartz_ore")) return "quartz";
+    return id;
+}
+
 bool handMineable(const std::string& blockId) {
     // Blocks that drop (or are acceptably broken) with a bare hand / any item.
     return classForBlock(blockId) != ToolClass::Pickaxe && requiredTier(blockId) == 0;
@@ -1275,17 +1290,48 @@ private:
         savedId_.clear();
         hasTarget_ = false;
         mined_ = 0;
+        goalCount_ = 0; goalBase_ = 0; goalProgress_ = 0; goalItem_.clear();
+        needTier_ = 0;
         aimSmoothInit_ = false;
     }
-    void startMining(std::string arg) {
+    void startMining(std::string arg, int goal = 0) {
         resetRun();
         targetId_ = localPart(arg);
         if (targetId_.empty() || isAir(targetId_)) { reply("ブロック名を指定してね（例: /mine iron_ore）"); return; }
         phase_ = Phase::Scan;
         scanCursor_ = 0;
         bestDist2_ = 1e18;
-        reply(targetId_ + " を探して掘るよ（半径" + std::to_string(radius_) + "）");
-        note("mine start: " + targetId_);
+        goalCount_ = goal;
+        goalItem_ = dropOf(targetId_);
+        goalBase_ = goal > 0 ? invCountOf(goalItem_) : 0;
+        if (goal > 0)
+            reply(targetId_ + " を掘って " + goalItem_ + " を " + std::to_string(goal) +
+                  " 個集めるよ（半径" + std::to_string(radius_) + "）");
+        else
+            reply(targetId_ + " を探して掘るよ（半径" + std::to_string(radius_) + "）");
+        note("mine start: " + targetId_ + (goal > 0 ? " goal=" + std::to_string(goal) +
+             "x" + goalItem_ + " base=" + std::to_string(goalBase_) : ""));
+    }
+    // Count of an item across the whole inventory (adapter snapshot when
+    // crafting is ready, else the hotbar).
+    int invCountOf(const std::string& item) {
+        // Exact id match: a substring count would call diamond_ore or a
+        // diamond pickaxe "diamond" and fake goal/material counts.
+        const auto have = craftReady_ ? chainCounts() : visibleItems();
+        const auto it = have.find(item);
+        return it == have.end() ? 0 : it->second;
+    }
+    bool goalReached() {
+        if (goalCount_ <= 0) return false;
+        if (goalItem_ == targetId_) return mined_ >= goalCount_;
+        return invCountOf(goalItem_) - goalBase_ >= goalCount_;
+    }
+    void finishGoal() {
+        reply("目標達成！ " + goalItem_ + " を " + std::to_string(goalCount_) + " 個集めたよ（掘った数: " +
+              std::to_string(mined_) + "）");
+        note("goal reached: " + std::to_string(goalCount_) + "x" + goalItem_);
+        releaseInputs();
+        phase_ = Phase::Idle; hasTarget_ = false; goalCount_ = 0;
     }
     void stopMining(const std::string& why) {
         releaseInputs();
@@ -1298,7 +1344,14 @@ private:
         // line starts with "mine"; argument is the remainder.
         std::string rest = line.size() > 4 ? line.substr(4) : "";
         while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
-        const auto arg = lower(rest.substr(0, rest.find(' ')));
+        const auto sp = rest.find(' ');
+        const auto arg = lower(rest.substr(0, sp));
+        int goal = 0;
+        if (sp != std::string::npos) {
+            const auto num = rest.substr(sp + 1);
+            if (!num.empty() && num.find_first_not_of("0123456789") == std::string::npos)
+                goal = std::clamp(std::atoi(num.c_str()), 1, 999);
+        }
         if (arg.empty() || arg == "status") {
             reply(statusText());
         } else if (arg == "path") {
@@ -1310,7 +1363,7 @@ private:
             probePending_ = true; // actor reads must run on the tick thread
             reply("probe: queued");
         } else if (enabled_) {
-            startMining(arg);
+            startMining(arg, goal);
         } else {
             reply("設定で無効になっているよ");
         }
@@ -1380,7 +1433,9 @@ private:
     std::string statusText() const {
         switch (phase_) {
         case Phase::Idle: return "待機中。/mine <ブロック名> で開始";
-        case Phase::Scan: return targetId_ + " を探索中…（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Scan: return targetId_ + " を探索中…（掘った数: " + std::to_string(mined_) + "）" +
+            (goalCount_ > 0 ? " 目標 " + goalItem_ + " " + std::to_string(goalProgress_) +
+             "/" + std::to_string(goalCount_) : "");
         case Phase::Navigate: return targetId_ + " へ移動中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Mine: return targetId_ + " を採掘中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Collect: return "ドロップ回収中（掘った数: " + std::to_string(mined_) + "）";
@@ -1532,6 +1587,11 @@ private:
                 note("craft chain: cobblestone wait timed out");
             }
         }
+        if (goalCount_ > 0 && phase_ != Phase::Idle && tickCount_ % 20 == 0) {
+            goalProgress_ = goalItem_ == targetId_ ? mined_
+                            : invCountOf(goalItem_) - goalBase_;
+            if (goalReached()) { finishGoal(); return; }
+        }
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -1613,7 +1673,7 @@ private:
     // origin and submits them through the SDK outline renderer.
     void clearPath() {
         std::lock_guard lock(pathMutex_);
-        pathLine_.clear(); pathBox_ = false;
+        pathWalk_.clear(); pathDigLine_.clear(); pathBridgeLine_.clear(); pathBox_ = false;
     }
     void updatePath(const bedrock::Vec3& feet) {
         std::vector<bedrock::Vec3> points;
@@ -1622,13 +1682,23 @@ private:
             const bedrock::Vec3 goal{target_.x + .5f, target_.y + .5f, target_.z + .5f};
             if (!path_.empty() && phase_ == Phase::Navigate) {
                 // Draw the actual A* route: remaining waypoints, then goal.
-                points.push_back({feet.x, feet.y + 0.25f, feet.z});
+                // Segments are coloured by the kind of cell they enter:
+                // walk = green, dig = yellow, bridge = cyan.
+                std::vector<bedrock::Vec3> walk, dig, bridge;
+                bedrock::Vec3 prev{feet.x, feet.y + 0.25f, feet.z};
+                auto seg = [&](const bedrock::Vec3& to, std::size_t i) {
+                    auto& dst = (i < path_.size() && pathBridge_[i]) ? bridge
+                                : (i < path_.size() && pathDig_[i]) ? dig : walk;
+                    dst.push_back(prev); dst.push_back(to); prev = to;
+                };
                 for (std::size_t i = pathIdx_; i < path_.size(); ++i)
-                    points.push_back({path_[i].x + .5f, path_[i].y + 0.3f, path_[i].z + .5f});
-                points.push_back(goal);
+                    seg({path_[i].x + .5f, path_[i].y + 0.3f, path_[i].z + .5f}, i);
+                seg(goal, path_.size());
                 box = true; boxPos = target_;
                 std::lock_guard lock(pathMutex_);
-                pathLine_ = std::move(points); pathBox_ = box; pathBoxPos_ = boxPos;
+                pathWalk_ = std::move(walk); pathDigLine_ = std::move(dig);
+                pathBridgeLine_ = std::move(bridge);
+                pathBox_ = box; pathBoxPos_ = boxPos;
                 return;
             }
             const double dx = goal.x - feet.x, dz = goal.z - feet.z;
@@ -1652,7 +1722,8 @@ private:
             box = true; boxPos = target_;
         }
         std::lock_guard lock(pathMutex_);
-        pathLine_ = std::move(points); pathBox_ = box; pathBoxPos_ = boxPos;
+        pathWalk_ = std::move(points); pathDigLine_.clear(); pathBridgeLine_.clear();
+        pathBox_ = box; pathBoxPos_ = boxPos;
     }
     static void BDS_HOOK_CALL onRenderLevel(void* user, void* raw, BDS_HookNext next, void* frame) {
         auto& self = *static_cast<AutoMineMod*>(user);
@@ -1667,9 +1738,11 @@ private:
         if (!outlineReady_ || !showPath_) return;
         const auto& args = *static_cast<BDS_RenderLevelArgs*>(raw);
         if (!args.renderer || !args.screen) return;
-        std::vector<bedrock::Vec3> line; bool box{}; BlockPos3 boxPos{};
-        { std::lock_guard lock(pathMutex_); line = pathLine_; box = pathBox_; boxPos = pathBoxPos_; }
-        if (line.size() < 2 && !box) return;
+        std::vector<bedrock::Vec3> walk, dig, bridge; bool box{}; BlockPos3 boxPos{};
+        { std::lock_guard lock(pathMutex_);
+          walk = pathWalk_; dig = pathDigLine_; bridge = pathBridgeLine_;
+          box = pathBox_; boxPos = pathBoxPos_; }
+        if (walk.size() < 2 && dig.size() < 2 && bridge.size() < 2 && !box) return;
         const auto origin = outline_.renderOrigin(args.renderer);
         if (!origin) return;
         auto rel = [&](const bedrock::Vec3& p) {
@@ -1677,18 +1750,23 @@ private:
         };
         bedrock::WorldOutlineGeometry geometry;
         geometry.origin = *origin;
-        if (line.size() >= 2) {
+        auto addLine = [&](const std::vector<bedrock::Vec3>& pts,
+                           const std::array<float, 4>& color) {
+            if (pts.size() < 2) return;
             bedrock::WorldGeometryBatch batch;
-            batch.color = {0.25f, 1.f, 0.45f, 1.f};
-            for (std::size_t i = 1; i < line.size(); ++i) {
-                batch.vertices.push_back(rel(line[i - 1]));
-                batch.vertices.push_back(rel(line[i]));
+            batch.color = color;
+            for (std::size_t i = 1; i < pts.size(); ++i) {
+                batch.vertices.push_back(rel(pts[i - 1]));
+                batch.vertices.push_back(rel(pts[i]));
             }
             geometry.lines.push_back(std::move(batch));
-        }
+        };
+        addLine(walk, {0.3f, 1.f, 0.35f, 1.f});    // route: bright green
+        addLine(dig, {1.f, 0.8f, 0.15f, 1.f});     // dig-through: yellow
+        addLine(bridge, {0.3f, 0.9f, 1.f, 1.f});   // bridge cells: cyan
         if (box) {
             bedrock::WorldGeometryBatch batch;
-            batch.color = {1.f, 0.75f, 0.2f, 1.f};
+            batch.color = {1.f, 0.45f, 0.1f, 1.f};
             const float x0 = static_cast<float>(boxPos.x), y0 = static_cast<float>(boxPos.y),
                         z0 = static_cast<float>(boxPos.z);
             const float x1 = x0 + 1.f, y1 = y0 + 1.f, z1 = z0 + 1.f;
@@ -2662,7 +2740,26 @@ private:
     void enterNeedTool() {
         releaseInputs();
         phase_ = Phase::NeedTool; needTicks_ = 0;
+        needTier_ = requiredTier(targetId_);
         if (classForBlock(targetId_) == ToolClass::Pickaxe) {
+            if (needTier_ >= 4) {
+                // The block drops nothing without a high-tier pickaxe
+                // (diamond ore needs iron+): never swing a weaker tool
+                // at it. Craft the required pickaxe when its material
+                // is on hand; otherwise say exactly what is missing.
+                const bool diamondTier = needTier_ >= 5;
+                const int mats = invCountOf(diamondTier ? "diamond" : "iron_ingot");
+                const std::string tool = diamondTier ? "ダイヤのツルハシ" : "鉄のツルハシ";
+                const std::string mat = diamondTier ? "ダイヤモンド" : "鉄インゴット";
+                reply("この鉱石は" + tool + "以上じゃないと掘れないよ。" +
+                      (mats >= 3 ? mat + "があるから作るね"
+                                 : mat + "が3個必要だよ（今" + std::to_string(mats) + "個）"));
+                note("needtool: tier " + std::to_string(needTier_) + " for " + targetId_ +
+                     ", " + mat + "=" + std::to_string(mats));
+                wantPickaxeChain_ = true;
+                tryStartPickaxeChain();
+                return;
+            }
             const auto plan = planPickaxe(visibleItems());
             reply("ツルハシがホットバーに無いよ。" + plan.summary);
             note("needtool: " + plan.summary + " possible=" + std::to_string(plan.possible));
@@ -2706,6 +2803,7 @@ private:
     Phase chainReturn_{Phase::Scan};
     bool chainForPickaxe_{};
     bool wantPickaxeChain_{};
+    int needTier_{};
     long long chainNextRetryTick_{};
     int chainRetries_{};
     bool chainWaitingCobble_{};
@@ -2806,13 +2904,31 @@ private:
         const int sticks = countIn(have, "stick");
         const int tables = countIn(have, "crafting_table");
         const int cobble = countIn(have, "cobblestone");
-        if (countIn(have, "stone_pickaxe") || countIn(have, "iron_pickaxe") ||
-            countIn(have, "diamond_pickaxe"))
+        // The chain's goal is set by what the current target demands
+        // (needTier_, from requiredTier at NeedTool entry): the classic
+        // route tops out at a stone pickaxe, but diamond-tier ores need
+        // iron+ and obsidian needs diamond — build exactly the pickaxe
+        // the job requires, skipping the lower stages when the material
+        // for the required one is already on hand.
+        const int goalTier = needTier_ >= 4 ? needTier_ : 2;
+        int bestPickTier = 0;
+        for (const auto& [id, count] : have) {
+            if (!count || !contains(id, "_pickaxe")) continue;
+            int t{};
+            if (classForItem(id, t) == ToolClass::Pickaxe) bestPickTier = std::max(bestPickTier, t);
+        }
+        if (bestPickTier >= goalTier)
             return false; // a usable pickaxe exists somewhere; not our problem
+        auto exactIn = [&](const char* id) {
+            const auto it = have.find(id);
+            return it == have.end() ? 0 : it->second;
+        };
+        if (goalTier == 4 && exactIn("iron_ingot") < 3) return false;
+        if (goalTier == 5 && exactIn("diamond") < 3) return false;
         int logCount = 0;
         const std::string wood = chainWood(have, logCount);
         std::vector<ChainStep> steps;
-        const int plankNeed = 3 + (sticks < 2 ? 2 : 0) + (tables < 1 ? 4 : 0);
+        const int plankNeed = (goalTier >= 4 ? 0 : 3) + (sticks < 2 ? 2 : 0) + (tables < 1 ? 4 : 0);
         const int deficit = plankNeed - planks;
         const int logCrafts = deficit > 0 ? (deficit + 3) / 4 : 0;
         if (logCrafts > 0) {
@@ -2837,23 +2953,34 @@ private:
         }
         if (!placedTableExists())
             steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
-        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
-        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:wooden_pickaxe",
-                                  "minecraft:wooden_pickaxe", 1, true});
-        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
-        if (cobble < 3) steps.push_back(ChainStep{ChainStep::Kind::WaitCobble});
-        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
-        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stone_pickaxe",
-                                  "minecraft:stone_pickaxe", 1, true});
-        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        if (goalTier >= 4) {
+            const std::string pick = goalTier == 4 ? "minecraft:iron_pickaxe"
+                                                   : "minecraft:diamond_pickaxe";
+            steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, pick, pick, 1, true});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        } else {
+            steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:wooden_pickaxe",
+                                      "minecraft:wooden_pickaxe", 1, true});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+            if (cobble < 3) steps.push_back(ChainStep{ChainStep::Kind::WaitCobble});
+            steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stone_pickaxe",
+                                      "minecraft:stone_pickaxe", 1, true});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        }
         chainSteps_ = std::move(steps);
         chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
         chainWaitingCobble_ = false;
         chainForPickaxe_ = true; chainReturn_ = Phase::Scan;
         phase_ = Phase::Craft;
-        reply("材料があるから、ツルハシをクラフトするね");
-        note("craft chain: pickaxe (" + std::to_string(chainSteps_.size()) + " steps)");
+        reply(goalTier == 4 ? "鉄のツルハシをクラフトするね"
+              : goalTier == 5 ? "ダイヤのツルハシをクラフトするね"
+                              : "材料があるから、ツルハシをクラフトするね");
+        note("craft chain: pickaxe tier " + std::to_string(goalTier) +
+             " (" + std::to_string(chainSteps_.size()) + " steps)");
         return true;
     }
     bool tryStartBoatChain() {
@@ -3057,6 +3184,15 @@ private:
             bool found = false;
             for (const auto& d : dirs) {
                 const BlockPos3 cell{fx + d.x, fy, fz + d.z};
+                // A cell the player's own AABB reaches into can never
+                // accept a block (the game rejects placements that
+                // intersect the player) — with the feet point near the
+                // cell edge this silently ate every pulse (measured
+                // 2026-11-16: table placement timed out twice in a row
+                // while the bot stood at the platform edge).
+                if (cell.x < feet.x + .6 && cell.x + 1 > feet.x &&
+                    cell.z < feet.z + .6 && cell.z + 1 > feet.z)
+                    continue;
                 const auto at = blockAt(cell);
                 if (contains(localPart(at), "crafting_table")) {
                     chainTablePos_ = cell;
@@ -3205,7 +3341,7 @@ private:
     bool outlineReady_{};
     BDS_HookToken renderToken_{};
     std::mutex pathMutex_;
-    std::vector<bedrock::Vec3> pathLine_;
+    std::vector<bedrock::Vec3> pathWalk_, pathDigLine_, pathBridgeLine_;
     bool pathBox_{};
     BlockPos3 pathBoxPos_{};
     bool showPath_{true};
@@ -3238,6 +3374,10 @@ private:
     bool hasTarget_{};
     std::set<BlockPos3> blacklist_;
     int mined_{};
+    int goalCount_{};
+    int goalBase_{};
+    int goalProgress_{};
+    std::string goalItem_;
     int scanCursor_{};
     double bestDist2_{1e18};
     int emptyScans_{};
