@@ -234,6 +234,138 @@ struct BlockPos3 {
     bool operator==(const BlockPos3&) const noexcept = default;
 };
 
+// ---------------------------------------------------------------------------
+// Crash flight recorder + reporter, and SEH guard rails.
+//
+// A tiny allocation-free record of what the mod was doing (a section
+// breadcrumb + the last notes) lives in static storage. A vectored
+// exception handler writes it — plus the faulting module/offset and a
+// stack scan — to crash.log when the process dies on a fatal exception,
+// so a crash on a machine we cannot debug still says where it happened.
+// Separately, SEH guards wrap the dangerous native-call sections (tick,
+// craft update, path draw, mouse dispatch) so an access violation inside
+// one aborts the operation instead of taking the game down.
+// ---------------------------------------------------------------------------
+namespace crashrec {
+    constexpr int kRingSize = 48;
+    constexpr int kLineSize = 168;
+    inline char g_ring[kRingSize][kLineSize]{};
+    inline volatile LONG g_ringNext = 0;
+    inline char g_section[64] = "init";
+    inline volatile LONG g_ticks = 0;
+    inline volatile LONG g_sehFaults = 0;
+    inline volatile LONG g_reported = 0;
+    inline HANDLE g_file = INVALID_HANDLE_VALUE;
+
+    inline void copyLine(char* dst, const char* src, int cap) {
+        int i = 0; for (; i < cap - 1 && src[i]; ++i) dst[i] = src[i]; dst[i] = 0;
+    }
+    inline void ringPush(const char* text) {
+        const LONG i = InterlockedIncrement(&g_ringNext) - 1;
+        copyLine(g_ring[i % kRingSize], text, kLineSize);
+    }
+    inline void setSection(const char* name) { copyLine(g_section, name, sizeof(g_section)); }
+    struct Section {
+        char prev[64];
+        explicit Section(const char* name) { copyLine(prev, g_section, sizeof(prev)); setSection(name); }
+        ~Section() { copyLine(g_section, prev, sizeof(g_section)); }
+    };
+    inline void append(char*& p, const char* end, const char* s) { while (*s && p < end) *p++ = *s++; }
+    inline void appendHex(char*& p, const char* end, unsigned long long v, int width = 0) {
+        char tmp[32]; int n = 0;
+        if (!v) tmp[n++] = '0';
+        while (v) { const int d = static_cast<int>(v & 0xF); tmp[n++] = static_cast<char>(d < 10 ? '0' + d : 'a' + d - 10); v >>= 4; }
+        while (n < width) tmp[n++] = '0';
+        while (n > 0 && p < end) *p++ = tmp[--n];
+    }
+    inline void appendDec(char*& p, const char* end, long long v) {
+        if (v < 0) { if (p < end) *p++ = '-'; v = -v; }
+        char tmp[24]; int n = 0;
+        if (!v) tmp[n++] = '0';
+        while (v) { tmp[n++] = static_cast<char>('0' + (v % 10)); v /= 10; }
+        while (n > 0 && p < end) *p++ = tmp[--n];
+    }
+    inline void moduleOf(char*& p, const char* end, const void* addr) {
+        HMODULE h{};
+        if (addr && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       static_cast<LPCWSTR>(addr), &h) && h) {
+            wchar_t path[260]{}; const DWORD n = GetModuleFileNameW(h, path, 260);
+            const wchar_t* base = path;
+            for (DWORD i = 0; i < n; ++i) if (path[i] == L'\\' || path[i] == L'/') base = path + i + 1;
+            for (const wchar_t* s = base; *s && p < end; ++s) *p++ = static_cast<char>(*s);
+            append(p, end, "+0x");
+            appendHex(p, end, static_cast<unsigned long long>(
+                reinterpret_cast<const char*>(addr) - reinterpret_cast<const char*>(h)));
+        } else append(p, end, "?");
+    }
+    inline LONG WINAPI veh(EXCEPTION_POINTERS* ep) {
+        const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+        const bool fatal = code == EXCEPTION_ACCESS_VIOLATION ||
+            code == 0xC0000374ul || // STATUS_HEAP_CORRUPTION
+            code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+            code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == 0xC0000006ul;
+        if (!fatal || InterlockedExchange(&g_reported, 1)) return EXCEPTION_CONTINUE_SEARCH;
+        if (g_file == INVALID_HANDLE_VALUE || !ep->ContextRecord) return EXCEPTION_CONTINUE_SEARCH;
+        char buf[16384]; char* p = buf; const char* const end = buf + sizeof(buf) - 64;
+        append(p, end, "==== AutoMine crash report ====\ncode=0x");
+        appendHex(p, end, code, 8);
+        append(p, end, " section="); append(p, end, g_section);
+        append(p, end, " ticks="); appendDec(p, end, g_ticks);
+        append(p, end, " sehFaults="); appendDec(p, end, g_sehFaults);
+        append(p, end, "\n");
+        auto* ctx = ep->ContextRecord;
+        append(p, end, "rip=0x"); appendHex(p, end, ctx->Rip, 16); append(p, end, " ");
+        moduleOf(p, end, reinterpret_cast<const void*>(ctx->Rip)); append(p, end, "\n");
+        append(p, end, "faultAddr=0x");
+        appendHex(p, end, static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress)), 16);
+        append(p, end, " "); moduleOf(p, end, ep->ExceptionRecord->ExceptionAddress); append(p, end, "\n");
+        if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
+            append(p, end, "av: ");
+            append(p, end, ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read");
+            append(p, end, " at 0x"); appendHex(p, end, ep->ExceptionRecord->ExceptionInformation[1], 16);
+            append(p, end, "\n");
+        }
+        append(p, end, "rsp=0x"); appendHex(p, end, ctx->Rsp, 16);
+        append(p, end, " rbp=0x"); appendHex(p, end, ctx->Rbp, 16); append(p, end, "\nstack:\n");
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<const void*>(ctx->Rsp), &mbi, sizeof(mbi)) &&
+            (mbi.State & MEM_COMMIT)) {
+            const auto* q = reinterpret_cast<const unsigned long long*>(ctx->Rsp);
+            const auto* limit = reinterpret_cast<const unsigned long long*>(
+                static_cast<const char*>(mbi.BaseAddress) + mbi.RegionSize);
+            if (limit > q + 96) limit = q + 96;
+            for (; q < limit; ++q) {
+                const unsigned long long v = *q;
+                HMODULE h{};
+                if (v > 0x10000 && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        reinterpret_cast<LPCWSTR>(v), &h) && h) {
+                    append(p, end, "  0x"); appendHex(p, end, v, 16); append(p, end, " ");
+                    moduleOf(p, end, reinterpret_cast<const void*>(v)); append(p, end, "\n");
+                }
+            }
+        }
+        append(p, end, "recent notes (oldest first):\n");
+        const LONG total = g_ringNext;
+        const LONG start = total > kRingSize ? total - kRingSize : 0;
+        for (LONG i = start; i < total; ++i) {
+            append(p, end, "  "); append(p, end, g_ring[i % kRingSize]); append(p, end, "\n");
+        }
+        append(p, end, "==== end ====\n");
+        DWORD written{};
+        WriteFile(g_file, buf, static_cast<DWORD>(p - buf), &written, nullptr);
+        FlushFileBuffers(g_file);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    inline void install(const std::filesystem::path& dir) {
+        const auto path = dir / L"crash.log";
+        g_file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        AddVectoredExceptionHandler(1, &veh);
+    }
+} // namespace crashrec
+
 class AutoMineMod {
 public:
     std::atomic<unsigned> status{};
@@ -251,11 +383,22 @@ public:
         try {
             const auto dir = directory();
             std::filesystem::create_directories(dir);
+            crashrec::install(dir);
             loadConfig(dir);
             initialize();
             status = 2;
             std::ofstream out(dir / L"AutoMine.log", std::ios::trunc);
-            while (!stopped_.load()) { flush(out); std::this_thread::sleep_for(100ms); }
+            while (!stopped_.load()) {
+                flush(out);
+                if (crashTestPending_.exchange(false)) {
+                    // Deliberate unguarded fault OUTSIDE the tick guards, to
+                    // verify the crash reporter end to end (/mine crashtest).
+                    crashrec::setSection("crashtest");
+                    crashrec::ringPush("crashtest: deliberate fault");
+                    volatile int* bad = nullptr; *bad = 42;
+                }
+                std::this_thread::sleep_for(100ms);
+            }
             flush(out);
             status = 3;
         } catch (const std::exception& error) {
@@ -273,6 +416,7 @@ public:
 private:
     // -- logging / chat ------------------------------------------------------
     void note(std::string text) {
+        crashrec::ringPush(text.c_str());
         std::lock_guard lock(logMutex_);
         if (logs_.size() < 256) logs_.push_back(std::move(text));
     }
@@ -375,11 +519,8 @@ private:
                 auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
                 snap_ = camera_.readPlayerProxy();
                 updateRegistration();
-                if (craftReady_) {
-                    try { craft_.update(client_.load(), event.level); }
-                    catch (...) { note("craft adapter update failed"); }
-                }
-                tick();
+                if (craftReady_) craftUpdateGuarded(event.level);
+                tickGuarded();
             } catch (const std::exception& e) {
                 releaseInputs();
                 note(std::string("tick failed: ") + e.what());
@@ -556,7 +697,12 @@ private:
         } catch (...) {}
         next(frame, raw);
     }
+    static uintptr_t dispatchMouseSeh(void* args) {
+        __try { return BDS_HookDispatch(BDS_HOOK_MOUSE_FEED, args); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
     bool feedMouse(int action, int state, int dx, int dy) {
+        crashrec::Section section("feedMouse");
         BDS_MouseArgs args;
         {
             std::lock_guard lock(mouseMutex_);
@@ -570,7 +716,7 @@ private:
         args.x = static_cast<std::int16_t>(std::clamp(static_cast<int>(args.x) + dx, -32768, 32767));
         args.y = static_cast<std::int16_t>(std::clamp(static_cast<int>(args.y) + dy, -32768, 32767));
         args.force_motionless_pointer &= BDS_MOUSE_FLAG_FORCE_MOTIONLESS;
-        BDS_HookDispatch(BDS_HOOK_MOUSE_FEED, &args);
+        dispatchMouseSeh(&args);
         {
             std::lock_guard lock(mouseMutex_);
             lastMouse_.x = args.x;
@@ -1311,6 +1457,7 @@ private:
         aimSmoothInit_ = false;
     }
     void startMining(std::string arg, int goal = 0) {
+        sehStopped_ = false;
         resetRun();
         targetId_ = localPart(arg);
         if (targetId_.empty() || isAir(targetId_)) { reply("ブロック名を指定してね（例: /mine iron_ore）"); return; }
@@ -1378,6 +1525,9 @@ private:
         } else if (arg == "mobs") {
             probePending_ = true; // actor reads must run on the tick thread
             reply("probe: queued");
+        } else if (arg == "crashtest") {
+            note("crashtest: deliberate fault queued (crash reporter self-test)");
+            crashTestPending_ = true;
         } else if (enabled_) {
             startMining(arg, goal);
         } else {
@@ -1484,6 +1634,62 @@ private:
         while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) line.pop_back();
         if (line.empty()) return;
         handleLine(line);
+    }
+
+    // -- SEH guard rails ------------------------------------------------------
+    // The guarded entry points are split so no function mixes __try with
+    // C++ objects or C++ try/catch (C2712): the SEH layer calls an inner
+    // function that keeps the ordinary C++ error handling.
+    void tickGuarded() {
+        if (sehStopped_) return;
+        __try { tick(); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { onSehFault("tick"); }
+    }
+    void onSehFault(const char* where) {
+        InterlockedIncrement(&crashrec::g_sehFaults);
+        note(std::string("SEH fault caught in ") + where + " (section: " +
+             crashrec::g_section + "); stopping the run for safety");
+        try { releaseInputs(); } catch (...) {}
+        phase_ = Phase::Idle;
+        sehStopped_ = true;
+    }
+    void craftUpdateInner(void* level) {
+        try { craft_.update(client_.load(), level); }
+        catch (...) { note("craft adapter update failed"); }
+    }
+    void craftUpdateGuarded(void* level) {
+        __try { craftUpdateInner(level); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedIncrement(&crashrec::g_sehFaults);
+            note("craft adapter update faulted (SEH); disabling craft");
+            craftReady_ = false;
+        }
+    }
+    void drawPathInner(void* raw) { try { drawPath(raw); } catch (...) {} }
+    void drawPathGuarded(void* raw) {
+        __try { drawPathInner(raw); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedIncrement(&crashrec::g_sehFaults);
+            outlineReady_ = false;
+        }
+    }
+    void markSection() {
+        crashrec::g_ticks = static_cast<LONG>(tickCount_);
+        switch (phase_) {
+        case Phase::Idle: crashrec::setSection("tick/Idle"); break;
+        case Phase::Scan: crashrec::setSection("tick/Scan"); break;
+        case Phase::Navigate: crashrec::setSection("tick/Navigate"); break;
+        case Phase::Mine: crashrec::setSection("tick/Mine"); break;
+        case Phase::Collect: crashrec::setSection("tick/Collect"); break;
+        case Phase::NeedTool: crashrec::setSection("tick/NeedTool"); break;
+        case Phase::Escape: crashrec::setSection("tick/Escape"); break;
+        case Phase::Combat: crashrec::setSection("tick/Combat"); break;
+        case Phase::Boat: crashrec::setSection("tick/Boat"); break;
+        case Phase::Craft: crashrec::setSection("tick/Craft"); break;
+        case Phase::Descend: crashrec::setSection("tick/Descend"); break;
+        case Phase::Hunt: crashrec::setSection("tick/Hunt"); break;
+        case Phase::Smelt: crashrec::setSection("tick/Smelt"); break;
+        }
     }
 
     void tick() {
@@ -1740,6 +1946,7 @@ private:
             note("craft chain: cobble shaft done, resuming stone scan");
         }
         tickExpedition(feet);
+        markSection();
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -1883,9 +2090,10 @@ private:
         // (the first attempt) projected the lines through the previous pass
         // and they came out as huge black wireframes.
         next(frame, raw);
-        try { self.drawPath(raw); } catch (...) {}
+        self.drawPathGuarded(raw);
     }
     void drawPath(void* raw) {
+        crashrec::Section section("drawPath");
         if (!outlineReady_ || !showPath_) return;
         const auto& args = *static_cast<BDS_RenderLevelArgs*>(raw);
         if (!args.renderer || !args.screen) return;
@@ -1935,6 +2143,7 @@ private:
     }
 
     void tickScan(bedrock::Vec3 feet) {
+        crashrec::Section section("scan");
         releaseInputs();
         if (scanWait_ > 0) { --scanWait_; return; }
         const int cx = static_cast<int>(std::floor(feet.x));
@@ -2171,6 +2380,7 @@ private:
     }
 
     bool planPath(bedrock::Vec3 feet) {
+        crashrec::Section section("planPath");
         pathFor_ = target_;
         planSpares_ = spareCount();
         std::unordered_map<CellKey, CellKind, CellKeyHash> cache;
@@ -4822,6 +5032,8 @@ private:
     std::atomic<void*> level_{};
     std::atomic<std::uint64_t> epoch_{1};
     std::atomic<bool> stopped_{};
+    bool sehStopped_{};
+    std::atomic<bool> crashTestPending_{};
     bool enabled_{true};
     int radius_{24};
 
