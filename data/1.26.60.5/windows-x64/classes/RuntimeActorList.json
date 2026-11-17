@@ -8,6 +8,9 @@
       "function": {
         "symbol": "Level::getRuntimeActorList"
       },
+      "release": {
+        "symbol": "Bedrock::Memory::deallocate"
+      },
       "maximum_actors": 4096,
       "source": "REA/Ghidra ev_0e33781edc6e3ddc1ce6310c277f6fffb58f6f75759a8e857b237b554fe0f7b1: RCX Level; RDX zeroed 24-byte vector, eight-byte Actor pointers appended; RAX returns RDX. Windows register ABI supersedes raw fragment gcc pseudocode. Caller must be owning game tick; runtime list validation remains pending."
     }
