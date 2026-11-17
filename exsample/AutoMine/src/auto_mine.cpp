@@ -2126,11 +2126,22 @@ private:
 
     // Spare blocks are whatever mining piles up; bridging consumes them
     // as scaffolding, so only expendable block types qualify.
+    // Gravity blocks fall into any hole dug beneath them, so a pocket
+    // dug under one refills before a table/furnace can be placed in it
+    // (measured 2026-11-17: the table pocket cell stayed gravel
+    // through 25 s of placement pulses and the smelt then failed the
+    // same way). Never dig a pocket under one, and never place into a
+    // cell with one above it.
+    bool isGravityBlock(const std::string& local) {
+        return local == "gravel" || local == "sand" || local == "red_sand" ||
+               contains(local, "concrete_powder") || contains(local, "suspicious_");
+    }
     bool isSpareBlock(const std::string& local) {
         return local == "cobblestone" || local == "dirt" || local == "stone" ||
                local == "andesite" || local == "granite" || local == "diorite" ||
                local == "cobbled_deepslate" || local == "netherrack" || local == "tuff" ||
-               local == "coarse_dirt" || local == "mossy_cobblestone";
+               local == "coarse_dirt" || local == "mossy_cobblestone" ||
+               local == "grass_block" || local == "podzol" || local == "rooted_dirt";
     }
     int spareCount() {
         int n = 0;
@@ -2374,6 +2385,22 @@ private:
             setUse(false);
             note("bridge: no spare blocks; replanning");
             pathFor_ = {INT_MIN, 0, 0};
+            // Escalation (same as placement failures): with no blocks
+            // to place, every replan for this target fails the same
+            // way, and tickFollowPath resets the navigate timeout on
+            // every bridge tick, so the loop never ends on its own
+            // (measured 2026-11-17: 2,000+ repeats at a ravine edge).
+            if (!navReturn_) {
+                if (!(bridgeFailFor_ == target_)) { bridgeFailFor_ = target_; bridgeFailStreak_ = 0; }
+                if (++bridgeFailStreak_ >= 3 && hasTarget_) {
+                    note("bridge: giving up on this target (no spare blocks)");
+                    blacklist_.insert(target_);
+                    hasTarget_ = false;
+                    path_.clear();
+                    phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                    bridgeFailStreak_ = 0;
+                }
+            }
             return true;
         }
         selectSlot(slot);
@@ -2857,9 +2884,14 @@ private:
             setAttack(false);
             ++mined_;
             note("mined " + targetId_ + " total=" + std::to_string(mined_));
-            if (!savedId_.empty()) { // mine-through block cleared: restore goal
-                targetId_ = savedId_; savedId_.clear(); hasTarget_ = false;
-                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+            if (!savedId_.empty()) {
+                // Mine-through block cleared: its drop is worth as much
+                // as a direct target's (measured 2026-11-17: 48 diamond
+                // ore broken but only 3 diamonds held, the rest were
+                // occluders whose drops were abandoned by going
+                // straight back to Scan). Collect first, restore the
+                // goal target when Collect finishes.
+                phase_ = Phase::Collect; collectTicks_ = 0;
                 return;
             }
             phase_ = Phase::Collect; collectTicks_ = 0;
@@ -2928,6 +2960,7 @@ private:
         const auto below = blockAt({target_.x, target_.y - 1, target_.z});
         const auto cell = blockAt(target_);
         if (collectTicks_ == 0 && (below.empty() || isAir(below) || !isAir(cell))) {
+            restoreMineThroughGoal();
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; hasTarget_ = false; return;
         }
         const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
@@ -2937,8 +2970,17 @@ private:
         pressKey(kKeySpace, inWaterNow(feet)); // swim at the surface to the drop
         if (++collectTicks_ >= 7) {
             pressKey(kKeyW, false);
+            restoreMineThroughGoal();
             hasTarget_ = false;
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+        }
+    }
+    // After a mine-through Collect, restore the goal target the
+    // occlusion detour had stashed (no-op for direct targets).
+    // Same restore as the Escape path: cell and id together.
+    void restoreMineThroughGoal() {
+        if (!savedId_.empty()) {
+            target_ = savedTarget_; targetId_ = savedId_; savedId_.clear();
         }
     }
 
@@ -3148,7 +3190,15 @@ private:
     long long moveStageStart_{};
     long long moveDeadline_{};
     bool moveFailed_{};
-    static std::uint32_t invContainer(int slot) { return slot < 9 ? 28u : 29u; }
+    // The hotbar move always works against the personal inventory
+    // screen it opens with E, whose inventory is container 12 with
+    // absolute slots 0..35 (the same addressing the craft jobs use).
+    // The old 28/29 section ids belong to the furnace/table screens:
+    // with only the personal screen open, every move transfer was
+    // rejected with status 49 (measured 2026-11-17: the stone
+    // pickaxe could not be brought into the hotbar mid-hunt and the
+    // iron stage stalled in a retry loop).
+    static std::uint32_t invContainer(int) { return 12u; }
     bool ensureHotbarTick(const std::string& localId) {
         const long long stageTicks = tickCount_ - moveStageStart_;
         switch (moveStage_) {
@@ -3248,11 +3298,16 @@ private:
             // fresh3: the E pulse visibly opened the inventory, yet
             // the event stayed "active" for the whole 300-tick wait
             // and every hotbar move failed without dispatching a
-            // single transfer). After a short warmup, dispatch
-            // anyway: with the screen open the transfer succeeds;
-            // without one the server rejects it and Evict/Bring
-            // retries the move from here.
-            if (!game_.gameplayActive() || stageTicks >= 25) {
+            // single transfer). Worse, when the event DOES flip it
+            // flips a couple of ticks after the E pulse, and a
+            // transfer dispatched on that flip races the screen
+            // opening server-side and is rejected with status 49
+            // (measured 2026-11-17: the table evict failed 3x on
+            // early dispatches, then succeeded on a 25-tick dispatch;
+            // the iron-pickaxe evict failed the same way 3x in a
+            // row). So never dispatch on the event: always wait the
+            // full 25-tick warmup after the E pulse.
+            if (stageTicks >= 25) {
                 const bool evicting = moveNeedEvict_ && !moveEvictDone_;
                 const bool ok = evicting
                     ? craft_.startTransfer(invContainer(moveEvict_), moveEvict_, moveEvictNet_,
@@ -3669,6 +3724,13 @@ private:
                     badMask |= 1 << i;
                     continue;
                 }
+                // A gravity block in the cell itself, or directly above
+                // it, refills the pocket the moment it is dug.
+                if (isGravityBlock(localPart(at)) ||
+                    isGravityBlock(localPart(blockAt({cell.x, cell.y + 1, cell.z})))) {
+                    badMask |= 1 << i;
+                    continue;
+                }
                 // Air/water cells are valid pockets too: the blocker
                 // there is the player's own AABB reaching into the
                 // cell, and the back-off stage below is what clears
@@ -3820,6 +3882,12 @@ private:
                 if (ground.empty() || isAir(ground) || contains(localPart(ground), "water") ||
                     (!isAir(at) && !contains(localPart(at), "water")))
                     continue;
+                // A gravity block above the cell falls in while the
+                // pocket is dug or the pulses run: the cell can never
+                // stay placeable (measured 2026-11-17: the table cell
+                // stayed gravel through 25 s of pulses).
+                if (isGravityBlock(localPart(blockAt({cell.x, cell.y + 1, cell.z}))))
+                    continue;
                 // The placement ray must actually reach the ground
                 // block: a diagonal neighbour can shadow the ray so
                 // every pulse lands on the wrong face and the block
@@ -3850,6 +3918,17 @@ private:
             note("craft chain: table placed");
             chainAdvance();
             return;
+        }
+        {
+            // The cell refilled after collection (falling gravel/sand):
+            // drop it and re-collect instead of pulsing at a solid
+            // cell for the rest of the budget.
+            const auto atNow = blockAt(chainPlaceCell_);
+            if (!isAir(atNow) && !contains(localPart(atNow), "water")) {
+                note("craft chain: place cell refilled, re-collecting");
+                chainPlaceCell_ = {INT_MIN, 0, 0};
+                return;
+            }
         }
         int slot = findTableHotbarSlot();
         if (moveStage_ != MoveStage::None) {
@@ -4432,6 +4511,11 @@ private:
                 if (ground.empty() || isAir(ground) || contains(localPart(ground), "water") ||
                     (!isAir(at) && !contains(localPart(at), "water")))
                     continue;
+                // Same gravity refill as the table cells (measured
+                // 2026-11-17: the smelt failed right after the pocket
+                // note when the furnace cell sat under gravel).
+                if (isGravityBlock(localPart(blockAt({cell.x, cell.y + 1, cell.z}))))
+                    continue;
                 BlockPos3 occluder;
                 if (!lineOfSight(eye, {cell.x, cell.y - 1, cell.z}, occluder))
                     continue;
@@ -4449,11 +4533,21 @@ private:
             smeltCellTicks_ = 0;
             smeltPlaceCell_ = smeltPlaceCells_[0];
         }
+        // (furnace placement shares the table placement pattern)
         if (contains(localPart(blockAt(smeltPlaceCell_)), "furnace")) {
             smeltFurnacePos_ = smeltPlaceCell_; smeltPlaced_ = true;
             note("smelt: furnace placed");
             smeltAdvance();
             return;
+        }
+        {
+            // Same refill guard as the table placement.
+            const auto atNow = blockAt(smeltPlaceCell_);
+            if (!isAir(atNow) && !contains(localPart(atNow), "water")) {
+                note("smelt: place cell refilled, re-collecting");
+                smeltPlaceCell_ = {INT_MIN, 0, 0};
+                return;
+            }
         }
         int slot = findHotbarSlot("furnace");
         // A hotbar move in flight must be driven to completion first:
