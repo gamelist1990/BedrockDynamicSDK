@@ -1122,6 +1122,69 @@ private:
         }
         return best;
     }
+    // Passive food animals (type ids measured live 2026-11-18 by
+    // controlled summons + /mine mobs: bounds and positions matched
+    // per species; the four ids are consecutive).
+    static bool isFoodAnimalType(std::uint32_t t) {
+        switch (t) {
+        case 4874: // chicken (0.30x0.40)
+        case 4875: // cow (0.90x1.30)
+        case 4876: // pig (0.90x0.90)
+        case 4877: // sheep (0.90x1.30)
+            return true;
+        default: return false;
+        }
+    }
+    static const char* rawMeatOf(std::uint32_t t) {
+        switch (t) {
+        case 4874: return "chicken";
+        case 4875: return "beef";
+        case 4876: return "porkchop";
+        case 4877: return "mutton";
+        default: return "";
+        }
+    }
+    static std::string cookedMeatOf(const std::string& raw) {
+        if (raw == "beef") return "cooked_beef";
+        if (raw == "porkchop") return "cooked_porkchop";
+        if (raw == "chicken") return "cooked_chicken";
+        if (raw == "mutton") return "cooked_mutton";
+        return "";
+    }
+    // Nearest food animal within maxDist (onlyEid restricts to one).
+    std::optional<MobInfo> scanPassive(const bedrock::Vec3& feet, double maxDist,
+                                       std::uint32_t onlyEid = 0) {
+        if (!actorsReady_) return std::nullopt;
+        const auto snap = runtimeActors_.snapshot(level_.load());
+        if (!snap) return std::nullopt;
+        void* self = world_.localPlayer(client_.load());
+        std::optional<MobInfo> best;
+        for (void* a : *snap) {
+            if (a == self) continue;
+            const auto type = actorTypeOf(a);
+            if (!type || !isFoodAnimalType(*type)) continue;
+            std::uint32_t eid = 0;
+            actorRegistry_.readEntityId(a, eid);
+            if (onlyEid && eid != onlyEid) continue;
+            bedrock::Vec3 pos;
+            if (!actorRegistry_.readPosition(a, pos)) continue;
+            MobInfo m; m.eid = eid; m.type = *type;
+            bedrock::ActorBounds b{};
+            if (actorRegistry_.readBounds(a, b)) {
+                m.hasBounds = true; m.bmin = b.minimum; m.bmax = b.maximum;
+                m.center = {(b.minimum.x + b.maximum.x) * .5f,
+                            (b.minimum.y + b.maximum.y) * .5f,
+                            (b.minimum.z + b.maximum.z) * .5f};
+            } else {
+                m.center = {pos.x, pos.y + .9f, pos.z};
+            }
+            m.dist = std::sqrt((m.center.x - feet.x) * (m.center.x - feet.x) +
+                               (m.center.y - feet.y) * (m.center.y - feet.y) +
+                               (m.center.z - feet.z) * (m.center.z - feet.z));
+            if (m.dist <= maxDist && (!best || m.dist < best->dist)) best = m;
+        }
+        return best;
+    }
     // Distance from a point to the mob's AABB (0 when inside): the reach
     // metric — a hit counts when this is within the game's ~3 block reach.
     static double distToMob(const bedrock::Vec3& p, const MobInfo& m) {
@@ -1538,7 +1601,8 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt, Ascend };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt, Ascend, Forage };
+    enum class ForageStage { Hunt, Cook, Eat };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -1562,6 +1626,7 @@ private:
         cobbleNavFails_ = 0; cobbleDescend_ = false;
         moveStage_ = MoveStage::None; moveFailed_ = false;
         smeltDone_ = false; smeltFailed_ = false;
+        forageActive_ = false; forageEid_ = 0;
         navReturn_ = false; chainReturnTrips_ = 0;
         savedId_.clear();
         hasTarget_ = false;
@@ -1641,6 +1706,8 @@ private:
             reply(showPath_ ? "経路表示を ON にしたよ" : "経路表示を OFF にしたよ");
         } else if (arg == "stop") {
             stopMining("");
+        } else if (arg == "food") {
+            startForage(goal > 0 ? goal : 3);
         } else if (arg == "mobs") {
             probePending_ = true; // actor reads must run on the tick thread
             reply("probe: queued");
@@ -1800,6 +1867,7 @@ private:
         case Phase::Boat: return "ボートで移動中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Craft: return "クラフト中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Ascend: return "地上へ帰還中（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Forage: return "食料調達中（狩った数: " + std::to_string(forageKills_) + "）";
         }
         return "";
     }
@@ -1880,6 +1948,7 @@ private:
         case Phase::Hunt: crashrec::setSection("tick/Hunt"); break;
         case Phase::Smelt: crashrec::setSection("tick/Smelt"); break;
         case Phase::Ascend: crashrec::setSection("tick/Ascend"); break;
+        case Phase::Forage: crashrec::setSection("tick/Forage"); break;
         }
     }
 
@@ -1929,7 +1998,10 @@ private:
                     phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
                     hasTarget_ = false; emptyScans_ = 0;
                 }
-                if (phase_ == Phase::Idle) tickExpedition(pf);
+                if (phase_ == Phase::Idle) {
+                    if (forageActive_) tickForage(pf);
+                    else tickExpedition(pf);
+                }
             }
         }
         if (phase_ == Phase::Idle) { clearPath(); return; }
@@ -1964,7 +2036,7 @@ private:
         // is intentional there and has its own air management.
         if (phase_ == Phase::Escape) { tickEscape(feet); updatePath(feet); return; }
         if (phase_ == Phase::Mine || phase_ == Phase::Collect || phase_ == Phase::NeedTool ||
-            phase_ == Phase::Combat) {
+            phase_ == Phase::Combat || phase_ == Phase::Forage) {
             if (headInWater(feet)) {
                 if (++submergedTicks_ >= 3) { startEscape(); tickEscape(feet); updatePath(feet); return; }
             } else submergedTicks_ = 0;
@@ -2189,10 +2261,14 @@ private:
             note("craft chain: cobble shaft done, resuming stone scan");
         }
         tickExpedition(feet);
+        if (forageActive_ && (phase_ == Phase::Forage || phase_ == Phase::Scan))
+            tickForage(feet);
         markSection();
         // Sprint is a Navigate-only state; every other phase clears
-        // it every tick (pressKey dedups, so this is free).
-        if (phase_ != Phase::Navigate) pressKey(kKeySprint, false);
+        // it every tick (pressKey dedups, so this is free). Forage
+        // chases sprint too.
+        if (phase_ != Phase::Navigate && phase_ != Phase::Forage)
+            pressKey(kKeySprint, false);
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -2206,6 +2282,7 @@ private:
         case Phase::Descend: tickDescend(feet); break;
         case Phase::Hunt: tickHunt(feet); break;
         case Phase::Smelt: tickSmelt(feet); break;
+        case Phase::Forage: break; // driven beside tickExpedition above
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
@@ -5675,6 +5752,8 @@ private:
         if (item == "raw_iron") return "iron_ingot";
         if (item == "raw_gold") return "gold_ingot";
         if (item == "raw_copper") return "copper_ingot";
+        const std::string cooked = cookedMeatOf(item);
+        if (!cooked.empty()) return cooked;
         return item;
     }
     int findHotbarSlot(const std::string& localId) {
@@ -5702,6 +5781,7 @@ private:
         smeltTransferStarted_ = false; smeltUseAltCont_ = false; smeltMoved_ = 0;
         smeltFuelBurnTicks_ = 0; smeltFuelPendingBurn_ = 0; smeltFuelBurnPer_ = 0;
         smeltExpect_ = count;
+        smeltFurnaceGhost_ = false; smeltFailReason_.clear();
         furnaceChainTried_ = false; smeltCollectTries_ = 0; smeltBreakRetries_ = 0;
         smeltDone_ = false; smeltFailed_ = false;
         phase_ = Phase::Smelt;
@@ -5716,10 +5796,278 @@ private:
         setUse(false); pressKey(kKeyS, false);
     }
     void smeltFail(const std::string& why) {
+        smeltFailReason_ = why;
         note("smelt failed: " + why);
         reply("精錬に失敗したよ（" + why + "）");
         setUse(false); setAttack(false); releaseInputs();
         smeltFailed_ = true; smeltStage_ = SmeltStage::Failed; phase_ = Phase::Idle;
+    }
+    // -- forage: hunt animals, cook the meat, eat ----------------------
+    // /mine food [N]: hunt N pieces of meat from passive animals,
+    // cook them with the smelt machinery, then eat. The profile has
+    // no hunger read, so the meal is a fixed size (up to 2 pieces);
+    // if a held piece is not consumed the player was already full,
+    // which still counts as success.
+    void startForage(int want) {
+        resetRun();
+        forageActive_ = true;
+        forageWant_ = std::clamp(want, 1, 16);
+        forageStage_ = ForageStage::Hunt;
+        forageEid_ = 0; forageType_ = 0; forageEngaged_ = false;
+        forageTicks_ = 0; forageKills_ = 0; forageCollectTicks_ = 0;
+        forageNoAnimalTicks_ = 0; forageLastHitTick_ = 0; forageIgnore_.clear();
+        forageSmeltStarted_ = false;
+        forageTriedRaw_.clear();
+        forageRawId_.clear(); forageCookedId_.clear();
+        forageEatStep_ = 0; forageEatTicks_ = 0; forageEatBase_ = 0; forageEaten_ = 0;
+        phase_ = Phase::Forage;
+        reply("食料を調達するね（肉" + std::to_string(forageWant_) + "個が目標）");
+        note("forage: start want=" + std::to_string(forageWant_));
+    }
+    void forageFail(const std::string& why) {
+        note("forage failed: " + why);
+        reply("食料調達はここまで（" + why + "）");
+        forageActive_ = false;
+        releaseInputs(); setUse(false); setAttack(false);
+        if (phase_ == Phase::Forage) phase_ = Phase::Idle;
+    }
+    void forageDone() {
+        note("forage: done kills=" + std::to_string(forageKills_) +
+             " eaten=" + std::to_string(forageEaten_));
+        reply("狩って焼いて食べたよ（" + std::to_string(forageKills_) + "頭狩って、" +
+              std::to_string(forageEaten_) + "個食べた）");
+        forageActive_ = false;
+        releaseInputs(); setUse(false); setAttack(false);
+        if (phase_ == Phase::Forage) phase_ = Phase::Idle;
+    }
+    int forageRawTotal() {
+        return countAllItems("beef") + countAllItems("porkchop") +
+               countAllItems("chicken") + countAllItems("mutton");
+    }
+    void tickForage(const bedrock::Vec3& feet) {
+        if (!forageActive_) return;
+        ++forageTicks_;
+        if (forageTicks_ > 20 * 60 * 10) { forageFail("時間切れ"); return; }
+        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+        if (forageStage_ == ForageStage::Hunt) {
+            if (attackPulse_ > 0 && --attackPulse_ == 0) setAttack(false);
+            if (attackCd_ > 0) --attackCd_;
+            if (forageRawTotal() >= forageWant_) {
+                releaseInputs();
+                forageStage_ = ForageStage::Cook; forageSmeltStarted_ = false;
+                note("forage: enough raw meat, cooking");
+                return;
+            }
+            if (forageEid_) {
+                // No landed hit for 20 s: the animal is unreachable
+                // (measured 2026-11-18: a pig fled into a tree canopy
+                // and the straight-line chase pressed into the leaves
+                // forever). Drop the lock and ignore it for a minute.
+                if (forageTicks_ - forageLastHitTick_ > 20 * 20) {
+                    note("forage: animal unreachable, moving on");
+                    forageIgnore_[forageEid_] = forageTicks_ + 20 * 60;
+                    forageEid_ = 0; forageEngaged_ = false;
+                    releaseInputs();
+                    return;
+                }
+                auto mob = scanPassive(feet, 48.0, forageEid_);
+                if (mob) {
+                    forageCentre_ = mob->center;
+                    BlockPos3 hitCell{};
+                    const BlockPos3 mobCell{static_cast<int>(std::floor(mob->center.x)),
+                                            static_cast<int>(std::floor(mob->center.y)),
+                                            static_cast<int>(std::floor(mob->center.z))};
+                    const bool los = lineOfSight(eye, mobCell, hitCell);
+                    const double reach = distToMob(eye, *mob);
+                    const bool wet = inWaterNow(feet);
+                    if (reach > 2.9 || !los) {
+                        faceAim(eye, mob->center, 5.f, .35f);
+                        pressKey(kKeyW, true);
+                        pressKey(kKeySprint, mob->dist > 6.0);
+                        pressKey(kKeySpace, wet || mob->center.y > feet.y + .6f);
+                    } else {
+                        pressKey(kKeyW, false); pressKey(kKeySprint, false);
+                        pressKey(kKeySpace, wet);
+                        faceToward(eye, mob->center, 3.f);
+                        if (attackCd_ == 0) {
+                            const Weapon w = bestMelee();
+                            if (w.slot >= 0) selectSlot(w.slot);
+                            setAttack(true);
+                            attackPulse_ = 2; attackCd_ = 11;
+                            forageEngaged_ = true;
+                            forageLastHitTick_ = forageTicks_;
+                        }
+                    }
+                    return;
+                }
+                // The animal is gone (killed, or fled out of range):
+                // walk onto its last spot so the drops get picked up.
+                forageEid_ = 0;
+                if (forageEngaged_) ++forageKills_;
+                forageEngaged_ = false;
+                forageCollectTicks_ = 50;
+                note("forage: animal down, collecting drops");
+                return;
+            }
+            if (forageCollectTicks_ > 0) {
+                --forageCollectTicks_;
+                const double dx = forageCentre_.x - feet.x;
+                const double dz = forageCentre_.z - feet.z;
+                if (dx * dx + dz * dz > 1.2) {
+                    faceAim(eye, forageCentre_, 5.f, .35f);
+                    pressKey(kKeyW, true);
+                    pressKey(kKeySpace, inWaterNow(feet));
+                } else {
+                    pressKey(kKeyW, false);
+                }
+                if (forageCollectTicks_ == 0) pressKey(kKeyW, false);
+                return;
+            }
+            for (auto it = forageIgnore_.begin(); it != forageIgnore_.end();) {
+                if (it->second <= forageTicks_) it = forageIgnore_.erase(it);
+                else ++it;
+            }
+            if (auto mob = scanPassive(feet, 48.0)) {
+                if (forageIgnore_.count(mob->eid)) {
+                    // Only the ignored animal is around: walkabout
+                    // away instead of re-locking it (fall through to
+                    // the walkabout below by pretending none was seen).
+                } else {
+                forageEid_ = mob->eid; forageType_ = mob->type;
+                forageCentre_ = mob->center; forageEngaged_ = false;
+                forageLastHitTick_ = forageTicks_;
+                forageNoAnimalTicks_ = 0;
+                note("forage: hunting type=" + std::to_string(mob->type) +
+                     " (" + rawMeatOf(mob->type) + ")");
+                return;
+                }
+            }
+            // No animal in range: if some meat is already in hand and
+            // a full minute of searching found nothing more, cook
+            // what there is instead of walking forever.
+            if (++forageNoAnimalTicks_ > 20 * 60 && forageRawTotal() > 0) {
+                releaseInputs();
+                forageStage_ = ForageStage::Cook; forageSmeltStarted_ = false;
+                note("forage: no more animals nearby, cooking what we have");
+                return;
+            }
+            // Walkabout: keep moving in the hunt direction (turning
+            // every ~8 s), hopping onto single blocks in the way.
+            if ((forageTicks_ % 160) == 0) {
+                const int ndx = huntDirZ_, ndz = -huntDirX_;
+                huntDirX_ = ndx; huntDirZ_ = ndz;
+            }
+            const bedrock::Vec3 ahead{feet.x + huntDirX_ * 8.f, feet.y,
+                                      feet.z + huntDirZ_ * 8.f};
+            faceAim(eye, ahead, 5.f, .3f);
+            pressKey(kKeyW, true);
+            const BlockPos3 fwdCell{static_cast<int>(std::floor(feet.x)) + huntDirX_,
+                                    static_cast<int>(std::floor(feet.y)),
+                                    static_cast<int>(std::floor(feet.z)) + huntDirZ_};
+            const bool blocked = isSolidCell(localPart(blockAt(fwdCell)));
+            const bool headroom =
+                !isSolidCell(localPart(blockAt({fwdCell.x, fwdCell.y + 1, fwdCell.z})));
+            pressKey(kKeySpace, blocked && headroom);
+            return;
+        }
+        if (forageStage_ == ForageStage::Cook) {
+            // The smelt machinery places a furnace and stands beside
+            // it; that fails in open water (measured 2026-11-18: a
+            // hunt that ended in a pond cycled every placement cell
+            // and gave up). Swim ashore first, turning every ~5 s
+            // until the feet are dry.
+            if (inWaterNow(feet)) {
+                if ((forageTicks_ % 100) == 0) {
+                    const int ndx = huntDirZ_, ndz = -huntDirX_;
+                    huntDirX_ = ndx; huntDirZ_ = ndz;
+                }
+                const bedrock::Vec3 ahead{feet.x + huntDirX_ * 8.f, feet.y + 1.f,
+                                          feet.z + huntDirZ_ * 8.f};
+                faceAim(eye, ahead, 5.f, .3f);
+                pressKey(kKeyW, true);
+                pressKey(kKeySpace, true);
+                return;
+            }
+            pressKey(kKeyW, false);
+            pressKey(kKeySpace, false);
+            if (!forageSmeltStarted_) {
+                // Cook the largest raw stack (one kind per smelt run),
+                // skipping kinds already exposed as inventory ghosts.
+                static const char* kRaws[4] = {"beef", "porkchop", "chicken", "mutton"};
+                int bestCount = 0;
+                for (const char* r : kRaws) {
+                    if (forageTriedRaw_.count(r)) continue;
+                    const int c = countAllItems(r);
+                    if (c > bestCount) { bestCount = c; forageRawId_ = r; }
+                }
+                if (bestCount <= 0) { forageFail("肉が無かった"); return; }
+                forageCookedId_ = cookedMeatOf(forageRawId_);
+                startSmelt(forageRawId_, std::min(bestCount, forageWant_));
+                forageSmeltStarted_ = true;
+                return;
+            }
+            if (smeltDone_) {
+                smeltDone_ = false;
+                forageStage_ = ForageStage::Eat;
+                forageEatStep_ = 0; forageEatTicks_ = 0;
+                phase_ = Phase::Forage;
+                note("forage: cooked " + forageCookedId_);
+                return;
+            }
+            if (smeltFailed_) {
+                smeltFailed_ = false;
+                if (smeltFailReason_.find("材料") != std::string::npos &&
+                    !forageRawId_.empty()) {
+                    // The chosen meat was a ghost in the inventory
+                    // view (counted, but the furnace load found
+                    // nothing): try the next kind instead of giving
+                    // up on the whole forage.
+                    forageTriedRaw_.insert(forageRawId_);
+                    forageSmeltStarted_ = false;
+                    note("forage: " + forageRawId_ +
+                         " was a ghost; trying another meat");
+                    return;
+                }
+                forageFail("焼けなかった"); return;
+            }
+            return; // the smelt machinery owns the phase until it lands in Idle
+        }
+        // Eat.
+        if (moveStage_ != MoveStage::None) { (void)ensureHotbarTick(moveItem_); return; }
+        const int cooked = countAllItems(forageCookedId_);
+        if (cooked <= 0 || forageEaten_ >= 2) { forageDone(); return; }
+        int slot = -1;
+        const auto bar = hotbarItems();
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = bar[static_cast<std::size_t>(i)];
+            if (it.count && localPart(it.id) == forageCookedId_) { slot = i; break; }
+        }
+        if (slot < 0) {
+            if (!moveFailed_) (void)ensureHotbarTick(forageCookedId_);
+            else forageFail("焼けた肉をホットバーに移せなかった");
+            return;
+        }
+        selectSlot(slot);
+        if (forageEatStep_ == 0) {
+            forageEatBase_ = cooked; forageEatStep_ = 1; forageEatTicks_ = 0;
+            setUse(true);
+            return;
+        }
+        if (++forageEatTicks_ >= 45) {
+            setUse(false);
+            const int now = countAllItems(forageCookedId_);
+            forageEatStep_ = 0;
+            if (now < forageEatBase_) {
+                ++forageEaten_;
+                note("forage: ate " + forageCookedId_ +
+                     " (" + std::to_string(forageEaten_) + ")");
+            } else {
+                // Nothing consumed in 45 ticks of holding use: the
+                // hunger bar is full. That is a successful meal state.
+                note("forage: not hungry, keeping the rest");
+                forageDone();
+            }
+        }
     }
     bool tryStartFurnaceChain() {
         if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
@@ -5890,6 +6238,24 @@ private:
         ++smeltTicks_;
         switch (smeltStage_) {
         case SmeltStage::CraftFurnace: {
+            if (smeltFurnaceGhost_) {
+                // A counted furnace turned out to be a ghost in the
+                // inventory view (tickPlaceFurnace could not find it
+                // in the hotbar after a completed move): craft a real
+                // one even though the count still claims one exists.
+                if (chainActive_) return;
+                if (!furnaceChainTried_) {
+                    furnaceChainTried_ = true;
+                    if (tryStartFurnaceChain()) return;
+                    smeltFail("かまどを作れなかった");
+                    return;
+                }
+                if (countAllItems("furnace") >= 1) {
+                    smeltFurnaceGhost_ = false;
+                    smeltAdvance();
+                } else if (smeltTicks_ > 20 * 30) smeltFail("かまどを作れなかった");
+                return;
+            }
             if (countAllItems("furnace") >= 1) { smeltAdvance(); return; }
             if (chainActive_) return; // the furnace chain is running (phase Craft)
             if (!furnaceChainTried_) {
@@ -6106,6 +6472,19 @@ private:
                 moveFailed_ = false;
                 moveStage_ = MoveStage::None;
                 note("smelt: furnace counted but no hotbar slot; resetting the move and retrying");
+                return;
+            }
+            if (!smeltFurnaceGhost_) {
+                // The count claims a furnace exists but no hotbar
+                // slot ever showed it: the counted stack is a ghost
+                // (measured 2026-11-18 after a death/respawn desync).
+                // Go back and craft a real one instead of failing.
+                smeltFurnaceGhost_ = true;
+                furnaceChainTried_ = false;
+                smeltStage_ = SmeltStage::CraftFurnace; smeltTicks_ = 0;
+                smeltNoSlotTicks_ = 0; smeltNoSlotRetries_ = 0;
+                moveFailed_ = false;
+                note("smelt: counted furnace not in hotbar (ghost?); crafting one");
                 return;
             }
             moveFailed_ = false; smeltFail("かまどがホットバーに無い"); return;
@@ -6689,6 +7068,22 @@ private:
     bool smeltPlaced_{}, smeltTransferStarted_{}, smeltUseAltCont_{};
     int smeltAimedTick_{-1}, smeltCollectTries_{};
     bool furnaceChainTried_{}, smeltDone_{}, smeltFailed_{};
+    bool smeltFurnaceGhost_{};
+    std::string smeltFailReason_;
+    // Forage (hunt -> cook -> eat) state.
+    bool forageActive_{};
+    int forageWant_{3};
+    ForageStage forageStage_{ForageStage::Hunt};
+    std::uint32_t forageEid_{}, forageType_{};
+    bedrock::Vec3 forageCentre_{};
+    bool forageEngaged_{};
+    int forageTicks_{}, forageKills_{}, forageCollectTicks_{}, forageNoAnimalTicks_{};
+    int forageLastHitTick_{};
+    std::map<std::uint32_t, int> forageIgnore_;
+    bool forageSmeltStarted_{};
+    std::set<std::string> forageTriedRaw_;
+    std::string forageRawId_, forageCookedId_;
+    int forageEatStep_{}, forageEatTicks_{}, forageEatBase_{}, forageEaten_{};
     // Expedition state
     ExpStage expStage_{ExpStage::None};
     int expNeedTier_{}, expGoalCount_{};
