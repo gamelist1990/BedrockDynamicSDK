@@ -915,9 +915,81 @@ private:
     }
 
     // -- tools -----------------------------------------------------------------
+    // Soft durability tracking: the item layout exposes no damage
+    // value, so wear is estimated by counting blocks broken with
+    // each hotbar slot's tool (reset when the slot's item changes).
+    // Estimates drive conservative decisions only (prefer the
+    // fresher of two equal tools, craft a spare before a long
+    // descent), so drift fails safe.
+    static int maxDurabilityOf(const std::string& local) {
+        if (!contains(local, "_pickaxe") && !contains(local, "_axe") &&
+            !contains(local, "_sword") && !contains(local, "_shovel") &&
+            !contains(local, "_hoe"))
+            return 0;
+        if (contains(local, "netherite_")) return 2031;
+        if (contains(local, "diamond_")) return 1561;
+        if (contains(local, "iron_")) return 250;
+        if (contains(local, "stone_")) return 131;
+        if (contains(local, "golden_")) return 32;
+        if (contains(local, "wooden_")) return 59;
+        return 0;
+    }
+    std::array<std::string, 9> toolIdAtSlot_;
+    std::array<int, 9> toolUsedAtSlot_{};
+    void chargeToolUse() {
+        void* p = player();
+        if (!p) return;
+        const int slot = world_.selected(p);
+        if (slot < 0 || slot > 8) return;
+        const auto slots = hotbarItems();
+        const auto& it = slots[static_cast<std::size_t>(slot)];
+        if (it.id.empty()) { toolIdAtSlot_[static_cast<std::size_t>(slot)].clear(); return; }
+        if (maxDurabilityOf(localPart(it.id)) == 0) return;
+        if (toolIdAtSlot_[static_cast<std::size_t>(slot)] != it.id) {
+            toolIdAtSlot_[static_cast<std::size_t>(slot)] = it.id;
+            toolUsedAtSlot_[static_cast<std::size_t>(slot)] = 0;
+        }
+        ++toolUsedAtSlot_[static_cast<std::size_t>(slot)];
+    }
+    int toolRemainingAt(int slot) { // -1: not a tracked tool
+        const auto slots = hotbarItems();
+        if (slot < 0 || slot > 8) return -1;
+        const auto& it = slots[static_cast<std::size_t>(slot)];
+        const int max = it.id.empty() ? 0 : maxDurabilityOf(localPart(it.id));
+        if (!max) return -1;
+        if (toolIdAtSlot_[static_cast<std::size_t>(slot)] != it.id) return max; // untouched here
+        return std::max(0, max - toolUsedAtSlot_[static_cast<std::size_t>(slot)]);
+    }
+    // Best (largest) remaining-durability estimate among hotbar
+    // pickaxes of at least minTier; -1 when none is held.
+    int bestPickaxeRemaining(int minTier) {
+        int best = -1;
+        const auto slots = hotbarItems();
+        for (int slot = 0; slot < 9; ++slot) {
+            const auto& it = slots[static_cast<std::size_t>(slot)];
+            if (!it.count || it.id.empty()) continue;
+            int t{};
+            if (classForItem(localPart(it.id), t) != ToolClass::Pickaxe || t < minTier) continue;
+            best = std::max(best, toolRemainingAt(slot));
+        }
+        return best;
+    }
+    // A pickaxe of minTier+ sitting in the main inventory counts as
+    // a fresh spare (it is not the one being worn down).
+    bool hasSparePickaxe(int minTier) {
+        if (!craftReady_) return false;
+        for (const auto& s : craft_.snapshot()) {
+            if (!s.count || s.slot < 9) continue;
+            int t{};
+            if (classForItem(localPart(s.item), t) == ToolClass::Pickaxe && t >= minTier)
+                return true;
+        }
+        return false;
+    }
     struct ToolChoice { int slot{-1}; int tier{}; ToolClass kind{ToolClass::None}; bool byHand{}; };
     ToolChoice chooseTool(const std::string& blockId) {
         ToolChoice best;
+        int bestRemaining = -1;
         const auto need = classForBlock(blockId);
         const int minTier = requiredTier(blockId);
         void* p = player();
@@ -930,7 +1002,12 @@ private:
             int tier{};
             const auto kind = classForItem(item.id, tier);
             if (kind != need || tier < minTier) continue;
-            if (slot == best.slot || tier > best.tier) { best.slot = slot; best.tier = tier; best.kind = kind; }
+            const int rem = toolRemainingAt(slot);
+            if (slot == best.slot || tier > best.tier ||
+                (tier == best.tier && rem > bestRemaining)) {
+                best.slot = slot; best.tier = tier; best.kind = kind;
+                bestRemaining = rem;
+            }
         }
         return best;
     }
@@ -1426,7 +1503,7 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt, Ascend };
     void resetRun() {
         releaseInputs();
         phase_ = Phase::Idle;
@@ -1687,6 +1764,7 @@ private:
         case Phase::Combat: return "敵と戦闘中！（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Boat: return "ボートで移動中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Craft: return "クラフト中（掘った数: " + std::to_string(mined_) + "）";
+        case Phase::Ascend: return "地上へ帰還中（掘った数: " + std::to_string(mined_) + "）";
         }
         return "";
     }
@@ -1766,6 +1844,7 @@ private:
         case Phase::Descend: crashrec::setSection("tick/Descend"); break;
         case Phase::Hunt: crashrec::setSection("tick/Hunt"); break;
         case Phase::Smelt: crashrec::setSection("tick/Smelt"); break;
+        case Phase::Ascend: crashrec::setSection("tick/Ascend"); break;
         }
     }
 
@@ -2072,7 +2151,8 @@ private:
         case Phase::Navigate: tickNavigate(feet); break;
         case Phase::Mine: tickMine(feet); break;
         case Phase::Collect: tickCollect(feet); break;
-        case Phase::NeedTool: tickNeedTool(); break;
+        case Phase::NeedTool: tickNeedTool(feet); break;
+        case Phase::Ascend: tickAscend(feet); break;
         case Phase::Combat: tickCombat(feet); break;
         case Phase::Boat: tickBoat(feet); break;
         case Phase::Craft: tickCraft(feet); break;
@@ -2387,6 +2467,7 @@ private:
         return l == "grass" || l == "short_grass" || l == "tall_grass" || l == "fern" ||
                l == "large_fern" || l == "snow_layer" || l == "dead_bush" ||
                l == "leaf_litter" || l == "bush" || l == "vine" ||
+               l == "sculk_vein" || l == "glow_lichen" ||
                contains(l, "flower") || contains(l, "sapling") || contains(l, "carpet") ||
                l == "torch" || l == "wall_torch";
     }
@@ -2518,6 +2599,16 @@ private:
         int n = 0;
         for (const auto& it : hotbarItems())
             if (isSpareBlock(localPart(it.id))) n += it.count;
+        return n;
+    }
+    // Spares across the whole inventory: the ascend pulls stacks
+    // up from the main inventory as it climbs, so its trigger
+    // counts everything, not just the hotbar.
+    int totalSpareCount() {
+        if (!craftReady_) return spareCount();
+        int n = 0;
+        for (const auto& s : craft_.snapshot())
+            if (s.count && isSpareBlock(localPart(s.item))) n += s.count;
         return n;
     }
     int spareSlot() { // hotbar slot holding the largest spare stack, or -1
@@ -3432,7 +3523,19 @@ private:
         if (isAir(current) || localPart(current) != targetId_) {
             setAttack(false);
             ++mined_;
+            chargeToolUse();
             note("mined " + targetId_ + " total=" + std::to_string(mined_));
+            if (ascendDig_) {
+                // The ascend's ceiling block is gone: hand control
+                // back to the climb. A broken head block is
+                // progress, so the climb's stuck timer resets.
+                ascendDig_ = false;
+                hasTarget_ = false;
+                mineTicks_ = 0;
+                ascendStuck_ = 0;
+                phase_ = Phase::Ascend;
+                return;
+            }
             if (!savedId_.empty() && pathDigResume_ && !contains(targetId_, "_ore")) {
                 // A route cell (not an ore — ore drops detour through
                 // Collect as before): restore the goal and resume
@@ -3474,7 +3577,11 @@ private:
         const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
         const bedrock::Vec3 center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
         const double dx = center.x - eye.x, dy = center.y - eye.y, dz = center.z - eye.z;
-        if (std::sqrt(dx * dx + dy * dy + dz * dz) > 4.4) { setAttack(false); phase_ = Phase::Navigate; return; }
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) > 4.4) {
+            setAttack(false);
+            if (ascendDig_) { ascendDig_ = false; hasTarget_ = false; mineTicks_ = 0; phase_ = Phase::Ascend; return; }
+            phase_ = Phase::Navigate; return;
+        }
         // Occlusion: if another solid block blocks the ray to the target, mine
         // that block first (dig-through), then resume the original target.
         {
@@ -3516,6 +3623,20 @@ private:
         }
         ++mineTicks_;
         if (mineTicks_ > 20 * 12) {
+            if (ascendDig_) {
+                // Do not blacklist the ceiling cell (the climb
+                // still needs it gone); charge the attempt to the
+                // climb's stuck budget so two failed 12 s digs
+                // give the climb up instead of looping forever.
+                note("ascend dig: mine timeout, back to ascend");
+                ascendDig_ = false;
+                setAttack(false);
+                hasTarget_ = false;
+                mineTicks_ = 0;
+                ascendStuck_ += 20 * 12;
+                phase_ = Phase::Ascend;
+                return;
+            }
             note("mine timeout; blacklist");
             pathDigResume_ = false;
             setAttack(false);
@@ -3591,9 +3712,36 @@ private:
             reply("このブロック用のツールがホットバーに無いよ");
         }
     }
-    void tickNeedTool() {
+    void tickNeedTool(bedrock::Vec3 feet) {
         if (moveStage_ != MoveStage::None) { (void)ensureHotbarTick(moveItem_); return; }
         if (++needTicks_ % 20) return;
+        // Hopeless underground: no pickaxe of the needed tier in
+        // hand or in reserve, and the craft chain cannot start (no
+        // materials). Instead of waiting forever at the bottom,
+        // climb back to the surface the expedition descended from
+        // and rebuild there — provided enough spare blocks remain
+        // to pillar up with.
+        if (expeditionActive() && needTier_ >= 2) {
+            const int surfY = lastSurfaceY_ == INT_MAX ? 70 : lastSurfaceY_;
+            if (static_cast<int>(std::floor(feet.y)) < surfY - 8 &&
+                !hasPickaxeTier(needTier_) && !hasSparePickaxe(needTier_)) {
+                if (wantPickaxeChain_ && tryStartPickaxeChain()) return; // chain path taken
+                const int climb = surfY - static_cast<int>(std::floor(feet.y));
+                if (totalSpareCount() >= climb) {
+                    releaseInputs();
+                    phase_ = Phase::Ascend; ascendTicks_ = 0;
+                    ascendLastY_ = INT_MAX; ascendStuck_ = 0; ascendPullTicks_ = 0;
+                    ascendTargetY_ = surfY;
+                    ascendOpenSky_ = lastSurfaceY_ == INT_MAX;
+                    ascendNoteY_ = INT_MIN;
+                    ascendDig_ = false;
+                    ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
+                    reply("道具が作れないから、地上に戻って仕切り直すね");
+                    note("ascend: returning to surface y=" + std::to_string(surfY));
+                    return;
+                }
+            }
+        }
         if (wantPickaxeChain_ && tickCount_ >= chainNextRetryTick_ &&
             tryStartPickaxeChain())
             return;
@@ -3661,6 +3809,8 @@ private:
     int chainCobbleTicks_{};
     BlockPos3 chainTablePos_{INT_MIN, 0, 0};
     bool chainTablePlaced_{};
+    BlockPos3 chainTableBad_{INT_MIN, 0, 0};
+    long long chainTableBadUntil_{};
     BlockPos3 chainPlaceCell_{INT_MIN, 0, 0};
     BlockPos3 chainPocket_{INT_MIN, 0, 0};
     int chainPocketBad_{};
@@ -3716,6 +3866,7 @@ private:
         if (!chainTablePlaced_ ||
             !contains(localPart(blockAt(chainTablePos_)), "crafting_table"))
             return false;
+        if (tableBanned(chainTablePos_)) return false; // would not open; place a new one
         // The remembered table may be far away (placed for an earlier
         // chain in another area): its screen cannot be opened from here,
         // so for chain purposes it does not exist and a new one must be
@@ -4043,7 +4194,7 @@ private:
         }
         return best;
     }
-    bool tryStartPickaxeChain() {
+    bool tryStartPickaxeChain(bool force = false) {
         if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
         if (craft_.status() == bedrock::CraftJobStatus::Running) return false; // retry later
         craft_.clearStatus();
@@ -4065,7 +4216,7 @@ private:
             int t{};
             if (classForItem(id, t) == ToolClass::Pickaxe) bestPickTier = std::max(bestPickTier, t);
         }
-        if (bestPickTier >= goalTier)
+        if (bestPickTier >= goalTier && !force)
             return false; // a usable pickaxe exists somewhere; not our problem
         auto exactIn = [&](const char* id) {
             const auto it = have.find(id);
@@ -4134,6 +4285,71 @@ private:
         note("craft chain: pickaxe tier " + std::to_string(goalTier) +
              " (" + std::to_string(chainSteps_.size()) + " steps)");
         return true;
+    }
+    // Weapon preparation: a stone sword via the same chain
+    // machinery, started only when the materials are already on
+    // hand (2 cobblestone + 1 stick + a table route).
+    bool tryStartSwordChain() {
+        if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
+        if (craft_.status() == bedrock::CraftJobStatus::Running) return false;
+        craft_.clearStatus();
+        const auto have = chainCounts();
+        if (countIn(have, "cobblestone") < 2 || countIn(have, "stick") < 1) return false;
+        const int tables = countIn(have, "crafting_table");
+        const bool placed = placedTableExists();
+        std::vector<ChainStep> steps;
+        if (tables < 1 && !placed) {
+            // The table itself may need planks first (from logs on
+            // hand) — mirror the pickaxe chain's personal-grid run.
+            int planks = countIn(have, "planks");
+            if (planks < 4) {
+                int logCount = 0;
+                const std::string wood = chainWood(have, logCount);
+                if (wood.empty() || logCount < 1) return false;
+                steps.push_back(ChainStep{ChainStep::Kind::Craft,
+                                          "minecraft:" + wood + "_planks",
+                                          "minecraft:" + wood + "_planks", 1, false});
+                planks += 4;
+            }
+            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
+                                      "minecraft:crafting_table", 1, false});
+            steps.insert(steps.begin(), ChainStep{ChainStep::Kind::OpenInventory});
+            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        }
+        if (!placed) steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
+        steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
+        steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stone_sword",
+                                  "minecraft:stone_sword", 1, true});
+        steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+        chainSteps_ = std::move(steps);
+        chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
+        chainPlaceCell_ = {INT_MIN, 0, 0};
+        chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
+        chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
+        chainRecoverTicks_ = -1; chainPendingFail_.clear();
+        chainWaitingCobble_ = false;
+        chainForPickaxe_ = false; chainReturn_ = Phase::Scan;
+        phase_ = Phase::Craft;
+        note("craft chain: stone sword (weapon prep)");
+        return true;
+    }
+    // Before cave stages: a sword in the hotbar (moved from the
+    // main inventory, or crafted from materials on hand).
+    void ensureSwordPrep() {
+        if (!craftReady_) return;
+        std::string mainSword;
+        for (const auto& s : craft_.snapshot()) {
+            if (!s.count || !contains(localPart(s.item), "_sword")) continue;
+            if (s.slot < 9) return; // already in the hotbar
+            mainSword = localPart(s.item);
+        }
+        if (!mainSword.empty()) {
+            (void)ensureHotbarTick(mainSword);
+            note("weapon prep: moving " + mainSword + " to the hotbar");
+            return;
+        }
+        (void)tryStartSwordChain();
     }
     bool tryStartBoatChain() {
         if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_) return false;
@@ -4473,6 +4689,7 @@ private:
                                               {fx - 1, fy + dy, fz + 1}, {fx - 1, fy + dy, fz - 1}};
                     for (const auto& nb : nbs) {
                         if (!contains(localPart(blockAt(nb)), "crafting_table")) continue;
+                        if (tableBanned(nb)) continue;
                         BlockPos3 occ;
                         if (!lineOfSight(eye0, nb, occ)) continue;
                         chainTablePos_ = nb;
@@ -4643,6 +4860,7 @@ private:
                                            {fx - 1, fy + dy, fz + 1}, {fx - 1, fy + dy, fz - 1}};
                 for (const auto& nb : ring) {
                     if (!contains(localPart(blockAt(nb)), "crafting_table")) continue;
+                    if (tableBanned(nb)) continue;
                     BlockPos3 occ;
                     if (!lineOfSight(eye, nb, occ)) continue;
                     chainTablePos_ = nb;
@@ -4715,9 +4933,24 @@ private:
             note("craft chain: trying another table cell");
         }
     }
+    bool tableBanned(const BlockPos3& p) {
+        return tickCount_ < chainTableBadUntil_ && p == chainTableBad_;
+    }
     void tickOpenTable(bedrock::Vec3 feet) {
         if (!chainTablePlaced_) { chainFail("作業台が無い"); return; }
-        if (chainStepTicks_ > 20 * 6) { chainFail("作業台を開けなかった"); return; }
+        if (chainStepTicks_ > 20 * 6) {
+            // This table would not open (measured 2026-11-18: a table
+            // adopted inside a tree canopy failed 20+ chain retries
+            // in a row, each retry adopting the same table). Ban it
+            // for a while so the retry places a fresh table elsewhere
+            // instead of looping on the poisoned one.
+            chainTableBad_ = chainTablePos_;
+            chainTableBadUntil_ = tickCount_ + 20 * 600;
+            chainTablePlaced_ = false;
+            note("craft chain: table would not open; banning it and re-placing elsewhere");
+            chainFail("作業台を開けなかった");
+            return;
+        }
         bedrock::Vec3 eye;
         if (!eyePos(eye)) return;
         const bedrock::Vec3 center{chainTablePos_.x + .5f, chainTablePos_.y + .5f,
@@ -4731,7 +4964,7 @@ private:
             // died on it). Any other occluder still fails the step:
             // the use pulse would open the WRONG screen and the craft
             // would fail 50 at phase 0 forever.
-            if (contains(localPart(blockAt(occ)), "crafting_table")) {
+            if (contains(localPart(blockAt(occ)), "crafting_table") && !tableBanned(occ)) {
                 note("craft chain: adopting the table in the aim path");
                 chainTablePos_ = occ;
                 chainAimedTick_ = -1;
@@ -4841,10 +5074,222 @@ private:
         bedrock::Vec3 eye;
         if (!eyePos(eye)) return 0;
         const bedrock::Vec3 center{cell.x + .5f, cell.y + .5f, cell.z + .5f};
-        faceToward(eye, center, 0.02f);
-        setAttack(true);
+        // Hold discipline (the tickMine pattern): aim BEFORE
+        // the press, then feed nothing while the attack is
+        // held, so nothing disturbs the destroy progress.
+        // (Overhead digs additionally died in the ascend caller
+        // from a held-slot flutter — see tickAscend.)
+        if (!attackHeld_) {
+            const bool facing = faceToward(eye, center, 5.f);
+            if (facing) setAttack(true);
+        }
         if (++digTicks_ > 20 * 30) { setAttack(false); digTicks_ = 0; return 2; }
         return 0;
+    }
+    // Pillar back up the shaft to the surface the expedition
+    // descended from: jump, and while airborne place a spare block
+    // into the feet cell (aimed at the top face of the block below),
+    // land on it, repeat. The same jump-place rhythm as bridging.
+    void tickAscend(bedrock::Vec3 feet) {
+        ++ascendTicks_;
+        const int fy = static_cast<int>(std::floor(feet.y));
+        bool arrived = fy >= ascendTargetY_;
+        if (arrived && ascendOpenSky_) {
+            // Fallback target (the true surface was never recorded
+            // this session): y=70 inside a hill is not the surface —
+            // keep climbing until the column above is open.
+            const int fx = static_cast<int>(std::floor(feet.x));
+            const int fz = static_cast<int>(std::floor(feet.z));
+            arrived = isAir(blockAt({fx, fy + 3, fz})) &&
+                      isAir(blockAt({fx, fy + 8, fz}));
+        }
+        if (arrived) {
+            releaseInputs();
+            note("ascend: back at the surface (y=" + std::to_string(fy) + ")");
+            reply("地上に戻ったよ。道具を作り直すね");
+            hasTarget_ = false;
+            if (expeditionActive()) {
+                // Route by what can actually be done up here: with
+                // no iron for a pickaxe the recovery is to go back
+                // down and mine more, not to retry a chain that
+                // cannot start. (Measured 2026-11-18: entering
+                // IronPick with no materials left phase_ on Ascend
+                // and this arrival fired 294 times in a loop.)
+                if (expNeedTier_ >= 4 && !hasPickaxeTier(4) &&
+                    countAllItems("iron_ingot") < 3 && countAllItems("raw_iron") < 3)
+                    enterExpStage(ExpStage::ToIronLevel);
+                else
+                    enterExpStage(expNeedTier_ >= 4 ? ExpStage::IronPick : ExpStage::StonePick);
+                if (phase_ == Phase::Ascend) { phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; }
+            }
+            else { phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; }
+            return;
+        }
+        if (ascendLastY_ == INT_MAX || fy > ascendLastY_) { ascendLastY_ = fy; ascendStuck_ = 0; }
+        if (fy >= ascendNoteY_ + 10) { ascendNoteY_ = fy; note("ascend: y=" + std::to_string(fy)); }
+        if (++ascendStuck_ > 20 * 15 || ascendTicks_ > 20 * 1800) {
+            note("ascend fail: stuck=" + std::to_string(ascendStuck_) +
+                 " ticks=" + std::to_string(ascendTicks_) +
+                 " fy=" + std::to_string(fy) +
+                 " lastY=" + std::to_string(ascendLastY_));
+            releaseInputs();
+            expFail("地上へ戻れなかった");
+            phase_ = Phase::Idle;
+            return;
+        }
+        int slot = spareSlot();
+        if (slot >= 0) ascendPullTicks_ = 0; // the pull budget is per shortage, not per climb
+        if (slot < 0) {
+            // Pull a spare stack up from the main inventory first.
+            if (craftReady_ && ascendPullTicks_ < 600) {
+                ++ascendPullTicks_;
+                setUse(false); pressKey(kKeySpace, false);
+                for (const auto& s : craft_.snapshot())
+                    if (s.count && s.slot >= 9 && isSpareBlock(localPart(s.item))) {
+                        (void)ensureHotbarTick(localPart(s.item));
+                        break;
+                    }
+                return;
+            }
+            releaseInputs();
+            note("ascend: out of spare blocks");
+            expFail("足場ブロックが尽きた");
+            phase_ = Phase::Idle;
+            return;
+        }
+        void* p = player();
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        // Centre the player inside the column before jumping:
+        // with the AABB straddling a wall column, that column's
+        // block at fy+2 caps the jump at ~0.2 (measured
+        // 2026-11-18: feet y oscillating -52.00/-51.72 for the
+        // whole stuck budget, the place window never opened).
+        // Burst-walk to the cell centre, view level so the
+        // movement keys map to the world axes, sneak off (its
+        // edge clamp is what parks the player at the edge).
+        if (!ascendCenterGiveUp_) {
+            // Sticky target: the climb never changes column, so
+            // capture the starting cell once. Recomputing it from
+            // the live feet position every tick flips the target
+            // by a full block whenever the player straddles a
+            // boundary, and the walk chases it back and forth
+            // forever (measured 2026-11-18: 301 ticks pressed
+            // into a corner, the place section never reached).
+            if (!ascendCenterActive_) {
+                ascendCenterActive_ = true;
+                ascendCenterCell_ = {static_cast<int>(std::floor(feet.x)), fy,
+                                     static_cast<int>(std::floor(feet.z))};
+                ascendCenterTicks_ = 0;
+            }
+            const double ctx = ascendCenterCell_.x + 0.5;
+            const double ctz = ascendCenterCell_.z + 0.5;
+            const double cdx = ctx - feet.x, cdz = ctz - feet.z;
+            if (feet.y - fy < 0.05 && cdx * cdx + cdz * cdz > 0.12 * 0.12) {
+                if (++ascendCenterTicks_ > 40) {
+                    // Cannot settle (pursuit orbit / wedged):
+                    // climb anyway — the un-centred climb worked
+                    // before centring existed; the wall-cap case
+                    // is the rarer one.
+                    ascendCenterGiveUp_ = true;
+                    ascendCenterActive_ = false;
+                    pressKey(kKeyW, false);
+                    note("ascend: centering gave up, climbing as-is");
+                } else {
+                    setUse(false);
+                    pressKey(kKeySpace, false);
+                    pressKey(kKeySneak, false);
+                    faceToward(eye, {static_cast<float>(ctx), eye.y,
+                                     static_cast<float>(ctz)}, 5.f);
+                    pressKey(kKeyW, true);
+                    return;
+                }
+            } else {
+                ascendCenterActive_ = false;
+                pressKey(kKeyW, false);
+            }
+        }
+        // A ceiling over the head cell blocks the jump: dig it out
+        // first when a tool allows (a weaker spare pickaxe still
+        // digs, just slower). Without any tool the jump-place below
+        // simply makes no progress and the stuck timer gives up.
+        // Standing ticks only: fy is sampled from the live feet
+        // position, so at a jump's apex fy reads one higher and
+        // the "head" cell is the block above the real ceiling —
+        // digging it steals the cycle's placement and the player
+        // falls back, forever (measured 2026-11-18: dig entries
+        // at fy=-51 interleaved with standing notes at y=-52,
+        // zero net rise).
+        if (feet.y - fy < 0.05) {
+            const int fx = static_cast<int>(std::floor(feet.x));
+            const int fz = static_cast<int>(std::floor(feet.z));
+            const auto headId = blockAt({fx, fy + 2, fz});
+            if (isDiggableCell(headId) && !isPassableCell(headId)) {
+                // Dig the ceiling out through tickMine, the
+                // proven driver. digCell's own hold never broke
+                // an overhead block in this geometry (repeated
+                // 600-tick timeouts across three aim/selection
+                // variants, 2026-11-18), while tickMine breaks
+                // the same blocks in seconds and a real 4 s hold
+                // from the same spot broke straight through.
+                // tickMine hands control back via the ascendDig_
+                // intercepts (completion / timeout / range).
+                bool havePick = false;
+                for (const auto& s : hotbarItems())
+                    if (s.count > 0 && contains(s.id, "pickaxe")) { havePick = true; break; }
+                if (havePick) {
+                    note("ascend dig: via mine, head=" + headId +
+                         " fy=" + std::to_string(fy));
+                    ascendDig_ = true;
+                    target_ = {fx, fy + 2, fz};
+                    targetId_ = localPart(headId);
+                    savedId_.clear();
+                    hasTarget_ = true;
+                    mineTicks_ = 0;
+                    setUse(false); pressKey(kKeySpace, false);
+                    phase_ = Phase::Mine;
+                    return;
+                }
+                // No tool in the hotbar: the jump-place below
+                // makes no progress and the stuck timer gives up.
+            }
+        }
+        // Select the spare stack only now, for the placement
+        // below, so the held item stays stable while any dig
+        // is in progress.
+        if (p && world_.selected(p) != slot) world_.select(p, static_cast<unsigned>(slot));
+        // Aim at the centre of the top face of the block under
+        // the feet CELL. The old aim (body centre + 0.3) crosses
+        // into the neighbouring cell whenever the player stands
+        // past the cell's middle — on a pillar at a cavern edge
+        // the use then targets a face over the void, no block is
+        // ever placed, and the climb dies on the stuck timer
+        // (measured 2026-11-18: a climb rose -52 -> ~0 digging
+        // every ceiling block, then placed nothing for 15 s).
+        const int pfx = static_cast<int>(std::floor(feet.x));
+        const int pfz = static_cast<int>(std::floor(feet.z));
+        const bedrock::Vec3 aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
+        faceToward(eye, aim, 3.f);
+        // Sneak the whole climb: it clamps the player to the pillar
+        // top's edge, so a placement that lands a hair early cannot
+        // eject them sideways off the 1x1 column (measured
+        // 2026-11-18: the bot repeatedly fell off its own pillar).
+        pressKey(kKeySneak, true);
+        // Hold jump and use continuously: the game places the
+        // block the moment the jump clears the feet cell, and
+        // auto-jumps again on landing. The earlier 12-tick pulse
+        // cycle (1-tick jump, use on ticks 3-9) proved too
+        // fragile under this client's variable tick rate —
+        // measured 2026-11-18: whole climbs at a shaft bottom
+        // placing nothing for minutes while every ceiling dig
+        // succeeded.
+        pressKey(kKeySpace, true);
+        setUse(true);
+        if ((ascendTicks_ % 20) == 0)
+            note("ascend tick: y=" + std::to_string(feet.y) +
+                 " below=" + blockAt({pfx, fy - 1, pfz}) +
+                 " head=" + blockAt({pfx, fy + 2, pfz}) +
+                 " slot=" + std::to_string(p ? world_.selected(p) : -1));
     }
     void tickDescend(bedrock::Vec3 feet) {
         if (feet.y <= descendTargetY_) {
@@ -4854,7 +5299,7 @@ private:
         }
         const int fy = static_cast<int>(std::floor(feet.y));
         if (fy < descendLastY_) { descendLastY_ = fy; descendStuck_ = 0; }
-        if (descendEntryY_ == INT_MAX) descendEntryY_ = fy;
+        if (descendEntryY_ == INT_MAX) { descendEntryY_ = fy; lastSurfaceY_ = fy; }
         // Two blocks into the shaft the walls confine the player:
         // centring is only needed at the surface, and a wide hole
         // only until the player has dropped in (measured 2026-11-17:
@@ -5503,6 +5948,7 @@ private:
         note("expedition: stage " + std::to_string(static_cast<int>(stage)));
         switch (stage) {
         case ExpStage::Wood: {
+            descendDivertUsed_ = false; descendPending_ = false;
             static const std::vector<std::string> kLogs = {
                 "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log",
                 "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log"};
@@ -5516,14 +5962,31 @@ private:
             return;
         case ExpStage::ToIronLevel:
         case ExpStage::ToDiamondLevel: {
-            const int target = stage == ExpStage::ToIronLevel ? 16 : -53;
-            descendTargetY_ = target;
-            descendDone_ = false; descendFailed_ = false; descendCave_ = false;
-            descendLastY_ = INT_MAX; descendStuck_ = 0; digPos_ = {INT_MIN, 0, 0};
-            descendWide_ = false; descendCenterTicks_ = 0;
-            descendEntryY_ = INT_MAX; // captured on the first descend tick
-            phase_ = Phase::Descend;
-            reply(stage == ExpStage::ToIronLevel ? "鉄を探しに降りるね" : "ダイヤ層まで降りるね");
+            // Advance judgment before a long descent: if the best
+            // pickaxe is nearly worn out and no fresh spare exists,
+            // craft one first (the descend waits in tickExpedition);
+            // and make sure a weapon is in the hotbar before cave
+            // stages. Both are best-effort — if preparation cannot
+            // run, the descent proceeds as before.
+            const int needTier = stage == ExpStage::ToIronLevel ? 2 : 4;
+            const int threshold = stage == ExpStage::ToIronLevel ? 60 : 120;
+            if (!descendDivertUsed_) {
+                const int best = bestPickaxeRemaining(needTier);
+                if (best >= 0 && best < threshold && !hasSparePickaxe(needTier)) {
+                    descendDivertUsed_ = true;
+                    needTier_ = needTier; wantPickaxeChain_ = true;
+                    if (tryStartPickaxeChain(true)) {
+                        descendPending_ = true;
+                        note("expedition: pickaxe durability low (~" +
+                             std::to_string(best) + " left); crafting a fresh one first");
+                        reply("ツルハシがボロボロだから、先に新しいのを作るね");
+                        return;
+                    }
+                }
+            }
+            ensureSwordPrep();
+            if (chainActive_) { descendPending_ = true; return; } // sword chain first
+            beginDescend(stage);
             return; }
         case ExpStage::HuntIron:
             reply("鉄鉱石を探すね");
@@ -5549,6 +6012,16 @@ private:
         case ExpStage::None:
             return;
         }
+    }
+    void beginDescend(ExpStage stage) {
+        const int target = stage == ExpStage::ToIronLevel ? 16 : -53;
+        descendTargetY_ = target;
+        descendDone_ = false; descendFailed_ = false; descendCave_ = false;
+        descendLastY_ = INT_MAX; descendStuck_ = 0; digPos_ = {INT_MIN, 0, 0};
+        descendWide_ = false; descendCenterTicks_ = 0;
+        descendEntryY_ = INT_MAX; // captured on the first descend tick
+        phase_ = Phase::Descend;
+        reply(stage == ExpStage::ToIronLevel ? "鉄を探しに降りるね" : "ダイヤ層まで降りるね");
     }
     void tickExpedition(bedrock::Vec3 feet) {
         if (!expeditionActive()) return;
@@ -5580,6 +6053,39 @@ private:
             default: return;
             }
         }
+        // Hopeless-underground rescue, independent of which
+        // sub-state notices the missing tool first (the hunt's
+        // tunnel digs fail silently without entering NeedTool, and
+        // a gather with no reachable ore never tries to mine).
+        if (tickCount_ % 20 == 0 && !chainActive_ && !ascendDig_ &&
+            (expStage_ == ExpStage::HuntIron || expStage_ == ExpStage::HuntOre) &&
+            phase_ != Phase::Ascend && phase_ != Phase::Craft &&
+            phase_ != Phase::Smelt && phase_ != Phase::Descend) {
+            const int need = expStage_ == ExpStage::HuntIron ? 2 : 4;
+            const int fy = static_cast<int>(std::floor(feet.y));
+            // The surface this session descended from; when the run
+            // was resumed at depth after a restart it was never
+            // recorded — fall back to y=70 + an open-sky check.
+            const int surfY = lastSurfaceY_ == INT_MAX ? 70 : lastSurfaceY_;
+            if (fy < surfY - 8 && !hasPickaxeTier(need) &&
+                !hasSparePickaxe(need)) {
+                needTier_ = need; wantPickaxeChain_ = true;
+                if (!tryStartPickaxeChain() && totalSpareCount() >= surfY - fy) {
+                    releaseInputs();
+                    gatherActive_ = false;
+                    phase_ = Phase::Ascend; ascendTicks_ = 0;
+                    ascendLastY_ = INT_MAX; ascendStuck_ = 0; ascendPullTicks_ = 0;
+                    ascendTargetY_ = surfY;
+                    ascendOpenSky_ = lastSurfaceY_ == INT_MAX;
+                    ascendNoteY_ = INT_MIN;
+                    ascendDig_ = false;
+                    ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
+                    reply("道具が作れないから、地上に戻って仕切り直すね");
+                    note("ascend: returning to surface y=" + std::to_string(surfY));
+                    return;
+                }
+            }
+        }
         if (gatherActive_ || chainActive_) return;
         switch (expStage_) {
         case ExpStage::StonePick:
@@ -5592,6 +6098,10 @@ private:
             }
             return;
         case ExpStage::ToIronLevel:
+            if (descendPending_) {
+                if (!chainActive_) { descendPending_ = false; beginDescend(ExpStage::ToIronLevel); }
+                return;
+            }
             if (descendDone_) enterExpStage(ExpStage::HuntIron);
             return;
         case ExpStage::Smelt:
@@ -5610,6 +6120,10 @@ private:
             }
             return;
         case ExpStage::ToDiamondLevel:
+            if (descendPending_) {
+                if (!chainActive_) { descendPending_ = false; beginDescend(ExpStage::ToDiamondLevel); }
+                return;
+            }
             if (descendDone_) enterExpStage(ExpStage::HuntOre);
             return;
         default:
@@ -5773,6 +6287,22 @@ private:
     bool descendWide_{};
     int descendCenterTicks_{};
     int descendEntryY_{INT_MAX};
+    // Resource management state
+    int lastSurfaceY_{INT_MAX};
+    bool descendPending_{};
+    bool descendDivertUsed_{};
+    int ascendTicks_{};
+    int ascendLastY_{INT_MAX};
+    int ascendStuck_{};
+    int ascendPullTicks_{};
+    int ascendTargetY_{INT_MAX};
+    bool ascendOpenSky_{};
+    int ascendNoteY_{INT_MIN};
+    bool ascendDig_{};
+    bool ascendCenterActive_{};
+    bool ascendCenterGiveUp_{};
+    BlockPos3 ascendCenterCell_{};
+    int ascendCenterTicks_{};
     // Hunt state
     int huntDirX_{1}, huntDirZ_{};
     int huntStage_{}, huntCells_{}, huntTicks_{};
