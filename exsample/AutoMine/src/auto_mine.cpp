@@ -2954,6 +2954,7 @@ private:
 
     void tickFollowPath(bedrock::Vec3 feet) {
         ++navTicks_;
+        const std::size_t idxAtEntry = pathIdx_;
         if (navTicks_ > 20 * 45) { // same overall budget as legacy navigation
             note("navigate timeout (path); blacklist target");
             if (chainWaitingCobble_) ++cobbleNavFails_;
@@ -3021,6 +3022,26 @@ private:
             ++pathIdx_; // already cleared somehow: move on
             return;
         }
+        if (!pathBridge_[pathIdx_]) {
+            // Waypoint invalidation: the world changed under a
+            // walking waypoint (a block appeared in it). Dig it out
+            // if it is diggable; if it became impossible, feed it to
+            // the planner and replan NOW instead of walking into it
+            // until the stuck detector notices.
+            const auto wf = blockAt({wp.x, wp.y, wp.z});
+            const auto wh = blockAt({wp.x, wp.y + 1, wp.z});
+            const bool fSolid = isSolidCell(wf), hSolid = isSolidCell(wh);
+            if (fSolid || hSolid) {
+                pressKey(kKeyW, false);
+                if (fSolid && isDiggableCell(wf)) { enterPathDigCell({wp.x, wp.y, wp.z}, wf); return; }
+                if (hSolid && isDiggableCell(wh)) { enterPathDigCell({wp.x, wp.y + 1, wp.z}, wh); return; }
+                planBlockedFor_ = target_;
+                if (planBlocked_.size() < 64) planBlocked_.insert({wp.x, wp.y, wp.z});
+                pathFor_ = {INT_MIN, 0, 0};
+                note("path: waypoint blocked, replanning");
+                return;
+            }
+        }
         // --- pure-pursuit following -------------------------------------
         // Advance past every waypoint we have effectively passed: within
         // a generous radius for its level relation, or already behind us.
@@ -3048,6 +3069,10 @@ private:
             ++pathIdx_;
             stuckTicks_ = 0;
         }
+        // Steady waypoint progress resets the navigate clock: the
+        // 45 s budget exists to catch a follower that is NOT getting
+        // anywhere, not to kill a long route that is advancing.
+        if (pathIdx_ != idxAtEntry) navTicks_ = 0;
         if (pathIdx_ >= path_.size()) {
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
             pressKey(kKeyA, false); pressKey(kKeyD, false);
@@ -3087,6 +3112,23 @@ private:
             }
         }
         pressKey(kKeySpace, jump);
+        // Jump watchdog: a genuine step-up gains the level within a
+        // second. Jumping for ~2.5 s without rising means the step
+        // is not climbable from here (the ice-pocket failure: the
+        // bot bounced against a wall indefinitely). Stop, feed the
+        // waypoint to the planner as blocked, and replan.
+        if (jump) {
+            if (jumpHoldTicks_ == 0) jumpBaseY_ = feetCellY;
+            if (++jumpHoldTicks_ > 50 && feetCellY <= jumpBaseY_) {
+                jumpHoldTicks_ = 0;
+                pressKey(kKeySpace, false); pressKey(kKeyW, false);
+                planBlockedFor_ = target_;
+                if (planBlocked_.size() < 64) planBlocked_.insert({wp.x, wp.y, wp.z});
+                pathFor_ = {INT_MIN, 0, 0};
+                note("path: jump watchdog, replanning");
+                return;
+            }
+        } else jumpHoldTicks_ = 0;
         // Stuck on this stretch: the first two checks wiggle (jump +
         // alternating strafe, applied below); only then re-plan, and give
         // up on the target after the re-plan budget runs out.
@@ -5638,6 +5680,8 @@ private:
     std::size_t pathIdx_{0};
     bool pathDigResume_{};
     bool pathPartial_{};
+    int jumpHoldTicks_{};
+    int jumpBaseY_{INT_MIN};
     std::unordered_set<CellKey, CellKeyHash> planBlocked_;
     BlockPos3 planBlockedFor_{INT_MIN, 0, 0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
