@@ -633,7 +633,7 @@ private:
         return out;
     }
     struct InvSlot { std::string id; int count{}; };
-    std::array<InvSlot, 9> hotbarItems() {
+    std::array<InvSlot, 9> hotbarMemoryItems() {
         std::array<InvSlot, 9> out;
         void* p = player();
         if (!p) return out;
@@ -652,23 +652,58 @@ private:
             if (!world_.readField(stack, items_.countOffset, count) || !count) continue;
             out[static_cast<std::size_t>(i)] = {stackItemId(stack), static_cast<int>(count)};
         }
-        // The client inventory model never applies the responses to the
-        // craft adapter's forged requests, so after a craft it is stale
-        // (a crafted pickaxe/table is invisible here). The adapter's
-        // snapshot merges memory with its response-tracked overlay and
-        // is the server truth; prefer it for the hotbar whenever the
-        // adapter is up.
+        return out;
+    }
+    std::array<InvSlot, 9> hotbarItems() {
+        auto out = hotbarMemoryItems();
+        // The snapshot is the authority for the hotbar. It merges the
+        // same memory read with the response-tracked shadow of every
+        // forged request, and retires a shadow entry the moment the
+        // memory view diverges from it — so wherever the snapshot has
+        // an entry it is at least as fresh as the memory read, and for
+        // slots a forged craft/transfer touched it is the ONLY correct
+        // view. Memory-first masking was measured broken on
+        // 2026-11-18: the crafted wooden pickaxe sat at hotbar 4 in
+        // the snapshot while the memory read still showed the slot's
+        // stale pre-craft stack, chooseTool never saw the pickaxe,
+        // and NeedTool waited forever with the tool in hand. (The
+        // earlier fear that the snapshot misplaces takes was traced
+        // to the fy+1 placement adopt gap instead.) Slots the
+        // snapshot does not cover keep the memory read.
         if (craftReady_) {
-            std::array<InvSlot, 9> merged;
-            bool any{};
             for (const auto& slot : craft_.snapshot()) {
                 if (slot.slot < 0 || slot.slot >= 9) continue;
-                merged[static_cast<std::size_t>(slot.slot)] = {slot.item, slot.count};
-                any = true;
+                out[static_cast<std::size_t>(slot.slot)] = {slot.item, slot.count};
             }
-            if (any) return merged;
         }
         return out;
+    }
+    // Every hotbar slot either inventory view claims holds the item.
+    // The place loops cycle through these: a single wrong claim no
+    // longer strands placement on an empty slot.
+    std::vector<int> hotbarSlotCandidates(const std::string& local) {
+        std::vector<int> out;
+        auto addFrom = [&](const std::array<InvSlot, 9>& slots) {
+            for (int i = 0; i < 9; ++i) {
+                const auto& it = slots[static_cast<std::size_t>(i)];
+                if (it.count && localPart(it.id) == local &&
+                    std::find(out.begin(), out.end(), i) == out.end())
+                    out.push_back(i);
+            }
+        };
+        addFrom(hotbarItems());
+        addFrom(hotbarMemoryItems());
+        return out;
+    }
+    // The slot to hold while placing: rotate the claimed slots,
+    // 40 ticks each, until the block lands.
+    int placeSlotTick(const std::string& local, std::size_t& idx, int& ticks, int fallback) {
+        const auto cands = hotbarSlotCandidates(local);
+        if (cands.empty()) return fallback;
+        if (idx >= cands.size()) idx = 0;
+        const int slot = cands[idx];
+        if (++ticks > 40) { ticks = 0; idx = (idx + 1) % cands.size(); }
+        return slot;
     }
     // -- input helpers (owner thread only) ------------------------------------
     bedrock::Keyboard keyboard() { return game_.localPlayer().getKeyboard(); }
@@ -2090,9 +2125,21 @@ private:
                 gatherActive_ = false; gatherFailed_ = true;
                 releaseInputs(); phase_ = Phase::Idle; hasTarget_ = false;
                 note("gather: timed out");
-            } else if (gatherHunt_ && phase_ == Phase::Scan && emptyScans_ >= 3 &&
+            } else if (gatherHunt_ && phase_ == Phase::Scan &&
+                       (emptyScans_ >= 3 || escapeStreak_ >= 3) &&
                        !chainActive_) {
-                // Nothing in scan range: tunnel a leg and rescan.
+                // Nothing in scan range: tunnel a leg and rescan. The
+                // escape-streak arm covers the flooded-cavern loop
+                // (measured 2026-11-18): scans kept FINDING ore across
+                // a lake, every approach submerged the head, and each
+                // escape only blacklisted that one vein cell — the bot
+                // bobbed in place forever. Three escapes with no block
+                // mined in between mean this patch of water is a trap:
+                // relocate like an empty scan does.
+                if (escapeStreak_ >= 3)
+                    note("gather: escape loop (x" + std::to_string(escapeStreak_) +
+                         "), relocating");
+                escapeStreak_ = 0; emptyScans_ = 0;
                 huntStage_ = 0; huntCells_ = 0; huntLegDone_ = false; digPos_ = {INT_MIN, 0, 0};
                 phase_ = Phase::Hunt;
                 note("gather: hunt leg (" + std::to_string(huntDirX_) + "," +
@@ -2180,6 +2227,7 @@ private:
         return contains(localPart(feetId), "water") || headInWater(feet);
     }
     void startEscape() {
+        ++escapeStreak_;
         if (combatEid_) {
             // Surfacing abandons the fight: ignore that mob for a while,
             // or the threat scan re-enters combat the moment we surface
@@ -3523,6 +3571,7 @@ private:
         if (isAir(current) || localPart(current) != targetId_) {
             setAttack(false);
             ++mined_;
+            escapeStreak_ = 0; // real progress: the water patch is workable
             chargeToolUse();
             note("mined " + targetId_ + " total=" + std::to_string(mined_));
             if (ascendDig_) {
@@ -3715,6 +3764,23 @@ private:
     void tickNeedTool(bedrock::Vec3 feet) {
         if (moveStage_ != MoveStage::None) { (void)ensureHotbarTick(moveItem_); return; }
         if (++needTicks_ % 20) return;
+        if (needTicks_ % 200 == 20) {
+            // Diagnostic (2026-11-18): a crafted pickaxe sat in the
+            // inventory server-side while NeedTool waited forever —
+            // dump what the adapter actually sees plus the latches
+            // that gate the fetch branch below.
+            std::string snap;
+            for (const auto& s : craft_.snapshot()) {
+                if (!s.count) continue;
+                snap += " " + std::to_string(s.slot) + ":" + localPart(s.item) + "x" +
+                        std::to_string(s.count);
+            }
+            note("needtool diag: tier=" + std::to_string(needTier_) +
+                 " moveFailed=" + std::to_string(moveFailed_) +
+                 " moveStage=" + std::to_string(static_cast<int>(moveStage_)) +
+                 " wantChain=" + std::to_string(wantPickaxeChain_) +
+                 " chainActive=" + std::to_string(chainActive_) + " snap:" + snap);
+        }
         // Hopeless underground: no pickaxe of the needed tier in
         // hand or in reserve, and the craft chain cannot start (no
         // materials). Instead of waiting forever at the bottom,
@@ -3819,6 +3885,10 @@ private:
     bool chainPocketDug_{};
     BlockPos3 chainPocketCell_{INT_MIN, 0, 0};
     int chainNoSlotTicks_{};
+    bool chainPlaceArmed_{};
+    std::size_t chainPlaceSlotIdx_{};
+    int chainPlaceSlotTicks_{};
+    int chainNoSlotRetries_{};
     std::vector<BlockPos3> chainPlaceCells_;
     std::size_t chainPlaceIdx_{};
     int placeCellTicks_{};
@@ -4273,6 +4343,7 @@ private:
         chainStep_ = 0; chainActive_ = true; chainJobStarted_ = false;
         chainPlaceCell_ = {INT_MIN, 0, 0};
         chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPlaceSlotIdx_ = 0; chainPlaceSlotTicks_ = 0;
         chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainRetriedOpen_ = false;
         chainRecoverTicks_ = -1; chainPendingFail_.clear();
@@ -4294,27 +4365,42 @@ private:
         if (craft_.status() == bedrock::CraftJobStatus::Running) return false;
         craft_.clearStatus();
         const auto have = chainCounts();
-        if (countIn(have, "cobblestone") < 2 || countIn(have, "stick") < 1) return false;
+        if (countIn(have, "cobblestone") < 2) return false;
         const int tables = countIn(have, "crafting_table");
         const bool placed = placedTableExists();
+        const int sticks = countIn(have, "stick");
         std::vector<ChainStep> steps;
-        if (tables < 1 && !placed) {
-            // The table itself may need planks first (from logs on
-            // hand) — mirror the pickaxe chain's personal-grid run.
+        {
+            // Personal-grid prep, mirroring the pickaxe chain: the
+            // sword needs a stick, and the stick (and the table, if
+            // one is missing) may have to come from planks — and the
+            // planks from logs. The old gate silently skipped the
+            // whole weapon prep whenever no stick happened to be on
+            // hand (measured 2026-11-18: on a natural run no sword
+            // was ever crafted, because the pickaxe chain had eaten
+            // every stick).
+            const int plankNeed = (sticks < 1 ? 2 : 0) + ((tables < 1 && !placed) ? 4 : 0);
             int planks = countIn(have, "planks");
-            if (planks < 4) {
+            if (planks < plankNeed) {
                 int logCount = 0;
                 const std::string wood = chainWood(have, logCount);
-                if (wood.empty() || logCount < 1) return false;
+                const int logCrafts = (plankNeed - planks + 3) / 4;
+                if (wood.empty() || logCount < logCrafts) return false;
                 steps.push_back(ChainStep{ChainStep::Kind::Craft,
                                           "minecraft:" + wood + "_planks",
-                                          "minecraft:" + wood + "_planks", 1, false});
-                planks += 4;
+                                          "minecraft:" + wood + "_planks", logCrafts, false});
+                planks += logCrafts * 4;
             }
-            steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
-                                      "minecraft:crafting_table", 1, false});
-            steps.insert(steps.begin(), ChainStep{ChainStep::Kind::OpenInventory});
-            steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+            if (sticks < 1)
+                steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:stick",
+                                          "minecraft:stick", 1, false});
+            if (tables < 1 && !placed)
+                steps.push_back(ChainStep{ChainStep::Kind::Craft, "minecraft:WorkBench_recipeId",
+                                          "minecraft:crafting_table", 1, false});
+            if (!steps.empty()) {
+                steps.insert(steps.begin(), ChainStep{ChainStep::Kind::OpenInventory});
+                steps.push_back(ChainStep{ChainStep::Kind::CloseUi});
+            }
         }
         if (!placed) steps.push_back(ChainStep{ChainStep::Kind::PlaceTable});
         steps.push_back(ChainStep{ChainStep::Kind::OpenTable});
@@ -4411,8 +4497,13 @@ private:
     void chainAdvance() {
         ++chainStep_;
         chainStepTicks_ = 0; chainAimedTick_ = -1; chainJobStarted_ = false;
+        chainPlaceArmed_ = false; chainNoSlotRetries_ = 0; chainNoSlotTicks_ = 0;
+        // A place step may be holding Use / backing off when the
+        // block lands: never leak a held input into the next step.
+        setUse(false); pressKey(kKeyS, false);
         chainPlaceCell_ = {INT_MIN, 0, 0};
         chainPlaceCells_.clear(); chainPlaceIdx_ = 0; placeCellTicks_ = 0;
+        chainPlaceSlotIdx_ = 0; chainPlaceSlotTicks_ = 0;
         chainPocketing_ = false; chainPocketDug_ = false; chainPocketBad_ = 0; chainPocket_ = {INT_MIN, 0, 0};
         if (chainStep_ >= chainSteps_.size()) chainFinish();
     }
@@ -4636,8 +4727,15 @@ private:
         // Only hold S while actually aimed at the pocket, and give up
         // after 60 ticks (the caller's collection keeps the dug cell
         // as a candidate and the placement loop keeps retreating).
-        const bool intersects = pocket.x < feet.x + .6f && pocket.x + 1 > feet.x &&
-                                pocket.z < feet.z + .6f && pocket.z + 1 > feet.z;
+        // feetPos is the AABB CENTRE (span +-0.3), not the min
+        // corner: the old +0.6 form modelled the player as
+        // [feet, feet+0.6], which never excludes the west/north
+        // neighbour and misjudges the back-off distance (measured
+        // 2026-11-18: a furnace cell the AABB reached into was
+        // pulsed for the full 25 s budget; the game rejected every
+        // placement for intersecting the player).
+        const bool intersects = pocket.x < feet.x + .31f && pocket.x + 1 > feet.x - .31f &&
+                                pocket.z < feet.z + .31f && pocket.z + 1 > feet.z - .31f;
         if (intersects && stage < 60) {
             bedrock::Vec3 eye;
             bool aimed = false;
@@ -4682,7 +4780,12 @@ private:
                 // the feet-level-only scan missed it while placement
                 // cycled overhead (measured 2026-11-17: a placed
                 // table in plain view, 27 futile candidate cycles).
-                for (int dy = 0; dy >= -1; --dy) {
+                // fy+1 matters just as much: on a slope the aim ray
+                // clips the uphill block's side face and the table
+                // lands ON it, one above feet level (measured
+                // 2026-11-18 at a forest spawn: a placed table in
+                // plain view, chain failing in a loop).
+                for (int dy = 1; dy >= -1; --dy) {
                     const BlockPos3 nbs[8] = {{fx + 1, fy + dy, fz}, {fx - 1, fy + dy, fz},
                                               {fx, fy + dy, fz + 1}, {fx, fy + dy, fz - 1},
                                               {fx + 1, fy + dy, fz + 1}, {fx + 1, fy + dy, fz - 1},
@@ -4759,8 +4862,8 @@ private:
                 // cell edge this silently ate every pulse (measured
                 // 2026-11-16: table placement timed out twice in a row
                 // while the bot stood at the platform edge).
-                if (cell.x < feet.x + .6 && cell.x + 1 > feet.x &&
-                    cell.z < feet.z + .6 && cell.z + 1 > feet.z &&
+                if (cell.x < feet.x + .31 && cell.x + 1 > feet.x - .31 &&
+                    cell.z < feet.z + .31 && cell.z + 1 > feet.z - .31 &&
                     !isPocketCell)
                     continue;
                 const auto at = blockAt(cell);
@@ -4853,7 +4956,7 @@ private:
             const int fx = static_cast<int>(std::floor(feet.x));
             const int fy = static_cast<int>(std::floor(feet.y));
             const int fz = static_cast<int>(std::floor(feet.z));
-            for (int dy = 0; dy >= -1; --dy) {
+            for (int dy = 1; dy >= -1; --dy) {
                 const BlockPos3 ring[8] = {{fx + 1, fy + dy, fz}, {fx - 1, fy + dy, fz},
                                            {fx, fy + dy, fz + 1}, {fx, fy + dy, fz - 1},
                                            {fx + 1, fy + dy, fz + 1}, {fx + 1, fy + dy, fz - 1},
@@ -4903,34 +5006,80 @@ private:
         }
         if (slot < 0) {
             // The memory hotbar read can flicker for a tick (a stack
-            // mid-update reads as a different item): only give up
-            // after 40 consecutive slot-less ticks.
-            if (++chainNoSlotTicks_ <= 40) return;
+            // mid-update reads as a different item): tolerate a
+            // window, then force one fresh move re-plan before
+            // giving up. A stale shadow can leave the move planner
+            // convinced there is no source while the item count says
+            // one exists, and the old 40-tick window died in 2 s
+            // without ever re-planning (measured 2026-11-18: a smelt
+            // chain failed here with a table in the inventory).
+            if (++chainNoSlotTicks_ <= 100) return;
+            if (chainNoSlotRetries_ < 1 && countAllItems("crafting_table") >= 1) {
+                ++chainNoSlotRetries_;
+                chainNoSlotTicks_ = 0;
+                moveFailed_ = false;
+                moveStage_ = MoveStage::None;
+                note("craft chain: table counted but no hotbar slot; resetting the move and retrying");
+                return;
+            }
             moveFailed_ = false;
             chainFail("作業台がホットバーに無い");
             return;
         }
         chainNoSlotTicks_ = 0;
+        if (!chainPlaceArmed_) {
+            // The placement budget starts when the item is actually
+            // in hand: the hotbar move that brought it here can eat
+            // most of the step's 25 s on its own (measured
+            // 2026-11-18: the furnace move completed and the place
+            // step died on the shared budget seconds later).
+            chainPlaceArmed_ = true;
+            chainStepTicks_ = 0;
+        }
+        // The merged view can claim the table at a slot the server
+        // disagrees with (see hotbarItems): rotate every claimed
+        // slot, 40 ticks each, instead of holding use on one
+        // possibly-empty slot for the whole budget.
+        slot = placeSlotTick("crafting_table", chainPlaceSlotIdx_, chainPlaceSlotTicks_, slot);
         selectSlot(slot);
         const bedrock::Vec3 aim{chainPlaceCell_.x + .5f, static_cast<float>(chainPlaceCell_.y),
                                 chainPlaceCell_.z + .5f};
-        // Keep re-aiming and pulse the use button on a cycle until the
-        // block appears: a single pulse right after the inventory screen
-        // closes is often eaten — at the mesa and at the shore alike,
-        // the first placement attempt failed and the second succeeded.
+        // Keep re-aiming until the block appears: a single use input
+        // right after the inventory screen closes is often eaten —
+        // at the mesa and at the shore alike, the first placement
+        // attempt failed and the second succeeded.
         faceToward(eye, aim, 3.f);
         // If the target cell still overlaps the player's AABB (a dug
         // pocket the back-off could not fully clear), keep backing
-        // away while pulsing: the game rejects intersecting
-        // placements, but a pulse lands the moment it clears.
-        pressKey(kKeyS, chainPlaceCell_.x < feet.x + .6f && chainPlaceCell_.x + 1 > feet.x &&
-                        chainPlaceCell_.z < feet.z + .6f && chainPlaceCell_.z + 1 > feet.z);
-        setUse((chainStepTicks_ % 12) < 2);
+        // away while placing: the game rejects intersecting
+        // placements, but a held use lands the moment it clears.
+        pressKey(kKeyS, chainPlaceCell_.x < feet.x + .31f && chainPlaceCell_.x + 1 > feet.x - .31f &&
+                        chainPlaceCell_.z < feet.z + .31f && chainPlaceCell_.z + 1 > feet.z - .31f);
+        // Hold the use button instead of pulsing it 2-in-12: the
+        // same lesson as the surface-return climb — in marginal
+        // geometry (a cave pocket with the ray grazing a wall) a
+        // short pulse can be eaten for the whole 25 s budget, while
+        // a held use places on the first tick the ray clears
+        // (measured 2026-11-18: three smelt chains died here in
+        // silence). chainAdvance releases the hold when the block
+        // lands and the step moves on.
+        setUse(true);
         if (++placeCellTicks_ > 30 && chainPlaceCells_.size() > 1) {
             placeCellTicks_ = 0;
             chainPlaceIdx_ = (chainPlaceIdx_ + 1) % chainPlaceCells_.size();
             chainPlaceCell_ = chainPlaceCells_[chainPlaceIdx_];
             note("craft chain: trying another table cell");
+        }
+        if ((chainStepTicks_ % 100) == 50) {
+            note("place diag: table cell=" + std::to_string(chainPlaceCell_.x) + "," +
+                 std::to_string(chainPlaceCell_.y) + "," + std::to_string(chainPlaceCell_.z) +
+                 " at=" + localPart(blockAt(chainPlaceCell_)) +
+                 " ground=" + localPart(blockAt({chainPlaceCell_.x, chainPlaceCell_.y - 1,
+                                                 chainPlaceCell_.z})) +
+                 " above=" + localPart(blockAt({chainPlaceCell_.x, chainPlaceCell_.y + 1,
+                                                chainPlaceCell_.z})) +
+                 " slot=" + std::to_string(slot) +
+                 " top=" + (screenReady_ ? topScreenName() : std::string("?")));
         }
     }
     bool tableBanned(const BlockPos3& p) {
@@ -5297,9 +5446,45 @@ private:
             note("descend: reached y=" + std::to_string(static_cast<int>(feet.y)));
             return;
         }
+        // Drowning guard: water pockets chained by the drop-in rule
+        // can turn the shaft into a dive far longer than one breath
+        // (measured 2026-11-18: the descent drowned in an aquifer
+        // system, 24 drop-ins in). Track continuous head submersion
+        // and surface for air before it runs out.
+        {
+            const BlockPos3 headCell{static_cast<int>(std::floor(feet.x)),
+                                     static_cast<int>(std::floor(feet.y + 1.62)),
+                                     static_cast<int>(std::floor(feet.z))};
+            const bool headWet = contains(localPart(blockAt(headCell)), "water");
+            if (descendBreath_) {
+                setAttack(false);
+                pressKey(kKeySpace, true);
+                if (!headWet || ++descendBreathTicks_ > 20 * 6) {
+                    pressKey(kKeySpace, false);
+                    descendBreath_ = false; descendBreathTicks_ = 0; descendWetTicks_ = 0;
+                    note("descend: breath break over");
+                }
+                return;
+            }
+            if (headWet) {
+                if (++descendWetTicks_ > 20 * 8) {
+                    descendBreath_ = true; descendBreathTicks_ = 0;
+                    digPos_ = {INT_MIN, 0, 0}; digBlockId_.clear(); digTicks_ = 0;
+                    note("descend: surfacing for air");
+                    return;
+                }
+            } else descendWetTicks_ = 0;
+        }
         const int fy = static_cast<int>(std::floor(feet.y));
         if (fy < descendLastY_) { descendLastY_ = fy; descendStuck_ = 0; }
-        if (descendEntryY_ == INT_MAX) { descendEntryY_ = fy; lastSurfaceY_ = fy; }
+        if (descendEntryY_ == INT_MAX) {
+            descendEntryY_ = fy;
+            // Only the first descent of a session records the
+            // surface: a cave-resume descent starts underground and
+            // must not overwrite it (the surface-return rescue
+            // climbs back to this height).
+            if (lastSurfaceY_ == INT_MAX) lastSurfaceY_ = fy;
+        }
         // Two blocks into the shaft the walls confine the player:
         // centring is only needed at the surface, and a wide hole
         // only until the player has dropped in (measured 2026-11-17:
@@ -5367,14 +5552,40 @@ private:
         // Cave guard: after the supporting blocks break the player
         // falls one cell; if the void under the centre column then
         // continues 3+ cells, the fall becomes a cavern drop — stop
-        // and let the hunt take over here.
+        // and let the hunt take over here. A SHALLOW opening is the
+        // exception: when a floor is visible inside the probe
+        // window (drop of at most 7, a few hearts at worst), or the
+        // void is water (a safe landing at any depth), drop in and
+        // keep shafting from the cave floor instead of abandoning
+        // the descent far above the target band (measured
+        // 2026-11-18: the diamond descent stopped at a cave at y=52
+        // and the hunt scanned that height forever).
         int voidDepth = 0;
+        std::string voidFloor;
+        bool voidWater = false;
         for (int y = fy - 2; y > fy - 9; --y) {
             const auto id = blockAt({cx, y, cz});
-            if (id.empty() || isAir(id) || contains(localPart(id), "water")) ++voidDepth;
-            else break;
+            if (id.empty() || isAir(id)) ++voidDepth;
+            else if (contains(localPart(id), "water")) { ++voidDepth; voidWater = true; }
+            else { voidFloor = localPart(id); break; }
         }
-        if (voidDepth >= 3) {
+        // Water in the void changes the call: a drop into water is
+        // safe at any depth, so an aquifer under the shaft is a
+        // drop-in too, not a cavern stop (measured 2026-11-18: the
+        // probe read a water column as a floorless void and the
+        // descent surrendered above an underground lake).
+        if (voidDepth >= 3 && voidFloor != "lava" && (!voidFloor.empty() || voidWater)) {
+            if (descendDropNoteY_ != fy) {
+                descendDropNoteY_ = fy;
+                note("descend: opening below (" +
+                     (voidWater && voidFloor.empty()
+                          ? std::string("water")
+                          : "floor " + std::to_string(voidDepth + 1) + " down") +
+                     "), dropping in");
+            }
+            // Fall through to the dig loop: breaking the centre
+            // column drops the player onto the floor.
+        } else if (voidDepth >= 3) {
             setAttack(false);
             descendDone_ = true; descendCave_ = true; phase_ = Phase::Idle;
             note("descend: cave opening below, stopping the shaft");
@@ -5489,6 +5700,8 @@ private:
         smeltPocket_ = {INT_MIN, 0, 0};
         smeltPlaceCells_.clear(); smeltPlaceIdx_ = 0; smeltCellTicks_ = 0;
         smeltTransferStarted_ = false; smeltUseAltCont_ = false; smeltMoved_ = 0;
+        smeltFuelBurnTicks_ = 0; smeltFuelPendingBurn_ = 0; smeltFuelBurnPer_ = 0;
+        smeltExpect_ = count;
         furnaceChainTried_ = false; smeltCollectTries_ = 0; smeltBreakRetries_ = 0;
         smeltDone_ = false; smeltFailed_ = false;
         phase_ = Phase::Smelt;
@@ -5498,6 +5711,9 @@ private:
         smeltStage_ = static_cast<SmeltStage>(static_cast<int>(smeltStage_) + 1);
         smeltTicks_ = 0; smeltAimedTick_ = -1; smeltTransferStarted_ = false;
         smeltUseAltCont_ = false;
+        smeltPlaceArmed_ = false; smeltNoSlotRetries_ = 0; smeltNoSlotTicks_ = 0;
+        smeltPlaceSlotIdx_ = 0; smeltPlaceSlotTicks_ = 0;
+        setUse(false); pressKey(kKeyS, false);
     }
     void smeltFail(const std::string& why) {
         note("smelt failed: " + why);
@@ -5575,16 +5791,45 @@ private:
             std::optional<bedrock::CraftInventorySlot> src;
             int want = 0;
             if (isFuel) {
-                // Planks burn 1.5 items each; logs the same; coal 8.
-                src = findInvItemPred([](const std::string& id) {
-                    return id.size() > 7 && id.compare(id.size() - 7, 7, "_planks") == 0;
-                });
-                if (src) want = (smeltCount_ * 2 + 2) / 3;
-                if (!src) { src = findInvItemPred([](const std::string& id) {
-                    return id.size() > 4 && id.compare(id.size() - 4, 4, "_log") == 0; });
-                    if (src) want = (smeltCount_ * 2 + 2) / 3; }
-                if (!src) { src = findInvItem("coal"); if (src) want = (smeltCount_ + 7) / 8; }
-                if (!src) { smeltFail("燃料が無い"); return true; }
+                // Fuel is topped up until the accumulated burn
+                // covers the input (coal 1600 ticks per item,
+                // planks/logs 300 — 1.5 items each). The old code
+                // moved a fixed count from the FIRST matching stack
+                // only: a split stack under-fuelled the furnace, the
+                // cook stopped early, and the post-break yield check
+                // failed on ingots that were never made (measured
+                // 2026-11-18, twice in a row).
+                const int needTicks = smeltMoved_ * 200 - smeltFuelBurnTicks_;
+                if (needTicks <= 0) {
+                    note("smelt: fuel loaded");
+                    smeltAdvance();
+                    return true;
+                }
+                src = findInvItem("coal");
+                smeltFuelBurnPer_ = 1600;
+                if (!src) {
+                    src = findInvItemPred([](const std::string& id) {
+                        return id.size() > 7 && id.compare(id.size() - 7, 7, "_planks") == 0;
+                    });
+                    smeltFuelBurnPer_ = 300;
+                }
+                if (!src) {
+                    src = findInvItemPred([](const std::string& id) {
+                        return id.size() > 4 && id.compare(id.size() - 4, 4, "_log") == 0;
+                    });
+                    smeltFuelBurnPer_ = 300;
+                }
+                if (!src) {
+                    if (smeltFuelBurnTicks_ > 0) {
+                        smeltExpect_ = std::min(smeltMoved_, smeltFuelBurnTicks_ / 200);
+                        note("smelt: fuel short, cooking " + std::to_string(smeltExpect_) +
+                             " of " + std::to_string(smeltMoved_));
+                        smeltAdvance();
+                        return true;
+                    }
+                    smeltFail("燃料が無い"); return true;
+                }
+                want = (needTicks + smeltFuelBurnPer_ - 1) / smeltFuelBurnPer_;
             } else {
                 src = findInvItem(smeltItem_);
                 if (!src) { smeltFail("精錬する材料が無い"); return true; }
@@ -5592,6 +5837,7 @@ private:
             }
             const int n = std::min(want, src->count);
             if (!isFuel) smeltMoved_ = n;
+            else smeltFuelPendingBurn_ = n * smeltFuelBurnPer_;
             const std::uint32_t cont = smeltUseAltCont_ ? 12u
                                        : (src->slot < 9 ? 28u : 29u);
             if (!craft_.startTransfer(cont, src->slot, src->netId, dstContainer, dstSlot, n,
@@ -5604,6 +5850,21 @@ private:
         if (st == bedrock::CraftJobStatus::Running) return false;
         if (st == bedrock::CraftJobStatus::Done) {
             craft_.clearTransferStatus();
+            if (isFuel) {
+                smeltFuelBurnTicks_ += smeltFuelPendingBurn_;
+                smeltFuelPendingBurn_ = 0;
+                if (smeltFuelBurnTicks_ < smeltMoved_ * 200) {
+                    // More burn needed: loop the stage for another
+                    // stack instead of advancing.
+                    smeltTransferStarted_ = false;
+                    note("smelt: fuel topped up (burn " +
+                         std::to_string(smeltFuelBurnTicks_) + " ticks)");
+                    return false;
+                }
+            } else {
+                // The yield target follows what was really loaded.
+                smeltExpect_ = smeltMoved_;
+            }
             note(std::string("smelt: ") + (isFuel ? "fuel" : "input") + " loaded");
             smeltAdvance();
             return true;
@@ -5664,23 +5925,36 @@ private:
             }
             return; }
         case SmeltStage::CollectDrops: {
+            // The yield target is what was actually loaded and
+            // cookable (smeltExpect_), not the stage's request: a
+            // partial input load or a short fuel load otherwise
+            // makes success unreachable by construction.
+            const int gained = countAllItems(smeltYieldItem_) - smeltYieldBase_;
+            if (gained >= smeltExpect_) {
+                pressKey(kKeyW, false);
+                reply("精錬完了！" + smeltYieldItem_ + " が " +
+                      std::to_string(gained) + "個できたよ");
+                note("smelt: done, " + std::to_string(gained) + "x " + smeltYieldItem_);
+                smeltDone_ = true; smeltStage_ = SmeltStage::Done; phase_ = Phase::Idle;
+                return;
+            }
+            // The drops from a broken furnace scatter around its
+            // cell and the pickup can lag the walk: sweep the cell
+            // with walk/pause cycles for a generous window instead
+            // of three fixed 25-tick lunges (measured 2026-11-18:
+            // the ingots existed but the old window closed before
+            // the count caught up, twice in a row).
             const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
             const bedrock::Vec3 center{smeltFurnacePos_.x + .5f, feet.y + .5f,
                                        smeltFurnacePos_.z + .5f};
             faceAim(eye, center, 12.f, 0.3f);
-            pressKey(kKeyW, true);
-            if (smeltTicks_ >= 25) {
+            pressKey(kKeyW, (smeltTicks_ % 40) < 25);
+            if (smeltTicks_ > 240) {
                 pressKey(kKeyW, false);
-                if (countAllItems(smeltYieldItem_) - smeltYieldBase_ >= smeltCount_) {
-                    reply("精錬完了！" + smeltYieldItem_ + " が " +
-                          std::to_string(smeltCount_) + "個できたよ");
-                    note("smelt: done, " + std::to_string(smeltCount_) + "x " + smeltYieldItem_);
-                    smeltDone_ = true; smeltStage_ = SmeltStage::Done; phase_ = Phase::Idle;
-                } else if (++smeltCollectTries_ < 3) {
-                    smeltTicks_ = 0;
-                } else {
-                    smeltFail("精錬物を取りこぼした");
-                }
+                note("smelt diag: collect shortfall, gained=" + std::to_string(gained) +
+                     " expect=" + std::to_string(smeltExpect_) +
+                     " base=" + std::to_string(smeltYieldBase_));
+                smeltFail("精錬物を取りこぼした");
             }
             return; }
         case SmeltStage::Done: case SmeltStage::Failed:
@@ -5697,7 +5971,7 @@ private:
                 const int fx = static_cast<int>(std::floor(feet.x));
                 const int fy = static_cast<int>(std::floor(feet.y));
                 const int fz = static_cast<int>(std::floor(feet.z));
-                for (int dy = 0; dy >= -1; --dy) {
+                for (int dy = 1; dy >= -1; --dy) {
                 const BlockPos3 nbs[8] = {{fx + 1, fy + dy, fz}, {fx - 1, fy + dy, fz},
                                           {fx, fy + dy, fz + 1}, {fx, fy + dy, fz - 1},
                                           {fx + 1, fy + dy, fz + 1}, {fx + 1, fy + dy, fz - 1},
@@ -5744,8 +6018,8 @@ private:
             smeltPlaceCells_.clear();
             for (const auto& d : dirs) {
                 const BlockPos3 cell{fx + d.x, fy, fz + d.z};
-                if (cell.x < feet.x + .6 && cell.x + 1 > feet.x &&
-                    cell.z < feet.z + .6 && cell.z + 1 > feet.z &&
+                if (cell.x < feet.x + .31 && cell.x + 1 > feet.x - .31 &&
+                    cell.z < feet.z + .31 && cell.z + 1 > feet.z - .31 &&
                     !(smeltPocketDug_ && cell.x == smeltPocketCell_.x &&
                       cell.y == smeltPocketCell_.y && cell.z == smeltPocketCell_.z))
                     continue;
@@ -5823,24 +6097,54 @@ private:
             slot = findHotbarSlot("furnace");
         }
         if (slot < 0) {
-            // Same hotbar-read flicker tolerance as tickPlaceTable.
-            if (++smeltNoSlotTicks_ <= 40) return;
+            // Same flicker tolerance + one forced move re-plan as
+            // tickPlaceTable (see there for the measured failure).
+            if (++smeltNoSlotTicks_ <= 100) return;
+            if (smeltNoSlotRetries_ < 1 && countAllItems("furnace") >= 1) {
+                ++smeltNoSlotRetries_;
+                smeltNoSlotTicks_ = 0;
+                moveFailed_ = false;
+                moveStage_ = MoveStage::None;
+                note("smelt: furnace counted but no hotbar slot; resetting the move and retrying");
+                return;
+            }
             moveFailed_ = false; smeltFail("かまどがホットバーに無い"); return;
         }
         smeltNoSlotTicks_ = 0;
+        if (!smeltPlaceArmed_) {
+            // Same budget decoupling as tickPlaceTable: the clock
+            // starts when the furnace is actually in hand.
+            smeltPlaceArmed_ = true;
+            smeltTicks_ = 0;
+        }
+        // Same claimed-slot rotation as tickPlaceTable.
+        slot = placeSlotTick("furnace", smeltPlaceSlotIdx_, smeltPlaceSlotTicks_, slot);
         selectSlot(slot);
         const bedrock::Vec3 aim{smeltPlaceCell_.x + .5f,
                                 static_cast<float>(smeltPlaceCell_.y),
                                 smeltPlaceCell_.z + .5f};
         faceToward(eye, aim, 3.f);
-        pressKey(kKeyS, smeltPlaceCell_.x < feet.x + .6f && smeltPlaceCell_.x + 1 > feet.x &&
-                        smeltPlaceCell_.z < feet.z + .6f && smeltPlaceCell_.z + 1 > feet.z);
-        setUse((smeltTicks_ % 12) < 2);
+        pressKey(kKeyS, smeltPlaceCell_.x < feet.x + .31f && smeltPlaceCell_.x + 1 > feet.x - .31f &&
+                        smeltPlaceCell_.z < feet.z + .31f && smeltPlaceCell_.z + 1 > feet.z - .31f);
+        // Held use, not a 2-in-12 pulse — same fix as the table
+        // placement (see tickPlaceTable).
+        setUse(true);
         if (++smeltCellTicks_ > 30 && smeltPlaceCells_.size() > 1) {
             smeltCellTicks_ = 0;
             smeltPlaceIdx_ = (smeltPlaceIdx_ + 1) % smeltPlaceCells_.size();
             smeltPlaceCell_ = smeltPlaceCells_[smeltPlaceIdx_];
             note("smelt: trying another furnace cell");
+        }
+        if ((smeltTicks_ % 100) == 50) {
+            note("place diag: furnace cell=" + std::to_string(smeltPlaceCell_.x) + "," +
+                 std::to_string(smeltPlaceCell_.y) + "," + std::to_string(smeltPlaceCell_.z) +
+                 " at=" + localPart(blockAt(smeltPlaceCell_)) +
+                 " ground=" + localPart(blockAt({smeltPlaceCell_.x, smeltPlaceCell_.y - 1,
+                                                 smeltPlaceCell_.z})) +
+                 " above=" + localPart(blockAt({smeltPlaceCell_.x, smeltPlaceCell_.y + 1,
+                                                smeltPlaceCell_.z})) +
+                 " slot=" + std::to_string(slot) +
+                 " top=" + (screenReady_ ? topScreenName() : std::string("?")));
         }
     }
     void tickOpenFurnace(bedrock::Vec3 feet) {
@@ -5962,6 +6266,7 @@ private:
             return;
         case ExpStage::ToIronLevel:
         case ExpStage::ToDiamondLevel: {
+            descendCaveRetries_ = 0; descendResumePending_ = false;
             // Advance judgment before a long descent: if the best
             // pickaxe is nearly worn out and no fresh spare exists,
             // craft one first (the descend waits in tickExpedition);
@@ -6019,9 +6324,49 @@ private:
         descendDone_ = false; descendFailed_ = false; descendCave_ = false;
         descendLastY_ = INT_MAX; descendStuck_ = 0; digPos_ = {INT_MIN, 0, 0};
         descendWide_ = false; descendCenterTicks_ = 0;
+        descendWetTicks_ = 0; descendBreathTicks_ = 0; descendBreath_ = false;
+        pressKey(kKeySpace, false);
         descendEntryY_ = INT_MAX; // captured on the first descend tick
         phase_ = Phase::Descend;
         reply(stage == ExpStage::ToIronLevel ? "鉄を探しに降りるね" : "ダイヤ層まで降りるね");
+    }
+    // A cavern stop far above the target band is not arrival: the
+    // hunt would scan a depth where the ore never spawns (measured
+    // 2026-11-18: the diamond descent stopped at a cavern at y=52
+    // and stage 9 hunted horizontally at that height forever).
+    // Relocate with a hunt leg and shaft again from there; the
+    // retry cap hands over to the hunt as before.
+    bool descendCaveResume(ExpStage stage, bedrock::Vec3 feet) {
+        if (!descendCave_) return false;
+        const int fy = static_cast<int>(std::floor(feet.y));
+        if (fy <= descendTargetY_ + 16) return false;
+        if (descendCaveRetries_ >= 6) return false;
+        ++descendCaveRetries_;
+        descendDone_ = false; descendCave_ = false;
+        descendResumePending_ = true;
+        huntStage_ = 0; huntCells_ = 0; huntLegDone_ = false; huntBlocked_ = false;
+        digPos_ = {INT_MIN, 0, 0};
+        phase_ = Phase::Hunt;
+        note("expedition: cavern stop at y=" + std::to_string(fy) + ", still above the y=" +
+             std::to_string(descendTargetY_) + " band; relocating and descending again");
+        return true;
+    }
+    // While a cavern relocation leg runs, watch for its end and
+    // restart the descent from the new spot. Returns true when the
+    // stage case is fully handled for this tick.
+    bool descendResumeTick(ExpStage stage) {
+        if (!descendResumePending_) return false;
+        if (huntLegDone_ && phase_ == Phase::Idle) {
+            huntLegDone_ = false;
+            if (huntBlocked_) {
+                huntBlocked_ = false;
+                const int ndx = huntDirZ_, ndz = -huntDirX_;
+                huntDirX_ = ndx; huntDirZ_ = ndz;
+            }
+            descendResumePending_ = false;
+            beginDescend(stage);
+        }
+        return true;
     }
     void tickExpedition(bedrock::Vec3 feet) {
         if (!expeditionActive()) return;
@@ -6098,11 +6443,15 @@ private:
             }
             return;
         case ExpStage::ToIronLevel:
+            if (descendResumeTick(ExpStage::ToIronLevel)) return;
             if (descendPending_) {
                 if (!chainActive_) { descendPending_ = false; beginDescend(ExpStage::ToIronLevel); }
                 return;
             }
-            if (descendDone_) enterExpStage(ExpStage::HuntIron);
+            if (descendDone_) {
+                if (descendCaveResume(ExpStage::ToIronLevel, feet)) return;
+                enterExpStage(ExpStage::HuntIron);
+            }
             return;
         case ExpStage::Smelt:
             if (smeltDone_) { smeltDone_ = false; enterExpStage(ExpStage::IronPick); }
@@ -6120,11 +6469,15 @@ private:
             }
             return;
         case ExpStage::ToDiamondLevel:
+            if (descendResumeTick(ExpStage::ToDiamondLevel)) return;
             if (descendPending_) {
                 if (!chainActive_) { descendPending_ = false; beginDescend(ExpStage::ToDiamondLevel); }
                 return;
             }
-            if (descendDone_) enterExpStage(ExpStage::HuntOre);
+            if (descendDone_) {
+                if (descendCaveResume(ExpStage::ToDiamondLevel, feet)) return;
+                enterExpStage(ExpStage::HuntOre);
+            }
             return;
         default:
             return;
@@ -6254,6 +6607,7 @@ private:
     int scanCursor_{};
     double bestDist2_{1e18};
     int emptyScans_{};
+    int escapeStreak_{};
     int scanWait_{};
     int navTicks_{}, stuckTicks_{};
     float lastX_{}, lastZ_{};
@@ -6281,6 +6635,11 @@ private:
     // Descend state
     int descendTargetY_{};
     bool descendDone_{}, descendFailed_{}, descendCave_{};
+    int descendCaveRetries_{};
+    bool descendResumePending_{};
+    int descendDropNoteY_{INT_MAX};
+    int descendWetTicks_{}, descendBreathTicks_{};
+    bool descendBreath_{};
     int cobbleNavFails_{};
     bool cobbleDescend_{};
     int descendLastY_{INT_MAX}, descendStuck_{};
@@ -6311,6 +6670,7 @@ private:
     SmeltStage smeltStage_{SmeltStage::CraftFurnace};
     std::string smeltItem_, smeltYieldItem_;
     int smeltCount_{}, smeltMoved_{}, smeltYieldBase_{}, smeltTicks_{};
+    int smeltFuelBurnTicks_{}, smeltFuelPendingBurn_{}, smeltFuelBurnPer_{}, smeltExpect_{};
     BlockPos3 smeltPlaceCell_{INT_MIN, 0, 0}, smeltFurnacePos_{};
     BlockPos3 smeltPocket_{INT_MIN, 0, 0};
     int smeltPocketBad_{};
@@ -6319,6 +6679,10 @@ private:
     bool smeltPocketDug_{};
     BlockPos3 smeltPocketCell_{INT_MIN, 0, 0};
     int smeltNoSlotTicks_{};
+    bool smeltPlaceArmed_{};
+    std::size_t smeltPlaceSlotIdx_{};
+    int smeltPlaceSlotTicks_{};
+    int smeltNoSlotRetries_{};
     std::vector<BlockPos3> smeltPlaceCells_;
     std::size_t smeltPlaceIdx_{};
     int smeltCellTicks_{};
