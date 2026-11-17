@@ -321,6 +321,30 @@ public:
             detail_.clear();
         }
     }
+    // Post-failure reset: a failed job can leave ingredients sitting in
+    // the crafting grid and a result on the cursor. The caller closes
+    // the crafting screen (the game itself returns grid/cursor contents
+    // to the inventory) and calls this so the shadow overlay stops
+    // asserting the mid-job state: without it every retry places into
+    // the occupied grid (status 50) and the ingredients parked in the
+    // grid read as "not in inventory" — the identical-failure cascade
+    // measured on the user's run 2026-11-17. Dropping the whole overlay
+    // is deliberate: after a failure the memory model + server syncs
+    // are the only trustworthy source, and plans are rebuilt from a
+    // fresh snapshot anyway.
+    void resetAfterFailure() {
+        {
+            std::lock_guard lock(shadowMutex_);
+            shadow_.clear();
+        }
+        job_.grid.clear();
+        job_.resultStack = 0;
+        job_.resultCount = 0;
+        job_.pending = 0;
+        status_ = CraftJobStatus::Idle;
+        detail_.clear();
+        note("craft: shadow reset after failure");
+    }
 
     // One-shot place transfer between arbitrary containers (furnace
     // loading is the first user: inventory -> input 25/0, fuel 24/1 on

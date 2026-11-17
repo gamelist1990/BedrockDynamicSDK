@@ -35,6 +35,11 @@ public:
             if (!BDS_HookOwnsTarget(BDS_HOOK_RENDER_LEVEL, target_)) native_profile::checked(root, functions.at("render_level"));
             begin_ = reinterpret_cast<Begin>(native_profile::checked(root, functions.at("begin")));
             vertex_ = reinterpret_cast<Vertex>(native_profile::checked(root, functions.at("vertex")));
+            // Optional: a profile without the tessellator colour entry
+            // keeps the old (uniform-only) behaviour instead of losing
+            // the whole renderer.
+            try { color_ = reinterpret_cast<Color>(native_profile::checked(root, functions.at("color"))); }
+            catch (...) { color_ = nullptr; }
             submit_ = reinterpret_cast<Submit>(native_profile::checked(root, functions.at("render_mesh")));
             name_ = reinterpret_cast<Name>(native_profile::checked(root, functions.at("hashed_name_ctor")));
             material_ = reinterpret_cast<Material>(native_profile::checked(root, functions.at("material_ctor")));
@@ -102,6 +107,15 @@ private:
             const unsigned char dirty = 1;
             if (!write(shader, 0, color) || !write(shader, layout_.dirty, dirty)) return false;
             begin_(tess, 0, topology, static_cast<int>(count), false);
+            // Bake the batch colour into the vertices themselves. The
+            // shader-colour write above only tints materials that read
+            // the uniform; the tessellator's current vertex colour is
+            // separate state this renderer never set, so on the real
+            // renderer the inherited colour (black) multiplied every
+            // line to black regardless of the uniform (user-reported:
+            // lines always black on Windows; Wine happened to inherit
+            // white). Tessellator::color applies to subsequent vertices.
+            if (color_) color_(tess, color[0], color[1], color[2], color[3]);
             for (std::size_t i=0; i<count; ++i) {
                 const auto& point = vertices[start+i]; vertex_(tess, point.x, point.y, point.z);
             }
@@ -112,12 +126,13 @@ private:
     }
     using Begin = void(__fastcall*)(void*,int,int,int,bool);
     using Vertex = void(__fastcall*)(void*,float,float,float);
+    using Color = void(__fastcall*)(void*,float,float,float,float);
     using Submit = void(__fastcall*)(void*,void*,void*,void*);
     using Name = void*(__fastcall*)(void*,const char*);
     using Material = void*(__fastcall*)(void*,void*,const void*);
     WorldRenderProfile layout_;
     void *target_{}, *group_{};
-    Begin begin_{}; Vertex vertex_{}; Submit submit_{}; Name name_{}; Material material_{};
+    Begin begin_{}; Vertex vertex_{}; Color color_{}; Submit submit_{}; Name name_{}; Material material_{};
     alignas(16) std::array<std::byte,48> nameStorage_{};
     alignas(16) std::array<std::byte,16> materialStorage_{};
     std::atomic<DWORD> owner_{};
