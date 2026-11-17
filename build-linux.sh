@@ -26,8 +26,8 @@ ROOT=$PWD
 BUILD_ID=${BEDROCK_BUILD_ID:-$(git rev-parse --short HEAD)}
 TOOLCHAIN=$ROOT/linux-xwin-toolchain.cmake
 
-LATEST=1.26.60.5
-LEGACY=1.26.52.3
+LATEST=1.26.65.1
+LEGACY=1.26.60.5
 ALL_MODS="CheckSig Top Freecam HitBox SpeedBuilder TabList Zoom AutoSprint AutoMine Fake GlobalResourcePack"
 LEGACY_MODS="CheckSig Top Freecam HitBox SpeedBuilder TabList Zoom AutoSprint"
 

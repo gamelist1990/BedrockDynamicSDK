@@ -14,7 +14,8 @@ public:
         slot_=native_profile::number(sender.at("sender_send_to_server_slot"));
         commands_=sender.value("path",std::string{})=="MinecraftCommands::client->getPacketSender";
         if(commands_) {
-            if(root.at("target").at("sha256")!="988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a" || slot_!=2)
+            if((root.at("target").at("sha256")!="988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a" &&
+                root.at("target").at("sha256")!="dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88") || slot_!=2)
                 throw std::runtime_error("unsupported MinecraftCommands sender path");
             native_profile::checked(root,sender.at("command_request_path"));
         } else {

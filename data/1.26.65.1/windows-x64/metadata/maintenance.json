@@ -1,0 +1,6 @@
+{
+  "maintenance": {
+    "guide": "docs/profile-maintenance.md",
+    "symbol_policy": "Use stable Minecraft function identifiers; one function definition under symbols, layout references use symbol. Native ABI and version fields are implemented in SDK adapters."
+  }
+}

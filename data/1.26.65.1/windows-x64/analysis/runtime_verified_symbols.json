@@ -1,0 +1,20 @@
+{
+  "analysis": {
+    "runtime_verified_symbols": [
+      "BlockSource::getBlock",
+      "BlockSource::getChunk",
+      "ClientInstance::getLevel",
+      "ClientInstance::getLocalPlayer",
+      "ClientInstance::getRegion",
+      "ClientInstance::getTopScreenName",
+      "CommandRegistry::findCommand",
+      "CommandRegistry::registerCommand",
+      "GuiData::displayClientMessage",
+      "Keyboard::feed",
+      "Level::getRuntimeActorList",
+      "MinecraftGame::isInGame",
+      "MouseDevice::feed",
+      "MultiPlayerLevel::_subTick"
+    ]
+  }
+}

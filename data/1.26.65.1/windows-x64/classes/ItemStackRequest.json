@@ -1,0 +1,19 @@
+{
+ "layouts": {
+  "ItemStackRequest": {
+   "schema": 1,
+   "layout_revision": 1,
+   "pointer_size": 8,
+   "status": "verified",
+   "runtime_verified": true,
+   "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+   "packet_vtable_rva": "0xF15FD00",
+   "request_data_vtable_rva": "0xF161A60",
+   "packet_requests_offset": "0x30",
+   "packet_serialization_version": 5,
+   "request_data_size": "0x48",
+   "action_box_size": "0x60",
+   "verification_scope": "Forged ItemStackRequest packets built to this layout were accepted by a self-hosted BDS 1.26.60.6 across the full manual craft flow (place, craft_recipe, results_deprecated, consume, take) for planks, stick, crafting table, wooden/stone pickaxe and oak boat (2026-11-16). The packet +0x10 connection pointer must be borrowed from a real outgoing packet of the same session; without it the send path drops the packet silently."
+  }
+ }
+}

@@ -1,0 +1,11 @@
+{
+  "analysis": {
+    "runtime_validation": {
+      "status": "partial",
+      "capture_kind": "agent live smoke test (BedrockOnLinux + BDS 1.26.65.1)",
+      "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+      "text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
+      "note": "AutoMine paths verified live 2026-11-17; other mods not yet run on this build"
+    }
+  }
+}

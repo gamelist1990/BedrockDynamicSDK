@@ -1,0 +1,13 @@
+{
+  "analysis": {
+    "mod_runtime_validation": {
+      "AutoMine": {
+        "status": "complete",
+        "authority": "agent-live-verification",
+        "date": "2026-11-17",
+        "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+        "scope": "BedrockOnLinux 1.26.65.1 + self-hosted BDS 1.26.65.1: profile resolution, /mine registration and local execution, block scan/describe, A* mining + collect + goal completion (grass_block x3), expedition wood gather (20 logs), ItemStackRequest crafting (acacia planks, crafting_table, wooden_pickaxe), table place/adopt, inventory snapshot counts"
+      }
+    }
+  }
+}
