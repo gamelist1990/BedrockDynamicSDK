@@ -2359,10 +2359,11 @@ private:
     // out first (solid ground present); anything else is Blocked. Moves:
     // walk (1.0), step up one block (1.6, needs headroom above the current
     // cell), drop 1-3 blocks (1.0 + 0.3/level, Stand landing, clear shaft),
-    // and entering a Dig cell (25.0+: a long detour still beats tunneling,
-    // per the design goal of following real paths). Fluids are never
-    // entered, so routes
-    // stay on land and go around water instead of through it.
+    // and entering a Dig cell at its real break-time cost (blockDigCost:
+    // dirt ~2, stone ~6, deepslate ~9 per blocking block) — the planner
+    // compares tunnelling against the detour honestly and picks the
+    // shortcut when it is genuinely faster. Fluids are never entered, so
+    // routes stay on land and go around water instead of through it.
     enum class CellKind : std::uint8_t { Stand, Dig, Blocked, Bridge };
     struct CellKey {
         int x{}, y{}, z{};
@@ -2395,13 +2396,38 @@ private:
     bool isDiggableCell(const std::string& id) {
         return isSolidCell(id) && localPart(id) != "bedrock";
     }
-    CellKind classifyCell(CellKey c, std::unordered_map<CellKey, CellKind, CellKeyHash>& cache) {
-        if (auto it = cache.find(c); it != cache.end()) return it->second;
+    // Break time of one blocking block, in walk-step units (1.0 = one
+    // walk step): the planner weighs digging through against walking
+    // around with real numbers, so a short tunnel wins when it is
+    // genuinely faster (the old flat 25.0 made almost every detour
+    // "win" on paper, then execution fell back to ad-hoc digging).
+    static double blockDigCost(const std::string& id) {
+        const auto l = localPart(id);
+        if (contains(l, "leaves")) return 1.5;
+        if (l == "dirt" || l == "grass_block" || l == "coarse_dirt" || l == "podzol" ||
+            l == "rooted_dirt" || l == "mud" || contains(l, "sand") || l == "gravel" ||
+            l == "clay" || l == "snow" || l == "soul_soil")
+            return 2.0;
+        if (contains(l, "log") || contains(l, "wood") || contains(l, "planks") ||
+            l == "crafting_table")
+            return 4.0;
+        if (contains(l, "deepslate") || l == "tuff" || l == "basalt") return 9.0;
+        if (l == "obsidian" || l == "crying_obsidian") return 80.0;
+        return 6.0; // stone family and everything else solid
+    }
+    struct CellInfo {
+        CellKind kind{CellKind::Blocked};
+        double digCost{0.0}; // valid when kind == Dig: total enter cost
+    };
+    using CellCache = std::unordered_map<CellKey, CellInfo, CellKeyHash>;
+    CellKind classifyCell(CellKey c, CellCache& cache) {
+        if (auto it = cache.find(c); it != cache.end()) return it->second.kind;
         CellKind kind = CellKind::Blocked;
+        double digCost = 0.0;
         // Never plan a dig through the chain's crafting table.
         if (chainTablePlaced_ && c.x == chainTablePos_.x && c.z == chainTablePos_.z &&
             (c.y == chainTablePos_.y || c.y + 1 == chainTablePos_.y)) {
-            cache.emplace(c, kind);
+            cache.emplace(c, CellInfo{kind, 0.0});
             return kind;
         }
         const auto ground = blockAt({c.x, c.y - 1, c.z});
@@ -2412,8 +2438,12 @@ private:
             isSolidCell(ground)) {
             const bool fP = isPassableCell(feetB), hP = isPassableCell(headB);
             if (fP && hP) kind = CellKind::Stand;
-            else if ((fP || isDiggableCell(feetB)) && (hP || isDiggableCell(headB)))
+            else if ((fP || isDiggableCell(feetB)) && (hP || isDiggableCell(headB))) {
                 kind = CellKind::Dig;
+                digCost = 1.0; // the step itself
+                if (!fP) digCost += blockDigCost(feetB);
+                if (!hP) digCost += blockDigCost(headB);
+            }
         }
         if (kind == CellKind::Blocked && planSpares_ > 0 &&
             !ground.empty() && isAir(ground) &&
@@ -2445,8 +2475,20 @@ private:
             }
             if (anchor) kind = CellKind::Bridge;
         }
-        cache.emplace(c, kind);
+        // Cells the follower physically failed on during this target
+        // are planned around on the next attempt (the obstruction is
+        // fed back into the planner instead of being re-walked into).
+        if (planBlocked_.count(c) && kind != CellKind::Blocked) {
+            kind = CellKind::Blocked;
+            digCost = 0.0;
+        }
+        cache.emplace(c, CellInfo{kind, digCost});
         return kind;
+    }
+    double digCostOf(CellKey c, CellCache& cache) {
+        classifyCell(c, cache);
+        const auto it = cache.find(c);
+        return it == cache.end() ? 25.0 : it->second.digCost;
     }
 
     // Spare blocks are whatever mining piles up; bridging consumes them
@@ -2492,14 +2534,15 @@ private:
     // navigation, which walked it into walls and water. Only a path that
     // has been fully consumed is worthless.
     void discardPathIfExhausted() {
-        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0; }
+        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0; pathPartial_ = false; }
     }
 
     bool planPath(bedrock::Vec3 feet) {
         crashrec::Section section("planPath");
+        if (!(planBlockedFor_ == target_)) { planBlocked_.clear(); planBlockedFor_ = target_; }
         pathFor_ = target_;
         planSpares_ = spareCount();
-        std::unordered_map<CellKey, CellKind, CellKeyHash> cache;
+        CellCache cache;
         CellKey start{static_cast<int>(std::floor(feet.x)),
                       static_cast<int>(std::floor(feet.y)),
                       static_cast<int>(std::floor(feet.z))};
@@ -2526,19 +2569,33 @@ private:
         // Goal cells: Stand/Dig cells around the target whose eye point is
         // within mining reach (4.2) of the target centre.
         std::vector<CellKey> goals;
+        bool anyStandGoal = false;
         for (int dx = -1; dx <= 1; ++dx)
             for (int dy = -1; dy <= 2; ++dy)
                 for (int dz = -1; dz <= 1; ++dz) {
                     const CellKey g{target_.x + dx, target_.y + dy, target_.z + dz};
-                    if (classifyCell(g, cache) == CellKind::Blocked) continue;
+                    const auto gk = classifyCell(g, cache);
+                    if (gk == CellKind::Blocked) continue;
                     const double ex = dx, ey = g.y + 1.62 - (target_.y + .5), ez = dz;
-                    if (ex * ex + ey * ey + ez * ez <= 4.2 * 4.2) goals.push_back(g);
+                    if (ex * ex + ey * ey + ez * ez <= 4.2 * 4.2) {
+                        goals.push_back(g);
+                        if (gk == CellKind::Stand) anyStandGoal = true;
+                    }
                 }
         if (goals.empty()) {
             note("path: no standpoint near target");
             discardPathIfExhausted();
             return false;
         }
+        // Heuristic weight: when every standpoint is a Dig cell (an ore
+        // embedded in rock), the approach IS tunnelling — estimate the
+        // cost-to-go at dig prices (~10/step) so the search dives at
+        // the goal instead of flooding every open cave first (measured
+        // 2026-11-17: 24,000 expansions spent in caves a few blocks
+        // from a deepslate diamond ore, no route). With a Stand
+        // standpoint the approach is mostly walking: weight 1.5 keeps
+        // the search goal-directed without giving up detours.
+        const double hWeight = anyStandGoal ? 1.5 : 10.0;
         auto heuristic = [&](const CellKey& c) {
             double best = 1e18;
             for (const auto& g : goals) {
@@ -2546,7 +2603,7 @@ private:
                     (c.x - g.x) * (c.x - g.x) + (c.y - g.y) * (c.y - g.y) + (c.z - g.z) * (c.z - g.z)));
                 if (d < best) best = d;
             }
-            return best;
+            return best * hWeight;
         };
         struct OpenNode {
             double f; CellKey c;
@@ -2560,14 +2617,22 @@ private:
         gScore[start] = 0;
         open.push({heuristic(start), start});
         constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        constexpr int kMaxExpansions = 9000;
+        constexpr int kMaxExpansions = 24000;
         int expansions = 0;
         CellKey found{}; bool haveFound = false;
+        // Best-effort fallback (the Baritone approach): if the budget
+        // dies before a goal cell is reached, keep the path to the
+        // closest expanded node — following it makes real progress
+        // and the next plan starts from there, instead of declaring
+        // "no route" while embedded in diggable rock.
+        CellKey bestNode = start;
+        double bestH = heuristic(start);
         while (!open.empty() && expansions < kMaxExpansions) {
             const OpenNode cur = open.top(); open.pop();
             const double cg = gScore.count(cur.c) ? gScore[cur.c] : 1e18;
             if (cur.f > cg + heuristic(cur.c) + 1e-9) continue; // stale entry
             ++expansions;
+            { const double h = heuristic(cur.c); if (h < bestH - 1e-9) { bestH = h; bestNode = cur.c; } }
             if (std::find(goals.begin(), goals.end(), cur.c) != goals.end()) {
                 found = cur.c; haveFound = true; break;
             }
@@ -2587,20 +2652,37 @@ private:
                     const CellKey n{nx, cur.c.y, nz};
                     const auto k = classifyCell(n, cache);
                     if (k != CellKind::Blocked)
-                        relax(n, k == CellKind::Dig ? 25.0 : k == CellKind::Bridge ? 5.0 : 1.0, k);
+                        relax(n, k == CellKind::Dig ? digCostOf(n, cache)
+                             : k == CellKind::Bridge ? 5.0 : 1.0, k);
                 }
-                {   // step up one block (headroom above the current cell)
+                {   // step up one block: the block above our own head
+                    // is swept during the jump — passable is free,
+                    // diggable adds its break cost (an up-tunnel step),
+                    // anything else refuses the move.
                     const CellKey n{nx, cur.c.y + 1, nz};
                     const auto k = classifyCell(n, cache);
-                    if (k != CellKind::Blocked && k != CellKind::Bridge &&
-                        isPassableCell(blockAt({cur.c.x, cur.c.y + 2, cur.c.z})))
-                        relax(n, k == CellKind::Dig ? 25.6 : 1.6, k);
+                    const auto aboveHead = blockAt({cur.c.x, cur.c.y + 2, cur.c.z});
+                    const bool ahPass = isPassableCell(aboveHead);
+                    const bool ahDig = !ahPass && isDiggableCell(aboveHead);
+                    if (k != CellKind::Blocked && k != CellKind::Bridge && (ahPass || ahDig)) {
+                        double cost = k == CellKind::Dig ? digCostOf(n, cache) + 0.6 : 1.6;
+                        if (ahDig) cost += blockDigCost(aboveHead);
+                        relax(n, cost, k);
+                    }
                 }
                 // drop 1-3 blocks onto a Stand cell, fall shaft passable
                 if (isPassableCell(blockAt({nx, cur.c.y + 1, nz}))) {
                     for (int drop = 1; drop <= 3; ++drop) {
                         const CellKey n{nx, cur.c.y - drop, nz};
-                        if (classifyCell(n, cache) != CellKind::Stand) break;
+                        const auto nk = classifyCell(n, cache);
+                        if (nk == CellKind::Dig) {
+                            // One level only: dig the landing cell's
+                            // feet block out and drop in (a diagonal
+                            // down-tunnel step).
+                            if (drop == 1) relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
+                            break;
+                        }
+                        if (nk != CellKind::Stand) break;
                         bool shaft = true;
                         for (int k2 = 0; k2 < drop; ++k2)
                             if (!isPassableCell(blockAt({nx, cur.c.y - k2, nz}))) { shaft = false; break; }
@@ -2609,11 +2691,28 @@ private:
                     }
                 }
             }
+            {   // dig straight down: the cell below is a Dig cell whose
+                // feet block is our own floor — dig it out and drop in.
+                // Without this move the planner cannot descend through
+                // rock at all (drops only land on Stand cells), which
+                // is why ore approaches from above degenerated into
+                // unplanned straight-line digging (measured 2026-11-17:
+                // a diamond ore 5 blocks below, 24,000 expansions, no
+                // route and no node closer than the start).
+                const CellKey n{cur.c.x, cur.c.y - 1, cur.c.z};
+                if (classifyCell(n, cache) == CellKind::Dig)
+                    relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
+            }
         }
+        bool partial = false;
         if (!haveFound) {
-            note("path: no route (" + std::to_string(expansions) + " expansions)");
-            discardPathIfExhausted();
-            return false;
+            if (!(bestNode == start) && bestH < heuristic(start) - 1e-9) {
+                found = bestNode; haveFound = true; partial = true;
+            } else {
+                note("path: no route (" + std::to_string(expansions) + " expansions)");
+                discardPathIfExhausted();
+                return false;
+            }
         }
         path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         std::vector<CellKey> cells;
@@ -2640,8 +2739,9 @@ private:
                 pathBridge_.push_back(bridge);
             }
         }
+        pathPartial_ = partial;
         note("path: " + std::to_string(path_.size()) + " waypoints (" +
-             std::to_string(expansions) + " expansions)");
+             std::to_string(expansions) + " expansions)" + (partial ? " partial" : ""));
         return true;
     }
 
@@ -2651,7 +2751,22 @@ private:
         hasTarget_ = true; phase_ = Phase::Mine; mineTicks_ = 0;
         path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0};
+        pathDigResume_ = false;
         note("mine-through: " + targetId_);
+    }
+    // A Dig waypoint ON the planned route: mine it without discarding
+    // the route. The old flow cleared the path and re-planned from a
+    // full rescan after every single block (measured 2026-11-17 in
+    // the diamond approach: one 9,000-expansion replan + rescan per
+    // deepslate block, ~15 s per block). With the route kept, the
+    // follower resumes at the same waypoint the moment the cell
+    // opens and walks the rest of the plan.
+    void enterPathDigCell(BlockPos3 cell, const std::string& id) {
+        savedTarget_ = target_; savedId_ = targetId_;
+        target_ = cell; targetId_ = localPart(id);
+        hasTarget_ = true; phase_ = Phase::Mine; mineTicks_ = 0;
+        pathDigResume_ = true;
+        note("path dig: " + targetId_);
     }
 
     // Fill the current run of bridge waypoints with spare blocks.
@@ -2850,6 +2965,15 @@ private:
         }
         if (pathIdx_ >= path_.size()) {
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            if (pathPartial_) {
+                // A best-effort path that ran out is progress, not a
+                // failure: replan from here without spending the
+                // failure budget, and reset the navigate clock.
+                pathPartial_ = false;
+                pathFor_ = {INT_MIN, 0, 0};
+                navTicks_ = 0;
+                return;
+            }
             if (++replans_ > 2) {
                 note("path exhausted; blacklist target");
                 blacklist_.insert(target_); hasTarget_ = false;
@@ -2887,13 +3011,13 @@ private:
         }
         const BlockPos3 wp = path_[pathIdx_];
         if (pathDig_[pathIdx_]) {
-            // Mine out this waypoint's blocking cell, then re-plan (the
-            // Mine phase restores the real target via the saved goal).
+            // Mine out this waypoint's blocking cell, keeping the
+            // route: the Mine completion resumes following it.
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
             const auto feetId = blockAt({wp.x, wp.y, wp.z});
             const auto headId = blockAt({wp.x, wp.y + 1, wp.z});
-            if (isDiggableCell(feetId)) { enterMineCell({wp.x, wp.y, wp.z}, feetId); return; }
-            if (isDiggableCell(headId)) { enterMineCell({wp.x, wp.y + 1, wp.z}, headId); return; }
+            if (isDiggableCell(feetId)) { enterPathDigCell({wp.x, wp.y, wp.z}, feetId); return; }
+            if (isDiggableCell(headId)) { enterPathDigCell({wp.x, wp.y + 1, wp.z}, headId); return; }
             ++pathIdx_; // already cleared somehow: move on
             return;
         }
@@ -2978,7 +3102,21 @@ private:
                         blacklist_.insert(target_); hasTarget_ = false;
                         path_.clear(); pathDig_.clear(); pathBridge_.clear();
                         phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
-                    } else pathFor_ = {INT_MIN, 0, 0};
+                    } else {
+                        // Feed the obstruction back into the planner:
+                        // the waypoint we could not enter (and the
+                        // cell physically in front) is planned around
+                        // on the next attempt instead of re-walked.
+                        if (pathIdx_ < path_.size() && planBlocked_.size() < 64) {
+                            const BlockPos3 w = path_[pathIdx_];
+                            planBlockedFor_ = target_;
+                            planBlocked_.insert({w.x, w.y, w.z});
+                            note("path: replan around blocked cell " +
+                                 std::to_string(w.x) + "," + std::to_string(w.y) + "," +
+                                 std::to_string(w.z));
+                        }
+                        pathFor_ = {INT_MIN, 0, 0};
+                    }
                     return;
                 }
             } else stuckTicks_ = 0;
@@ -3218,6 +3356,18 @@ private:
             setAttack(false);
             ++mined_;
             note("mined " + targetId_ + " total=" + std::to_string(mined_));
+            if (!savedId_.empty() && pathDigResume_ && !contains(targetId_, "_ore")) {
+                // A route cell (not an ore — ore drops detour through
+                // Collect as before): restore the goal and resume
+                // following the kept path at the same waypoint. The
+                // drop falls on the route cell, which the follower is
+                // about to walk through anyway.
+                pathDigResume_ = false;
+                target_ = savedTarget_; targetId_ = savedId_; savedId_.clear();
+                mineTicks_ = 0; navTicks_ = 0;
+                phase_ = Phase::Navigate;
+                return;
+            }
             if (!savedId_.empty()) {
                 // A leaf occluder drops nothing worth collecting, and
                 // the Collect detour forced a full A* replan before the
@@ -3261,6 +3411,7 @@ private:
                     // rather than break the table.
                     note("target occluded by the crafting table; rescan");
                     setAttack(false);
+                    pathDigResume_ = false;
                     blacklist_.insert(savedId_.empty() ? target_ : savedTarget_);
                     if (!savedId_.empty()) { targetId_ = savedId_; savedId_.clear(); }
                     hasTarget_ = false;
@@ -3289,6 +3440,7 @@ private:
         ++mineTicks_;
         if (mineTicks_ > 20 * 12) {
             note("mine timeout; blacklist");
+            pathDigResume_ = false;
             setAttack(false);
             // In mine-through mode target_ is the occluder cell, not the
             // goal: blacklist the goal cell (same rule as the crafting
@@ -3325,6 +3477,7 @@ private:
     // occlusion detour had stashed (no-op for direct targets).
     // Same restore as the Escape path: cell and id together.
     void restoreMineThroughGoal() {
+        pathDigResume_ = false; // any Collect/Escape exit ends the route resume
         if (!savedId_.empty()) {
             target_ = savedTarget_; targetId_ = savedId_; savedId_.clear();
         }
@@ -5483,6 +5636,10 @@ private:
     int planSpares_{};
     std::set<BlockPos3> bridgeBlocked_;
     std::size_t pathIdx_{0};
+    bool pathDigResume_{};
+    bool pathPartial_{};
+    std::unordered_set<CellKey, CellKeyHash> planBlocked_;
+    BlockPos3 planBlockedFor_{INT_MIN, 0, 0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
     BlockPos3 planFailFor_{INT_MIN, 0, 0};
     int planFailTick_ = -100000;
