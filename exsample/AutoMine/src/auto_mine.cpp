@@ -3718,6 +3718,31 @@ private:
         return 0;
     }
     void tickPlaceTable(bedrock::Vec3 feet) {
+        // A table placed by an earlier pulse (or an earlier chain
+        // attempt) may sit in a neighbour cell this step never
+        // re-checks: adopt any reachable table next to the player
+        // before pulsing (measured 2026-11-17: four tables on the
+        // ground while the chain kept timing out on placement).
+        {
+            bedrock::Vec3 eye0;
+            if (eyePos(eye0)) {
+                const int fx = static_cast<int>(std::floor(feet.x));
+                const int fy = static_cast<int>(std::floor(feet.y));
+                const int fz = static_cast<int>(std::floor(feet.z));
+                const BlockPos3 nbs[4] = {{fx + 1, fy, fz}, {fx - 1, fy, fz},
+                                          {fx, fy, fz + 1}, {fx, fy, fz - 1}};
+                for (const auto& nb : nbs) {
+                    if (!contains(localPart(blockAt(nb)), "crafting_table")) continue;
+                    BlockPos3 occ;
+                    if (!lineOfSight(eye0, nb, occ)) continue;
+                    chainTablePos_ = nb;
+                    chainTablePlaced_ = true;
+                    note("craft chain: adopting nearby table");
+                    chainAdvance();
+                    return;
+                }
+            }
+        }
         if (chainStepTicks_ > 20 * 25) { chainFail("作業台を置けなかった"); return; }
         if (!game_.gameplayActive()) {
             // Same leftover-screen guard as tickPlaceFurnace: a screen
@@ -4335,6 +4360,28 @@ private:
         }
     }
     void tickPlaceFurnace(bedrock::Vec3 feet) {
+        // Same neighbour re-check as tickPlaceTable: a furnace placed
+        // by an earlier pulse may sit in a cell this step no longer
+        // watches; adopt any reachable furnace next to the player.
+        {
+            bedrock::Vec3 eye0;
+            if (eyePos(eye0)) {
+                const int fx = static_cast<int>(std::floor(feet.x));
+                const int fy = static_cast<int>(std::floor(feet.y));
+                const int fz = static_cast<int>(std::floor(feet.z));
+                const BlockPos3 nbs[4] = {{fx + 1, fy, fz}, {fx - 1, fy, fz},
+                                          {fx, fy, fz + 1}, {fx, fy, fz - 1}};
+                for (const auto& nb : nbs) {
+                    if (!contains(localPart(blockAt(nb)), "furnace")) continue;
+                    BlockPos3 occ;
+                    if (!lineOfSight(eye0, nb, occ)) continue;
+                    smeltFurnacePos_ = nb; smeltPlaced_ = true;
+                    note("smelt: adopting nearby furnace");
+                    smeltAdvance();
+                    return;
+                }
+            }
+        }
         if (smeltTicks_ > 20 * 25) { smeltFail("かまどを置けなかった"); return; }
         if (!game_.gameplayActive()) {
             // A leftover inventory screen eats every use pulse, so
