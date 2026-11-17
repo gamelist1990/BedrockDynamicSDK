@@ -61,6 +61,7 @@ using namespace std::chrono_literals;
 // Win32 virtual keys, matching the values the native HID route uses.
 constexpr unsigned kKeyW = 0x57, kKeyA = 0x41, kKeyS = 0x53, kKeyD = 0x44;
 constexpr unsigned kKeySpace = 0x20;
+constexpr unsigned kKeySprint = 0xA2; // VK_LCONTROL: Bedrock's sprint key
 constexpr unsigned kKeySneak = 0x10; // VK_SHIFT: dismount / sneak
 
 std::string lower(std::string value) {
@@ -748,7 +749,7 @@ private:
             attackHeld_ = down;
     }
     void releaseInputs() {
-        for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace, kKeySneak}) {
+        for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace, kKeySneak, kKeySprint}) {
             if (heldKeys_.erase(key)) { try { keyboard().release(key); } catch (...) {} }
         }
         if (attackHeld_) { try { feedButton(false); mouse().setDown(bedrock::MouseButton::Left, false); } catch (...) {} attackHeld_ = false; }
@@ -2063,6 +2064,9 @@ private:
         }
         tickExpedition(feet);
         markSection();
+        // Sprint is a Navigate-only state; every other phase clears
+        // it every tick (pressKey dedups, so this is free).
+        if (phase_ != Phase::Navigate) pressKey(kKeySprint, false);
         switch (phase_) {
         case Phase::Scan: tickScan(feet); break;
         case Phase::Navigate: tickNavigate(feet); break;
@@ -3100,6 +3104,32 @@ private:
             if (std::abs(err) > 65.0) wDown = false;
         }
         pressKey(kKeyW, wDown);
+        // Sprint on real straights: W held, the aim point well ahead,
+        // and the next stretch level walking (no dig/bridge/step-up
+        // coming). On long level stretches, sprint-jump: a short jump
+        // pulse on a ~13-tick cycle is the fastest land movement.
+        bool sprintJump = false;
+        {
+            bool wantSprint = false;
+            if (wDown) {
+                // Distance to the END of the route (the lookahead aim
+                // point is capped ~2 blocks out and would never pass
+                // the sprint threshold).
+                const BlockPos3& last = path_.back();
+                const double aimDist = std::hypot(last.x + .5 - feet.x, last.z + .5 - feet.z);
+                bool levelAhead = true;
+                int levelRun = 0;
+                for (std::size_t i = pathIdx_; i < path_.size() && i < pathIdx_ + 4; ++i) {
+                    if (pathDig_[i] || pathBridge_[i] || path_[i].y != feetCellY) { levelAhead = false; break; }
+                    ++levelRun;
+                }
+                wantSprint = aimDist >= 4.0 && levelAhead;
+                sprintJump = wantSprint && levelRun >= 3 && aimDist >= 6.0;
+            }
+            if (wantSprint && !sprintWasOn_) note(sprintJump ? "sprint-jump" : "sprint");
+            sprintWasOn_ = wantSprint;
+            pressKey(kKeySprint, wantSprint);
+        }
         // Jump only when the step-up is actually at our feet (the old code
         // held jump whenever any upcoming waypoint was higher, bunny-
         // hopping across flat ground toward a distant rise).
@@ -3110,6 +3140,10 @@ private:
                 jump = std::hypot(path_[i].x + .5 - feet.x, path_[i].z + .5 - feet.z) < 1.7;
                 break;
             }
+        }
+        if (sprintJump) {
+            jump = (tickCount_ % 13) < 2;
+            jumpHoldTicks_ = 0; // sprint jumps are not step-up attempts
         }
         pressKey(kKeySpace, jump);
         // Jump watchdog: a genuine step-up gains the level within a
@@ -3326,6 +3360,7 @@ private:
             }
         }
         pressKey(kKeyW, true);
+        pressKey(kKeySprint, dist > 6.0); // legacy straight-line travel sprints too
         // Stuck handling: jump, then mine through the blocker.
         ++navTicks_;
         if (navTicks_ % 10 == 0) {
@@ -5682,6 +5717,7 @@ private:
     bool pathPartial_{};
     int jumpHoldTicks_{};
     int jumpBaseY_{INT_MIN};
+    bool sprintWasOn_{};
     std::unordered_set<CellKey, CellKeyHash> planBlocked_;
     BlockPos3 planBlockedFor_{INT_MIN, 0, 0};
     BlockPos3 pathFor_{INT_MIN, 0, 0};
