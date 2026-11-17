@@ -2056,7 +2056,7 @@ private:
         const auto l = localPart(id);
         return l == "grass" || l == "short_grass" || l == "tall_grass" || l == "fern" ||
                l == "large_fern" || l == "snow_layer" || l == "dead_bush" ||
-               l == "leaf_litter" || l == "bush" ||
+               l == "leaf_litter" || l == "bush" || l == "vine" ||
                contains(l, "flower") || contains(l, "sapling") || contains(l, "carpet") ||
                l == "torch" || l == "wall_torch";
     }
@@ -2912,7 +2912,12 @@ private:
         if (mineTicks_ > 20 * 12) {
             note("mine timeout; blacklist");
             setAttack(false);
-            blacklist_.insert(target_); hasTarget_ = false;
+            // In mine-through mode target_ is the occluder cell, not the
+            // goal: blacklist the goal cell (same rule as the crafting
+            // table occlusion branch), or the scan re-picks the same
+            // unreachable goal forever (measured 2026-11-17 on a vine-
+            // occluded jungle log: 120 timeouts on one cell).
+            blacklist_.insert(savedId_.empty() ? target_ : savedTarget_); hasTarget_ = false;
             if (!savedId_.empty()) { targetId_ = savedId_; savedId_.clear(); }
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
         }
