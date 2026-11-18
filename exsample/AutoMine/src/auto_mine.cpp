@@ -5621,6 +5621,7 @@ private:
         ascendStepTicks_ = 0; ascendStepY_ = INT_MAX;
         ascendShiftActive_ = false;
         ascendDirX_ = 1; ascendDirZ_ = 0;
+        ascendShaftTicks_ = 0; ascendShaftBestDist_ = 1e18;
         reply(replyText);
         note(noteText);
     }
@@ -5761,6 +5762,19 @@ private:
         if (descendShaftCell_.x != INT_MIN && fy <= descendShaftCell_.y + 2) {
             const double sdx = descendShaftCell_.x + .5 - feet.x;
             const double sdz = descendShaftCell_.z + .5 - feet.z;
+            const double sdist = std::hypot(sdx, sdz);
+            if (sdist < ascendShaftBestDist_ - 0.5) {
+                ascendShaftBestDist_ = sdist;
+                ascendShaftTicks_ = 0;
+            } else if (++ascendShaftTicks_ > 20 * 60) {
+                // The shaft cannot be reached from here (caved
+                // in, walled off, no route): stop walking and
+                // let the staircase dig up from where we stand.
+                note("ascend: shaft walk-back made no progress; digging up from here");
+                descendShaftCell_.x = INT_MIN;
+                ascendShaftTicks_ = 0;
+                return;
+            }
             if (sdx * sdx + sdz * sdz > 1.2 * 1.2) {
                 target_ = descendShaftCell_; targetId_ = "ascend_shaft"; hasTarget_ = true;
                 if (!(pathFor_ == target_)) {
@@ -7653,6 +7667,8 @@ private:
     bool ascendShiftActive_{};
     BlockPos3 ascendShiftCell_{};
     BlockPos3 descendShaftCell_{INT_MIN, 0, 0};
+    int ascendShaftTicks_{};
+    double ascendShaftBestDist_{1e18};
     // Hunt state
     int huntDirX_{1}, huntDirZ_{};
     int huntStage_{}, huntCells_{}, huntTicks_{};
