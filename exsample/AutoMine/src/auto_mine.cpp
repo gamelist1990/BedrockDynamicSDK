@@ -5648,7 +5648,8 @@ private:
             else { phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; }
             return;
         }
-        if (ascendLastY_ == INT_MAX || fy > ascendLastY_) { ascendLastY_ = fy; ascendStuck_ = 0; }
+        if (ascendLastY_ == INT_MAX) { ascendLastRiseTick_ = tickCount_; ascendShifts_ = 0; }
+        if (ascendLastY_ == INT_MAX || fy > ascendLastY_) { ascendLastY_ = fy; ascendStuck_ = 0; ascendLastRiseTick_ = tickCount_; }
         if (fy >= ascendNoteY_ + 10) { ascendNoteY_ = fy; note("ascend: y=" + std::to_string(fy)); }
         if (++ascendStuck_ > 20 * 15 || ascendTicks_ > 20 * 1800) {
             note("ascend fail: stuck=" + std::to_string(ascendStuck_) +
@@ -5659,6 +5660,53 @@ private:
             expFail("地上へ戻れなかった");
             phase_ = Phase::Idle;
             return;
+        }
+        // No-rise budget: dig completions reset ascendStuck_ and
+        // ascendTicks_ only advances outside dig detours, so a
+        // climb whose place window never opens could loop forever
+        // (measured 2026-11-18: fy pinned at -53 for 13+ min in a
+        // natural pocket, then the same loop at a cliff base).
+        // 90 s of real time (dig detours included, via tickCount_)
+        // without gaining a level moves the climb to a
+        // neighbouring column; after 4 shifts it gives up through
+        // the normal fail path instead of looping.
+        if (tickCount_ - ascendLastRiseTick_ > 20 * 90) {
+            BlockPos3 shiftCell{INT_MIN, 0, 0};
+            if (ascendShifts_ < 4) {
+                const int fx = static_cast<int>(std::floor(feet.x));
+                const int fz = static_cast<int>(std::floor(feet.z));
+                static const int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (const auto& d : kDirs) {
+                    const int nx = fx + d[0], nz = fz + d[1];
+                    if (!isPassableCell(blockAt({nx, fy, nz})) ||
+                        !isPassableCell(blockAt({nx, fy + 1, nz}))) continue;
+                    const auto floorId = blockAt({nx, fy - 1, nz});
+                    if (isPassableCell(floorId) ||
+                        contains(localPart(floorId), "water") ||
+                        contains(localPart(floorId), "lava")) continue;
+                    const auto cap = blockAt({nx, fy + 2, nz});
+                    if (!isPassableCell(cap) && !isDiggableCell(cap)) continue;
+                    shiftCell = {nx, fy, nz};
+                    break;
+                }
+            }
+            if (shiftCell.x != INT_MIN) {
+                ++ascendShifts_;
+                ascendLastRiseTick_ = tickCount_;
+                ascendCenterCell_ = shiftCell;
+                ascendCenterActive_ = true;
+                ascendCenterGiveUp_ = false;
+                ascendCenterTicks_ = 0;
+                note("ascend: no rise for 90s; shifting the climb column to " +
+                     std::to_string(shiftCell.x) + "," + std::to_string(shiftCell.z));
+            } else {
+                note("ascend fail: no rise for 90s and no column to shift to" 
+                     " fy=" + std::to_string(fy));
+                releaseInputs();
+                expFail("地上へ戻れなかった");
+                phase_ = Phase::Idle;
+                return;
+            }
         }
         int slot = spareSlot();
         if (slot >= 0) ascendPullTicks_ = 0; // the pull budget is per shortage, not per climb
@@ -5744,10 +5792,36 @@ private:
         // at fy=-51 interleaved with standing notes at y=-52,
         // zero net rise).
         if (feet.y - fy < 0.05) {
+            // The cap scan covers EVERY column the AABB overlaps,
+            // not just the feet column: the box is 0.6 wide, so an
+            // off-centre stance straddles up to four columns, and
+            // a solid block at fy+2 in any of them caps the jump
+            // at ~0.2 so the place window (rise >= 1) never opens.
+            // Digging only the feet column's cap looped forever in
+            // a natural pocket and at a cliff base (measured
+            // 2026-11-18: fy pinned at -53 for 13+ min, the head
+            // types cycling through the bot's own spare blocks).
             const int fx = static_cast<int>(std::floor(feet.x));
             const int fz = static_cast<int>(std::floor(feet.z));
-            const auto headId = blockAt({fx, fy + 2, fz});
-            if (isDiggableCell(headId) && !isPassableCell(headId)) {
+            const int minCx = static_cast<int>(std::floor(feet.x - 0.3));
+            const int maxCx = static_cast<int>(std::floor(feet.x + 0.3));
+            const int minCz = static_cast<int>(std::floor(feet.z - 0.3));
+            const int maxCz = static_cast<int>(std::floor(feet.z + 0.3));
+            BlockPos3 capCell{INT_MIN, 0, 0};
+            std::string capId;
+            for (int pass = 0; pass < 2 && capId.empty(); ++pass)
+                for (int cx = minCx; cx <= maxCx && capId.empty(); ++cx)
+                    for (int cz = minCz; cz <= maxCz; ++cz) {
+                        const bool feetCol = (cx == fx && cz == fz);
+                        if ((pass == 0) != feetCol) continue;
+                        const auto id = blockAt({cx, fy + 2, cz});
+                        if (isDiggableCell(id) && !isPassableCell(id)) {
+                            capCell = {cx, fy + 2, cz};
+                            capId = id;
+                            break;
+                        }
+                    }
+            if (!capId.empty()) {
                 // Dig the ceiling out through tickMine, the
                 // proven driver. digCell's own hold never broke
                 // an overhead block in this geometry (repeated
@@ -5761,11 +5835,11 @@ private:
                 for (const auto& s : hotbarItems())
                     if (s.count > 0 && contains(s.id, "pickaxe")) { havePick = true; break; }
                 if (havePick) {
-                    note("ascend dig: via mine, head=" + headId +
+                    note("ascend dig: via mine, head=" + capId +
                          " fy=" + std::to_string(fy));
                     ascendDig_ = true;
-                    target_ = {fx, fy + 2, fz};
-                    targetId_ = localPart(headId);
+                    target_ = capCell;
+                    targetId_ = localPart(capId);
                     savedId_.clear();
                     hasTarget_ = true;
                     mineTicks_ = 0;
@@ -7385,6 +7459,8 @@ private:
     bool ascendCenterGiveUp_{};
     BlockPos3 ascendCenterCell_{};
     int ascendCenterTicks_{};
+    int ascendLastRiseTick_{};
+    int ascendShifts_{};
     // Hunt state
     int huntDirX_{1}, huntDirZ_{};
     int huntStage_{}, huntCells_{}, huntTicks_{};
