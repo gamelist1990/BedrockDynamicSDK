@@ -5676,7 +5676,16 @@ private:
         if (ascendLastY_ == INT_MAX) { ascendLastRiseTick_ = tickCount_; ascendShifts_ = 0; }
         if (ascendLastY_ == INT_MAX || fy > ascendLastY_) { ascendLastY_ = fy; ascendStuck_ = 0; ascendLastRiseTick_ = tickCount_; }
         if (fy >= ascendNoteY_ + 10) { ascendNoteY_ = fy; note("ascend: y=" + std::to_string(fy)); }
-        if (++ascendStuck_ > 20 * 15 || ascendTicks_ > 20 * 1800) {
+        // While the phase-A walk-back is engaged, fy is not
+        // supposed to rise — the shaft-progress clock below is
+        // the guard there, so the rise-based guards stand down
+        // (measured 2026-11-18: the walk-back's dig detours held
+        // fy for minutes and the 15 s stuck guard killed a climb
+        // that was still progressing toward the shaft).
+        const bool shaftWalk = descendShaftCell_.x != INT_MIN &&
+                               fy <= descendShaftCell_.y + 2;
+        if (shaftWalk) ascendLastRiseTick_ = tickCount_;
+        if ((!shaftWalk && ++ascendStuck_ > 20 * 50) || ascendTicks_ > 20 * 1800) {
             note("ascend fail: stuck=" + std::to_string(ascendStuck_) +
                  " ticks=" + std::to_string(ascendTicks_) +
                  " fy=" + std::to_string(fy) +
@@ -5691,11 +5700,13 @@ private:
         // climb whose place window never opens could loop forever
         // (measured 2026-11-18: fy pinned at -53 for 13+ min in a
         // natural pocket, then the same loop at a cliff base).
-        // 90 s of real time (dig detours included, via tickCount_)
+        // 40 s of real time (dig detours included, via tickCount_)
         // without gaining a level moves the climb to a
-        // neighbouring column; after 4 shifts it gives up through
-        // the normal fail path instead of looping.
-        if (tickCount_ - ascendLastRiseTick_ > 20 * 90) {
+        // neighbouring column — ahead of the 50 s stuck fail above
+        // so a shiftable stall recovers instead of failing; after
+        // 4 shifts it gives up through the normal fail path
+        // instead of looping.
+        if (tickCount_ - ascendLastRiseTick_ > 20 * 40) {
             BlockPos3 shiftCell{INT_MIN, 0, 0};
             if (ascendShifts_ < 4) {
                 const int fx = static_cast<int>(std::floor(feet.x));
@@ -5721,10 +5732,10 @@ private:
                 ascendShiftCell_ = shiftCell;
                 ascendShiftActive_ = true;
                 ascendStepTicks_ = 0;
-                note("ascend: no rise for 90s; shifting the climb column to " +
+                note("ascend: no rise for 40s; shifting the climb column to " +
                      std::to_string(shiftCell.x) + "," + std::to_string(shiftCell.z));
             } else {
-                note("ascend fail: no rise for 90s and no column to shift to" 
+                note("ascend fail: no rise for 40s and no column to shift to" 
                      " fy=" + std::to_string(fy));
                 releaseInputs();
                 expFail("地上へ戻れなかった");
@@ -7374,7 +7385,7 @@ private:
         // sub-state notices the missing tool first (the hunt's
         // tunnel digs fail silently without entering NeedTool, and
         // a gather with no reachable ore never tries to mine).
-        if (tickCount_ % 20 == 0 && !chainActive_ && !ascendDig_ &&
+        if (tickCount_ % 20 == 0 && !chainActive_ && !ascendDig_ && !ascendActive_ &&
             (expStage_ == ExpStage::HuntIron || expStage_ == ExpStage::HuntOre) &&
             phase_ != Phase::Ascend && phase_ != Phase::Craft &&
             phase_ != Phase::Smelt && phase_ != Phase::Descend) {
