@@ -1613,6 +1613,7 @@ private:
         hazardZones_.clear();
         path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
+        scaffoldActive_ = false; scaffoldDig_ = false;
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
         boatTriedFor_ = {INT_MIN, 0, 0};
@@ -1793,6 +1794,20 @@ private:
     bool inventoryScreenUp() {
         if (!screenReady_) return false;
         return contains(topScreenName(), "inventory");
+    }
+    // "A screen whose name contains `needle` is on top", judged by
+    // the screen NAME (the ground truth anyScreenUp documents). The
+    // chain and smelt steps used to poll the gameplayActive EVENT
+    // for this, and the event sticks in both directions: steps
+    // advanced into screens that were never open (status-49 crafts,
+    // fail/recover/re-aim loops — the bot turning left and right at
+    // a placed table without crafting, user-reported 2026-11-18),
+    // and Esc pulses meant to close a screen toggled the pause menu
+    // instead. Falls back to the event only when the name is
+    // unreadable (no screen profile).
+    bool screenUp(const char* needle) {
+        if (!screenReady_) return !game_.gameplayActive();
+        return contains(topScreenName(), needle);
     }
     // Ground truth for "some UI screen is on top": the gameplay-
     // active EVENT can stick in the inactive state after a screen
@@ -2630,23 +2645,49 @@ private:
     void updatePath(const bedrock::Vec3& feet) {
         std::vector<bedrock::Vec3> points;
         bool box = false; BlockPos3 boxPos{};
-        if (showPath_ && hasTarget_ && (phase_ == Phase::Navigate || phase_ == Phase::Mine)) {
+        const bool routePhase = phase_ == Phase::Navigate || phase_ == Phase::Mine ||
+                                phase_ == Phase::Collect || phase_ == Phase::NeedTool;
+        if (showPath_ && hasTarget_ && routePhase) {
             const bedrock::Vec3 goal{target_.x + .5f, target_.y + .5f, target_.z + .5f};
-            if (!path_.empty() && phase_ == Phase::Navigate) {
-                // Draw the actual A* route: remaining waypoints, then goal.
-                // Segments are coloured by the kind of cell they enter:
-                // walk = green, dig = yellow, bridge = cyan.
+            if (!path_.empty()) {
+                // Draw the actual A* route: remaining waypoints, then
+                // the planned destination (pathFor_). The route data is
+                // deliberately KEPT across dig detours, drop collection
+                // and tool fetches, so the drawing must not gate on
+                // Navigate either: the old Navigate-only gate made the
+                // line vanish the moment a dig started and after every
+                // mined block (user-reported 2026-11-18: the trajectory
+                // suddenly cuts off while mining). During a detour the
+                // live target_ is the occluder/drop cell, so the line
+                // ends at pathFor_, the route's real destination.
+                const bedrock::Vec3 routeGoal{pathFor_.x + .5f, pathFor_.y + .5f,
+                                              pathFor_.z + .5f};
                 std::vector<bedrock::Vec3> walk, dig, bridge;
                 bedrock::Vec3 prev{feet.x, feet.y + 0.25f, feet.z};
                 auto seg = [&](const bedrock::Vec3& to, std::size_t i) {
                     auto& dst = (i < path_.size() && pathBridge_[i]) ? bridge
                                 : (i < path_.size() && pathDig_[i]) ? dig : walk;
-                    dst.push_back(prev); dst.push_back(to); prev = to;
+                    // Subdivide into ~1-block steps so the drawn line
+                    // passes through EVERY future position on the route
+                    // in order, not just the compressed waypoints
+                    // (user request 2026-11-18).
+                    const double sx = to.x - prev.x, sy = to.y - prev.y, sz = to.z - prev.z;
+                    const double len = std::sqrt(sx * sx + sy * sy + sz * sz);
+                    const int steps = std::clamp(static_cast<int>(std::ceil(len)), 1, 64);
+                    bedrock::Vec3 p = prev;
+                    for (int s2 = 1; s2 <= steps; ++s2) {
+                        const float t = static_cast<float>(s2) / static_cast<float>(steps);
+                        const bedrock::Vec3 q{prev.x + static_cast<float>(sx) * t,
+                                              prev.y + static_cast<float>(sy) * t,
+                                              prev.z + static_cast<float>(sz) * t};
+                        dst.push_back(p); dst.push_back(q); p = q;
+                    }
+                    prev = to;
                 };
                 for (std::size_t i = pathIdx_; i < path_.size(); ++i)
                     seg({path_[i].x + .5f, path_[i].y + 0.3f, path_[i].z + .5f}, i);
-                seg(goal, path_.size());
-                box = true; boxPos = target_;
+                seg(routeGoal, path_.size());
+                box = true; boxPos = pathFor_;
                 std::lock_guard lock(pathMutex_);
                 pathWalk_ = std::move(walk); pathDigLine_ = std::move(dig);
                 pathBridgeLine_ = std::move(bridge);
@@ -3098,123 +3139,161 @@ private:
             double f; CellKey c;
             bool operator<(const OpenNode& o) const noexcept { return f > o.f; } // min-heap
         };
-        std::priority_queue<OpenNode> open;
-        std::unordered_map<CellKey, double, CellKeyHash> gScore;
-        std::unordered_map<CellKey, CellKey, CellKeyHash> cameFrom;
-        std::unordered_map<CellKey, bool, CellKeyHash> digFlag;
-        std::unordered_map<CellKey, bool, CellKeyHash> bridgeFlag;
-        gScore[start] = 0;
-        open.push({heuristic(start), start});
+        // Chained search (the Baritone segment approach): one
+        // 24,000-expansion search only reaches a few blocks into a
+        // long or flooded region, so the route — and its drawn
+        // trajectory — ended there and the rest of the trip fell to
+        // short partials and straight-line walking (user-reported
+        // 2026-11-18: the line only ever showed the next few blocks).
+        // When a search dies partial, continue from its best node
+        // with a fresh search and concatenate, until the goal is
+        // reached, a segment stops improving, or the total budget
+        // (72,000 expansions over at most 4 segments) runs out. The
+        // result is the FULL route to the target, start to goal.
         constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         constexpr int kMaxExpansions = 24000;
+        constexpr int kMaxTotalExpansions = 72000;
+        constexpr int kMaxSegments = 4;
         int expansions = 0;
-        CellKey found{}; bool haveFound = false;
-        // Best-effort fallback (the Baritone approach): if the budget
-        // dies before a goal cell is reached, keep the path to the
-        // closest expanded node — following it makes real progress
-        // and the next plan starts from there, instead of declaring
-        // "no route" while embedded in diggable rock.
-        CellKey bestNode = start;
-        double bestH = heuristic(start);
-        while (!open.empty() && expansions < kMaxExpansions) {
-            const OpenNode cur = open.top(); open.pop();
-            const double cg = gScore.count(cur.c) ? gScore[cur.c] : 1e18;
-            if (cur.f > cg + heuristic(cur.c) + 1e-9) continue; // stale entry
-            ++expansions;
-            { const double h = heuristic(cur.c); if (h < bestH - 1e-9) { bestH = h; bestNode = cur.c; } }
-            if (std::find(goals.begin(), goals.end(), cur.c) != goals.end()) {
-                found = cur.c; haveFound = true; break;
-            }
-            auto relax = [&](const CellKey& next, double cost, CellKind kind) {
-                const double ng = cg + cost;
-                if (!gScore.count(next) || ng < gScore[next] - 1e-9) {
-                    gScore[next] = ng;
-                    cameFrom[next] = cur.c;
-                    digFlag[next] = (kind == CellKind::Dig);
-                    bridgeFlag[next] = (kind == CellKind::Bridge);
-                    open.push({ng + heuristic(next), next});
-                }
-            };
-            for (const auto& d : kDirs) {
-                const int nx = cur.c.x + d[0], nz = cur.c.z + d[1];
-                {   // walk, same level
-                    const CellKey n{nx, cur.c.y, nz};
-                    const auto k = classifyCell(n, cache);
-                    if (k != CellKind::Blocked)
-                        relax(n, k == CellKind::Dig ? digCostOf(n, cache)
-                             : k == CellKind::Bridge ? 5.0 : 1.0, k);
-                }
-                {   // step up one block: the block above our own head
-                    // is swept during the jump — passable is free,
-                    // diggable adds its break cost (an up-tunnel step),
-                    // anything else refuses the move.
-                    const CellKey n{nx, cur.c.y + 1, nz};
-                    const auto k = classifyCell(n, cache);
-                    const auto aboveHead = blockAt({cur.c.x, cur.c.y + 2, cur.c.z});
-                    const bool ahPass = isPassableCell(aboveHead);
-                    const bool ahDig = !ahPass && isDiggableCell(aboveHead);
-                    if (k != CellKind::Blocked && k != CellKind::Bridge && (ahPass || ahDig)) {
-                        double cost = k == CellKind::Dig ? digCostOf(n, cache) + 0.6 : 1.6;
-                        if (ahDig) cost += blockDigCost(aboveHead);
-                        relax(n, cost, k);
-                    }
-                }
-                // drop 1-3 blocks onto a Stand cell, fall shaft passable
-                if (isPassableCell(blockAt({nx, cur.c.y + 1, nz}))) {
-                    for (int drop = 1; drop <= 3; ++drop) {
-                        const CellKey n{nx, cur.c.y - drop, nz};
-                        const auto nk = classifyCell(n, cache);
-                        if (nk == CellKind::Dig) {
-                            // One level only: dig the landing cell's
-                            // feet block out and drop in (a diagonal
-                            // down-tunnel step).
-                            if (drop == 1) relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
-                            break;
-                        }
-                        if (nk != CellKind::Stand) break;
-                        bool shaft = true;
-                        for (int k2 = 0; k2 < drop; ++k2)
-                            if (!isPassableCell(blockAt({nx, cur.c.y - k2, nz}))) { shaft = false; break; }
-                        if (!shaft) break;
-                        relax(n, 1.0 + 0.3 * drop, CellKind::Stand);
-                    }
-                }
-            }
-            {   // dig straight down: the cell below is a Dig cell whose
-                // feet block is our own floor — dig it out and drop in.
-                // Without this move the planner cannot descend through
-                // rock at all (drops only land on Stand cells), which
-                // is why ore approaches from above degenerated into
-                // unplanned straight-line digging (measured 2026-11-17:
-                // a diamond ore 5 blocks below, 24,000 expansions, no
-                // route and no node closer than the start).
-                const CellKey n{cur.c.x, cur.c.y - 1, cur.c.z};
-                if (classifyCell(n, cache) == CellKind::Dig)
-                    relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
-            }
-        }
+        int segments = 0;
         bool partial = false;
-        if (!haveFound) {
-            if (!(bestNode == start) && bestH < heuristic(start) - 1e-9) {
-                found = bestNode; haveFound = true; partial = true;
-            } else {
-                note("path: no route (" + std::to_string(expansions) + " expansions)");
-                discardPathIfExhausted();
-                return false;
-            }
-        }
-        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         std::vector<CellKey> cells;
-        for (CellKey c = found;; c = cameFrom[c]) {
-            cells.push_back(c);
-            if (c == start) break;
+        std::unordered_map<CellKey, bool, CellKeyHash> allDig, allBridge;
+        CellKey segStart = start;
+        bool reachedGoal = false;
+        while (segments < kMaxSegments && expansions < kMaxTotalExpansions) {
+            ++segments;
+            std::priority_queue<OpenNode> open;
+            std::unordered_map<CellKey, double, CellKeyHash> gScore;
+            std::unordered_map<CellKey, CellKey, CellKeyHash> cameFrom;
+            std::unordered_map<CellKey, bool, CellKeyHash> digFlag;
+            std::unordered_map<CellKey, bool, CellKeyHash> bridgeFlag;
+            gScore[segStart] = 0;
+            open.push({heuristic(segStart), segStart});
+            int segExpansions = 0;
+            CellKey found{}; bool haveFound = false;
+            // Best-effort fallback (the Baritone approach): if the
+            // budget dies before a goal cell is reached, keep the
+            // path to the closest expanded node — following it makes
+            // real progress and the next segment starts from there,
+            // instead of declaring "no route" while embedded in
+            // diggable rock.
+            CellKey bestNode = segStart;
+            const double startH = heuristic(segStart);
+            double bestH = startH;
+            while (!open.empty() && segExpansions < kMaxExpansions &&
+                   expansions < kMaxTotalExpansions) {
+                const OpenNode cur = open.top(); open.pop();
+                const double cg = gScore.count(cur.c) ? gScore[cur.c] : 1e18;
+                if (cur.f > cg + heuristic(cur.c) + 1e-9) continue; // stale entry
+                ++segExpansions; ++expansions;
+                { const double h = heuristic(cur.c); if (h < bestH - 1e-9) { bestH = h; bestNode = cur.c; } }
+                if (std::find(goals.begin(), goals.end(), cur.c) != goals.end()) {
+                    found = cur.c; haveFound = true; break;
+                }
+                auto relax = [&](const CellKey& next, double cost, CellKind kind) {
+                    const double ng = cg + cost;
+                    if (!gScore.count(next) || ng < gScore[next] - 1e-9) {
+                        gScore[next] = ng;
+                        cameFrom[next] = cur.c;
+                        digFlag[next] = (kind == CellKind::Dig);
+                        bridgeFlag[next] = (kind == CellKind::Bridge);
+                        open.push({ng + heuristic(next), next});
+                    }
+                };
+                for (const auto& d : kDirs) {
+                    const int nx = cur.c.x + d[0], nz = cur.c.z + d[1];
+                    {   // walk, same level
+                        const CellKey n{nx, cur.c.y, nz};
+                        const auto k = classifyCell(n, cache);
+                        if (k != CellKind::Blocked)
+                            relax(n, k == CellKind::Dig ? digCostOf(n, cache)
+                                 : k == CellKind::Bridge ? 5.0 : 1.0, k);
+                    }
+                    {   // step up one block: the block above our own head
+                        // is swept during the jump — passable is free,
+                        // diggable adds its break cost (an up-tunnel step),
+                        // anything else refuses the move.
+                        const CellKey n{nx, cur.c.y + 1, nz};
+                        const auto k = classifyCell(n, cache);
+                        const auto aboveHead = blockAt({cur.c.x, cur.c.y + 2, cur.c.z});
+                        const bool ahPass = isPassableCell(aboveHead);
+                        const bool ahDig = !ahPass && isDiggableCell(aboveHead);
+                        if (k != CellKind::Blocked && k != CellKind::Bridge && (ahPass || ahDig)) {
+                            double cost = k == CellKind::Dig ? digCostOf(n, cache) + 0.6 : 1.6;
+                            if (ahDig) cost += blockDigCost(aboveHead);
+                            relax(n, cost, k);
+                        }
+                    }
+                    // drop 1-3 blocks onto a Stand cell, fall shaft passable
+                    if (isPassableCell(blockAt({nx, cur.c.y + 1, nz}))) {
+                        for (int drop = 1; drop <= 3; ++drop) {
+                            const CellKey n{nx, cur.c.y - drop, nz};
+                            const auto nk = classifyCell(n, cache);
+                            if (nk == CellKind::Dig) {
+                                // One level only: dig the landing cell's
+                                // feet block out and drop in (a diagonal
+                                // down-tunnel step).
+                                if (drop == 1) relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
+                                break;
+                            }
+                            if (nk != CellKind::Stand) break;
+                            bool shaft = true;
+                            for (int k2 = 0; k2 < drop; ++k2)
+                                if (!isPassableCell(blockAt({nx, cur.c.y - k2, nz}))) { shaft = false; break; }
+                            if (!shaft) break;
+                            relax(n, 1.0 + 0.3 * drop, CellKind::Stand);
+                        }
+                    }
+                }
+                {   // dig straight down: the cell below is a Dig cell whose
+                    // feet block is our own floor — dig it out and drop in.
+                    // Without this move the planner cannot descend through
+                    // rock at all (drops only land on Stand cells), which
+                    // is why ore approaches from above degenerated into
+                    // unplanned straight-line digging (measured 2026-11-17:
+                    // a diamond ore 5 blocks below, 24,000 expansions, no
+                    // route and no node closer than the start).
+                    const CellKey n{cur.c.x, cur.c.y - 1, cur.c.z};
+                    if (classifyCell(n, cache) == CellKind::Dig)
+                        relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
+                }
+            }
+            const bool progressed = !(bestNode == segStart) && bestH < startH - 1.0;
+            const CellKey segEnd = haveFound ? found : bestNode;
+            if (!haveFound && !progressed) {
+                if (cells.empty()) {
+                    note("path: no route (" + std::to_string(expansions) + " expansions)");
+                    discardPathIfExhausted();
+                    return false;
+                }
+                partial = true;
+                break;
+            }
+            // Append this segment's chain (skipping the joint cell
+            // when a previous segment already ended there).
+            std::vector<CellKey> segCells;
+            for (CellKey c = segEnd;; c = cameFrom[c]) {
+                segCells.push_back(c);
+                if (c == segStart) break;
+            }
+            std::reverse(segCells.begin(), segCells.end());
+            for (std::size_t i = cells.empty() ? 0 : 1; i < segCells.size(); ++i) {
+                cells.push_back(segCells[i]);
+                if (digFlag.count(segCells[i])) allDig[segCells[i]] = digFlag[segCells[i]];
+                if (bridgeFlag.count(segCells[i])) allBridge[segCells[i]] = bridgeFlag[segCells[i]];
+            }
+            if (haveFound) { reachedGoal = true; break; }
+            partial = true; // until a later segment reaches the goal
+            segStart = bestNode;
         }
-        std::reverse(cells.begin(), cells.end());
+        (void)reachedGoal;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
         // Keep every Dig cell and every direction/height change; compress
         // straight same-level walking runs to their endpoints.
         for (std::size_t i = 1; i < cells.size(); ++i) {
-            const bool dig = digFlag.count(cells[i]) && digFlag[cells[i]];
-            const bool bridge = bridgeFlag.count(cells[i]) && bridgeFlag[cells[i]];
+            const bool dig = allDig.count(cells[i]) && allDig[cells[i]];
+            const bool bridge = allBridge.count(cells[i]) && allBridge[cells[i]];
             const bool last = (i + 1 == cells.size());
             bool keep = last || dig || bridge;
             if (!keep) {
@@ -3230,7 +3309,8 @@ private:
         }
         pathPartial_ = partial;
         note("path: " + std::to_string(path_.size()) + " waypoints (" +
-             std::to_string(expansions) + " expansions)" + (partial ? " partial" : ""));
+             std::to_string(expansions) + " expansions, " + std::to_string(segments) +
+             " segments)" + (partial ? " partial" : ""));
         return true;
     }
 
@@ -3692,6 +3772,241 @@ private:
         }
     }
 
+    // -- scaffold climb (elevated targets) ----------------------------------
+    // Pillar up beside an elevated target block until it is within
+    // mining reach, then hand over to the normal Mine phase. Modelled
+    // on the ascend pillar (sticky centring, multi-column cap dig via
+    // a tickMine detour, sneak + continuous jump/use), but driven
+    // from Navigate toward a block target instead of a surface goal.
+    bool isScaffoldBlock(const std::string& local) {
+        return isSpareBlock(local) || contains(local, "_log") ||
+               contains(local, "planks");
+    }
+    int scaffoldSlot() { // hotbar slot with the largest scaffold stack
+        const auto slots = hotbarItems();
+        int best = -1, bestCount = 0;
+        for (int i = 0; i < 9; ++i) {
+            const auto& it = slots[static_cast<std::size_t>(i)];
+            if (it.count > bestCount && isScaffoldBlock(localPart(it.id))) {
+                best = i; bestCount = it.count;
+            }
+        }
+        return best;
+    }
+    int scaffoldCount() { // hotbar + main inventory, via the snapshot
+        int n = 0;
+        for (const auto& s : craft_.snapshot())
+            if (s.count && isScaffoldBlock(localPart(s.item))) n += s.count;
+        return n;
+    }
+    bool scaffoldWanted(bedrock::Vec3 feet) {
+        if (navReturn_ || inWaterNow(feet)) return false;
+        const int fy = static_cast<int>(std::floor(feet.y));
+        if (target_.y - fy < 4) return false; // not out of reach upward
+        const double hdx = (target_.x + .5) - feet.x, hdz = (target_.z + .5) - feet.z;
+        if (hdx * hdx + hdz * hdz > 6.0 * 6.0) return false; // walk closer first
+        bool routeUseless = (planFailFor_ == target_) && path_.empty();
+        if (!routeUseless && !path_.empty()) {
+            // A route exists: pre-empt only if it is a pure vertical
+            // dig up the target's own column (the trunk case).
+            bool vertical = true;
+            for (std::size_t i = pathIdx_; i < path_.size(); ++i)
+                if (std::abs(path_[i].x - target_.x) > 1 ||
+                    std::abs(path_[i].z - target_.z) > 1) { vertical = false; break; }
+            routeUseless = vertical;
+        }
+        if (!routeUseless) return false;
+        // A viable pillar stance: a neighbour cell of the target
+        // column at our level with solid ground under a passable
+        // cell, or our own cell already beside the column.
+        bool stance = (hdx * hdx + hdz * hdz <= 1.7 * 1.7);
+        static constexpr int kDX[4] = {1, -1, 0, 0};
+        static constexpr int kDZ[4] = {0, 0, 1, -1};
+        for (int i = 0; i < 4 && !stance; ++i) {
+            const BlockPos3 cell{target_.x + kDX[i], fy, target_.z + kDZ[i]};
+            const auto at = blockAt(cell);
+            const auto ground = blockAt({cell.x, fy - 1, cell.z});
+            if (!at.empty() && isPassableCell(at) && !ground.empty() &&
+                !isAir(ground) && !isPassableCell(ground) &&
+                !contains(localPart(ground), "water"))
+                stance = true;
+        }
+        if (!stance) return false;
+        if (scaffoldCount() < 3) return false;
+        // Engage.
+        scaffoldActive_ = true;
+        scaffoldFor_ = target_; scaffoldId_ = targetId_;
+        scaffoldTicks_ = 0; scaffoldPullTicks_ = 0;
+        scaffoldLastY_ = feet.y; scaffoldRiseTick_ = tickCount_;
+        scaffoldCenterActive_ = false; scaffoldCenterGiveUp_ = false;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+        note("scaffold: climbing to elevated " + targetId_ + " at " +
+             std::to_string(target_.x) + "," + std::to_string(target_.y) + "," +
+             std::to_string(target_.z));
+        return true;
+    }
+    void endScaffold() {
+        scaffoldActive_ = false;
+        pressKey(kKeySpace, false); pressKey(kKeySneak, false);
+        pressKey(kKeyW, false);
+        setUse(false);
+    }
+    void scaffoldFail(const std::string& why) {
+        note("scaffold: giving up (" + why + ")");
+        blacklist_.insert(scaffoldFor_);
+        hasTarget_ = false;
+        endScaffold();
+        releaseInputs();
+        phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+    }
+    bool tickScaffold(bedrock::Vec3 feet) {
+        if (!hasTarget_ || !(target_ == scaffoldFor_)) { endScaffold(); return false; }
+        ++scaffoldTicks_;
+        if (scaffoldTicks_ > 20 * 90) { scaffoldFail("timeout"); return true; }
+        if (feet.y > scaffoldLastY_ + 0.5) {
+            scaffoldLastY_ = feet.y; scaffoldRiseTick_ = tickCount_;
+        }
+        if (tickCount_ - scaffoldRiseTick_ > 200) { scaffoldFail("no rise"); return true; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return true;
+        const bedrock::Vec3 center{scaffoldFor_.x + .5f, scaffoldFor_.y + .5f,
+                                   scaffoldFor_.z + .5f};
+        const double dx = center.x - eye.x, dy = center.y - eye.y, dz = center.z - eye.z;
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) <= 4.0) {
+            // In reach: hand over to the normal mine phase.
+            endScaffold();
+            phase_ = Phase::Mine; mineTicks_ = 0;
+            return true;
+        }
+        const int fy = static_cast<int>(std::floor(feet.y));
+        // Walk to the base of the target column first (ground-level
+        // approach); the climb itself starts beside the column.
+        const double hdx = center.x - feet.x, hdz = center.z - feet.z;
+        if (std::hypot(hdx, hdz) > 1.7 && feet.y < scaffoldFor_.y - 3) {
+            setUse(false);
+            pressKey(kKeySpace, false); pressKey(kKeySneak, false);
+            faceToward(eye, {center.x, eye.y, center.z}, 5.f);
+            pressKey(kKeyW, true);
+            scaffoldCenterActive_ = false;
+            return true;
+        }
+        pressKey(kKeyW, false);
+        // Cap dig (standing ticks only, every AABB column, feet
+        // column first — the ascend pillar's measured rules): a
+        // branch or leaf block at fy+2 caps the jump at ~0.2.
+        if (feet.y - fy < 0.05) {
+            const int fx = static_cast<int>(std::floor(feet.x));
+            const int fz = static_cast<int>(std::floor(feet.z));
+            const int minCx = static_cast<int>(std::floor(feet.x - 0.3));
+            const int maxCx = static_cast<int>(std::floor(feet.x + 0.3));
+            const int minCz = static_cast<int>(std::floor(feet.z - 0.3));
+            const int maxCz = static_cast<int>(std::floor(feet.z + 0.3));
+            BlockPos3 capCell{INT_MIN, 0, 0};
+            std::string capId;
+            for (int pass = 0; pass < 2 && capId.empty(); ++pass)
+                for (int cx = minCx; cx <= maxCx && capId.empty(); ++cx)
+                    for (int cz = minCz; cz <= maxCz; ++cz) {
+                        const bool feetCol = (cx == fx && cz == fz);
+                        if ((pass == 0) != feetCol) continue;
+                        const auto id = blockAt({cx, fy + 2, cz});
+                        if (isDiggableCell(id) && !isPassableCell(id)) {
+                            capCell = {cx, fy + 2, cz};
+                            capId = id;
+                            break;
+                        }
+                    }
+            if (!capId.empty()) {
+                bool havePick = false;
+                for (const auto& s : hotbarItems())
+                    if (s.count > 0 && contains(s.id, "pickaxe")) { havePick = true; break; }
+                // A wood-class cap can be dug by hand or axe (tickMine's
+                // ensureTool decides); a stone-class cap needs the
+                // pickaxe in hand or the detour dead-ends in NeedTool.
+                const bool stoneCap = contains(localPart(capId), "stone") ||
+                                      contains(localPart(capId), "deepslate") ||
+                                      contains(localPart(capId), "ore");
+                if (havePick || !stoneCap) {
+                    note("scaffold dig: via mine, head=" + capId);
+                    scaffoldDig_ = true;
+                    target_ = capCell;
+                    targetId_ = localPart(capId);
+                    savedId_.clear();
+                    hasTarget_ = true;
+                    mineTicks_ = 0;
+                    setUse(false); pressKey(kKeySpace, false);
+                    phase_ = Phase::Mine;
+                    return true;
+                }
+            }
+        }
+        // Supply: largest scaffold stack in the hotbar; pull from the
+        // main inventory when the hotbar runs dry.
+        const int slot = scaffoldSlot();
+        if (slot < 0) {
+            if (scaffoldCount() > 0 && scaffoldPullTicks_ < 200) {
+                ++scaffoldPullTicks_;
+                setUse(false); pressKey(kKeySpace, false);
+                for (const auto& s : craft_.snapshot())
+                    if (s.count && s.slot >= 9 && isScaffoldBlock(localPart(s.item))) {
+                        (void)ensureHotbarTick(localPart(s.item));
+                        break;
+                    }
+                return true;
+            }
+            scaffoldFail("足場ブロックが尽きた");
+            return true;
+        }
+        void* p = player();
+        if (p && world_.selected(p) != slot) world_.select(p, static_cast<unsigned>(slot));
+        // Sticky centring in the pillar column (the ascend rules:
+        // recomputing the centre from the live feet position flips
+        // the target by a full block at a boundary and the walk
+        // chases it forever).
+        if (!scaffoldCenterGiveUp_) {
+            if (!scaffoldCenterActive_) {
+                scaffoldCenterActive_ = true;
+                scaffoldCenterCell_ = {static_cast<int>(std::floor(feet.x)), fy,
+                                       static_cast<int>(std::floor(feet.z))};
+                scaffoldCenterTicks_ = 0;
+            }
+            const double ctx = scaffoldCenterCell_.x + 0.5;
+            const double ctz = scaffoldCenterCell_.z + 0.5;
+            const double cdx = ctx - feet.x, cdz = ctz - feet.z;
+            if (feet.y - fy < 0.05 && cdx * cdx + cdz * cdz > 0.12 * 0.12) {
+                if (++scaffoldCenterTicks_ > 40) {
+                    scaffoldCenterGiveUp_ = true;
+                    scaffoldCenterActive_ = false;
+                    pressKey(kKeyW, false);
+                    note("scaffold: centering gave up, climbing as-is");
+                } else {
+                    setUse(false);
+                    pressKey(kKeySpace, false);
+                    pressKey(kKeySneak, false);
+                    faceToward(eye, {static_cast<float>(ctx), eye.y,
+                                     static_cast<float>(ctz)}, 5.f);
+                    pressKey(kKeyW, true);
+                    return true;
+                }
+            } else {
+                scaffoldCenterActive_ = false;
+                pressKey(kKeyW, false);
+            }
+        }
+        const int pfx = static_cast<int>(std::floor(feet.x));
+        const int pfz = static_cast<int>(std::floor(feet.z));
+        const bedrock::Vec3 aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
+        faceToward(eye, aim, 3.f);
+        // Sneak the whole climb (edge clamp keeps the player on the
+        // 1x1 column) and hold jump+use continuously: the game places
+        // the block the moment the jump clears the feet cell.
+        pressKey(kKeySneak, true);
+        pressKey(kKeySpace, true);
+        setUse(true);
+        if ((scaffoldTicks_ % 20) == 0)
+            note("scaffold tick: y=" + std::to_string(feet.y) +
+                 " target y=" + std::to_string(scaffoldFor_.y));
+        return true;
+    }
     void tickNavigate(bedrock::Vec3 feet) {
         if (!hasTarget_) { phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18; return; }
         // Target may have changed (another player mined it, physics, ...).
@@ -3745,6 +4060,16 @@ private:
                     planFailTick_ = tickCount_;
                 }
             }
+        }
+        // Elevated target with no usable route (a log left in a tree
+        // canopy is the textbook case, user-requested 2026-11-18):
+        // build a scaffold underfoot and climb to it, digging as we
+        // go, instead of staring up at it until the navigate timeout
+        // blacklists it. Also pre-empts a "route" that is nothing but
+        // digging straight up the target's own column when a viable
+        // pillar stance exists beside it.
+        if (scaffoldActive_ || scaffoldWanted(feet)) {
+            if (tickScaffold(feet)) return;
         }
         if (!path_.empty()) { tickFollowPath(feet); return; }
         // No land route and open water ahead on a long crossing: craft a
@@ -3941,6 +4266,17 @@ private:
                 phase_ = Phase::Ascend;
                 return;
             }
+            if (scaffoldDig_) {
+                // The scaffold's ceiling block is gone: restore the
+                // real target and hand control back to the climb.
+                scaffoldDig_ = false;
+                target_ = scaffoldFor_; targetId_ = scaffoldId_;
+                hasTarget_ = true;
+                mineTicks_ = 0;
+                scaffoldRiseTick_ = tickCount_;
+                phase_ = Phase::Navigate;
+                return;
+            }
             if (!savedId_.empty() && pathDigResume_ && !contains(targetId_, "_ore")) {
                 // A route cell (not an ore — ore drops detour through
                 // Collect as before): restore the goal and resume
@@ -3985,6 +4321,7 @@ private:
         if (std::sqrt(dx * dx + dy * dy + dz * dz) > 4.4) {
             setAttack(false);
             if (ascendDig_) { ascendDig_ = false; hasTarget_ = false; mineTicks_ = 0; phase_ = Phase::Ascend; return; }
+            if (scaffoldDig_) { scaffoldDig_ = false; target_ = scaffoldFor_; targetId_ = scaffoldId_; hasTarget_ = true; mineTicks_ = 0; phase_ = Phase::Navigate; return; }
             phase_ = Phase::Navigate; return;
         }
         // Occlusion: if another solid block blocks the ray to the target, mine
@@ -4040,6 +4377,19 @@ private:
                 mineTicks_ = 0;
                 ascendStuck_ += 20 * 12;
                 phase_ = Phase::Ascend;
+                return;
+            }
+            if (scaffoldDig_) {
+                // Charge the failed cap dig to the climb's rise
+                // budget so it gives up instead of looping forever.
+                note("scaffold dig: mine timeout, back to scaffold");
+                scaffoldDig_ = false;
+                setAttack(false);
+                target_ = scaffoldFor_; targetId_ = scaffoldId_;
+                hasTarget_ = true;
+                mineTicks_ = 0;
+                scaffoldRiseTick_ = tickCount_ - 200;
+                phase_ = Phase::Navigate;
                 return;
             }
             note("mine timeout; blacklist");
@@ -5011,7 +5361,7 @@ private:
             // (user's run 2026-11-17: the same status=50 failure
             // repeated across four chain restarts).
             ++chainRecoverTicks_;
-            if (game_.gameplayActive() || chainRecoverTicks_ > 40) {
+            if (!anyScreenUp() || chainRecoverTicks_ > 40) {
                 craft_.resetAfterFailure();
                 chainRecoverTicks_ = -1;
                 const std::string why = chainPendingFail_;
@@ -5513,7 +5863,8 @@ private:
             chainTableBad_ = chainTablePos_;
             chainTableBadUntil_ = tickCount_ + 20 * 600;
             chainTablePlaced_ = false;
-            note("craft chain: table would not open; banning it and re-placing elsewhere");
+            note("craft chain: table would not open; banning it and re-placing elsewhere"
+                 " (top screen was '" + (screenReady_ ? topScreenName() : std::string("?")) + "')");
             chainFail("作業台を開けなかった");
             return;
         }
@@ -5555,7 +5906,17 @@ private:
         }
         const int since = chainStepTicks_ - chainAimedTick_;
         setUse(since < 2);
-        if (!game_.gameplayActive()) { setUse(false); chainAdvance(); return; }
+        // Advance only when the crafting screen is verifiably on
+        // top, by NAME (see screenUp): the gameplayActive event this
+        // used to poll sticks in the "inactive" state, so the step
+        // advanced into a closed screen and the craft failed 49,
+        // recover, re-aim, repeat — the visible left/right turning.
+        if (screenUp("crafting")) {
+            setUse(false);
+            note("craft chain: table open ('" + topScreenName() + "')");
+            chainAdvance();
+            return;
+        }
         // The pulse missed (no screen after 15 ticks): re-aim and
         // pulse again instead of advancing blind — advancing here is
         // what sent table crafts into status-49 failures on fresh
@@ -5566,10 +5927,11 @@ private:
     void tickOpenInventory() {
         // E toggles the inventory screen (and with it the personal 2x2
         // crafting grid the server validates grid places against).
-        // gameplayActive() == false means a screen is open, so poll it
-        // instead of assuming one pulse landed (the first feed after
-        // joining can be eaten by device capture warm-up).
-        if (!game_.gameplayActive()) { chainAdvance(); return; }
+        // Poll the screen NAME instead of assuming one pulse landed
+        // (the first feed after joining can be eaten by device
+        // capture warm-up) — and instead of the gameplayActive
+        // event, which sticks (see screenUp).
+        if (screenUp("inventory")) { chainAdvance(); return; }
         if ((chainStepTicks_ % 45) == 1) pressKey(0x45, true);  // VK_E
         if ((chainStepTicks_ % 45) == 3) pressKey(0x45, false);
         // Never advance into a craft whose grid the server will reject
@@ -5578,7 +5940,7 @@ private:
         if (chainStepTicks_ > 300) chainFail("インベントリを開けなかった");
     }
     void tickCloseUi() {
-        if (game_.gameplayActive()) { chainAdvance(); return; }
+        if (!anyScreenUp()) { chainAdvance(); return; }
         if (chainStepTicks_ == 1 || chainStepTicks_ == 30)
             pressKey(0x1B, true);  // VK_ESCAPE
         if (chainStepTicks_ == 3 || chainStepTicks_ == 32)
@@ -6975,7 +7337,7 @@ private:
         case SmeltStage::LoadInput: (void)tickSmeltTransfer(25, 0, false); return;
         case SmeltStage::LoadFuel: (void)tickSmeltTransfer(24, 1, true); return;
         case SmeltStage::CloseUi:
-            if (game_.gameplayActive()) { smeltAdvance(); return; }
+            if (!anyScreenUp()) { smeltAdvance(); return; }
             if (smeltTicks_ == 1 || smeltTicks_ == 30) pressKey(0x1B, true);
             if (smeltTicks_ == 3 || smeltTicks_ == 32) pressKey(0x1B, false);
             if (smeltTicks_ > 70) smeltAdvance();
@@ -7259,9 +7621,17 @@ private:
         }
         const int since = smeltTicks_ - smeltAimedTick_;
         setUse(since < 2);
-        if (!game_.gameplayActive()) { setUse(false); smeltAdvance(); return; }
-        // Same blind-advance trap as tickOpenTable: re-aim and pulse
-        // again; the step timeout fails the smelt if it never opens.
+        // Advance only when the furnace screen is verifiably on top,
+        // by NAME (see screenUp) — same fix as tickOpenTable.
+        if (screenUp("furnace")) {
+            setUse(false);
+            note("smelt: furnace open ('" + topScreenName() + "')");
+            smeltAdvance();
+            return;
+        }
+        // The pulse missed: re-aim and pulse again instead of
+        // advancing blind; the step timeout fails the smelt if the
+        // furnace truly cannot be opened.
         if (since > 15) smeltAimedTick_ = -1;
     }
 
@@ -7772,6 +8142,18 @@ private:
     bool ascendOpenSky_{};
     int ascendNoteY_{INT_MIN};
     bool ascendDig_{};
+    bool scaffoldActive_{};
+    bool scaffoldDig_{};
+    BlockPos3 scaffoldFor_{INT_MIN, 0, 0};
+    std::string scaffoldId_;
+    int scaffoldTicks_{};
+    int scaffoldPullTicks_{};
+    int scaffoldRiseTick_{};
+    double scaffoldLastY_{};
+    bool scaffoldCenterActive_{};
+    bool scaffoldCenterGiveUp_{};
+    BlockPos3 scaffoldCenterCell_{};
+    int scaffoldCenterTicks_{};
     bool ascendCenterActive_{};
     bool ascendCenterGiveUp_{};
     BlockPos3 ascendCenterCell_{};
