@@ -4079,6 +4079,35 @@ private:
                  " wantChain=" + std::to_string(wantPickaxeChain_) +
                  " chainActive=" + std::to_string(chainActive_) + " snap:" + snap);
         }
+        // Missing-tool stall during the cobble wait (measured
+        // 2026-11-18): the wooden pickaxe craft reported done but
+        // no pickaxe reached the inventory (server-side count 0),
+        // so the stone scan's Mine step parked in NeedTool forever
+        // with the chain suspended. Fail the chain instead: its
+        // retry re-plans from the live counts and re-crafts the
+        // pickaxe from the logs still on hand.
+        if (chainActive_ && chainWaitingCobble_ && !hasPickaxeTier(1) &&
+            needTicks_ > 20 * 10) {
+            chainFail("ツルハシが見つからない");
+            return;
+        }
+        // Gather deadlock (measured 2026-11-18): the wood gather's
+        // path to the nearest tree cut through a stone outcrop, the
+        // dig needed a pickaxe, and NeedTool could neither chain
+        // (no wood yet) nor hand over (the expedition was already
+        // active) — the run waited forever holding a path it could
+        // not walk. Give the target up, drop the path and let the
+        // gather scan-stall logic relocate with a hunt leg.
+        if (gatherActive_ && !chainActive_ && !hasPickaxeTier(1) &&
+            needTicks_ > 20 * 10) {
+            if (hasTarget_) blacklist_.insert(target_);
+            hasTarget_ = false;
+            path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+            needTicks_ = 0; emptyScans_ = 6;
+            releaseInputs(); phase_ = Phase::Scan;
+            note("needtool: gather path needs a tool I cannot make yet; relocating");
+            return;
+        }
         // Hopeless underground: no pickaxe of the needed tier in
         // hand or in reserve, and the craft chain cannot start (no
         // materials). Instead of waiting forever at the bottom,
@@ -4110,6 +4139,19 @@ private:
             tryStartPickaxeChain())
             return;
         if (maybeStartExpedition()) return;
+        // Fetch retry (measured 2026-11-18): the hotbar move for a
+        // main-inventory pickaxe failed once on a screen race
+        // ("inventory screen did not open (top: hud_screen)") and
+        // moveFailed_ latched — the fetch branch below never ran
+        // again and the diamond hunt parked at y=-53 holding a
+        // perfectly good iron pickaxe in the main inventory. A
+        // latched failure may be re-planned on a slow cooldown;
+        // the move itself re-verifies the screen before acting.
+        if (moveFailed_ && needTier_ > 0 && tickCount_ >= moveRetryTick_) {
+            moveRetryTick_ = tickCount_ + 20 * 15;
+            moveFailed_ = false;
+            note("needtool: retrying the hotbar fetch");
+        }
         // A good-enough pickaxe that only exists in the main inventory
         // (deposited there while the hotbar was full) is invisible to
         // ensureTool: move it into the hotbar first.
@@ -4315,6 +4357,7 @@ private:
     long long moveStageStart_{};
     long long moveDeadline_{};
     bool moveFailed_{};
+    int moveRetryTick_{};
     // The hotbar move always works against the personal inventory
     // screen it opens with E, whose inventory is container 12 with
     // absolute slots 0..35 (the same addressing the craft jobs use).
@@ -5445,6 +5488,13 @@ private:
             }
             note("craft chain: table shadowed by " + localPart(blockAt(occ)) +
                  "; re-placing");
+            // Ban the shadowed table: since the reuse scan adopts
+            // ANY nearby table (2026-11-18 widening), an unbanned
+            // shadowed table is re-adopted by the retry and the
+            // chain loops on it forever (measured 2026-11-18 in a
+            // y=10 tunnel: adopt -> shadowed -> re-place -> adopt).
+            chainTableBad_ = chainTablePos_;
+            chainTableBadUntil_ = tickCount_ + 20 * 600;
             chainTablePlaced_ = false;
             chainFail("作業台が他のブロックに隠れている");
             return;
@@ -5786,6 +5836,17 @@ private:
                 if (!headWet || ++descendBreathTicks_ > 20 * 6) {
                     pressKey(kKeySpace, false);
                     descendBreath_ = false; descendBreathTicks_ = 0; descendWetTicks_ = 0;
+                    // Flooded-cavern avoidance (user request
+                    // 2026-11-18): three breath breaks in one shaft
+                    // mean the shaft fell into deep water — abandon
+                    // it once back at the surface and let the
+                    // supervisor relocate, instead of breath-cycling
+                    // in the cavern for tens of minutes.
+                    if (descendBreathBreaks_ >= 3) {
+                        descendDone_ = true; descendCave_ = true; phase_ = Phase::Idle;
+                        note("descend: flooded cavern swallows this shaft (repeated breath breaks), relocating");
+                        return;
+                    }
                     note("descend: breath break over");
                 }
                 return;
@@ -5793,6 +5854,7 @@ private:
             if (headWet) {
                 if (++descendWetTicks_ > 20 * 8) {
                     descendBreath_ = true; descendBreathTicks_ = 0;
+                    ++descendBreathBreaks_;
                     digPos_ = {INT_MIN, 0, 0}; digBlockId_.clear(); digTicks_ = 0;
                     note("descend: surfacing for air");
                     return;
@@ -5898,7 +5960,27 @@ private:
         // drop-in too, not a cavern stop (measured 2026-11-18: the
         // probe read a water column as a floorless void and the
         // descent surrendered above an underground lake).
-        if (voidDepth >= 3 && voidFloor != "lava" && (!voidFloor.empty() || voidWater)) {
+        // Flooded-cavern avoidance (user request 2026-11-18) limits
+        // that rule to SHALLOW water: a floor within reach and at
+        // most 5 water cells deep. A deeper body is a flooded
+        // cavern; swimming it costs a breath cycle per block or
+        // two and the descent stalls (measured: 40+ breath breaks
+        // in the aquifer under the spawn hillside). Deep water far
+        // above the target band stops the shaft like a dry cavern
+        // and the supervisor relocates it; near the band the swim
+        // is accepted rather than giving the depth up.
+        bool deepWater = false;
+        if (voidWater) {
+            int waterCells = 0; bool floorFound = false;
+            for (int y = fy - 2; y > fy - 18; --y) {
+                const auto wid = blockAt({cx, y, cz});
+                if (contains(localPart(wid), "water")) ++waterCells;
+                else if (!wid.empty() && !isAir(wid)) { floorFound = true; break; }
+            }
+            deepWater = !floorFound || waterCells > 5;
+        }
+        if (voidDepth >= 3 && voidFloor != "lava" && (!voidFloor.empty() || voidWater) &&
+            !(deepWater && fy > descendTargetY_ + 10)) {
             if (descendDropNoteY_ != fy) {
                 descendDropNoteY_ = fy;
                 note("descend: opening below (" +
@@ -5912,7 +5994,8 @@ private:
         } else if (voidDepth >= 3) {
             setAttack(false);
             descendDone_ = true; descendCave_ = true; phase_ = Phase::Idle;
-            note("descend: cave opening below, stopping the shaft");
+            note(deepWater ? "descend: flooded cavern below, stopping the shaft"
+                           : "descend: cave opening below, stopping the shaft");
             return;
         }
         bool refused = false;
@@ -6951,6 +7034,7 @@ private:
         descendLastY_ = INT_MAX; descendStuck_ = 0; digPos_ = {INT_MIN, 0, 0};
         descendWide_ = false; descendCenterTicks_ = 0;
         descendWetTicks_ = 0; descendBreathTicks_ = 0; descendBreath_ = false;
+        descendBreathBreaks_ = 0;
         pressKey(kKeySpace, false);
         descendEntryY_ = INT_MAX; // captured on the first descend tick
         phase_ = Phase::Descend;
@@ -7277,7 +7361,7 @@ private:
     int descendCaveRetries_{};
     bool descendResumePending_{};
     int descendDropNoteY_{INT_MAX};
-    int descendWetTicks_{}, descendBreathTicks_{};
+    int descendWetTicks_{}, descendBreathTicks_{}, descendBreathBreaks_{};
     bool descendBreath_{};
     int cobbleNavFails_{};
     bool cobbleDescend_{};
