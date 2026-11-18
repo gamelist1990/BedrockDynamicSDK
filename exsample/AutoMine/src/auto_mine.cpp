@@ -5675,7 +5675,7 @@ private:
         ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
         ascendStepTicks_ = 0; ascendStepY_ = INT_MAX;
         ascendShiftActive_ = false;
-        ascendStairLatch_ = false; ascendOpenTicks_ = 0;
+        ascendStairLatch_ = false; ascendOpenTicks_ = 0; ascendDirFails_ = 0;
         ascendDirX_ = 1; ascendDirZ_ = 0;
         ascendShaftTicks_ = 0; ascendShaftBestDist_ = 1e18;
         reply(replyText);
@@ -5915,6 +5915,7 @@ private:
             if (solidDiggable(bodyId)) { digCellPos = {nx, fy + 1, nz}; digId = bodyId; }
             else if (solidDiggable(headId)) { digCellPos = {nx, fy + 2, nz}; digId = headId; }
             if (digCellPos.x != INT_MIN && havePick) {
+                ascendDirFails_ = 0; // this heading has a step: progress
                 note("ascend stair: dig " + localPart(digId) + " at " +
                      std::to_string(digCellPos.x) + "," + std::to_string(digCellPos.y) +
                      "," + std::to_string(digCellPos.z));
@@ -5931,6 +5932,7 @@ private:
             const bool stepClear = stepSolid && isPassableCell(bodyId) &&
                                    isPassableCell(headId) && digCellPos.x == INT_MIN;
             if (stepClear) {
+                ascendDirFails_ = 0;
                 // If the step keeps failing, the cap over the
                 // player's own head may be clipping the jump arc:
                 // dig it out, then keep trying.
@@ -5963,13 +5965,24 @@ private:
             if (!stepSolid || digCellPos.x == INT_MIN) {
                 // No floor to step onto in this direction, or the
                 // way is blocked by something undiggable: rotate
-                // and try another heading.
+                // and try another heading. If every heading fails
+                // (an open pocket whose floor is one level down in
+                // all directions — measured 2026-11-18 in a sculk
+                // pocket at y=0 after 60 clean staircase levels),
+                // fall through to the pillar branch below instead
+                // of rotating until the no-rise budget fails the
+                // climb: the pillar digs its own cap and jumps.
+                bool fallThrough = false;
                 if (++ascendStepTicks_ > 10) {
                     ascendStepTicks_ = 0;
                     rotateAscendDir();
                     note("ascend stair: no step this way, rotating");
+                    if (++ascendDirFails_ >= 4) {
+                        ascendDirFails_ = 0;
+                        fallThrough = true;
+                    }
                 }
-                return;
+                if (!fallThrough) return;
             }
             // A dig is needed but no pickaxe is in the hotbar:
             // fall through to the pillar branch.
@@ -7769,7 +7782,7 @@ private:
     int ascendDirX_{1};
     int ascendDirZ_{0};
     int ascendStepTicks_{};
-    bool ascendStairLatch_{}; int ascendOpenTicks_{};
+    bool ascendStairLatch_{}; int ascendOpenTicks_{}; int ascendDirFails_{};
     int ascendStepY_{INT_MAX};
     bool ascendShiftActive_{};
     BlockPos3 ascendShiftCell_{};
