@@ -1611,9 +1611,10 @@ private:
         targetId_.clear();
         blacklist_.clear();
         hazardZones_.clear();
-        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
         scaffoldActive_ = false; scaffoldDig_ = false;
+        collectDropId_.clear();
         swimSubmerged_ = 0; surfacing_ = false; wasInWater_ = false;
         combatEid_ = 0; bowDraw_ = 0; attackPulse_ = 0;
         boatTriedFor_ = {INT_MIN, 0, 0};
@@ -2665,7 +2666,9 @@ private:
                 std::vector<bedrock::Vec3> walk, dig, bridge;
                 bedrock::Vec3 prev{feet.x, feet.y + 0.25f, feet.z};
                 auto seg = [&](const bedrock::Vec3& to, std::size_t i) {
-                    auto& dst = (i < path_.size() && pathBridge_[i]) ? bridge
+                    auto& dst = (i < path_.size() &&
+                                 (pathBridge_[i] || (i < pathPillar_.size() && pathPillar_[i])))
+                                    ? bridge
                                 : (i < path_.size() && pathDig_[i]) ? dig : walk;
                     // Subdivide into ~1-block steps so the drawn line
                     // passes through EVERY future position on the route
@@ -2860,7 +2863,7 @@ private:
                  std::to_string(target_.y) + "," + std::to_string(target_.z));
             phase_ = Phase::Navigate;
             stuckTicks_ = 0; lastX_ = feet.x; lastZ_ = feet.z; navTicks_ = 0;
-            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0; path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+            pathFor_ = {INT_MIN, 0, 0}; replans_ = 0; path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
         } else {
             // Nothing in range: wait ~2s, then rescan (the player may move,
             // or a fresh area may load).
@@ -3064,7 +3067,7 @@ private:
     // navigation, which walked it into walls and water. Only a path that
     // has been fully consumed is worthless.
     void discardPathIfExhausted() {
-        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0; pathPartial_ = false; }
+        if (pathIdx_ >= path_.size()) { path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0; pathPartial_ = false; }
     }
 
     bool planPath(bedrock::Vec3 feet) {
@@ -3158,7 +3161,7 @@ private:
         int segments = 0;
         bool partial = false;
         std::vector<CellKey> cells;
-        std::unordered_map<CellKey, bool, CellKeyHash> allDig, allBridge;
+        std::unordered_map<CellKey, bool, CellKeyHash> allDig, allBridge, allParkour, allPillar;
         CellKey segStart = start;
         bool reachedGoal = false;
         while (segments < kMaxSegments && expansions < kMaxTotalExpansions) {
@@ -3168,6 +3171,14 @@ private:
             std::unordered_map<CellKey, CellKey, CellKeyHash> cameFrom;
             std::unordered_map<CellKey, bool, CellKeyHash> digFlag;
             std::unordered_map<CellKey, bool, CellKeyHash> bridgeFlag;
+            std::unordered_map<CellKey, bool, CellKeyHash> parkourFlag;
+            std::unordered_map<CellKey, bool, CellKeyHash> pillarFlag;
+            std::unordered_map<CellKey, int, CellKeyHash> pillarCount;
+            auto flagOf = [](const std::unordered_map<CellKey, bool, CellKeyHash>& m,
+                             const CellKey& c) {
+                const auto it = m.find(c);
+                return it != m.end() && it->second;
+            };
             gScore[segStart] = 0;
             open.push({heuristic(segStart), segStart});
             int segExpansions = 0;
@@ -3198,6 +3209,9 @@ private:
                         cameFrom[next] = cur.c;
                         digFlag[next] = (kind == CellKind::Dig);
                         bridgeFlag[next] = (kind == CellKind::Bridge);
+                        parkourFlag[next] = false;
+                        pillarFlag[next] = false;
+                        pillarCount[next] = pillarCount.count(cur.c) ? pillarCount[cur.c] : 0;
                         open.push({ng + heuristic(next), next});
                     }
                 };
@@ -3258,6 +3272,79 @@ private:
                     if (classifyCell(n, cache) == CellKind::Dig)
                         relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
                 }
+                // Pillar: jump and place a spare block underfoot to
+                // rise one cell in the same column — the block-based
+                // answer to smooth walls, cliff faces and pits with
+                // no diggable route (user request 2026-11-18). The
+                // cell above must classify usable; the chain is
+                // capped by the plan-time spare snapshot and a depth
+                // of 3 (longer climbs belong to the scaffold/ascend
+                // machinery, which also handles the ceiling digs).
+                if (planSpares_ > 0 && !flagOf(digFlag, cur.c)) {
+                    const int pc = pillarCount.count(cur.c) ? pillarCount[cur.c] : 0;
+                    if (pc < 3 && pc < planSpares_) {
+                        const CellKey n{cur.c.x, cur.c.y + 1, cur.c.z};
+                        const auto k = classifyCell(n, cache);
+                        if (k != CellKind::Blocked) {
+                            const double ng = cg + 5.0 +
+                                (k == CellKind::Dig ? digCostOf(n, cache) : 0.0);
+                            if (!gScore.count(n) || ng < gScore[n] - 1e-9) {
+                                gScore[n] = ng;
+                                cameFrom[n] = cur.c;
+                                digFlag[n] = false; bridgeFlag[n] = false;
+                                parkourFlag[n] = false; pillarFlag[n] = true;
+                                pillarCount[n] = pc + 1;
+                                open.push({ng + heuristic(n), n});
+                            }
+                        }
+                    }
+                }
+                // Parkour: a sprint jump across a 1-3 cell gap onto a
+                // Stand cell at the same level — Baritone's basic
+                // gap movement, far cheaper than bridging the gap
+                // (user request 2026-11-18). Only from a plain stand
+                // cell, only over a genuine gap (no floor under the
+                // first jumped cell), and a 3-gap jump additionally
+                // needs a run-up cell behind the takeoff.
+                if (!flagOf(digFlag, cur.c) && !flagOf(bridgeFlag, cur.c) &&
+                    !flagOf(pillarFlag, cur.c)) {
+                    for (const auto& d : kDirs) {
+                        for (int dist = 2; dist <= 4; ++dist) {
+                            bool clear = true;
+                            for (int s2 = 1; s2 < dist; ++s2) {
+                                const BlockPos3 mid{cur.c.x + d[0] * s2, cur.c.y,
+                                                    cur.c.z + d[1] * s2};
+                                if (!isPassableCell(blockAt(mid)) ||
+                                    !isPassableCell(blockAt({mid.x, mid.y + 1, mid.z}))) {
+                                    clear = false; break;
+                                }
+                                if (s2 == 1 && isSolidCell(blockAt({mid.x, mid.y - 1, mid.z}))) {
+                                    clear = false; break;
+                                }
+                            }
+                            if (!clear) break; // longer jumps cross this cell too
+                            const CellKey land{cur.c.x + d[0] * dist, cur.c.y,
+                                               cur.c.z + d[1] * dist};
+                            if (classifyCell(land, cache) != CellKind::Stand) continue;
+                            if (dist == 4) {
+                                const CellKey back{cur.c.x - d[0], cur.c.y,
+                                                   cur.c.z - d[1]};
+                                if (classifyCell(back, cache) == CellKind::Blocked)
+                                    continue;
+                            }
+                            const double ng = cg + 1.0 + 0.3 * dist;
+                            if (!gScore.count(land) || ng < gScore[land] - 1e-9) {
+                                gScore[land] = ng;
+                                cameFrom[land] = cur.c;
+                                digFlag[land] = false; bridgeFlag[land] = false;
+                                parkourFlag[land] = true; pillarFlag[land] = false;
+                                pillarCount[land] = pillarCount.count(cur.c)
+                                                        ? pillarCount[cur.c] : 0;
+                                open.push({ng + heuristic(land), land});
+                            }
+                        }
+                    }
+                }
             }
             const bool progressed = !(bestNode == segStart) && bestH < startH - 1.0;
             const CellKey segEnd = haveFound ? found : bestNode;
@@ -3282,20 +3369,24 @@ private:
                 cells.push_back(segCells[i]);
                 if (digFlag.count(segCells[i])) allDig[segCells[i]] = digFlag[segCells[i]];
                 if (bridgeFlag.count(segCells[i])) allBridge[segCells[i]] = bridgeFlag[segCells[i]];
+                if (parkourFlag.count(segCells[i])) allParkour[segCells[i]] = parkourFlag[segCells[i]];
+                if (pillarFlag.count(segCells[i])) allPillar[segCells[i]] = pillarFlag[segCells[i]];
             }
             if (haveFound) { reachedGoal = true; break; }
             partial = true; // until a later segment reaches the goal
             segStart = bestNode;
         }
         (void)reachedGoal;
-        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
         // Keep every Dig cell and every direction/height change; compress
         // straight same-level walking runs to their endpoints.
         for (std::size_t i = 1; i < cells.size(); ++i) {
             const bool dig = allDig.count(cells[i]) && allDig[cells[i]];
             const bool bridge = allBridge.count(cells[i]) && allBridge[cells[i]];
+            const bool parkour = allParkour.count(cells[i]) && allParkour[cells[i]];
+            const bool pillar = allPillar.count(cells[i]) && allPillar[cells[i]];
             const bool last = (i + 1 == cells.size());
-            bool keep = last || dig || bridge;
+            bool keep = last || dig || bridge || parkour || pillar;
             if (!keep) {
                 const auto& a = cells[i - 1]; const auto& b = cells[i]; const auto& n = cells[i + 1];
                 keep = !(a.y == b.y && b.y == n.y && (b.x - a.x) == (n.x - b.x) &&
@@ -3305,6 +3396,8 @@ private:
                 path_.push_back({cells[i].x, cells[i].y, cells[i].z});
                 pathDig_.push_back(dig);
                 pathBridge_.push_back(bridge);
+                pathParkour_.push_back(parkour);
+                pathPillar_.push_back(pillar);
             }
         }
         pathPartial_ = partial;
@@ -3318,7 +3411,7 @@ private:
         savedTarget_ = target_; savedId_ = targetId_;
         target_ = cell; targetId_ = localPart(id);
         hasTarget_ = true; phase_ = Phase::Mine; mineTicks_ = 0;
-        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
         pathFor_ = {INT_MIN, 0, 0};
         pathDigResume_ = false;
         note("mine-through: " + targetId_);
@@ -3521,15 +3614,120 @@ private:
         return true;
     }
 
+    // Execute one pillar waypoint: jump and place a spare block
+    // underfoot until the feet cell IS the waypoint cell (one level
+    // up, same column). The head cell after the rise may hold a
+    // diggable block the planner priced in — dig it out through the
+    // route-dig detour first when it caps the jump.
+    void tickPillarWaypoint(bedrock::Vec3 feet) {
+        const BlockPos3 wp = path_[pathIdx_];
+        const int fx = static_cast<int>(std::floor(feet.x));
+        const int fy = static_cast<int>(std::floor(feet.y));
+        const int fz = static_cast<int>(std::floor(feet.z));
+        if (fx == wp.x && fy == wp.y && fz == wp.z) {
+            pressKey(kKeySpace, false); pressKey(kKeySneak, false);
+            setUse(false);
+            pillarWpTicks_ = 0;
+            ++pathIdx_;
+            return;
+        }
+        if (pillarWpTicks_ == 0) pillarWpBaseY_ = fy;
+        if (++pillarWpTicks_ > 100 || fy < pillarWpBaseY_ - 1) {
+            // No rise in 5 s (or we fell): feed the cell back and
+            // replan instead of bouncing here forever.
+            pillarWpTicks_ = 0;
+            pressKey(kKeySpace, false); pressKey(kKeySneak, false);
+            setUse(false);
+            planBlockedFor_ = target_;
+            if (planBlocked_.size() < 64) planBlocked_.insert({wp.x, wp.y, wp.z});
+            pathFor_ = {INT_MIN, 0, 0};
+            note("path: pillar failed, replanning");
+            return;
+        }
+        // A diggable block in the post-rise head cell caps the jump
+        // at ~0.2: dig it via the route detour (it resumes here).
+        const auto headId = blockAt({wp.x, wp.y + 1, wp.z});
+        if (!isPassableCell(headId) && isDiggableCell(headId)) {
+            pressKey(kKeySpace, false);
+            enterPathDigCell({wp.x, wp.y + 1, wp.z}, headId);
+            return;
+        }
+        const int slot = spareSlot();
+        if (slot < 0) {
+            pillarWpTicks_ = 0;
+            pressKey(kKeySpace, false); pressKey(kKeySneak, false);
+            planBlockedFor_ = target_;
+            if (planBlocked_.size() < 64) planBlocked_.insert({wp.x, wp.y, wp.z});
+            pathFor_ = {INT_MIN, 0, 0};
+            note("path: pillar needs a spare block, replanning");
+            return;
+        }
+        void* p = player();
+        if (p && world_.selected(p) != slot) world_.select(p, static_cast<unsigned>(slot));
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        const bedrock::Vec3 aim{fx + .5f, static_cast<float>(fy), fz + .5f};
+        faceToward(eye, aim, 3.f);
+        pressKey(kKeySneak, true);
+        pressKey(kKeySpace, true);
+        setUse(true);
+    }
+    // Execute one parkour waypoint: sprint at the landing cell and
+    // jump the moment the floor ends under the player's front edge.
+    // Returns false when the waypoint was consumed and normal
+    // following should resume this tick.
+    bool tickParkourWaypoint(bedrock::Vec3 feet) {
+        const BlockPos3 wp = path_[pathIdx_];
+        const int fy = static_cast<int>(std::floor(feet.y));
+        if (feet.y < wp.y - 1.5) {
+            // Fell into the gap: feed the landing back as blocked
+            // and replan from wherever we end up.
+            pressKey(kKeyW, false); pressKey(kKeySpace, false);
+            pressKey(kKeySprint, false);
+            planBlockedFor_ = target_;
+            if (planBlocked_.size() < 64) planBlocked_.insert({wp.x, wp.y, wp.z});
+            pathFor_ = {INT_MIN, 0, 0};
+            note("path: parkour fell short, replanning");
+            return true;
+        }
+        const double hx = wp.x + .5 - feet.x, hz = wp.z + .5 - feet.z;
+        if (fy == wp.y && std::hypot(hx, hz) < 1.05) {
+            pressKey(kKeySprint, false); pressKey(kKeySpace, false);
+            ++pathIdx_;
+            return false;
+        }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return true;
+        faceAim(eye, {wp.x + .5f, eye.y, wp.z + .5f}, 10.f, 0.25f);
+        pressKey(kKeyW, true);
+        pressKey(kKeySprint, true);
+        // Jump at the edge: standing on solid ground while the cell
+        // under the front edge has no floor.
+        float yaw{}, pitch{};
+        bool jump = false;
+        if (rotation(yaw, pitch)) {
+            const double rad = yaw * 3.141592653589793 / 180.0;
+            const double fx2 = -std::sin(rad), fz2 = std::cos(rad);
+            const int groundX = static_cast<int>(std::floor(feet.x));
+            const int groundZ = static_cast<int>(std::floor(feet.z));
+            const int frontX = static_cast<int>(std::floor(feet.x + fx2 * 0.45));
+            const int frontZ = static_cast<int>(std::floor(feet.z + fz2 * 0.45));
+            const bool grounded = isSolidCell(blockAt({groundX, fy - 1, groundZ}));
+            const bool edge = !isSolidCell(blockAt({frontX, fy - 1, frontZ}));
+            jump = grounded && edge;
+        }
+        pressKey(kKeySpace, jump);
+        return true;
+    }
     void tickFollowPath(bedrock::Vec3 feet) {
         ++navTicks_;
         const std::size_t idxAtEntry = pathIdx_;
         if (navTicks_ > 20 * 45) { // same overall budget as legacy navigation
             note("navigate timeout (path); blacklist target");
             if (chainWaitingCobble_) ++cobbleNavFails_;
-            blacklist_.insert(target_); hasTarget_ = false;
+            blacklistCluster(target_, targetId_); hasTarget_ = false;
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
-            path_.clear(); pathDig_.clear(); pathBridge_.clear();
+            path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear();
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
             return;
         }
@@ -3590,6 +3788,14 @@ private:
             if (isDiggableCell(headId)) { enterPathDigCell({wp.x, wp.y + 1, wp.z}, headId); return; }
             ++pathIdx_; // already cleared somehow: move on
             return;
+        }
+        if (pathIdx_ < pathPillar_.size() && pathPillar_[pathIdx_]) {
+            tickPillarWaypoint(feet);
+            return;
+        }
+        if (pathIdx_ < pathParkour_.size() && pathParkour_[pathIdx_]) {
+            if (tickParkourWaypoint(feet)) return;
+            if (pathIdx_ >= path_.size()) return;
         }
         if (!pathBridge_[pathIdx_]) {
             // Waypoint invalidation: the world changed under a
@@ -3741,7 +3947,7 @@ private:
                     if (++replans_ > 2) {
                         note("path follow stuck; blacklist target");
                         blacklist_.insert(target_); hasTarget_ = false;
-                        path_.clear(); pathDig_.clear(); pathBridge_.clear();
+                        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear();
                         phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
                     } else {
                         // Feed the obstruction back into the planner:
@@ -3816,9 +4022,19 @@ private:
             routeUseless = vertical;
         }
         if (!routeUseless) return false;
-        // A viable pillar stance: a neighbour cell of the target
-        // column at our level with solid ground under a passable
-        // cell, or our own cell already beside the column.
+        if (!scaffoldStanceOk(feet)) return false;
+        engageScaffold(feet);
+        return true;
+    }
+    // Stance + supply conditions for a scaffold climb (shared by
+    // the no-route trigger and the stuck-route escape in
+    // tickNavigate): a neighbour cell of the target column at our
+    // level with solid ground under a passable cell, or our own
+    // cell already beside the column, plus scaffold material.
+    bool scaffoldStanceOk(bedrock::Vec3 feet) {
+        if (navReturn_ || inWaterNow(feet)) return false;
+        const int fy = static_cast<int>(std::floor(feet.y));
+        const double hdx = (target_.x + .5) - feet.x, hdz = (target_.z + .5) - feet.z;
         bool stance = (hdx * hdx + hdz * hdz <= 1.7 * 1.7);
         static constexpr int kDX[4] = {1, -1, 0, 0};
         static constexpr int kDZ[4] = {0, 0, 1, -1};
@@ -3831,19 +4047,18 @@ private:
                 !contains(localPart(ground), "water"))
                 stance = true;
         }
-        if (!stance) return false;
-        if (scaffoldCount() < 3) return false;
-        // Engage.
+        return stance && scaffoldCount() >= 3;
+    }
+    void engageScaffold(bedrock::Vec3 feet) {
         scaffoldActive_ = true;
         scaffoldFor_ = target_; scaffoldId_ = targetId_;
         scaffoldTicks_ = 0; scaffoldPullTicks_ = 0;
         scaffoldLastY_ = feet.y; scaffoldRiseTick_ = tickCount_;
         scaffoldCenterActive_ = false; scaffoldCenterGiveUp_ = false;
-        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+        path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
         note("scaffold: climbing to elevated " + targetId_ + " at " +
              std::to_string(target_.x) + "," + std::to_string(target_.y) + "," +
              std::to_string(target_.z));
-        return true;
     }
     void endScaffold() {
         scaffoldActive_ = false;
@@ -4061,6 +4276,17 @@ private:
                 }
             }
         }
+        // Stuck-route escape: a route toward an elevated target
+        // that has made no waypoint progress for 15 s is the cave
+        // loop the user reported (plan -> dig-climb stall -> replan
+        // -> the same shaft again). Abandon it for a scaffold climb
+        // when a stance is available.
+        if (!scaffoldActive_ && !path_.empty() && navTicks_ > 300 &&
+            target_.y - static_cast<int>(std::floor(feet.y)) >= 3 &&
+            scaffoldStanceOk(feet)) {
+            note("navigate: route stuck toward elevated target; switching to scaffold");
+            engageScaffold(feet);
+        }
         // Elevated target with no usable route (a log left in a tree
         // canopy is the textbook case, user-requested 2026-11-18):
         // build a scaffold underfoot and climb to it, digging as we
@@ -4173,7 +4399,7 @@ private:
                 if (!waterBelow) {
                     pressKey(kKeyW, false);
                     note("cliff guard: target unreachable on foot");
-                    blacklist_.insert(target_); hasTarget_ = false;
+                    blacklistCluster(target_, targetId_); hasTarget_ = false;
                     phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
                     return;
                 }
@@ -4207,7 +4433,7 @@ private:
         if (navTicks_ > 20 * 45) { // ~45s per target is plenty
             note("navigate timeout; blacklist target");
             if (chainWaitingCobble_) ++cobbleNavFails_;
-            blacklist_.insert(target_); hasTarget_ = false;
+            blacklistCluster(target_, targetId_); hasTarget_ = false;
             pressKey(kKeyW, false); pressKey(kKeySpace, false);
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
         }
@@ -4254,6 +4480,17 @@ private:
             ++mined_;
             escapeStreak_ = 0; // real progress: the water patch is workable
             chargeToolUse();
+            // Arm the verified ore collect (see tickCollect): the
+            // drop's pre-break inventory count is the baseline the
+            // collect checks against. Only when the held pickaxe
+            // could actually produce the drop — a wrong-tier tool
+            // yields nothing and the sweep would waste its budget.
+            if (contains(targetId_, "_ore") &&
+                requiredTier(targetId_) <= heldPickaxeTier()) {
+                collectDropId_ = dropOf(targetId_);
+                collectBase_ = invCountOf(collectDropId_);
+                collectSweep_.clear(); collectSweepIdx_ = 0; collectDwell_ = 0;
+            } else collectDropId_.clear();
             note("mined " + targetId_ + " total=" + std::to_string(mined_));
             if (ascendDig_) {
                 // The ascend's ceiling block is gone: hand control
@@ -4400,13 +4637,96 @@ private:
             // table occlusion branch), or the scan re-picks the same
             // unreachable goal forever (measured 2026-11-17 on a vine-
             // occluded jungle log: 120 timeouts on one cell).
-            blacklist_.insert(savedId_.empty() ? target_ : savedTarget_); hasTarget_ = false;
+            blacklistCluster(savedId_.empty() ? target_ : savedTarget_,
+                             savedId_.empty() ? targetId_ : savedId_);
+            hasTarget_ = false;
             if (!savedId_.empty()) { targetId_ = savedId_; savedId_.clear(); }
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
         }
     }
 
+    // Blacklist a failed target AND the same-id cells touching it:
+    // after a hard failure on one cell of a vein, the scan used to
+    // pick the vein's next cell and repeat the identical failing
+    // approach for every cell in the cluster — the cave loop the
+    // user reported (2026-11-18).
+    void blacklistCluster(const BlockPos3& center, const std::string& id) {
+        blacklist_.insert(center);
+        for (int dx = -2; dx <= 2; ++dx)
+            for (int dy = -2; dy <= 2; ++dy)
+                for (int dz = -2; dz <= 2; ++dz) {
+                    if (!dx && !dy && !dz) continue;
+                    const BlockPos3 c{center.x + dx, center.y + dy, center.z + dz};
+                    if (localPart(blockAt(c)) == id) blacklist_.insert(c);
+                }
+    }
     void tickCollect(bedrock::Vec3 feet) {
+        // Ore drops are verified: the old collect walked at the cell
+        // for 7 ticks and left, losing diamonds that bounced off the
+        // cell or fell to a lower ledge (user-reported 2026-11-18).
+        // Now an ore collect only ends when the drop item's
+        // inventory count actually rises; until then it sweeps the
+        // mined cell, the landing cell below it, and the standable
+        // neighbours, dwelling on each.
+        if (!collectDropId_.empty()) {
+            if (invCountOf(collectDropId_) > collectBase_) {
+                pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                note("collect: got " + collectDropId_);
+                collectDropId_.clear();
+                restoreMineThroughGoal();
+                hasTarget_ = false;
+                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                return;
+            }
+            ++collectTicks_;
+            if (collectTicks_ > 240) {
+                pressKey(kKeyW, false); pressKey(kKeySpace, false);
+                note("collect: drop not found for " + collectDropId_ + "; moving on");
+                collectDropId_.clear();
+                restoreMineThroughGoal();
+                hasTarget_ = false;
+                phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
+                return;
+            }
+            if (collectSweep_.empty()) {
+                collectSweep_.push_back(target_);
+                for (int dy = 1; dy <= 6; ++dy) {
+                    const auto b = blockAt({target_.x, target_.y - dy, target_.z});
+                    if (!b.empty() && !isAir(b)) {
+                        if (!contains(localPart(b), "lava"))
+                            collectSweep_.push_back({target_.x, target_.y - dy + 1, target_.z});
+                        break;
+                    }
+                }
+                static constexpr int kD[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (int lvl = 0; lvl >= -1; --lvl)
+                    for (const auto& d : kD) {
+                        const BlockPos3 c{target_.x + d[0], target_.y + lvl, target_.z + d[1]};
+                        const auto below = blockAt({c.x, c.y - 1, c.z});
+                        const auto at = blockAt(c);
+                        if (!below.empty() && !isAir(below) &&
+                            !contains(localPart(below), "lava") &&
+                            !at.empty() && isAir(at))
+                            collectSweep_.push_back(c);
+                    }
+            }
+            const BlockPos3 goal =
+                collectSweep_[std::min<std::size_t>(collectSweepIdx_, collectSweep_.size() - 1)];
+            const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+            const bedrock::Vec3 center{goal.x + .5f, goal.y + .5f, goal.z + .5f};
+            faceAim(eye, center, 12.f, 0.3f);
+            const double horiz = std::hypot(center.x - feet.x, center.z - feet.z);
+            const bool onGoal = horiz < 0.55 && std::abs(feet.y - goal.y) < 1.1;
+            pressKey(kKeyW, !onGoal);
+            pressKey(kKeySpace, inWaterNow(feet) ||
+                                    (goal.y > static_cast<int>(std::floor(feet.y)) && horiz < 1.2));
+            if (onGoal && ++collectDwell_ >= 5) {
+                collectDwell_ = 0;
+                if (collectSweepIdx_ + 1 < static_cast<int>(collectSweep_.size()))
+                    ++collectSweepIdx_;
+            }
+            return;
+        }
         // Step onto the mined cell briefly to pick the drop up, when safe.
         const auto below = blockAt({target_.x, target_.y - 1, target_.z});
         const auto cell = blockAt(target_);
@@ -4510,7 +4830,7 @@ private:
             needTicks_ > 20 * 10) {
             if (hasTarget_) blacklist_.insert(target_);
             hasTarget_ = false;
-            path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathIdx_ = 0;
+            path_.clear(); pathDig_.clear(); pathBridge_.clear(); pathParkour_.clear(); pathPillar_.clear(); pathIdx_ = 0;
             needTicks_ = 0; emptyScans_ = 6;
             releaseInputs(); phase_ = Phase::Scan;
             note("needtool: gather path needs a tool I cannot make yet; relocating");
@@ -7674,6 +7994,18 @@ private:
         }
         return false;
     }
+    int heldPickaxeTier() { // tier of the pickaxe in the selected slot, else 0
+        void* p = player();
+        if (!p) return 0;
+        const int slot = world_.selected(p);
+        if (slot < 0 || slot > 8) return 0;
+        const auto slots = hotbarItems();
+        int tier = 0;
+        return classForItem(slots[static_cast<std::size_t>(slot)].id, tier) ==
+                       ToolClass::Pickaxe
+                   ? tier
+                   : 0;
+    }
     bool hasPickaxeTier(int minTier) {
         for (const auto& s : craft_.snapshot()) {
             if (!s.count) continue;
@@ -8054,6 +8386,15 @@ private:
     std::vector<BlockPos3> path_;
     std::vector<bool> pathDig_;
     std::vector<bool> pathBridge_;
+    std::vector<bool> pathParkour_;
+    std::vector<bool> pathPillar_;
+    int pillarWpTicks_{};
+    int pillarWpBaseY_{};
+    std::string collectDropId_;
+    int collectBase_{};
+    int collectSweepIdx_{};
+    int collectDwell_{};
+    std::vector<BlockPos3> collectSweep_;
     int bridgeTicks_{};
     int bridgeFailStreak_{};
     BlockPos3 bridgeFailFor_{INT_MIN, 0, 0};
