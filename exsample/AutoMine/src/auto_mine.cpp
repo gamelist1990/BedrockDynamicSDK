@@ -2041,6 +2041,36 @@ private:
         }
         bedrock::Vec3 feet;
         if (!feetPos(feet)) { releaseInputs(); return; }
+        // Flooded-cave countermeasures (user request 2026-11-18):
+        // remember the last spot where the head was dry. In a cave
+        // flooded to its ceiling "up" has no air — the only way out
+        // is back toward where the water was entered.
+        if (!headInWater(feet)) { lastDryPos_ = feet; lastDryValid_ = true; }
+        // After a flooded-shaft abort the relocation leg starts
+        // underwater: hold the swim for air before anything else
+        // runs, or the leg's first seconds are spent sinking with
+        // an empty air bar.
+        if (floodHold_) {
+            if (headInWater(feet)) {
+                floodDryTicks_ = 0;
+                pressKey(kKeySpace, true);
+                if (lastDryValid_ && ++floodWetTicks_ > 20 * 5) {
+                    bedrock::Vec3 eye;
+                    if (eyePos(eye))
+                        faceToward(eye, {lastDryPos_.x, eye.y, lastDryPos_.z}, 5.f);
+                    pressKey(kKeyW, true);
+                }
+            } else {
+                pressKey(kKeySpace, false); pressKey(kKeyW, false);
+                floodWetTicks_ = 0;
+                if (++floodDryTicks_ > 20) {
+                    floodHold_ = false; floodDryTicks_ = 0;
+                    note("flood hold: breathing again, resuming");
+                }
+            }
+            updatePath(feet);
+            return;
+        }
         // Drowning safety net: in the stationary working phases, if the
         // head stays submerged for a few ticks, abandon the target and
         // swim up. Target selection already avoids water, but the
@@ -2561,13 +2591,28 @@ private:
         ++escapeTicks_;
         pressKey(kKeySpace, true); // hold jump: swim up / bob at the surface
         if (!headInWater(feet)) {
+            pressKey(kKeyW, false);
             if (++dryTicks_ >= 10 || escapeTicks_ > 240) {
                 pressKey(kKeySpace, false);
                 phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
             }
-        } else dryTicks_ = 0;
-        if (escapeTicks_ > 240 && phase_ == Phase::Escape) {
-            pressKey(kKeySpace, false);
+        } else {
+            dryTicks_ = 0;
+            // Risen as far as "up" goes and still wet after 5 s:
+            // the cave is flooded to its ceiling — swim back
+            // toward the last dry ground instead of bobbing under
+            // the ceiling until the air runs out (the gather
+            // drowning measured 2026-11-18 at (101,40,-35), where
+            // the old escape surfaced into rock and timed out).
+            if (escapeTicks_ > 100 && lastDryValid_) {
+                bedrock::Vec3 eye;
+                if (eyePos(eye))
+                    faceToward(eye, {lastDryPos_.x, eye.y, lastDryPos_.z}, 5.f);
+                pressKey(kKeyW, true);
+            }
+        }
+        if (escapeTicks_ > 400 && phase_ == Phase::Escape) {
+            pressKey(kKeySpace, false); pressKey(kKeyW, false);
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
         }
     }
@@ -3739,6 +3784,16 @@ private:
                 swimSubmerged_ = 0;
                 pressKey(kKeyS, false); pressKey(kKeyD, false);
                 pressKey(kKeyW, true); pressKey(kKeySpace, true);
+            }
+            // Hard air limit (2026-11-18): a swim whose head stays
+            // submerged for 10 s is a flooded-cave trap, not a
+            // crossing — abandon the target and escape while there
+            // is still air to escape with. The old code waited for
+            // the 45 s navigate timeout; the air is gone at ~15 s.
+            if (swimSubmerged_ > 20 * 10) {
+                swimSubmerged_ = 0; wasInWater_ = false;
+                pressKey(kKeyS, false); pressKey(kKeyD, false);
+                startEscape(); tickEscape(feet); return;
             }
             ++navTicks_;
             if (navTicks_ % 10 == 0) {
@@ -6105,7 +6160,7 @@ private:
             if (descendBreath_) {
                 setAttack(false);
                 pressKey(kKeySpace, true);
-                if (!headWet || ++descendBreathTicks_ > 20 * 6) {
+                if (!headWet) {
                     pressKey(kKeySpace, false);
                     descendBreath_ = false; descendBreathTicks_ = 0; descendWetTicks_ = 0;
                     // Flooded-cavern avoidance (user request
@@ -6120,11 +6175,32 @@ private:
                         return;
                     }
                     note("descend: breath break over");
+                } else if (++descendBreathTicks_ > 20 * 20) {
+                    // 20 s of rising without reaching air: from
+                    // here the water has no surface the shaft can
+                    // use. Declare the shaft flooded NOW instead of
+                    // ending the break underwater — the old 6 s cap
+                    // ended every break still submerged, the dive
+                    // cycles never refilled the air, and the
+                    // descent drowned twice on 2026-11-18 before
+                    // the 3-break rule could fire. floodHold_
+                    // keeps the swim going while the supervisor's
+                    // relocation leg takes over.
+                    pressKey(kKeySpace, false);
+                    descendBreath_ = false; descendBreathTicks_ = 0; descendWetTicks_ = 0;
+                    descendDone_ = true; descendCave_ = true; phase_ = Phase::Idle;
+                    floodHold_ = true; floodWetTicks_ = 0; floodDryTicks_ = 0;
+                    note("descend: no air above; shaft is flooded, relocating");
+                    return;
                 }
                 return;
             }
             if (headWet) {
-                if (++descendWetTicks_ > 20 * 8) {
+                // 3 s, not 8: the old trigger let the shaft dig
+                // ~8 s deeper into the flood before surfacing,
+                // lengthening the swim back to air by the same
+                // margin (2026-11-18 drownings).
+                if (++descendWetTicks_ > 20 * 3) {
                     descendBreath_ = true; descendBreathTicks_ = 0;
                     ++descendBreathBreaks_;
                     digPos_ = {INT_MIN, 0, 0}; digBlockId_.clear(); digTicks_ = 0;
@@ -7556,6 +7632,10 @@ private:
     bool probePending_{false};
     bool skipUnderwater_{true};
     int submergedTicks_{0};
+    // Flooded-cave countermeasures: last dry-head spot (escape
+    // breadcrumb) and the post-abort swim hold.
+    bedrock::Vec3 lastDryPos_{}; bool lastDryValid_{};
+    bool floodHold_{}; int floodWetTicks_{}; int floodDryTicks_{};
     int joinGuardTicks_{}, joinDryTicks_{};
     bool joinGuardNoted_{};
     bool joinArmPending_{true};
