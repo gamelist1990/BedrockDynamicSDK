@@ -1284,6 +1284,8 @@ private:
             localPart(blockAt(target_)) == targetId_) {
             phase_ = resumePhase_;
             pathFor_ = {INT_MIN, 0, 0}; replans_ = 0;
+        } else if (resumePhase_ == Phase::Idle) {
+            phase_ = Phase::Idle; // idle self-defense: go back to waiting
         } else {
             phase_ = Phase::Scan; scanCursor_ = 0; bestDist2_ = 1e18;
         }
@@ -1601,7 +1603,7 @@ private:
     }
 
     // -- state machine -----------------------------------------------------------
-    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt, Ascend, Forage };
+    enum class Phase { Idle, Scan, Navigate, Mine, Collect, NeedTool, Escape, Combat, Boat, Craft, Descend, Hunt, Smelt, Ascend, Forage, Recover };
     enum class ForageStage { Hunt, Cook, Eat };
     void resetRun() {
         releaseInputs();
@@ -1868,6 +1870,7 @@ private:
         case Phase::Craft: return "クラフト中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Ascend: return "地上へ帰還中（掘った数: " + std::to_string(mined_) + "）";
         case Phase::Forage: return "食料調達中（狩った数: " + std::to_string(forageKills_) + "）";
+        case Phase::Recover: return "死亡した場所へ荷物を回収に戻り中";
         }
         return "";
     }
@@ -1949,6 +1952,7 @@ private:
         case Phase::Smelt: crashrec::setSection("tick/Smelt"); break;
         case Phase::Ascend: crashrec::setSection("tick/Ascend"); break;
         case Phase::Forage: crashrec::setSection("tick/Forage"); break;
+        case Phase::Recover: crashrec::setSection("tick/Recover"); break;
         }
     }
 
@@ -1957,7 +1961,11 @@ private:
         if ((tickCount_ % 200) == 0) // expire combat give-up entries
             for (auto it = combatIgnore_.begin(); it != combatIgnore_.end();)
                 if (it->second <= tickCount_) it = combatIgnore_.erase(it); else ++it;
-        if (pendingReset_) { pendingReset_ = false; gui_.reset(epoch_.load()); camera_.reset(); resetRun(); }
+        if (pendingReset_) { pendingReset_ = false; gui_.reset(epoch_.load()); camera_.reset(); resetRun(); joinGuardTicks_ = 20 * 60; joinGuardNoted_ = false; joinDryTicks_ = 0; joinSurfaced_ = false; if (recoverActive_) phase_ = Phase::Recover; }
+        tickDeathWatch();
+        if (recoverActive_ && !deathPending_ &&
+            phase_ != Phase::Recover && phase_ != Phase::Mine && phase_ != Phase::Collect)
+            phase_ = Phase::Recover; // the corpse run owns the client until done
         {
             std::deque<std::string> native;
             { std::lock_guard lock(nativeMutex_); native.swap(nativeLines_); }
@@ -2004,7 +2012,11 @@ private:
                 }
             }
         }
-        if (phase_ == Phase::Idle) { clearPath(); return; }
+        if (phase_ == Phase::Idle) {
+            bedrock::Vec3 pf;
+            if (feetPos(pf) && tickIdleGuards(pf)) return;
+            clearPath(); return;
+        }
         if (anyScreenUp() && phase_ != Phase::Craft && phase_ != Phase::Smelt) {
             if (moveStage_ != MoveStage::None) {
                 // A hotbar move is mid-flight (it opened this screen
@@ -2283,9 +2295,218 @@ private:
         case Phase::Hunt: tickHunt(feet); break;
         case Phase::Smelt: tickSmelt(feet); break;
         case Phase::Forage: break; // driven beside tickExpedition above
+        case Phase::Recover: tickRecover(feet); break;
         case Phase::Idle: case Phase::Escape: break;
         }
         updatePath(feet);
+    }
+
+    // Death watch + corpse recovery (2026-11-18, user request).
+    // Death has no direct readout, but its signature is unambiguous
+    // (measured live with a /kill probe): while alive the top screen
+    // is 'hud_screen' with gameplay active; on the death screen it is
+    // steadily 'ui://./hbui/gameplay.html' with gameplay inactive.
+    // The self actor stays in the snapshot either way. On death:
+    // remember the last alive position, abandon the run (the
+    // inventory is gone with it), pulse Enter — the death screen's
+    // respawn button answers Enter, verified live — and after the
+    // respawn walk back to the death point to pick the drops up
+    // (this world drops everything on death; despawn is 5 minutes).
+    void tickDeathWatch() {
+        const std::string screen = topScreenName();
+        if (contains(screen, "world_loading")) joinArmPending_ = true;
+        const bool aliveSig = screen == "hud_screen" && game_.gameplayActive();
+        if ((screen == "hud_screen" || screen == "hud_crosshair_screen") && joinArmPending_) {
+            // Arm the join drowning guard on the first fully-loaded
+            // tick. It used to be armed only in the WorldChange
+            // reset, which does not fire on a plain server join —
+            // the guard never armed at all in the first pond tests.
+            joinArmPending_ = false;
+            joinGuardTicks_ = 20 * 60; joinGuardNoted_ = false; joinDryTicks_ = 0;
+            joinSurfaced_ = false;
+        }
+        if (aliveSig) {
+            deathSigTicks_ = 0;
+            bedrock::Vec3 f;
+            if (feetPos(f)) { lastAlivePos_ = f; hasLastAlivePos_ = true; }
+            if (deathPending_) {
+                deathPending_ = false;
+                if (hasDeathPos_) startRecovery();
+            }
+            return;
+        }
+        const bool deathSig = screen == "ui://./hbui/gameplay.html" && !game_.gameplayActive();
+        if (!deathSig || !hasLastAlivePos_) { deathSigTicks_ = 0; return; }
+        if (++deathSigTicks_ < 20) return; // 1 s sustained: not a transient
+        if (!deathPending_) {
+            deathPending_ = true; hasDeathPos_ = true;
+            deathPos_ = lastAlivePos_;
+            note("death: detected at " + std::to_string(static_cast<int>(deathPos_.x)) + "," +
+                 std::to_string(static_cast<int>(deathPos_.y)) + "," +
+                 std::to_string(static_cast<int>(deathPos_.z)) + "; respawning");
+            reply("死んじゃった…リスポーンして荷物を取りに戻るね");
+            resetRun();
+        }
+        if ((tickCount_ % 30) == 1) pressKey(0x0D, true);
+        if ((tickCount_ % 30) == 3) pressKey(0x0D, false);
+    }
+    void startRecovery() {
+        recoverActive_ = true;
+        recoverTicks_ = 0; recoverSweepTicks_ = 0; recoverStuckTicks_ = 0;
+        recoverLastPos_ = deathPos_;
+        phase_ = Phase::Recover;
+        // Sentinel goal id: the path follower's dig detours save and
+        // restore targetId_, and an EMPTY saved id silently converts
+        // the run into mining the dug block forever (measured
+        // 2026-11-18: the corpse run became an endless grass_block
+        // gather). A non-block id keeps the save/restore intact.
+        targetId_ = "corpse_run";
+        pathFor_ = {INT_MIN, 0, 0}; path_.clear();
+        note("recover: heading to the death point");
+        reply("リスポーンしたよ。荷物を取りに戻るね");
+    }
+    void recoverDone(bool arrived) {
+        releaseInputs();
+        recoverActive_ = false; hasDeathPos_ = false; hasTarget_ = false;
+        phase_ = Phase::Idle;
+        note(arrived ? "recover: back at the death point" : "recover: gave up");
+        reply(arrived ? "荷物の場所に戻ったよ" : "荷物の回収はできなかった…");
+    }
+    void tickRecover(const bedrock::Vec3& feet) {
+        ++recoverTicks_;
+        targetId_ = "corpse_run"; // dig detours may have overwritten it
+        if (recoverTicks_ > 20 * 240) { recoverDone(false); return; } // 4 min cap
+        const double dx = deathPos_.x - feet.x;
+        const double dy = deathPos_.y - feet.y;
+        const double dz = deathPos_.z - feet.z;
+        const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // No-progress guard: the corpse run has no tools, so a death
+        // spot behind solid rock is unreachable — stop early instead
+        // of pressing into a wall for the full 4 minutes.
+        const double moved = std::hypot(feet.x - recoverLastPos_.x, feet.z - recoverLastPos_.z);
+        if (moved > 1.0) { recoverLastPos_ = feet; recoverStuckTicks_ = 0; }
+        else if (++recoverStuckTicks_ > 20 * 45 && dist > 6.0) { recoverDone(false); return; }
+        if (dist <= 4.5) {
+            // Final sweep: step onto the spot and linger so the drops
+            // are picked up.
+            if (++recoverSweepTicks_ > 100) { recoverDone(true); return; }
+            bedrock::Vec3 eye;
+            if (eyePos(eye)) faceAim(eye, deathPos_, 12.f, 0.3f);
+            pressKey(kKeyW, dist > 0.8);
+            pressKey(kKeySpace, inWaterNow(feet));
+            return;
+        }
+        target_ = BlockPos3{static_cast<int>(std::floor(deathPos_.x)),
+                            static_cast<int>(std::floor(deathPos_.y)),
+                            static_cast<int>(std::floor(deathPos_.z))};
+        hasTarget_ = true;
+        if (!(pathFor_ == target_)) {
+            if (!(planFailFor_ == target_) || tickCount_ - planFailTick_ >= 200) {
+                if (!planPath(feet) && path_.empty()) {
+                    planFailFor_ = target_; planFailTick_ = tickCount_;
+                }
+            }
+        }
+        if (!path_.empty() && pathIdx_ < path_.size() && pathDig_[pathIdx_]) {
+            // The follower enters a dig waypoint with no distance
+            // gate, and the Mine phase bounces straight back when
+            // the cell is out of reach (4.4 from the eye) — the
+            // bounce lands back here and the follower re-enters the
+            // dig instantly, deadlocking on the spot (measured
+            // 2026-11-18: 549 dig entries, 2 completions). Walk up
+            // to the cell first, then let the follower dig it.
+            const BlockPos3& wp = path_[pathIdx_];
+            const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+            const bedrock::Vec3 c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
+            const double ddx = c.x - eye.x, ddy = c.y - eye.y, ddz = c.z - eye.z;
+            if (ddx * ddx + ddy * ddy + ddz * ddz > 3.2 * 3.2) {
+                faceAim(eye, c, 12.f, 0.3f);
+                pressKey(kKeyW, true);
+                pressKey(kKeySpace, inWaterNow(feet));
+                return;
+            }
+        }
+        if (!path_.empty()) { tickFollowPath(feet); return; }
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        faceAim(eye, deathPos_, 12.f, 0.3f);
+        pressKey(kKeyW, true);
+        pressKey(kKeySpace, inWaterNow(feet) || headInWater(feet));
+    }
+
+    // Join drowning guard (2026-11-18): if the player (re)joins with
+    // the head underwater — the logout spot was in a flooded cave —
+    // the run resets to Idle and nothing else ever surfaces the
+    // player: it drowned twice during verification. For the first
+    // minute after a reset, while Idle, hold jump to swim up and
+    // stay in control until the head has been dry for 10 ticks.
+    bool tickJoinGuard(const bedrock::Vec3& feet) {
+        if (joinGuardTicks_ <= 0) return false;
+        --joinGuardTicks_;
+        if (headInWater(feet)) {
+            joinDryTicks_ = 0;
+            if (!joinGuardNoted_) {
+                joinGuardNoted_ = true;
+                note("join guard: head underwater after join, surfacing");
+                reply("水の中にいたから浮上するね");
+            }
+            pressKey(kKeySpace, true);
+            return true;
+        }
+        if (joinGuardNoted_) {
+            pressKey(kKeySpace, false);
+            if (++joinDryTicks_ >= 10 && !joinSurfaced_) {
+                joinSurfaced_ = true;
+                note("join guard: surfaced, breathing (watching until the window ends)");
+            }
+            // Stay armed until the window ends: a player who
+            // surfaced in deep water sinks again once the key is
+            // released, and the wet branch above re-engages.
+            return joinDryTicks_ < 10; // keep control until breathing is confirmed
+        }
+        // Joined on dry land: guard off after 5 s of continuously
+        // dry head. A one-tick dry reading is not enough — the HUD
+        // name (and with it the arming) can appear while the player
+        // is still at a transient pre-placement position, and the
+        // earlier instant disarm killed the guard on the very tick
+        // it armed, before the server placed the player into the
+        // pond (measured 2026-11-18: rejoined at y=56, drowned,
+        // guard never fired).
+        if (++joinDryTicks_ >= 100) joinGuardTicks_ = 0;
+        return false;
+    }
+    // Idle-time guards, run every tick while the run is Idle:
+    // - death watch: remember the last position seen alive (the
+    //   corpse-recovery uses it) and log foreign screens once per
+    //   change; the death screen parks the client in Idle with a
+    //   screen up, invisible to every other check.
+    // - the join drowning guard above.
+    // - idle self-defense: a hostile that closes in on a waiting
+    //   player is fought off (2026-11-18: a zombie killed the idle
+    //   bot at night after a failed forage — nothing defended it).
+    bool tickIdleGuards(const bedrock::Vec3& feet) {
+        if (deathPending_) return false; // the death watch owns the client now
+        const std::string screen = topScreenName();
+        if (screen != lastIdleScreen_) {
+            lastIdleScreen_ = screen;
+            if (!screen.empty() && screen != "hud_screen")
+                note("idle screen: '" + screen + "'");
+        }
+        if (screen.empty() || screen == "hud_screen" || screen == "hud_crosshair_screen") {
+            lastAlivePos_ = feet; hasLastAlivePos_ = true;
+        }
+        if (tickJoinGuard(feet)) return true;
+        if (game_.gameplayActive() && (tickCount_ % 4) == 0) {
+            if (auto mob = scanHostile(feet, 12.0)) {
+                const double dy = std::abs(mob->center.y - feet.y);
+                if (dy <= 4.0 || mob->dist <= 6.0) {
+                    enterCombat(*mob);
+                    tickCombat(feet);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     bool headInWater(const bedrock::Vec3& feet) {
@@ -4010,21 +4231,47 @@ private:
         return total;
     }
     bool placedTableExists() {
-        if (!chainTablePlaced_ ||
-            !contains(localPart(blockAt(chainTablePos_)), "crafting_table"))
-            return false;
-        if (tableBanned(chainTablePos_)) return false; // would not open; place a new one
-        // The remembered table may be far away (placed for an earlier
-        // chain in another area): its screen cannot be opened from here,
-        // so for chain purposes it does not exist and a new one must be
-        // placed nearby.
-        bedrock::Vec3 feet;
-        if (feetPos(feet)) {
+        if (chainTablePlaced_ &&
+            contains(localPart(blockAt(chainTablePos_)), "crafting_table") &&
+            !tableBanned(chainTablePos_)) {
+            // The remembered table may be far away (placed for an
+            // earlier chain in another area): its screen cannot be
+            // opened from here, so for chain purposes it does not
+            // exist and a new one must be placed nearby.
+            bedrock::Vec3 feet;
+            if (!feetPos(feet)) return true;
             const double dx = chainTablePos_.x + .5 - feet.x;
             const double dy = chainTablePos_.y + .5 - feet.y;
             const double dz = chainTablePos_.z + .5 - feet.z;
-            if (dx * dx + dy * dy + dz * dz > 36.0) return false;
+            if (dx * dx + dy * dy + dz * dz <= 36.0) return true;
         }
+        // Widened reuse (2026-11-18): the remembered table is not the
+        // only one in the world. Every chain used to remember just its
+        // own latest table, so a new craft site a few blocks from an
+        // OLD table still placed a fresh bench — the pile of tables
+        // the user spotted in a photo. Adopt ANY placed table within
+        // opening reach (the same 6-block gate) that is not banned.
+        bedrock::Vec3 feet;
+        if (!feetPos(feet)) return false;
+        const int fx = static_cast<int>(std::floor(feet.x));
+        const int fy = static_cast<int>(std::floor(feet.y));
+        const int fz = static_cast<int>(std::floor(feet.z));
+        BlockPos3 best{INT_MIN, 0, 0};
+        double bestD2 = 36.0;
+        for (int dx = -6; dx <= 6; ++dx)
+            for (int dy = -2; dy <= 2; ++dy)
+                for (int dz = -6; dz <= 6; ++dz) {
+                    const double d2 = static_cast<double>(dx * dx + dy * dy + dz * dz);
+                    if (d2 > bestD2) continue;
+                    const BlockPos3 c{fx + dx, fy + dy, fz + dz};
+                    if (tableBanned(c)) continue;
+                    if (!contains(localPart(blockAt(c)), "crafting_table")) continue;
+                    best = c; bestD2 = d2;
+                }
+        if (best.x == INT_MIN) return false;
+        chainTablePos_ = best; chainTablePlaced_ = true;
+        note("chain: reusing placed table at " + std::to_string(best.x) + "," +
+             std::to_string(best.y) + "," + std::to_string(best.z));
         return true;
     }
     int findTableHotbarSlot() {
@@ -6942,6 +7189,19 @@ private:
     bool probePending_{false};
     bool skipUnderwater_{true};
     int submergedTicks_{0};
+    int joinGuardTicks_{}, joinDryTicks_{};
+    bool joinGuardNoted_{};
+    bool joinArmPending_{true};
+    bool joinSurfaced_{};
+    std::string lastIdleScreen_;
+    bedrock::Vec3 lastAlivePos_{};
+    bool hasLastAlivePos_{};
+    int deathSigTicks_{};
+    bool deathPending_{}, hasDeathPos_{};
+    bedrock::Vec3 deathPos_{};
+    bool recoverActive_{};
+    int recoverTicks_{}, recoverSweepTicks_{}, recoverStuckTicks_{};
+    bedrock::Vec3 recoverLastPos_{};
     int escapeTicks_{0};
     int dryTicks_{0};
     struct HazardZone { int x, y, z, r; };
