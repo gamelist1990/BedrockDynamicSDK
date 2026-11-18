@@ -5675,6 +5675,7 @@ private:
         ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
         ascendStepTicks_ = 0; ascendStepY_ = INT_MAX;
         ascendShiftActive_ = false;
+        ascendStairLatch_ = false; ascendOpenTicks_ = 0;
         ascendDirX_ = 1; ascendDirZ_ = 0;
         ascendShaftTicks_ = 0; ascendShaftBestDist_ = 1e18;
         reply(replyText);
@@ -5877,9 +5878,23 @@ private:
         // floor block. Runs whenever the column above is not
         // already open; the pillar branch below handles open
         // columns (and is the fallback when no digging is possible).
+        // The staircase LATCHES: once it has engaged, a momentarily
+        // open column above does not hand control to the pillar
+        // until the opening persists (~2 s). Without the latch the
+        // two branches fight over the border cell when the player
+        // straddles two columns (measured 2026-11-18: the pillar
+        // re-placed cobblestone into the staircase's step-head
+        // cell after every dig — the same cell was mined 13 times
+        // and the climb never rose).
         const bool openAbove = isAir(blockAt({fx, fy + 2, fz})) &&
                                isAir(blockAt({fx, fy + 3, fz}));
-        if (!openAbove) {
+        if (openAbove) {
+            if (++ascendOpenTicks_ > 40) ascendStairLatch_ = false;
+        } else {
+            ascendOpenTicks_ = 0;
+            ascendStairLatch_ = true;
+        }
+        if (!openAbove || ascendStairLatch_) {
             if (fy != ascendStepY_) { ascendStepY_ = fy; ascendStepTicks_ = 0; }
             bool havePick = false;
             for (const auto& s : hotbarItems())
@@ -7754,6 +7769,7 @@ private:
     int ascendDirX_{1};
     int ascendDirZ_{0};
     int ascendStepTicks_{};
+    bool ascendStairLatch_{}; int ascendOpenTicks_{};
     int ascendStepY_{INT_MAX};
     bool ascendShiftActive_{};
     BlockPos3 ascendShiftCell_{};
