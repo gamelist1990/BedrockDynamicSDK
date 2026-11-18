@@ -1966,6 +1966,9 @@ private:
         if (recoverActive_ && !deathPending_ &&
             phase_ != Phase::Recover && phase_ != Phase::Mine && phase_ != Phase::Collect)
             phase_ = Phase::Recover; // the corpse run owns the client until done
+        if (ascendActive_ && !recoverActive_ && !deathPending_ &&
+            phase_ != Phase::Ascend && phase_ != Phase::Mine && phase_ != Phase::Collect)
+            phase_ = Phase::Ascend; // the climb owns the client until it arrives or fails
         {
             std::deque<std::string> native;
             { std::lock_guard lock(nativeMutex_); native.swap(nativeLines_); }
@@ -4121,16 +4124,8 @@ private:
                 if (wantPickaxeChain_ && tryStartPickaxeChain()) return; // chain path taken
                 const int climb = surfY - static_cast<int>(std::floor(feet.y));
                 if (totalSpareCount() >= climb) {
-                    releaseInputs();
-                    phase_ = Phase::Ascend; ascendTicks_ = 0;
-                    ascendLastY_ = INT_MAX; ascendStuck_ = 0; ascendPullTicks_ = 0;
-                    ascendTargetY_ = surfY;
-                    ascendOpenSky_ = lastSurfaceY_ == INT_MAX;
-                    ascendNoteY_ = INT_MIN;
-                    ascendDig_ = false;
-                    ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
-                    reply("道具が作れないから、地上に戻って仕切り直すね");
-                    note("ascend: returning to surface y=" + std::to_string(surfY));
+                    enterAscend(surfY, "道具が作れないから、地上に戻って仕切り直すね",
+                                "ascend: returning to surface y=" + std::to_string(surfY));
                     return;
                 }
             }
@@ -5609,10 +5604,38 @@ private:
         if (++digTicks_ > 20 * 30) { setAttack(false); digTicks_ = 0; return 2; }
         return 0;
     }
-    // Pillar back up the shaft to the surface the expedition
-    // descended from: jump, and while airborne place a spare block
-    // into the feet cell (aimed at the top face of the block below),
-    // land on it, repeat. The same jump-place rhythm as bridging.
+    // Shared entry for every surface-return trigger (tool lost,
+    // tool about to break, hopeless underground): climb back to
+    // the surface the expedition descended from.
+    void enterAscend(int surfY, const std::string& replyText, const std::string& noteText) {
+        releaseInputs();
+        gatherActive_ = false;
+        ascendActive_ = true;
+        phase_ = Phase::Ascend; ascendTicks_ = 0;
+        ascendLastY_ = INT_MAX; ascendStuck_ = 0; ascendPullTicks_ = 0;
+        ascendTargetY_ = surfY;
+        ascendOpenSky_ = lastSurfaceY_ == INT_MAX;
+        ascendNoteY_ = INT_MIN;
+        ascendDig_ = false;
+        ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
+        ascendStepTicks_ = 0; ascendStepY_ = INT_MAX;
+        ascendShiftActive_ = false;
+        ascendDirX_ = 1; ascendDirZ_ = 0;
+        reply(replyText);
+        note(noteText);
+    }
+    void rotateAscendDir() {
+        const int ndx = ascendDirZ_, ndz = -ascendDirX_;
+        ascendDirX_ = ndx; ascendDirZ_ = ndz;
+    }
+    // Climb back to the surface the expedition descended from.
+    // Natural movement, the way a player does it (user direction
+    // 2026-11-18): walk back to the descent shaft and pillar up
+    // the open column; where the way up is rock, dig a staircase
+    // — clear the step column's body/head cells and step up, one
+    // level at a time. The old pillar-only climb looped forever
+    // wherever the place window never opened (straddle caps in
+    // natural pockets, cliff bases).
     void tickAscend(bedrock::Vec3 feet) {
         ++ascendTicks_;
         const int fy = static_cast<int>(std::floor(feet.y));
@@ -5628,6 +5651,7 @@ private:
         }
         if (arrived) {
             releaseInputs();
+            ascendActive_ = false;
             note("ascend: back at the surface (y=" + std::to_string(fy) + ")");
             reply("地上に戻ったよ。道具を作り直すね");
             hasTarget_ = false;
@@ -5693,10 +5717,9 @@ private:
             if (shiftCell.x != INT_MIN) {
                 ++ascendShifts_;
                 ascendLastRiseTick_ = tickCount_;
-                ascendCenterCell_ = shiftCell;
-                ascendCenterActive_ = true;
-                ascendCenterGiveUp_ = false;
-                ascendCenterTicks_ = 0;
+                ascendShiftCell_ = shiftCell;
+                ascendShiftActive_ = true;
+                ascendStepTicks_ = 0;
                 note("ascend: no rise for 90s; shifting the climb column to " +
                      std::to_string(shiftCell.x) + "," + std::to_string(shiftCell.z));
             } else {
@@ -5707,6 +5730,154 @@ private:
                 phase_ = Phase::Idle;
                 return;
             }
+        }
+        const int fx = static_cast<int>(std::floor(feet.x));
+        const int fz = static_cast<int>(std::floor(feet.z));
+        void* p = player();
+        bedrock::Vec3 eye;
+        if (!eyePos(eye)) return;
+        // Shift walk (from the no-rise budget): step sideways to
+        // the chosen neighbouring column, then keep climbing.
+        if (ascendShiftActive_) {
+            const double tx = ascendShiftCell_.x + .5, tz = ascendShiftCell_.z + .5;
+            const double sdx = tx - feet.x, sdz = tz - feet.z;
+            if (sdx * sdx + sdz * sdz < 0.15 * 0.15 || ++ascendStepTicks_ > 60) {
+                ascendShiftActive_ = false;
+                ascendStepTicks_ = 0;
+                pressKey(kKeyW, false);
+            } else {
+                setUse(false);
+                pressKey(kKeySpace, false);
+                pressKey(kKeySneak, false);
+                faceToward(eye, {static_cast<float>(tx), eye.y,
+                                 static_cast<float>(tz)}, 5.f);
+                pressKey(kKeyW, true);
+                return;
+            }
+        }
+        // Phase A: walk back to the shaft bottom first when it is
+        // known and the climb has not risen above it yet — the
+        // shaft is an open column straight to the surface.
+        if (descendShaftCell_.x != INT_MIN && fy <= descendShaftCell_.y + 2) {
+            const double sdx = descendShaftCell_.x + .5 - feet.x;
+            const double sdz = descendShaftCell_.z + .5 - feet.z;
+            if (sdx * sdx + sdz * sdz > 1.2 * 1.2) {
+                target_ = descendShaftCell_; targetId_ = "ascend_shaft"; hasTarget_ = true;
+                if (!(pathFor_ == target_)) {
+                    if (!(planFailFor_ == target_) || tickCount_ - planFailTick_ >= 200) {
+                        if (!planPath(feet) && path_.empty()) {
+                            planFailFor_ = target_; planFailTick_ = tickCount_;
+                        }
+                    }
+                }
+                if (!path_.empty() && pathIdx_ < path_.size() && pathDig_[pathIdx_]) {
+                    // Dig-waypoint distance gate (same as the
+                    // corpse run): walk up to the cell before the
+                    // follower tries to dig it.
+                    const BlockPos3& wp = path_[pathIdx_];
+                    const bedrock::Vec3 c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
+                    const double ddx = c.x - eye.x, ddy = c.y - eye.y, ddz = c.z - eye.z;
+                    if (ddx * ddx + ddy * ddy + ddz * ddz > 3.2 * 3.2) {
+                        faceAim(eye, c, 12.f, 0.3f);
+                        pressKey(kKeyW, true);
+                        pressKey(kKeySpace, inWaterNow(feet));
+                        return;
+                    }
+                }
+                if (!path_.empty()) { tickFollowPath(feet); return; }
+                faceAim(eye, {descendShaftCell_.x + .5f, feet.y,
+                              descendShaftCell_.z + .5f}, 12.f, 0.3f);
+                pressKey(kKeyW, true);
+                pressKey(kKeySpace, inWaterNow(feet));
+                return;
+            }
+        }
+        // Staircase through rock, the way a player digs up: clear
+        // the step column's body/head cells, then step up onto its
+        // floor block. Runs whenever the column above is not
+        // already open; the pillar branch below handles open
+        // columns (and is the fallback when no digging is possible).
+        const bool openAbove = isAir(blockAt({fx, fy + 2, fz})) &&
+                               isAir(blockAt({fx, fy + 3, fz}));
+        if (!openAbove) {
+            if (fy != ascendStepY_) { ascendStepY_ = fy; ascendStepTicks_ = 0; }
+            bool havePick = false;
+            for (const auto& s : hotbarItems())
+                if (s.count > 0 && contains(s.id, "pickaxe")) { havePick = true; break; }
+            auto solidDiggable = [this](const std::string& id) {
+                return !id.empty() && isDiggableCell(id) && !isPassableCell(id);
+            };
+            const int nx = fx + ascendDirX_, nz = fz + ascendDirZ_;
+            const auto stepId = blockAt({nx, fy, nz});
+            const auto bodyId = blockAt({nx, fy + 1, nz});
+            const auto headId = blockAt({nx, fy + 2, nz});
+            const auto ownCap = blockAt({fx, fy + 2, fz});
+            const bool stepSolid = !stepId.empty() && !isPassableCell(stepId) &&
+                                   !contains(localPart(stepId), "water") &&
+                                   !contains(localPart(stepId), "lava");
+            BlockPos3 digCellPos{INT_MIN, 0, 0};
+            std::string digId;
+            if (solidDiggable(bodyId)) { digCellPos = {nx, fy + 1, nz}; digId = bodyId; }
+            else if (solidDiggable(headId)) { digCellPos = {nx, fy + 2, nz}; digId = headId; }
+            if (digCellPos.x != INT_MIN && havePick) {
+                note("ascend stair: dig " + localPart(digId) + " at " +
+                     std::to_string(digCellPos.x) + "," + std::to_string(digCellPos.y) +
+                     "," + std::to_string(digCellPos.z));
+                ascendDig_ = true;
+                target_ = digCellPos;
+                targetId_ = localPart(digId);
+                savedId_.clear();
+                hasTarget_ = true;
+                mineTicks_ = 0;
+                setUse(false); pressKey(kKeySpace, false);
+                phase_ = Phase::Mine;
+                return;
+            }
+            const bool stepClear = stepSolid && isPassableCell(bodyId) &&
+                                   isPassableCell(headId) && digCellPos.x == INT_MIN;
+            if (stepClear) {
+                // If the step keeps failing, the cap over the
+                // player's own head may be clipping the jump arc:
+                // dig it out, then keep trying.
+                if (ascendStepTicks_ >= 30 && solidDiggable(ownCap) && havePick) {
+                    note("ascend stair: dig own cap " + localPart(ownCap));
+                    ascendDig_ = true;
+                    target_ = {fx, fy + 2, fz};
+                    targetId_ = localPart(ownCap);
+                    savedId_.clear();
+                    hasTarget_ = true;
+                    mineTicks_ = 0;
+                    setUse(false); pressKey(kKeySpace, false);
+                    phase_ = Phase::Mine;
+                    return;
+                }
+                pressKey(kKeySneak, false);
+                faceToward(eye, {nx + .5f, eye.y, nz + .5f}, 5.f);
+                pressKey(kKeyW, true);
+                pressKey(kKeySpace, true);
+                if (++ascendStepTicks_ > 50) {
+                    ascendStepTicks_ = 0;
+                    rotateAscendDir();
+                    note("ascend stair: step failed, rotating");
+                }
+                if ((ascendTicks_ % 20) == 0)
+                    note("ascend stair: y=" + std::to_string(feet.y) + " dir=" +
+                         std::to_string(ascendDirX_) + "," + std::to_string(ascendDirZ_));
+                return;
+            }
+            if (!stepSolid || digCellPos.x == INT_MIN) {
+                // No floor to step onto in this direction, or the
+                // way is blocked by something undiggable: rotate
+                // and try another heading.
+                if (++ascendStepTicks_ > 10) {
+                    ascendStepTicks_ = 0;
+                    rotateAscendDir();
+                    note("ascend stair: no step this way, rotating");
+                }
+                return;
+            }
+            // A dig is needed but no pickaxe is in the hotbar:
+            // fall through to the pillar branch.
         }
         int slot = spareSlot();
         if (slot >= 0) ascendPullTicks_ = 0; // the pull budget is per shortage, not per climb
@@ -5728,9 +5899,6 @@ private:
             phase_ = Phase::Idle;
             return;
         }
-        void* p = player();
-        bedrock::Vec3 eye;
-        if (!eyePos(eye)) return;
         // Centre the player inside the column before jumping:
         // with the AABB straddling a wall column, that column's
         // block at fy+2 caps the jump at ~0.2 (measured
@@ -5891,6 +6059,11 @@ private:
     void tickDescend(bedrock::Vec3 feet) {
         if (feet.y <= descendTargetY_) {
             setAttack(false); descendDone_ = true; phase_ = Phase::Idle;
+            // Remember the shaft bottom: the surface return walks
+            // back to this column and pillars up the open shaft.
+            descendShaftCell_ = {static_cast<int>(std::floor(feet.x)),
+                                 static_cast<int>(std::floor(feet.y)),
+                                 static_cast<int>(std::floor(feet.z))};
             note("descend: reached y=" + std::to_string(static_cast<int>(feet.y)));
             return;
         }
@@ -7024,6 +7197,7 @@ private:
     void expFail(const std::string& why) {
         note("expedition failed: " + why);
         reply("自律調達はここまで（" + why + "）");
+        ascendActive_ = false;
         expStage_ = ExpStage::None;
         gatherActive_ = false;
         endScanOverride();
@@ -7200,18 +7374,28 @@ private:
                 !hasSparePickaxe(need)) {
                 needTier_ = need; wantPickaxeChain_ = true;
                 if (!tryStartPickaxeChain() && totalSpareCount() >= surfY - fy) {
-                    releaseInputs();
-                    gatherActive_ = false;
-                    phase_ = Phase::Ascend; ascendTicks_ = 0;
-                    ascendLastY_ = INT_MAX; ascendStuck_ = 0; ascendPullTicks_ = 0;
-                    ascendTargetY_ = surfY;
-                    ascendOpenSky_ = lastSurfaceY_ == INT_MAX;
-                    ascendNoteY_ = INT_MIN;
-                    ascendDig_ = false;
-                    ascendCenterActive_ = false; ascendCenterGiveUp_ = false;
-                    reply("道具が作れないから、地上に戻って仕切り直すね");
-                    note("ascend: returning to surface y=" + std::to_string(surfY));
+                    enterAscend(surfY, "道具が作れないから、地上に戻って仕切り直すね",
+                                "ascend: returning to surface y=" + std::to_string(surfY));
                     return;
+                }
+            }
+            // Return BEFORE the tool breaks (user direction
+            // 2026-11-18): the rescue above only fires once the
+            // pickaxe is already gone, which strands the climb
+            // without a digging tool. When the best pickaxe is
+            // nearly worn out and no spare exists, head back while
+            // it still works — the staircase climb needs it.
+            else if (fy < surfY - 8 && !hasSparePickaxe(need)) {
+                const int best = bestPickaxeRemaining(need);
+                if (best >= 0 && best < 50) {
+                    needTier_ = need; wantPickaxeChain_ = true;
+                    if (!tryStartPickaxeChain()) {
+                        enterAscend(surfY, "ツルハシが壊れそうだから、壊れる前に地上に戻るね",
+                                    "ascend: pickaxe nearly worn out (~" + std::to_string(best) +
+                                    " left); returning before it breaks, surface y=" +
+                                    std::to_string(surfY));
+                        return;
+                    }
                 }
             }
         }
@@ -7461,6 +7645,14 @@ private:
     int ascendCenterTicks_{};
     int ascendLastRiseTick_{};
     int ascendShifts_{};
+    bool ascendActive_{};
+    int ascendDirX_{1};
+    int ascendDirZ_{0};
+    int ascendStepTicks_{};
+    int ascendStepY_{INT_MAX};
+    bool ascendShiftActive_{};
+    BlockPos3 ascendShiftCell_{};
+    BlockPos3 descendShaftCell_{INT_MIN, 0, 0};
     // Hunt state
     int huntDirX_{1}, huntDirZ_{};
     int huntStage_{}, huntCells_{}, huntTicks_{};
