@@ -1,5 +1,6 @@
 #include "bedrock/profiles/resolver.hpp"
 #include "bedrock/profiles/profile_json.hpp"
+#include "bedrock/generated/profile_sources.hpp"
 #include "bedrock/runtime/hook_runtime.h"
 #include <array>
 #include <cassert>
@@ -8,6 +9,16 @@
 #include <vector>
 
 int main() {
+    // Exercise the actual bundled profiles through the runtime parser, not
+    // just the JSON assembler: malformed new symbols otherwise ship in DLLs.
+    for (const auto& source : bedrock::generated::profileSources) {
+        bedrock::Resolver bundledResolver;
+        std::string bundledError;
+        if (!bundledResolver.loadJson(source, bundledError)) {
+            std::cerr << "bundled profile rejected: " << bundledError << '\n';
+            return 1;
+        }
+    }
     // Regression: old cache has no layouts; the exact-build bundle must work.
     nlohmann::json legacy = {{"target", {{"sha256", "exe"}, {"text_sha256", "text"},
         {"size_of_image", 512}, {"text_rva", "0x100"}, {"text_size", 256}}}};

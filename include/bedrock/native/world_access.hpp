@@ -39,6 +39,7 @@ struct NativeHotbar {
 // adapter: blocks leave as Cell/NativeBlockInfo values and the hotbar as a
 // NativeHotbar copy.
 class NativeWorldAccess {
+    friend class NativeBlockActions;
 public:
     NativeWorldAccess() : reader_(bindings_) {}
     NativeWorldAccess(const NativeWorldAccess &) = delete;
@@ -91,6 +92,12 @@ public:
                Vec3 hit, bool *accepted) const noexcept {
         return bindings_.build(player, gameMode, support, face, eye, hit, accepted);
     }
+    template<class Operation>
+    bool withBlockHit(void* player, const BlockPos& block, unsigned face, Vec3 eye, Vec3 hit,
+                      Operation operation) const noexcept {
+        return bindings_.withBlockHit(player, block, face, eye, hit, operation);
+    }
+
 
     void clear() {
         reader_.clear();

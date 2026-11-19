@@ -40,20 +40,22 @@ int main(int argc, char** argv) {
         if (!mappedSize || mappedSize > (512U<<20)) throw std::runtime_error("image size unsafe");
         std::vector<std::byte> image(mappedSize);
         std::uint32_t textRva=0, textSize=0;
+        const auto imageBase = std::uint64_t{le32(raw, optional+24)} |
+                               (std::uint64_t{le32(raw, optional+28)} << 32);
         std::size_t sections=optional+optionalLen;
         for (int i=0; i<count; ++i) {
             std::size_t sh=sections+40*i;
             if (sh+40 > raw.size()) throw std::runtime_error("bad section headers");
+            const auto sectionRva=le32(raw,sh+12), sectionSize=le32(raw,sh+8);
+            const auto fileSize=le32(raw,sh+16), filePtr=le32(raw,sh+20);
+            if (sectionRva >= image.size() || sectionSize > image.size()-sectionRva ||
+                filePtr > raw.size() || fileSize > raw.size()-filePtr)
+                throw std::runtime_error("bad section mapping");
+            std::memcpy(image.data()+sectionRva,raw.data()+filePtr,
+                        std::min<std::size_t>(fileSize,sectionSize));
             if (std::memcmp(raw.data()+sh, ".text", 5)==0) {
                 textRva=le32(raw,sh+12);
                 textSize=le32(raw,sh+8);
-                auto fileSize=le32(raw,sh+16), filePtr=le32(raw,sh+20);
-                if (textRva >= image.size() || textSize > image.size()-textRva ||
-                    filePtr > raw.size() || fileSize > raw.size()-filePtr)
-                    throw std::runtime_error("bad .text mapping");
-                std::memcpy(image.data()+textRva,raw.data()+filePtr,
-                            std::min<std::size_t>(fileSize,textSize));
-                break;
             }
         }
         if (!textSize) throw std::runtime_error("no .text");
@@ -75,6 +77,31 @@ int main(int argc, char** argv) {
             ++checked;
         }
         if (!checked) throw std::runtime_error("no matching symbols in DB");
+        // Both native GameMode classes are valid. Verify the adapter accepts
+        // the actual function in every supported class's virtual slot, so a
+        // base-only binding cannot silently reject the other class at runtime.
+        if (candidates && j.contains("layouts") && j["layouts"].contains("BlockActions")) {
+            const auto& actions=j["layouts"]["BlockActions"];
+            for (const auto& table : j["layouts"]["BlockSource"]["game_mode_vtables"]) {
+                const auto rva=std::stoull(table.get<std::string>(),nullptr,0);
+                for (const char* name : {"start_destroy","continue_destroy","stop_destroy",
+                                        "use_item","release_item","attack_actor"}) {
+                    const auto& action=actions.at(name);
+                    const auto at=rva+action.at("slot").get<unsigned>()*8;
+                    const auto function=std::uint64_t{le32(image,at)} |
+                                        (std::uint64_t{le32(image,at+4)} << 32);
+                    const auto matches=[&](const nlohmann::json& ref) {
+                        const auto& spec=j.at("symbols").at(ref.at("symbol").get<std::string>());
+                        return function==imageBase+std::stoull(spec.at("rva").get<std::string>(),nullptr,0);
+                    };
+                    bool supported=matches(action.at("function"));
+                    for (const auto& alt : action.value("alternate_functions",nlohmann::json::array()))
+                        supported=supported||matches(alt);
+                    if (!supported) throw std::runtime_error(std::string("BlockActions rejects supported GameMode: ")+name);
+                }
+            }
+            std::cout<<"PASS: both GameMode vtables covered by BlockActions bindings\n";
+        }
         std::cout<<"PASS: "<<checked<<" exact-hash RVAs resolved in mapped PE image"
                  <<(candidates?" (candidates are NOT ABI verified)":"")<<"\n";
         return 0;

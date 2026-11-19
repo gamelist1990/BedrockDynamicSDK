@@ -1,0 +1,119 @@
+{
+  "symbols": {
+    "ContainerOpenDispatcher::handle": {
+      "rva": "0x23a7330",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "4C 89 C1 4D 8B 01 48 8B 01 48 8B 80 48 06 00 00",
+      "abi": "void __fastcall(Dispatcher*, NetworkIdentifier*, NetEventCallback*, const shared_ptr<Packet>*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    },
+    "ContainerCloseDispatcher::handle": {
+      "rva": "0x23a7370",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "4C 89 C1 4D 8B 01 48 8B 01 48 8B 80 40 06 00 00",
+      "abi": "void __fastcall(Dispatcher*, NetworkIdentifier*, NetEventCallback*, const shared_ptr<Packet>*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    },
+    "InteractPacket::getId": {
+      "rva": "0x29fd4c0",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "B8 21 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC",
+      "abi": "int __fastcall(Packet*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    },
+    "InteractPacket::write": {
+      "rva": "0x29fd4f0",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 60 03 00",
+      "abi": "void __fastcall(Packet*, Writer*, Context*, version)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    },
+    "ContainerClosePacket::getId": {
+      "rva": "0x419f850",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "B8 2F 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC",
+      "abi": "int __fastcall(Packet*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    },
+    "ContainerClosePacket::write": {
+      "rva": "0x419f880",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "41 57 41 56 56 57 53 48 83 EC 20 4D 89 CE 4C 89",
+      "abi": "void __fastcall(Packet*, Writer*, Context*, version)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "evidence": "Documents/PEXData/REA/automine-background-craft-1.26.65.1/focused/windows-4.json; windows-9.json; focused-source.json. Exact-build byte guards and packet vtables compared on both supported executables."
+    }
+  },
+  "layouts": {
+    "BackgroundContainers": {
+      "schema": 1,
+      "revision": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "open_dispatch": {
+        "symbol": "ContainerOpenDispatcher::handle"
+      },
+      "close_dispatch": {
+        "symbol": "ContainerCloseDispatcher::handle"
+      },
+      "interact_id_guard": {
+        "symbol": "InteractPacket::getId"
+      },
+      "interact_write_guard": {
+        "symbol": "InteractPacket::write"
+      },
+      "close_id_guard": {
+        "symbol": "ContainerClosePacket::getId"
+      },
+      "close_write_guard": {
+        "symbol": "ContainerClosePacket::write"
+      },
+      "interact_vtable_rva": "0xf15b960",
+      "close_vtable_rva": "0xf1d8360",
+      "open_vtable_rva": "0xf1d83f0",
+      "packet_connection_offset": 16,
+      "packet_priority_offset": 8,
+      "packet_priority": 4294967298,
+      "interact_size": 88,
+      "interact_action_offset": 48,
+      "interact_runtime_offset": 56,
+      "interact_has_position_offset": 76,
+      "interact_version_offset": 80,
+      "interact_version": 5,
+      "close_size": 56,
+      "close_id_offset": 48,
+      "close_type_offset": 49,
+      "close_server_offset": 50,
+      "close_version_offset": 52,
+      "close_version": 1,
+      "open_id_offset": 48,
+      "open_type_offset": 49,
+      "open_position_offset": 52,
+      "evidence": "Native inventory-open path at 0x657e800 builds Interact action 6 without an OS key. Factory + dispatcher field and Open/Close thunks establish borrowed packet pointer ABI; ContainerOpen client dispatch can be intercepted without replacing chat. Server acceptance and invisible crafting are unverified."
+    }
+  }
+}

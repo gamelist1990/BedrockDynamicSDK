@@ -1,0 +1,133 @@
+{
+  "symbols": {
+    "MoveInputComponent::directionConsumer": {
+      "rva": "0x10dbc20",
+      "entry_check": "56 57 55 53 48 83 EC 28 48 8B 71 08 48 8B 7E 78",
+      "abi": "bool __fastcall(input rule context*)",
+      "status": "candidate",
+      "runtime_verified": false,
+      "abi_verified": false,
+      "source": "Exact-build static instruction analysis; REA/Ghidra focused PE with Windows x64 ABI. User will perform runtime validation.",
+      "evidence": "Documents/PEXData/REA/automine-control-1.26.65.1/; source PE section digest and carve mapping retained; external calls/data omitted from focused PE.",
+      "name_status": "inferred",
+      "signature": "",
+      "cross_version_signature_available": false
+    }
+  },
+  "layouts": {
+    "AutomationControls": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "component_hash": "0x018B1887",
+      "component_size": 100,
+      "fields": {
+        "input_flags": 0,
+        "move_left": 36,
+        "move_forward": 40,
+        "held_flags": 16
+      },
+      "flag_masks": {
+        "forward": "0x2000",
+        "backward": "0x4000",
+        "left": "0x8000",
+        "right": "0x10000",
+        "jump": "0x4000080",
+        "sneak": "0x200001",
+        "sprint": "0x100",
+        "forward_left": "0x200",
+        "forward_right": "0x400",
+        "backward_left": "0x800",
+        "backward_right": "0x1000",
+        "jump_pressed": "0x2000000",
+        "jump_released": "0x1000000",
+        "sneak_pressed": "0x800000",
+        "sneak_released": "0x400000"
+      },
+      "consumer_guard": {
+        "symbol": "MoveInputComponent::directionConsumer"
+      },
+      "evidence": "Exact source .pdata getter/consumer: hash 0x018B1887, stride 0x64, uint32 native MoveInputState flags at +0 and analog left/forward at +4/+8. Native direction masks correlate with LeviLamina MoveInputState::Flag (reference and SHA retained in native-flag-correlation.json). This is NOT the protocol InputData enum. Runtime hook timing and transitions remain unverified.",
+      "evidence_ids": [
+        "ev_3baf4f92df78fa26d931c6fc1abdee84152eb3e61ec36328e2f7c6e3b41f7bcf"
+      ],
+      "revision": 2
+    },
+    "BlockActions": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "candidate",
+      "runtime_verified": false,
+      "start_destroy": {
+        "slot": 1,
+        "function": {
+          "symbol": "GameMode::startDestroyBlock"
+        },
+        "alternate_functions": [
+          {
+            "symbol": "GameMode::startDestroyBlockAlternate"
+          }
+        ]
+      },
+      "continue_destroy": {
+        "slot": 3,
+        "function": {
+          "symbol": "GameMode::continueDestroyBlock"
+        }
+      },
+      "stop_destroy": {
+        "slot": 4,
+        "function": {
+          "symbol": "GameMode::stopDestroyBlock"
+        }
+      },
+      "evidence": "Survival GameMode vtable anchored by the guarded buildBlock function at slot 6; .pdata, Windows ABI register/stack inspection and REA/Ghidra decompilation. No runtime validation. Alternate start/use/attack entries retain their native state/feature gates before forwarding to the base implementation. SDK dispatches the checked virtual entry; it must not bypass the wrapper.",
+      "use_item": {
+        "slot": 11,
+        "function": {
+          "symbol": "GameMode::useItem"
+        },
+        "alternate_functions": [
+          {
+            "symbol": "GameMode::useItemAlternate"
+          }
+        ]
+      },
+      "release_item": {
+        "slot": 16,
+        "function": {
+          "symbol": "GameMode::releaseUsingItem"
+        }
+      },
+      "attack_actor": {
+        "slot": 15,
+        "function": {
+          "symbol": "GameMode::attack"
+        },
+        "alternate_functions": [
+          {
+            "symbol": "GameMode::attackAlternate"
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev_3fd42f7d9dd002a58bd451a6f79b12b58c795d730a90e3905ad809f0d5677906",
+        "ev_e56406520ca528de2b93ee82c6fd7a1f9bfa85f5d5c0eb762bba24786ef02b5e"
+      ],
+      "destroy_state": {
+        "target_offset": 16,
+        "progress_offset": 36,
+        "progress_mirror_offset": 32,
+        "destroying_flag_offset": 2890,
+        "evidence": "Exact-build GameMode start/continue and common tick decompilation: target +0x10, progress +0x24, previous +0x20. Native tick calls the owned timer virtual tick; the adapter calls this when the native counter is stalled, rather than writing a fixed time step. Candidate player destroying flag and held-state mirror retain prior input observations; runtime validation required.",
+        "timer_offset": 184,
+        "timer_counter_offset": 8
+      },
+      "revision": 2,
+      "clock_tick": {
+        "symbol": "GameMode::tick"
+      }
+    }
+  }
+}

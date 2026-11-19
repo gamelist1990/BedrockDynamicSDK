@@ -254,6 +254,25 @@ struct Bindings{
     }
     struct HitHead{Vec start,direction;int type;unsigned char face,padding[3];Pos block;Vec hit;};
     static_assert(sizeof(HitHead)==0x38);
+    template<class Operation>
+    bool withBlockHit(void* player,const Pos& block,unsigned face,Vec eye,Vec hit,
+                      Operation operation) const noexcept {
+        if(face>5)return false;
+        void* level{};void** vt{};void* getter{};void* head{};
+        if(!read(player,layout("player_level_offset"),level)||!read(level,0,vt)||
+           !read(vt,layout("level_hit_result_slot")*8,getter)||getter!=getHitFn)return false;
+        HitHead original{};bool saved=false,result=false;
+        __try { __try {
+            head=reinterpret_cast<void*(__fastcall*)(void*)>(getter)(level);
+            if(!read(head,0,original))return false;saved=true;
+            auto input=original;input.start=eye;input.direction={hit.x-eye.x,hit.y-eye.y,hit.z-eye.z};
+            input.type=0;input.face=static_cast<unsigned char>(face);input.block=block;input.hit=hit;
+            if(!write(head,0,input))return false;
+            result=operation();
+        } __finally { if(saved)write(head,0,original); } }
+        __except(EXCEPTION_EXECUTE_HANDLER){result=false;}
+        return result;
+    }
     bool build(void* player,void* gm,const Pos& support,unsigned face,Vec eye,Vec hit,bool* accepted)const noexcept{
         if(!placementReady||!accepted||face>5)return false;
         void* level{};void** vt{};void* getter{};void* head{};void** gameVt{};void* buildFn{};

@@ -89,7 +89,7 @@
     },
     {
       "path": "classes/GameMode.json",
-      "sha256": "7a4c03e35418bc4f1b8e6395b57cca6d1fbb34c82973f891259a1591a1dcb3b2"
+      "sha256": "b700c3f1785cd3f09bfe206c446aaa47d9468033edb978f61ca59639b97749e3"
     },
     {
       "path": "classes/GuiData.json",
@@ -186,6 +186,14 @@
     {
       "path": "metadata/maintenance.json",
       "sha256": "c0506e800ac150771a47556236c4f83da7732d21be5f8918925b2bf145bd2e09"
+    },
+    {
+      "path": "classes/AutomationControls.json",
+      "sha256": "fecd83a6bc7e140d592b3594080c04aaaddc2ec57dad45083f681488c97bba64"
+    },
+    {
+      "path": "classes/BackgroundContainers.json",
+      "sha256": "b17da5ae5c60751f8740e23029329ae5babf4bb6d12e84a952ab9d694bff259a"
     }
   ]
 }

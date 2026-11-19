@@ -23,6 +23,19 @@ class ProtocolCodec {
             throw std::runtime_error("protocol trailing payload bytes");
         return value;
     }
+    // Read only a named packet's leading fields, without decoding trailing item NBT.
+    Json decodePrefix(PacketId id, std::string_view payload, std::size_t fields) const {
+        if (payload.size() > WirePacket::maximumBytes)
+            throw std::runtime_error("protocol payload limit");
+        auto type = types().at(packetType(id).get<std::string>());
+        if (type.at(0) != "container" || fields > type.at(1).size())
+            throw std::runtime_error("invalid protocol prefix");
+        auto &members = type.at(1);
+        members.erase(members.begin() + fields, members.end());
+        WireReader reader(payload);
+        Budget budget;
+        return read(type, reader, {}, budget, 0);
+    }
     std::string encode(PacketId id, const Json &value) const {
         WireWriter writer;
         Budget budget;
@@ -161,6 +174,10 @@ class ProtocolCodec {
         }
         const auto kind = type.at(0).get<std::string>();
         const auto &spec = type.at(1);
+        if (kind == "option") {
+            if (!r.boolean()) return nullptr;
+            return read(spec,r,context,budget,depth+1);
+        }
         if (kind == "container") {
             Json result = Json::object();
             context.push_back(&result);
@@ -288,6 +305,11 @@ class ProtocolCodec {
         }
         const auto kind = type.at(0).get<std::string>();
         const auto &spec = type.at(1);
+        if (kind == "option") {
+            w.boolean(!value.is_null());
+            if (!value.is_null()) write(spec,value,w,context,budget,depth+1);
+            return;
+        }
         if (kind == "container") {
             context.push_back(&value);
             for (const auto &field : spec) {

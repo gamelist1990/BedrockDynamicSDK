@@ -41,7 +41,10 @@
 #include <bedrock/native/world_access.hpp>
 #include <bedrock/packets/packet_api.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
+#include <bedrock/detail/inventory_snapshot.hpp>
 #include <bedrock/runtime/hook_runtime.h>
+#include <bedrock/native/background_containers.hpp>
+#include <bedrock/packets/inventory_requests.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -90,6 +93,7 @@ struct CraftInventorySlot {
     std::string item;
     int count{};
     std::int32_t netId{};
+    int damage{-1}; // native aux; interpreted as wear only for tools
 };
 
 enum class CraftJobStatus { Idle, Running, Done, Failed };
@@ -138,6 +142,11 @@ public:
             world_.load(profile.json());
             loadItems(root);
             if (!items_.loaded) throw std::runtime_error("native_items layout unavailable");
+            if (root.at("layouts").contains("BackgroundContainers")) {
+                std::string backgroundError;
+                backgroundReady_=background_.load(root,backgroundError);
+                if (!backgroundReady_) note("background containers unavailable: "+backgroundError);
+            }
             loaded_ = true;
             error.clear();
             return true;
@@ -147,6 +156,16 @@ public:
     // Registers the CraftingData / ItemStackResponse receive handlers and
     // installs the PacketAPI receive routes. Call once, after load().
     bool installPackets(const std::string& profileJson, std::string& error) {
+        packets_.onSend(PacketId::ItemStackRequest,[this](PacketWireSendEvent& event) {
+            if (event.sender()!=sender_.load()) return;
+            WireReader reader(event.packet().payload());
+            if (reader.varuint()!=1) return;
+            const auto id=static_cast<std::int32_t>(reader.zigzag());
+            std::lock_guard lock(wireMutex_);
+            const auto found=wireOverrides_.find(id);
+            if (found!=wireOverrides_.end()) { event.packet().replacePayload(found->second);wireOverrides_.erase(found); }
+        });
+        if (!packets_.installSend(profileJson,error)) return false;
         packets_.onReceive(PacketId::CraftingData,
                            [this](const PacketReadEvent& event) {
                                auto bytes = event.ownedPayload();
@@ -163,6 +182,26 @@ public:
                                        reinterpret_cast<const std::byte*>(owned->data()),
                                        owned->size());
                            });
+        for (const auto id : {PacketId::InventoryContent, PacketId::InventorySlot})
+            packets_.onReceive(id, [this](const PacketReadEvent& event) {
+                try {
+                    const bool full = event.id() == PacketId::InventoryContent;
+                    const auto fields = ProtocolCodec{}.decodePrefix(
+                        event.id(), event.payload(), full ? 1 : 2);
+                    if (fields.at("window_id") != "inventory" &&
+                        fields.at("window_id") != "hotbar") return;
+                    std::lock_guard lock(shadowMutex_);
+                    if (full) {
+                        const int limit = fields.at("window_id") == "hotbar" ? 9 : 36;
+                        for (int slot = 0; slot < limit; ++slot) shadow_.erase(slot);
+                    } else {
+                        const auto slot = fields.at("slot").get<unsigned>();
+                        if (slot < 36) shadow_.erase(static_cast<int>(slot));
+                    }
+                } catch (const std::exception& e) {
+                    note(std::string("inventory update header rejected: ") + e.what());
+                }
+            });
         if (!packets_.installReceive(profileJson, error)) return false;
         note("ItemStackRequest adapter: packet routes installed");
         return true;
@@ -170,21 +209,60 @@ public:
 
     void stop() {
         stopped_ = true;
+        background_.stop();
         if (sendToken_) { BDS_HookUnsubscribe(std::exchange(sendToken_, nullptr)); }
     }
 
     // Sender observation + job pump. Call on the LevelTick thread.
-    void update(void* client, void* level) {
+    void update(void* client, void* level,bool allowWork=true) {
         if (stopped_ || !loaded_) return;
         client_ = client;
         level_ = level;
+        backgroundOpeningAllowed_ = allowWork;
         observeSender(client);
-        pump();
+        background_.context(sender_.load(),capturedPlus10_.load(),allowWork);
+        if (allowWork) pump();
     }
 
     bool senderReady() const noexcept { return sender_.load() != nullptr; }
     bool connectionReady() const noexcept { return capturedPlus10_.load() != nullptr; }
     bool ready() const noexcept { return loaded_ && senderReady() && connectionReady(); }
+    using BackgroundKind=NativeBackgroundContainers::Kind;
+    bool backgroundSupported() const noexcept { return backgroundReady_; }
+    bool backgroundActive() const { return background_.active(); }
+    bool backgroundFailed() const { return background_.failed(); }
+    bool backgroundOpen(BackgroundKind kind) const { return background_.isOpen(kind); }
+    bool backgroundArm(BackgroundKind kind,BlockPos position) { return backgroundOpeningAllowed_ && ready() && backgroundReady_ && background_.arm(kind,position); }
+    bool backgroundUse(BackgroundKind kind,BlockPos block,unsigned face,Vec3 eye,Vec3 hit) {
+        // Native build/use can synchronously change a screen before any
+        // ContainerOpen packet reaches the suppressing hook.
+        if (!backgroundOpeningAllowed_ || !ready() || !backgroundReady_ || background_.active()) return false;
+        if (!background_.arm(kind,block)) return false;
+        void* player=world_.localPlayer(client_);bool accepted{};
+        const bool called=world_.build(player,world_.gameMode(player),block,face,eye,hit,&accepted);
+        if (!called || !accepted) { (void)background_.close();return false; }
+        return true;
+    }
+    bool backgroundInventory() {
+        if (!backgroundOpeningAllowed_ || !ready() || !backgroundReady_) return false;
+        void* player=world_.localPlayer(client_);std::uint64_t runtime{};
+        const auto& actors=world_.actors();
+        if (!world_.readField(world_.component(player,actors.runtimeIdComponentHash),actors.runtimeIdValueOffset,runtime)) return false;
+        return background_.openInventory(runtime);
+    }
+    bool backgroundClose() { return background_.close(); }
+    void cancelJobs() {
+        if (status_==CraftJobStatus::Running) { job_.pending=0;status_=CraftJobStatus::Failed;detail_="cancelled"; }
+        if (transferStatus_==CraftJobStatus::Running) { transfer_.pending=0;transferStatus_=CraftJobStatus::Failed;transferDetail_="cancelled"; }
+        (void)background_.close();
+    }
+    void worldChanged() {
+        background_.reset();capturedPlus10_.store(nullptr);
+        { std::lock_guard lock(consensusMutex_);consensus_.clear(); }
+        if (status_==CraftJobStatus::Running) { job_.pending=0;status_=CraftJobStatus::Failed;detail_="world changed"; }
+        if (transferStatus_==CraftJobStatus::Running) { transfer_.pending=0;transferStatus_=CraftJobStatus::Failed;transferDetail_="world changed"; }
+        { std::lock_guard lock(shadowMutex_);shadow_.clear(); }
+    }
     bool recipesReady() const noexcept {
         std::lock_guard lock(recipesMutex_);
         return !recipes_.empty();
@@ -227,47 +305,47 @@ public:
         return count;
     }
 
-    // Memory snapshot of inventory slots 0..35 with the response-tracked
-    // overlay applied (the overlay wins: the memory view is stale for every
-    // slot a forged request has touched).
-    std::vector<CraftInventorySlot> snapshot() {
-        std::map<int, CraftInventorySlot> merged;
+    // Omitted slots failed to read; zero-count entries are confirmed empty.
+    std::vector<CraftInventorySlot> memorySnapshot(bool includeEmpty=false,
+                                                  int firstSlot=0, int slotCount=36) {
+        std::vector<CraftInventorySlot> out;
+        if (firstSlot < 0 || slotCount < 0 || firstSlot > 36 || slotCount > 36-firstSlot)
+            return out;
         if (void* player = world_.localPlayer(client_)) {
-            for (int slot = 0; slot < 36; ++slot) {
+            for (int slot = firstSlot; slot < firstSlot+slotCount; ++slot) {
                 void* stack = itemStack(player, slot);
                 if (!stack) continue;
                 std::uint8_t count{};
-                if (!world_.readField(stack, items_.countOffset, count) || !count) continue;
+                if (!world_.readField(stack, items_.countOffset, count)) continue;
+                if (!count) {
+                    if (includeEmpty) out.push_back({slot, {}, 0, 0});
+                    continue;
+                }
                 std::int32_t netId{};
-                readBytes(static_cast<const std::byte*>(stack) + items_.netIdOffset,
-                          &netId, sizeof(netId));
-                merged[slot] = CraftInventorySlot{slot, stackItemId(stack),
-                                                  static_cast<int>(count), netId};
+                if (!readBytes(static_cast<const std::byte*>(stack) + items_.netIdOffset,
+                               &netId, sizeof(netId))) continue;
+                auto id = stackItemId(stack);
+                if (id.empty()) continue;
+                short aux{-1};
+                if (items_.auxOffset)
+                    (void)world_.readField(stack, items_.auxOffset, aux);
+                out.push_back({slot, std::move(id), static_cast<int>(count), netId,
+                               aux >= 0 ? static_cast<int>(aux) : -1});
             }
         }
-        std::lock_guard lock(shadowMutex_);
-        for (auto it = shadow_.begin(); it != shadow_.end();) {
-            const int slot = it->first;
-            auto mem = merged.find(slot);
-            const std::int32_t memNet =
-                mem == merged.end() ? 0 : mem->second.netId;
-            const std::int32_t memCount =
-                mem == merged.end() ? 0 : mem->second.count;
-            // The merged map holds exactly what the model shows (empty
-            // slots are absent), except slots a still-valid entry below
-            // has not overwritten yet — this loop is the only writer, so
-            // reading `merged` here is the raw memory view.
-            if (memNet != it->second.memNetId || memCount != it->second.memCount) {
-                it = shadow_.erase(it); // gameplay replaced or grew the stack
-                continue;
-            }
-            merged[slot] = it->second.item;
-            ++it;
-        }
-        std::vector<CraftInventorySlot> out;
-        for (const auto& [slot, item] : merged)
-            if (item.count > 0) out.push_back(item);
         return out;
+    }
+
+    std::vector<CraftInventorySlot> snapshot(bool includeEmpty=false) {
+        auto memory = memorySnapshot(true);
+        std::lock_guard lock(shadowMutex_);
+        return detail::reconcileInventory(std::move(memory), shadow_, includeEmpty);
+    }
+
+    void invalidateInventorySlot(int slot) {
+        if (slot < 0 || slot >= 36) return;
+        std::lock_guard lock(shadowMutex_);
+        shadow_.erase(slot);
     }
 
     // Queue a craft job: `times` consecutive single crafts of `recipe`,
@@ -359,6 +437,7 @@ public:
         using namespace item_stack_request_native;
         if (!ready() || transferStatus_ == CraftJobStatus::Running) return false;
         if (count < 1 || count > 64) return false;
+        transferIsDrop_=false;
         auto* actions = new std::byte[0x60]{};
         actions[0x00] = static_cast<std::byte>(count);
         putSlotInfo(actions, 0x08, srcContainer, static_cast<std::uint8_t>(srcSlot), srcNetId);
@@ -379,6 +458,27 @@ public:
         return true;
     }
     CraftJobStatus transferStatus() const noexcept { return transferStatus_; }
+    bool startDrop(int slot,std::int32_t netId,int count,const std::string& item) {
+        if (!ready() || status_==CraftJobStatus::Running || transferStatus_==CraftJobStatus::Running) return false;
+        const auto inventory=snapshot();
+        const auto source=std::find_if(inventory.begin(),inventory.end(),[&](const auto& s) { return s.slot==slot && s.netId==netId && s.item==item && s.count>=count; });
+        if (source==inventory.end()) return false;
+        dropExpectedCount_=source->count-count;
+        const auto id=nextRequestId();std::string payload;
+        try { payload=dropRequestPayload(id,slot,netId,count); } catch (...) { return false; }
+        { std::lock_guard lock(wireMutex_);wireOverrides_[id]=std::move(payload); }
+        // A valid empty native request carries the connection through the
+        // normal sender. Its payload is replaced only for this exact request
+        // ID at the SDK wire hook, before batching/compression/encryption.
+        std::byte dummy{};auto* request=makeRequest(id,&dummy,0);
+        dispatchRequests(request,1);delete[] request;
+        { std::lock_guard lock(wireMutex_);
+          if (wireOverrides_.erase(id)) { note("drop: wire replacement unavailable");return false; }
+        }
+        transfer_=Transfer{12u,slot,item,id,std::chrono::steady_clock::now(),~0u,-1,count};
+        transferIsDrop_=true;transferStatus_=CraftJobStatus::Running;transferDetail_.clear();
+        note("drop: requested "+item+" x"+std::to_string(count));return true;
+    }
     const std::string& transferDetail() const noexcept { return transferDetail_; }
     void clearTransferStatus() {
         if (transferStatus_ == CraftJobStatus::Done || transferStatus_ == CraftJobStatus::Failed) {
@@ -418,6 +518,7 @@ private:
         std::size_t suppliesOffset{}, inventoryOffset{}, getItemSlot{};
         std::size_t itemRefOffset{}, countOffset{}, idOffset{}, strSizeOffset{}, strCapOffset{};
         std::size_t netIdOffset{0x80};
+        std::size_t auxOffset{};
         bool loaded{};
     } items_;
     void loadItems(const nlohmann::json& root) {
@@ -434,6 +535,8 @@ private:
         items_.getItemSlot = num(inv.at("get_item_vtable_slot"));
         items_.itemRefOffset = num(st.at("item_reference_offset"));
         items_.countOffset = num(st.at("count_offset"));
+        items_.auxOffset = num(root.at("layouts").at("BlockSource")
+                                  .at("candidate_layouts").at("item_stack_aux_offset"));
         items_.idOffset = num(st.at("namespaced_id_string_offset"));
         items_.strSizeOffset = num(st.at("string_size_offset"));
         items_.strCapOffset = num(st.at("string_capacity_offset"));
@@ -1103,6 +1206,15 @@ private:
                     break;
                 }
             }
+            if (transferIsDrop_) {
+                const auto found=std::find_if(resp.slots.begin(),resp.slots.end(),[&](const auto& s) {
+                    return s.container==transfer_.srcContainer && static_cast<int>(s.slot)==transfer_.srcSlot;
+                });
+                if (found==resp.slots.end() || found->count!=dropExpectedCount_) {
+                    transferStatus_=CraftJobStatus::Failed;transferDetail_="drop response missing source";return;
+                }
+                note("drop: server confirmed "+transfer_.srcItemId);
+            }
             transferStatus_ = CraftJobStatus::Done;
             note("transfer done (req " + std::to_string(pending) + ")");
         } else if (std::chrono::steady_clock::now() - transfer_.sentAt > std::chrono::seconds(30)) {
@@ -1118,6 +1230,8 @@ private:
     PacketAPI packets_;
     NativePacketSender senderLayout_;
     NativeWorldAccess world_;
+    NativeBackgroundContainers background_;
+    bool backgroundReady_{};
     Diagnostic diagnostic_;
     bool loaded_{};
     bool stopped_{};
@@ -1137,6 +1251,7 @@ private:
     std::map<std::int32_t, RespInfo> responses_;
     mutable std::mutex recipesMutex_;
     std::map<std::string, CraftRecipe> recipes_;
+    bool backgroundOpeningAllowed_{};
     std::mutex shadowMutex_;
     // A shadow entry is only trusted while the client model's stack id
     // for that slot still equals the baseline captured when the entry
@@ -1170,6 +1285,10 @@ private:
         int count{};
     };
     Transfer transfer_;
+    bool transferIsDrop_{};
+    int dropExpectedCount_{};
+    std::mutex wireMutex_;
+    std::map<std::int32_t,std::string> wireOverrides_;
     CraftJobStatus transferStatus_{CraftJobStatus::Idle};
     std::string transferDetail_;
 };

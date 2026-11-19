@@ -16,7 +16,33 @@ if(WIN32)
 endif()
 FetchContent_MakeAvailable(bedrock_sdk)
 if(WIN32)
-    add_library(BedrockAutoMine SHARED src/auto_mine.cpp)
+    add_library(BedrockAutoMine SHARED
+        src/auto_mine.cpp
+        src/block_knowledge.cpp
+        src/boat.cpp
+        src/collection.cpp
+        src/combat.cpp
+        src/construction.cpp
+        src/controller.cpp
+        src/controls.cpp
+        src/crafting.cpp
+        src/crafting_table.cpp
+        src/diagnostics.cpp
+        src/excavation.cpp
+        src/expedition.cpp
+        src/forage.cpp
+        src/inventory.cpp
+        src/mining.cpp
+        src/navigation.cpp
+        src/path_render.cpp
+        src/pathfinding.cpp
+        src/recovery.cpp
+        src/runtime.cpp
+        src/screens.cpp
+        src/smelting.cpp
+        src/target_selection.cpp
+        src/tools.cpp)
+    target_precompile_headers(BedrockAutoMine PRIVATE src/auto_mine.hpp)
     target_include_directories(BedrockAutoMine PRIVATE include)
     target_link_libraries(BedrockAutoMine PRIVATE bedrock::world bedrock::symbols bedrock::logging bedrock::hook_runtime EnTT::EnTT shell32 ole32)
     bedrock_enable_hook_runtime(BedrockAutoMine)
