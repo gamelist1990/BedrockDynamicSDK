@@ -1,8 +1,16 @@
 #include "auto_mine.hpp"
+#include "collection_geometry.hpp"
 
 namespace automine::client {
 
 void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
+    const bool pickup = phase_ == Phase::Collect;
+    const bool workstation = phase_ == Phase::Navigate && navReturn_;
+    const bool walkOnly = pickup || workstation;
+    const auto retryWalk = [&] {
+        ++replans_;
+        invalidateRoute();
+    };
     // A route interruption (including water/timeout) cannot inherit jump ownership.
     if (parkourSprintInput_ &&
         (pathIdx_ >= path_.size() || pathIdx_ >= pathParkour_.size() ||
@@ -14,6 +22,10 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
     ++navTicks_;
     const std::size_t idxAtEntry = pathIdx_;
     if (navTicks_ > 20 * 45) { // same overall budget as legacy navigation
+        if (walkOnly) {
+            retryWalk();
+            return;
+        }
         note("navigate timeout (path); blacklist target");
         if (chainWaitingCobble_)
             ++cobbleNavFails_;
@@ -40,6 +52,10 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
             pathPartial_ = false;
             pathFor_ = {INT_MIN, 0, 0};
             navTicks_ = 0;
+            return;
+        }
+        if (walkOnly) {
+            retryWalk();
             return;
         }
         if (++replans_ > 2) {
@@ -98,7 +114,7 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         const BlockPos3 cap{static_cast<int>(std::floor(feet.x)), stanceY + 2,
                             static_cast<int>(std::floor(feet.z))};
         const auto id = blockAt(cap);
-        if (isDiggableCell(id)) {
+        if (!walkOnly && isDiggableCell(id)) {
             pressKey(kKeyW, false);
             pressKey(kKeySpace, false);
             enterPathDigCell(cap, id);
@@ -111,6 +127,11 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         const auto wh = blockAt({wp.x, wp.y + 1, wp.z});
         const bool fSolid = isSolidCell(wf), hSolid = isSolidCell(wh);
         if (fSolid || hSolid) {
+            if (walkOnly) {
+                planBlocked_.insert({wp.x, wp.y, wp.z});
+                retryWalk();
+                return;
+            }
             const BlockPos3 dig{wp.x, hSolid ? wp.y + 1 : wp.y, wp.z};
             const auto &id = hSolid ? wh : wf;
             if (isDiggableCell(id)) {
@@ -136,6 +157,17 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         }
     }
     const int feetCellY = static_cast<int>(std::floor(feet.y));
+    const auto preciseEnd = [&](std::size_t i) {
+        return walkOnly && !pathPartial_ && i + 1 == path_.size();
+    };
+    if (workstation && preciseEnd(pathIdx_) && std::abs(feet.y - wp.y) < .16 &&
+        std::hypot(feet.x - wp.x - .5, feet.z - wp.z - .5) < .12) {
+        // We reached the planned stance, but tickNavigate couldn't interact
+        // from it (for example, the view is now blocked). Don't walk past it.
+        planBlocked_.insert({wp.x, wp.y, wp.z});
+        retryWalk();
+        return;
+    }
     float yawNow{}, pitchNow{};
     const bool haveYaw = !independent_ && rotation(yawNow, pitchNow);
     const auto isCorner = [&](std::size_t i) {
@@ -151,6 +183,10 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
     while (pathIdx_ < path_.size() && !pathDig_[pathIdx_] && !pathBridge_[pathIdx_] &&
            !pathParkour_[pathIdx_] && !pathPillar_[pathIdx_]) {
         const BlockPos3 w = path_[pathIdx_];
+        // Interactions own their actual arrival tests. The normal .48
+        // waypoint tolerance can stop outside pickup/reach distance.
+        if (preciseEnd(pathIdx_))
+            break;
         const double hx = w.x + .5 - feet.x, hz = w.z + .5 - feet.z;
         const double horiz = std::hypot(hx, hz);
         bool passed = false;
@@ -208,7 +244,16 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         }
     }
     const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-    const bedrock::Vec3 aim{path_[aimIdx].x + .5f, eye.y, path_[aimIdx].z + .5f};
+    const auto aimCell = path_[aimIdx];
+    bedrock::Vec3 aim{aimCell.x + .5f, eye.y, aimCell.z + .5f};
+    if (pickup && aimIdx == pathIdx_ && preciseEnd(aimIdx) &&
+        std::floor(feet.x) == aimCell.x && feetCellY == aimCell.y &&
+        std::floor(feet.z) == aimCell.z) {
+        const auto p = automine::pickupStancePoint({aimCell.x, aimCell.y, aimCell.z},
+            {collectEntityPos_.x, collectEntityPos_.y, collectEntityPos_.z});
+        aim.x = static_cast<float>(p.x);
+        aim.z = static_cast<float>(p.z);
+    }
     faceAim(eye, aim, 10.f, 0.25f);
     // Sharp turns pivot in place instead of arcing wide.
     bool wDown = true;
@@ -260,9 +305,23 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
             pressKey(kKeySpace, false);
             pressKey(kKeyW, false);
             planBlockedFor_ = target_;
-            if (planBlocked_.size() < 64)
-                planBlocked_.insert({wp.x, wp.y, wp.z});
-            pathFor_ = {INT_MIN, 0, 0};
+            if (planBlocked_.size() < 64) {
+                const auto blocked = path_[pathIdx_];
+                planBlocked_.insert({blocked.x, blocked.y, blocked.z});
+            }
+            if (walkOnly) {
+                retryWalk();
+            } else if (phase_ == Phase::Navigate && ++replans_ > 2) {
+                note("path: jump watchdog; blacklist target");
+                blacklist_.insert(target_);
+                invalidateRoute();
+                hasTarget_ = false;
+                phase_ = Phase::Scan;
+                scanCursor_ = 0;
+                bestDist2_ = 1e18;
+                return;
+            } else
+                pathFor_ = {INT_MIN, 0, 0};
             note("path: jump watchdog, replanning");
             return;
         }
@@ -277,6 +336,12 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
                 pressKey(kKeySpace, false);
                 pressKey(kKeyA, false);
                 pressKey(kKeyD, false);
+                if (walkOnly) {
+                    const auto w = path_[pathIdx_];
+                    planBlocked_.insert({w.x, w.y, w.z});
+                    retryWalk();
+                    return;
+                }
                 if (++replans_ > 2) {
                     note("path follow stuck; blacklist target");
                     blacklist_.insert(target_);
@@ -306,7 +371,7 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         lastX_ = feet.x;
         lastZ_ = feet.z;
     }
-    if (stuckTicks_ == 1 || stuckTicks_ == 2) {
+    if (!walkOnly && (stuckTicks_ == 1 || stuckTicks_ == 2)) {
         pressKey(kKeySpace, true);
         pressKey(kKeyD, stuckTicks_ == 1);
         pressKey(kKeyA, stuckTicks_ == 2);
@@ -314,6 +379,15 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
         pressKey(kKeyA, false);
         pressKey(kKeyD, false);
     }
+}
+
+bool AutoMineMod::workstationReachableFrom(bedrock::Vec3 feet, BlockPos3 table) {
+    return automine::workstationReachable({feet.x, feet.y, feet.z}, {table.x, table.y, table.z},
+        [&](automine::NavPoint eye) {
+            BlockPos3 obstruction;
+            return lineOfSight({static_cast<float>(eye.x), static_cast<float>(eye.y),
+                                static_cast<float>(eye.z)}, table, obstruction);
+        });
 }
 
 void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
@@ -328,6 +402,8 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
     if (navReturn_ && !(target_ == chainTablePos_))
         navReturn_ = false;
     if (navReturn_) {
+        if (scaffoldActive_)
+            endScaffold();
         if (!contains(localPart(targetNow), "crafting_table")) {
             note("craft chain: table gone; abandoning return");
             navReturn_ = false;
@@ -339,7 +415,33 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
             releaseInputs();
             return;
         }
+        if (workstationReachableFrom(feet, target_)) {
+            invalidateRoute();
+            navReturn_ = false;
+            hasTarget_ = false;
+            chainWaitingCobble_ = false;
+            phase_ = Phase::Craft;
+            chainStepTicks_ = 0;
+            chainAimedTick_ = -1;
+            note("craft chain: back beside the table, resuming");
+            return;
+        }
+        if (replans_ < 3 && (pathFor_ == target_ || planPath(feet))) {
+            tickFollowPath(feet);
+            return;
+        }
+        // Never walk directly into the table, dig through it or pillar up to it.
+        invalidateRoute();
+        navReturn_ = false;
+        hasTarget_ = false;
+        phase_ = Phase::Scan;
+        scanCursor_ = 0;
+        bestDist2_ = 1e18;
+        note("craft chain: no safe route to the side of the table");
+        return;
     } else if (targetNow.empty() || localPart(targetNow) != targetId_) {
+        if (scaffoldActive_)
+            endScaffold();
         note("target vanished; rescan");
         hasTarget_ = false;
         phase_ = Phase::Scan;
@@ -348,6 +450,8 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
         releaseInputs();
         return;
     }
+    if (scaffoldActive_ && !(target_ == scaffoldFor_))
+        endScaffold();
     const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
     const bedrock::Vec3 center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
     const double dx = center.x - eye.x, dy = center.y - eye.y, dz = center.z - eye.z;
@@ -364,12 +468,12 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
                                     pathParkour_[pathIdx_]));
     };
     // A placement action owns the selected slot until it is finished.
-    if (!constructionPending() && !navReturn_ && !ensureTool(targetId_)) {
+    if (!constructionPending() && !ensureTool(targetId_)) {
         enterNeedTool();
         return;
     }
     const auto supported = [&] {
-        return navReturn_ || center.y <= eye.y || inWaterNow(feet) ||
+        return center.y <= eye.y || inWaterNow(feet) ||
                automine::supportFraction({feet.x, feet.y, feet.z},
                                         [this](automine::PlanCell c) { return planTerrain(c); }) > .5;
     };
@@ -378,18 +482,24 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
         for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace, kKeySprint, kKeySneak})
             pressKey(key, false);
         setUse(false);
-        if (navReturn_) {
-            navReturn_ = false;
-            hasTarget_ = false;
-            chainWaitingCobble_ = false;
-            phase_ = Phase::Craft;
-            chainStepTicks_ = 0;
-            chainAimedTick_ = -1;
-            note("craft chain: back at the table, resuming");
-            return;
-        }
         phase_ = Phase::Mine;
         mineTicks_ = 0;
+        return;
+    }
+    if (!scaffoldActive_ && replans_ >= 3) {
+        // A blocked pillar may get one committed fallback climb. Otherwise
+        // stop alternating between failed construction routes.
+        if (scaffoldWanted(feet)) {
+            tickScaffold(feet);
+            return;
+        }
+        note("navigate: route retry limit; blacklist target");
+        blacklist_.insert(target_);
+        invalidateRoute();
+        hasTarget_ = false;
+        phase_ = Phase::Scan;
+        scanCursor_ = 0;
+        bestDist2_ = 1e18;
         return;
     }
     if (!scaffoldActive_ && !(pathFor_ == target_)) {
@@ -400,11 +510,6 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
             }
         }
     }
-    if (!constructionPending() && !path_.empty() && navTicks_ > 300 &&
-        target_.y - static_cast<int>(std::floor(feet.y)) >= 3 && scaffoldStanceOk(feet)) {
-        note("navigate: route stuck toward elevated target; switching to scaffold");
-        engageScaffold(feet);
-    }
     if (scaffoldActive_ || (!constructionPending() && scaffoldWanted(feet))) {
         if (tickScaffold(feet))
             return;
@@ -413,7 +518,7 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
         tickFollowPath(feet);
         return;
     }
-    if (!independent_ && !navReturn_ && !inWaterNow(feet) && boatSlot() < 0 && dist > 10.0 &&
+    if (!independent_ && !inWaterNow(feet) && boatSlot() < 0 && dist > 10.0 &&
         !(boatChainTriedFor_ == target_) && routeCrossesWater(feet, center) &&
         tryStartBoatChain()) {
         tickCraft(feet);

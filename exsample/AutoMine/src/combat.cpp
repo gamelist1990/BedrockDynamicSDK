@@ -1,4 +1,5 @@
 #include "auto_mine.hpp"
+#include <bedrock/detail/actor_identity.hpp>
 
 namespace automine::client {
 
@@ -418,16 +419,16 @@ void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
 }
 
 bool AutoMineMod::loadActors(const bedrock::RuntimeProfile &profile, std::string &failure) {
-    if (!bedrock::parseNativeActorLayout(profile.json(), actorLayout_, failure))
+    bedrock::NativeActorLayout layout{};
+    if (!bedrock::parseNativeActorLayout(profile.json(), layout, failure))
         return false;
     if (!runtimeActors_.load(profile.json(), failure))
         return false;
     try {
         const auto root = bedrock::parseNativeProfile(profile.json());
         const auto &at = root.at("layouts").at("Actor").at("actor_type");
-        actorTypeOffset_ = bedrock::native_profile::number(at.at("value_offset"));
         actorRegistry_.configure(
-            actorLayout_, actorTypeOffset_,
+            layout, bedrock::native_profile::number(at.at("value_offset")),
             static_cast<std::uint32_t>(bedrock::native_profile::number(at.at("player_type_id"))));
     } catch (const std::exception &e) {
         failure = e.what();
@@ -437,16 +438,10 @@ bool AutoMineMod::loadActors(const bedrock::RuntimeProfile &profile, std::string
 }
 
 std::optional<std::uint32_t> AutoMineMod::actorTypeOf(void *actor) {
-    void *comp = actorRegistry_.component(actor, actorLayout_.actorTypeComponentHash, 0);
-    if (!comp)
+    std::uint32_t type = 0;
+    if (!actorRegistry_.readActorType(actor, type))
         return std::nullopt;
-    std::uint32_t v = 0;
-    __try {
-        std::memcpy(&v, static_cast<const char *>(comp) + actorTypeOffset_, sizeof(v));
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return std::nullopt;
-    }
-    return v;
+    return type;
 }
 
 void AutoMineMod::probeActors(const bedrock::Vec3 &feet) {
@@ -475,8 +470,7 @@ void AutoMineMod::probeActors(const bedrock::Vec3 &feet) {
         std::uint32_t eid = 0;
         actorRegistry_.readEntityId(a, eid);
         const auto type = actorTypeOf(a);
-        const bedrock::Actor apiActor{game_, a};
-        const auto ident = apiActor.getIdentity();
+        const auto ident = bedrock::detail::readActorIdentity(access_, a);
         char buf[640];
         std::snprintf(buf, sizeof(buf),
                       "actor d=%.1f self=%d type=%d eid=%u bounds=%.2fx%.2f pos=%.1f,%.1f,%.1f "

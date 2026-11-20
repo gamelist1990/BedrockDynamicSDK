@@ -43,7 +43,10 @@ if(WIN32)
         src/target_selection.cpp
         src/tools.cpp)
     target_precompile_headers(BedrockAutoMine PRIVATE src/auto_mine.hpp)
+    set_source_files_properties(src/collection.cpp PROPERTIES
+        COMPILE_DEFINITIONS AUTOMINE_COLLECTION_PICKUP_WIRING)
     target_include_directories(BedrockAutoMine PRIVATE include)
+    # First-party Mod: native world access and shared hook dispatch.
     target_link_libraries(BedrockAutoMine PRIVATE bedrock::world bedrock::symbols bedrock::logging bedrock::hook_runtime EnTT::EnTT shell32 ole32)
     bedrock_enable_hook_runtime(BedrockAutoMine)
     target_compile_options(BedrockAutoMine PRIVATE /utf-8)

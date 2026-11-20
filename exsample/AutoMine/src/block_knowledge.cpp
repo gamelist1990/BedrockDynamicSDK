@@ -25,6 +25,19 @@ bool contains(const std::string &text, std::string_view needle) {
     return text.find(needle) != std::string::npos;
 }
 
+bool isWalkThroughVegetation(std::string_view local) {
+    for (const auto plant : {"grass", "short_grass", "tall_grass", "tallgrass", "fern", "large_fern",
+                             "double_plant", "dead_bush", "leaf_litter", "bush", "vine",
+                             "short_dry_grass", "tall_dry_grass", "firefly_bush", "wildflowers",
+                             "pink_petals", "dandelion", "poppy", "blue_orchid", "allium",
+                             "azure_bluet", "oxeye_daisy", "cornflower", "lily_of_the_valley",
+                             "wither_rose", "sunflower", "lilac", "rose_bush", "peony",
+                             "open_eyeblossom", "closed_eyeblossom", "torchflower", "pitcher_plant"})
+        if (local == plant)
+            return true;
+    return local.ends_with("_flower") || local.ends_with("_tulip") || local.ends_with("_sapling");
+}
+
 ToolClass classForBlock(const std::string &rawId) {
     const auto id = localPart(rawId);
     if (id.empty() || isAir(id))

@@ -4,209 +4,200 @@
 namespace automine::client {
 
 void AutoMineMod::resetCollectionSweep() {
-    collectSweep_.clear();
-    collectRoute_.clear();
-    collectSweepIdx_ = 0;
-    collectRouteIdx_ = 0;
-    collectDwell_ = collectCandidateTicks_ = collectLandingTicks_ = 0;
+    // r18: no pickup ring/sweep.  Keep the normal A* path fields consistent.
+    path_.clear();
+    pathDig_.clear();
+    pathBridge_.clear();
+    pathParkour_.clear();
+    pathPillar_.clear();
+    pathIdx_ = 0;
+    pathFor_ = {INT_MIN, 0, 0};
+    pathPartial_ = false;
+    jumpHoldTicks_ = 0;
 }
 
 void AutoMineMod::startCollection() {
-    // An adjacent drop can enter inventory before we observe the broken block.
     collectDropId_ = pickupItem_;
     collectBase_ = pickupBase_;
-    collectStableTicks_ = collectRetryTicks_ = 0;
-    collectRetryReported_ = false;
-    collectDig_.reset();
-    collectDigFailed_.clear();
+    collectStableTicks_ = collectAttemptTicks_ = collectNextScan_ = collectNextPlan_ = 0;
+    collectArrivalReported_ = false;
+    collectFailAttempts_ = 0;
+    collectEntityValid_ = false;
+    collectEntityPos_ = {};
+    collectTarget_ = {INT_MIN, 0, 0};
+    planBlocked_.clear();
+    planBlockedFor_ = {INT_MIN, 0, 0};
     resetCollectionSweep();
+    navTicks_ = stuckTicks_ = replans_ = 0;
     phase_ = Phase::Collect;
 }
 
 void AutoMineMod::tickCollect(bedrock::Vec3 feet) {
-    if (!collectDig_)
-        setAttack(false);
+    setAttack(false);
     pressKey(kKeySneak, false);
     pressKey(kKeySprint, false);
     const auto stop = [&] {
-        pressKey(kKeyW, false);
-        pressKey(kKeySpace, false);
+        pressKey(kKeyW, false); pressKey(kKeyA, false); pressKey(kKeyD, false);
+        pressKey(kKeyS, false); pressKey(kKeySpace, false);
     };
-    const int gain = collectDropId_.empty() ? 0 : invCountOf(collectDropId_) - collectBase_;
-    if (collectDropId_.empty() || pickupConfirmed(gain, collectStableTicks_)) {
-        setAttack(false);
-        if (!collectDropId_.empty())
-            note("collect: verified " + collectDropId_ + " +" + std::to_string(gain));
+
+    if (++collectAttemptTicks_ >= 600) {
+        stop();
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "collect: 30s timeout for %s; target=%.2f,%.2f,%.2f; abandoned",
+            collectDropId_.c_str(), collectEntityPos_.x, collectEntityPos_.y, collectEntityPos_.z);
+        note(buf);
         finishCollection(feet);
         return;
     }
-    if (collectStableTicks_ > 0 || collectRetryTicks_ > 0) {
+
+    const int gain = collectDropId_.empty() ? 0 : invCountOf(collectDropId_) - collectBase_;
+    if (collectDropId_.empty() || pickupConfirmed(gain, collectStableTicks_)) {
+        if (!collectDropId_.empty())
+            note("collect: verified " + collectDropId_ + " +" + std::to_string(gain));
         stop();
-        setAttack(false);
-        if (collectRetryTicks_ > 0)
-            --collectRetryTicks_;
+        finishCollection(feet);
         return;
     }
-    const auto skip = [&] {
-        stop();
-        ++collectSweepIdx_;
-        collectCandidateTicks_ = collectDwell_ = collectLandingTicks_ = 0;
-        collectRoute_.clear();
-        collectRouteIdx_ = 0;
-    };
-    std::map<BlockPos3, PickupTile> terrainCache;
-    const auto read = [&](PlanCell p) {
-        const BlockPos3 pos{p.x, p.y, p.z};
-        if (const auto it = terrainCache.find(pos); it != terrainCache.end())
-            return it->second;
-        const auto id = blockAt(pos);
-        const auto local = localPart(id);
-        auto tile = PickupTile::Obstacle;
-        if (id.empty())
-            tile = PickupTile::Unknown;
-        else if (isPassableCell(id))
-            tile = PickupTile::Air;
-        else if (local.ends_with("_slab"))
-            tile = PickupTile::Slab;
-        else if (isSolidCell(id) && fullCubeSupport(local) && local != "magma" &&
-                 local != "magma_block")
-            tile = PickupTile::Full;
-        terrainCache.emplace(pos, tile);
-        return tile;
-    };
-    const NavPoint position{feet.x, feet.y, feet.z};
-    const PlanCell here{static_cast<int>(std::floor(feet.x)),
-                        static_cast<int>(std::ceil(feet.y - .12)),
-                        static_cast<int>(std::floor(feet.z))};
-    const PlanCell ore{target_.x, target_.y, target_.z};
-    const auto distance = [&](PlanCell p) {
-        return std::hypot(feet.x - p.x - .5, feet.z - p.z - .5);
-    };
-    const auto walkTo = [&](PlanCell p, bool jump) {
-        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-        const bool facing = faceToward(eye, {p.x + .5f, eye.y, p.z + .5f}, 5.f);
-        pressKey(kKeyW, facing && distance(p) > .16);
-        pressKey(kKeySpace, facing && jump);
-    };
-    const auto owned = [&](PlanCell p) {
-        const BlockPos3 pos{p.x, p.y, p.z};
-        const auto it = placedPillars_.find(pos);
-        return it != placedPillars_.end() && !collectDigFailed_.count(pos) &&
-               it->second == localPart(blockAt(pos));
-    };
-    if (collectDig_) {
-        stop();
-        const auto cell = *collectDig_;
-        const PlanCell floor{cell.x, cell.y, cell.z};
-        const PlanCell stand{cell.x, cell.y + 1, cell.z};
-        if (read(floor) == PickupTile::Air) {
-            placedPillars_.erase(cell);
-        } else if (distance(stand) < .24 && pickupLanded(position, stand, read) &&
-                   pickupUndercut(stand, read, owned) && digCell(cell, feet, true) == 0) {
-            return;
-        } else {
-            collectDigFailed_.insert(cell);
-            note("collect: scaffold removal no longer safe or could not be completed");
-        }
-        setAttack(false);
-        collectDig_.reset();
-        resetCollectionSweep();
-        return; // Wait for the lower stance before selecting another step.
-    }
-    if (collectRoute_.empty() && !pickupLanded(position, here, read)) {
+
+    // The picked-up actor can disappear before inventory verification settles.
+    if (gain > 0) {
         stop();
         return;
     }
-    if (collectSweep_.empty())
-        for (const auto p : pickupSweep(ore, here, read))
-            collectSweep_.push_back({p.x, p.y, p.z});
-    if (collectSweepIdx_ >= static_cast<int>(collectSweep_.size())) {
-        stop();
-        // If walking off is blocked, look for an exit after removing our
-        // pillar one block at a time. Never dig the drop's natural floor.
-        auto lower = here;
-        const auto simulated = [&](PlanCell p) {
-            return p.x == here.x && p.z == here.z && p.y >= lower.y && p.y < here.y
-                       ? PickupTile::Air
-                       : read(p);
-        };
-        while (const auto next = pickupUndercut(lower, simulated, owned)) {
-            lower = *next;
-            const auto candidates = pickupSweep(ore, lower, simulated);
-            if (std::any_of(candidates.begin(), candidates.end(), [&](PlanCell p) {
-                    return p.y <= lower.y && !pickupRoute(lower, p, simulated).empty();
-                })) {
-                if (distance(here) >= .20) {
-                    if (++collectCandidateTicks_ <= 40) {
-                        walkTo(here, false);
-                        return;
+
+    if (collectAttemptTicks_ >= collectNextScan_) {
+        collectNextScan_ = collectAttemptTicks_ + pickupScanInterval;
+        // Keep only copied values between scans, never a live Actor pointer.
+        if (const auto snap = actorsReady_ ? runtimeActors_.snapshot(level_.load()) : std::nullopt) {
+            collectEntityValid_ = false;
+            std::optional<PickupCandidateKey> best;
+            void *self = world_.localPlayer(client_.load());
+            const std::string wanted = localPart(collectDropId_);
+            for (void *actor : *snap) {
+                if (actor == self) continue;
+                const auto type = actorTypeOf(actor);
+                if (!couldBePickupActor(type)) continue;
+
+                bedrock::Vec3 pos;
+                if (!actorRegistry_.readPosition(actor, pos)) continue;
+                const double dx = pos.x - feet.x, dy = pos.y - feet.y, dz = pos.z - feet.z;
+                const double horizontal2 = dx * dx + dz * dz;
+                if (horizontal2 > pickupScanRadius * pickupScanRadius ||
+                    std::abs(dy) > pickupScanHeight)
+                    continue;
+
+                bedrock::Actor apiActor{game_, actor};
+                const bedrock::ActorIdentity ident = apiActor.getIdentity();
+                if (ident.isPlayer) continue;
+                bool identityMatches = !ident.name.empty() &&
+                                       localPart(ident.name) == wanted;
+
+                if (!identityMatches) {
+                    if (const auto main = apiActor.getMainHand()) {
+                        identityMatches = !main->identifier.empty() &&
+                                          localPart(main->identifier) == wanted;
                     }
-                    break;
                 }
-                collectDig_ = BlockPos3{here.x, here.y - 1, here.z};
-                note("collect: removing our pillar to reach a lower sweep");
-                return;
+
+                // ItemActor has neither a name tag nor main-hand equipment
+                // in the usual case. Its native type is enough to try pickup.
+                const auto candidate =
+                    pickupCandidateKey(identityMatches, type, horizontal2 + dy * dy);
+                if (candidate && (!best || *candidate < *best)) {
+                    best = candidate;
+                    collectEntityPos_ = pos;
+                    collectEntityValid_ = true;
+                }
             }
-        }
-        if (!collectRetryReported_) {
-            note("collect: pickup unconfirmed; waiting and retrying the sweep");
-            reply(collectDropId_ + " はまだ未回収。新しく掘らずに回収を続けるよ");
-            collectRetryReported_ = true;
-        }
+        } else
+            collectEntityValid_ = false;
+    }
+
+    if (!collectEntityValid_) {
+        stop();
+        if (!(collectAttemptTicks_ % 60))
+            note("collect: drop not detected yet for " + collectDropId_ +
+                 "; feet=" + std::to_string(feet.x) + "," + std::to_string(feet.y) +
+                 "," + std::to_string(feet.z));
+        collectTarget_ = {INT_MIN, 0, 0};
+        collectArrivalReported_ = false;
         resetCollectionSweep();
-        collectRetryTicks_ = 40;
         return;
     }
-    if (collectRoute_.empty()) {
-        const auto goal = collectSweep_[collectSweepIdx_];
-        collectRoute_ = pickupRoute(here, {goal.x, goal.y, goal.z}, read);
-        collectRouteIdx_ = 0;
-        if (collectRoute_.empty()) {
-            skip();
+
+    const BlockPos3 target{
+        static_cast<int>(std::floor(collectEntityPos_.x)),
+        static_cast<int>(std::floor(collectEntityPos_.y)),
+        static_cast<int>(std::floor(collectEntityPos_.z))};
+
+    if (!(collectTarget_ == target)) {
+        collectTarget_ = target;
+        collectArrivalReported_ = false;
+        target_ = target;
+        targetId_ = collectDropId_;
+        hasTarget_ = true;
+        resetCollectionSweep();
+        collectFailAttempts_ = 0;
+        collectNextPlan_ = collectAttemptTicks_;
+        navTicks_ = stuckTicks_ = replans_ = 0;
+        note("collect: drop target " + collectDropId_ + " at " +
+             std::to_string(collectEntityPos_.x) + "," + std::to_string(collectEntityPos_.y) +
+             "," + std::to_string(collectEntityPos_.z) + " feet=" +
+             std::to_string(feet.x) + "," + std::to_string(feet.y) + "," +
+             std::to_string(feet.z));
+    }
+
+    const NavPoint item{collectEntityPos_.x, collectEntityPos_.y, collectEntityPos_.z};
+    std::optional<PlanCell> endpoint;
+    if (pathFor_ == target_ && !path_.empty() && !pathPartial_) {
+        const auto end = path_.back();
+        if (inPickupReach(pickupStancePoint({end.x, end.y, end.z}, item), item))
+            endpoint = PlanCell{end.x, end.y, end.z};
+        else
+            resetCollectionSweep(); // item moved within its block cell
+    }
+    if (pickupArrived({feet.x, feet.y, feet.z}, item, endpoint)) {
+        stop();
+        if (!collectArrivalReported_) {
+            collectArrivalReported_ = true;
+            note("collect: arrived for " + collectDropId_ +
+                 "; target=" + std::to_string(collectEntityPos_.x) + "," +
+                 std::to_string(collectEntityPos_.y) + "," + std::to_string(collectEntityPos_.z) +
+                 "; feet=" + std::to_string(feet.x) + "," + std::to_string(feet.y) + "," +
+                 std::to_string(feet.z));
+        }
+        return;
+    }
+    collectArrivalReported_ = false;
+
+    if (replans_ >= 3) {
+        stop();
+        note("collect: walking route repeatedly blocked; abandoned");
+        finishCollection(feet);
+        return;
+    }
+    // Use the normal A* route and normal follow/movement executor.
+    if (!(pathFor_ == target_) || path_.empty()) {
+        if (collectAttemptTicks_ < collectNextPlan_) {
+            stop();
             return;
         }
-    }
-    if (++collectCandidateTicks_ > 80) {
-        skip();
-        return;
-    }
-    if (collectRouteIdx_ >= collectRoute_.size()) {
-        stop();
-        if (++collectDwell_ >= 8)
-            skip();
-        return;
-    }
-    const auto next = collectRoute_[collectRouteIdx_];
-    if (distance(next) < .20 && pickupLanded(position, next, read)) {
-        stop();
-        if (++collectLandingTicks_ >= 2) {
-            ++collectRouteIdx_;
-            collectCandidateTicks_ = collectLandingTicks_ = 0;
-        }
-        return;
-    }
-    collectLandingTicks_ = 0;
-    if (!collectRouteIdx_) {
-        if (!(next == here) || !pickupLanded(position, next, read)) {
-            skip();
+        if (!planPath(feet)) {
+            ++collectFailAttempts_;
+            stop();
+            collectNextPlan_ = collectAttemptTicks_ + 10;
+            note("collect: normal route unavailable attempt=" + std::to_string(collectFailAttempts_) +
+                 " target=" + std::to_string(target.x) + "," + std::to_string(target.y) +
+                 "," + std::to_string(target.z));
+            if (collectFailAttempts_ >= 3)
+                finishCollection(feet);
             return;
         }
-        walkTo(next, false);
-        return;
+        navTicks_ = stuckTicks_ = 0;
     }
-    const auto from = collectRoute_[collectRouteIdx_ - 1];
-    const double lateral = from.x == next.x ? std::abs(feet.x - from.x - .5)
-                                            : std::abs(feet.z - from.z - .5);
-    const bool inCorridor = (here.x == from.x && here.z == from.z) ||
-                            (here.x == next.x && here.z == next.z);
-    if (!inCorridor || lateral >= .20 || feet.y < next.y - .62 || !pickupEdge(from, next, read)) {
-        skip();
-        return;
-    }
-    if (collectCandidateTicks_ == 1 && next.y < from.y)
-        note("collect: descending " + std::to_string(from.y - next.y) + " to " +
-             std::to_string(next.x) + "," + std::to_string(next.y) + "," + std::to_string(next.z));
-    walkTo(next, next.y > from.y && next.y - feet.y > .60);
+    tickFollowPath(feet);
 }
 
 } // namespace automine::client

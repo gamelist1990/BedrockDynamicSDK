@@ -136,9 +136,11 @@ automine::ActionPlan AutoMineMod::plannedActions(const bedrock::Vec3 &feet) {
     const bool returning = phase_ == Phase::Recover || phase_ == Phase::Ascend;
     const auto goal = returning ? target_ : !savedId_.empty() ? savedTarget_ : target_;
     if (phase_ == Phase::Collect) {
-        for (std::size_t i = collectRouteIdx_; i < collectRoute_.size(); ++i) {
-            const auto p = collectRoute_[i];
-            plan.add(A::Collect, p);
+        // r18: collection is routed by the same normal A* path as mining targets.
+        // Entity target positions are not a custom sweep or ring.
+        if (collectEntityValid_) {
+            plan.complete = !pathPartial_;
+            plan.add(A::Collect, {target_.x, target_.y, target_.z});
         }
         return plan;
     }
@@ -209,9 +211,8 @@ automine::ActionPlan AutoMineMod::plannedActions(const bedrock::Vec3 &feet) {
         if (!savedId_.empty())
             plan.actions.insert(plan.actions.begin(), {A::Dig, {target_.x, target_.y, target_.z}});
         if (phase_ == Phase::Collect) {
-            for (std::size_t i = std::max(0, collectSweepIdx_); i < collectSweep_.size(); ++i) {
-                const auto p = collectSweep_[i];
-                plan.add(A::Collect, {p.x, p.y, p.z});
+            if (collectEntityValid_) {
+                plan.add(A::Collect, {target_.x, target_.y, target_.z});
             }
         } else if (plan.complete &&
                    (!path_.empty() || automine::inMiningReach({feet.x, feet.y + 1.62, feet.z},

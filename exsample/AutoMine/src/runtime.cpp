@@ -203,17 +203,17 @@ void AutoMineMod::initialize() {
             error))
         throw std::runtime_error(error);
 
-    game_.Event.Enum.Gameplay.then([this](const bedrock::GameplayEvent &event) {
+    game_.on<bedrock::GameplayEvent>([this](const bedrock::GameplayEvent &event) {
         if (event.clientInstance)
             client_.store(event.clientInstance);
     });
-    game_.Event.Enum.WorldChange.then([this](const bedrock::WorldChangeEvent &event) {
+    game_.on<bedrock::WorldChangeEvent>([this](const bedrock::WorldChangeEvent &event) {
         if (event.clientInstance)
             client_.store(event.clientInstance);
         ++epoch_;
         pendingReset_ = true; // applied on the tick thread
     });
-    game_.Event.Enum.LevelTick.then([this](const bedrock::LevelTickEvent &event) {
+    game_.on<bedrock::LevelTickEvent>([this](const bedrock::LevelTickEvent &event) {
         if (stopped_.load())
             return;
         try {
@@ -258,7 +258,7 @@ void AutoMineMod::initialize() {
         } else
             note("independent control: scoped movement + targeted GameMode mining; camera "
                  "untouched [runtime unverified]");
-        game_.Event.Enum.NativeKeyboard.then([this](const bedrock::NativeKeyEvent &key) {
+        game_.on<bedrock::NativeKeyEvent>([this](const bedrock::NativeKeyEvent &key) {
             if (anyScreenUp()) {
                 controls_.clearManualInput();
                 return; // neither typing nor its key-up events are movement
@@ -278,7 +278,7 @@ void AutoMineMod::initialize() {
             if (controls_.manualActive())
                 blockActions_.cancelMiningOwnership();
         });
-        game_.Event.Enum.Mouse.then([this](const bedrock::MouseEvent &event) {
+        game_.on<bedrock::MouseEvent>([this](const bedrock::MouseEvent &event) {
             if (anyScreenUp()) {
                 controls_.clearManualInput();
                 return;

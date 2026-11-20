@@ -3,12 +3,12 @@
 
 namespace automine::client {
 
-bedrock::Keyboard AutoMineMod::keyboard() {
-    return game_.localPlayer().getKeyboard();
+bool AutoMineMod::releaseNativeKey(unsigned key) {
+    return game_.sendNativeKey(key, false) || access_.sendKey(key, false);
 }
 
-bedrock::Mouse AutoMineMod::mouse() {
-    return game_.localPlayer().getMouse();
+bool AutoMineMod::setNativeMouseDown(bedrock::MouseButton button, bool down) {
+    return game_.sendMouseInput(static_cast<unsigned>(button), down);
 }
 
 void AutoMineMod::installMouseCapture(const bedrock::Resolver &resolver) {
@@ -91,7 +91,7 @@ void AutoMineMod::setUse(bool down) {
     }
     if (useHeld_ == down)
         return;
-    if (feedUseButton(down) || mouse().setDown(bedrock::MouseButton::Right, down))
+    if (feedUseButton(down) || setNativeMouseDown(bedrock::MouseButton::Right, down))
         useHeld_ = down;
 }
 
@@ -107,12 +107,12 @@ void AutoMineMod::pressKey(unsigned key, bool down) {
             return;
         }
     }
-    auto kb = keyboard();
     if (down) {
-        if (!heldKeys_.count(key) && kb.press(key))
+        if (!heldKeys_.count(key) &&
+            (game_.sendNativeKey(key, true) || access_.sendKey(key, true)))
             heldKeys_.insert(key);
     } else if (heldKeys_.erase(key))
-        kb.release(key);
+        (void)releaseNativeKey(key);
 }
 
 void AutoMineMod::setAttack(bool down) {
@@ -122,7 +122,7 @@ void AutoMineMod::setAttack(bool down) {
     }
     if (attackHeld_ == down)
         return;
-    if (feedButton(down) || mouse().setDown(bedrock::MouseButton::Left, down))
+    if (feedButton(down) || setNativeMouseDown(bedrock::MouseButton::Left, down))
         attackHeld_ = down;
 }
 
@@ -138,7 +138,7 @@ void AutoMineMod::releaseInputs() {
         for (unsigned key : {0x45u, 0x1Bu, 0x0Du})
             if (heldKeys_.erase(key)) {
                 try {
-                    keyboard().release(key);
+                    releaseNativeKey(key);
                 } catch (...) {
                 }
             }
@@ -152,7 +152,7 @@ void AutoMineMod::releaseInputs() {
     for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySpace, kKeySneak, kKeySprint}) {
         if (heldKeys_.erase(key)) {
             try {
-                keyboard().release(key);
+                releaseNativeKey(key);
             } catch (...) {
             }
         }
@@ -160,7 +160,7 @@ void AutoMineMod::releaseInputs() {
     if (attackHeld_) {
         try {
             feedButton(false);
-            mouse().setDown(bedrock::MouseButton::Left, false);
+            setNativeMouseDown(bedrock::MouseButton::Left, false);
         } catch (...) {
         }
         attackHeld_ = false;
@@ -168,7 +168,7 @@ void AutoMineMod::releaseInputs() {
     if (useHeld_) {
         try {
             feedUseButton(false);
-            mouse().setDown(bedrock::MouseButton::Right, false);
+            setNativeMouseDown(bedrock::MouseButton::Right, false);
         } catch (...) {
         }
         useHeld_ = false;

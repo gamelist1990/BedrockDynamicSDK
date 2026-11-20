@@ -1,6 +1,5 @@
 #pragma once
-#include <bedrock/api/actor_samples.hpp>
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/actor_tracking_types.hpp>
 #include <algorithm>
 #include <array>
 #include <chrono>

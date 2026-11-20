@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 namespace automine::client {
+bool isWalkThroughVegetation(std::string_view local);
 
 enum class ToolClass { None, Pickaxe, Axe, Shovel, Hoe, Shears };
 

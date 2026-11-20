@@ -25,6 +25,8 @@ void AutoMineMod::planVein() {
 void AutoMineMod::finishCollection(bedrock::Vec3 feet) {
     resetCollectionSweep();
     collectDropId_.clear();
+    collectEntityValid_ = false;
+    collectTarget_ = {INT_MIN, 0, 0};
     collectDig_.reset();
     pickupTarget_ = {INT_MIN, 0, 0};
     pressKey(kKeyW, false);
@@ -37,6 +39,7 @@ void AutoMineMod::finishCollection(bedrock::Vec3 feet) {
     restoreMineThroughGoal();
     if (resume && localPart(blockAt(target_)) == targetId_) {
         hasTarget_ = true;
+        navTicks_ = stuckTicks_ = replans_ = 0;
         phase_ = Phase::Navigate;
         return;
     }

@@ -20,6 +20,23 @@ inline bool inMiningReach(NavPoint eye, PlanCell cell) {
                miningCenterReach &&
            std::hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z) <= miningReach;
 }
+inline constexpr bool onWorkstationColumn(PlanCell stance, PlanCell table) {
+    return stance.x == table.x && stance.z == table.z && stance.y >= table.y - 1;
+}
+template <class Visible>
+bool workstationReachable(NavPoint feet, PlanCell table, Visible visible) {
+    const PlanCell stance{static_cast<int>(std::floor(feet.x)), static_cast<int>(std::floor(feet.y)),
+                          static_cast<int>(std::floor(feet.z))};
+    const NavPoint eye{feet.x, feet.y + 1.62, feet.z};
+    return !onWorkstationColumn(stance, table) && inMiningReach(eye, table) && visible(eye);
+}
+
+struct RouteBudget {
+    int perSegment, segments;
+};
+inline constexpr RouteBudget routeBudget(bool interaction) {
+    return interaction ? RouteBudget{1200, 1} : RouteBudget{4096, 2};
+}
 template <class Supported>
 bool miningHandoffReady(NavPoint eye, PlanCell cell, bool constructionPending,
                         bool rejectedStance, Supported supported) {

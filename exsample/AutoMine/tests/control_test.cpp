@@ -1,4 +1,4 @@
-#include <bedrock/api/automation_controls.hpp>
+#include <bedrock/detail/automation_motion.hpp>
 #include <bedrock/detail/automation_input.hpp>
 #include "../src/screen_policy.hpp"
 #include "../src/locomotion_geometry.hpp"

@@ -134,6 +134,8 @@ void AutoMineMod::tickPillarWaypoint(bedrock::Vec3 feet) {
         pressKey(kKeySneak, false);
         planBlockedFor_ = target_;
         planBlocked_.insert({wp.x, wp.y, wp.z});
+        if (phase_ == Phase::Navigate)
+            ++replans_;
         invalidateRoute();
         note(std::string("pillar: ") + why + ", replanning");
     };
@@ -252,6 +254,8 @@ bool AutoMineMod::tickParkourWaypoint(bedrock::Vec3 feet) {
         pressKey(kKeySpace, false);
         planBlockedFor_ = target_;
         planBlocked_.insert({wp.x, wp.y, wp.z});
+        if (phase_ == Phase::Collect || (phase_ == Phase::Navigate && navReturn_))
+            ++replans_;
         invalidateRoute();
         note(std::string("path: parkour ") + why + ", stage=" + std::to_string(parkourStage_) +
              " sprint=0 jump=0, replanning");
@@ -404,7 +408,9 @@ bool AutoMineMod::isScaffoldBlock(const std::string &local) {
 }
 
 bool AutoMineMod::scaffoldWanted(bedrock::Vec3 feet) {
-    if (navReturn_ || inWaterNow(feet))
+    // Once committed, keep the climb until it reaches a mining stance or
+    // explicitly fails. Don't recommit after a failed mining handoff.
+    if (navReturn_ || scaffoldFor_ == target_ || inWaterNow(feet))
         return false;
     const int fy = static_cast<int>(std::floor(feet.y));
     if (target_.y - fy < 4)
@@ -412,10 +418,10 @@ bool AutoMineMod::scaffoldWanted(bedrock::Vec3 feet) {
     const double hdx = (target_.x + .5) - feet.x, hdz = (target_.z + .5) - feet.z;
     if (hdx * hdx + hdz * hdz > 6.0 * 6.0)
         return false; // walk closer first
-    bool routeUseless = (planFailFor_ == target_) && path_.empty();
-    if (!routeUseless && !path_.empty()) {
-        // A route exists: pre-empt only if it is a pure vertical
-        // dig up the target's own column (the trunk case).
+    bool routeUseless = path_.empty() && (planFailFor_ == target_ || replans_ >= 3);
+    if (!routeUseless && pathPartial_ && pathIdx_ < path_.size()) {
+        // Only pre-empt an incomplete vertical approach at the trunk.
+        // A complete walking/pillar route owns its actions.
         bool vertical = true;
         for (std::size_t i = pathIdx_; i < path_.size(); ++i)
             if (std::abs(path_[i].x - target_.x) > 1 || std::abs(path_[i].z - target_.z) > 1) {

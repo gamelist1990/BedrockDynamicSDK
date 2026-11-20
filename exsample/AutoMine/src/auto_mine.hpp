@@ -6,7 +6,7 @@
 #include "mining_progress.hpp"
 #include "inventory_policy.hpp"
 #include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <bedrock/native/world_access.hpp>
 #include <bedrock/native/automation_controls.hpp>
 #include <bedrock/native/block_actions.hpp>
@@ -212,8 +212,8 @@ class AutoMineMod {
     void tick();
 
     // Movement input and world queries (controls.cpp).
-    bedrock::Keyboard keyboard();
-    bedrock::Mouse mouse();
+    bool releaseNativeKey(unsigned key);
+    bool setNativeMouseDown(bedrock::MouseButton button, bool down);
     void installMouseCapture(const bedrock::Resolver &resolver);
     static void BDS_HOOK_CALL onMouseCapture(void *user, void *raw, BDS_HookNext next,
                                              void *frame) noexcept;
@@ -361,6 +361,7 @@ class AutoMineMod {
     void discardPathIfExhausted();
     void invalidateRoute();
     bool planPath(bedrock::Vec3 feet);
+    bool workstationReachableFrom(bedrock::Vec3 feet, BlockPos3 table);
 
     // Route execution (navigation.cpp).
     void tickFollowPath(bedrock::Vec3 feet);
@@ -463,6 +464,9 @@ class AutoMineMod {
     std::array<InvSlot, 9> hotbarCache_;
     long long hotbarCacheTick_{-1};
     int toolSyncSlot_{-1}, toolSyncStage_{}, toolSyncTicks_{};
+    int hotbarMoveAttempts_{};
+    BlockPos3 hotbarMoveTarget_{INT_MIN, 0, 0};
+    std::string hotbarMoveUnavailableItem_;
     bool digHandAllowed_{};
     std::string toolSyncItem_;
 
@@ -538,12 +542,10 @@ class AutoMineMod {
     bool craftReady_{};
     std::string craftProfileJson_;
     bedrock::NativeGameAccess access_;
-    bedrock::GameApi game_{access_};
+    bedrock::detail::HookDispatch game_{access_};
     bedrock::NativeWorldAccess world_;
     bedrock::NativeRuntimeActors runtimeActors_;
     bedrock::NativeActorRegistry actorRegistry_;
-    bedrock::NativeActorLayout actorLayout_{};
-    std::size_t actorTypeOffset_{0};
     bool actorsReady_{false};
     bedrock::NativeCamera camera_;
     bedrock::NativeAutomationControls controls_;
@@ -694,18 +696,18 @@ class AutoMineMod {
     std::map<BlockPos3, std::string> placedPillars_;
     std::string collectDropId_;
     int collectBase_{};
-    int collectSweepIdx_{};
-    int collectCandidateTicks_{};
-    int collectDwell_{};
-    std::vector<BlockPos3> collectSweep_;
-    std::vector<automine::PlanCell> collectRoute_;
-    std::size_t collectRouteIdx_{};
+    BlockPos3 collectTarget_{INT_MIN, 0, 0};
+    bedrock::Vec3 collectEntityPos_{};
+    bool collectEntityValid_{};
     int collectStableTicks_{};
     int collectLandingTicks_{};
-    int collectRetryTicks_{};
-    bool collectRetryReported_{};
+    int collectNextScan_{};
+    int collectNextPlan_{};
+    bool collectArrivalReported_{};
     std::optional<BlockPos3> collectDig_;
     std::set<BlockPos3> collectDigFailed_;
+    int collectFailAttempts_{};
+    int collectAttemptTicks_{};
     BlockPos3 pickupTarget_{INT_MIN, 0, 0};
     std::string pickupItem_;
     int pickupBase_{};

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "kind": "checksig-job",
+  "arch": "x64",
+  "profile": "oreui-profile.json",
+  "actions": [
+    {"op": "identity"},
+    {"op": "probe", "symbol": "OreUI::HybridResourceHandler::onResourceRequest"},
+    {"op": "probe", "symbol": "OreUI::PackResourceHandler::onResourceRequest"}
+  ]
+}

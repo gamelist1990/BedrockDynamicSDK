@@ -39,9 +39,13 @@ void AutoMineMod::resetRun() {
     replans_ = 0;
     scaffoldActive_ = false;
     scaffoldDig_ = false;
+    scaffoldFor_ = {INT_MIN, 0, 0};
     placedPillars_.clear();
     collectDropId_.clear();
+    collectEntityValid_ = false;
+    collectTarget_ = {INT_MIN, 0, 0};
     collectDig_.reset();
+    collectFailAttempts_ = 0;
     resetCollectionSweep();
     veinPlan_.clear();
     veinId_.clear();
@@ -157,6 +161,7 @@ void AutoMineMod::stopMining(const std::string &why) {
     hasTarget_ = false;
     collectDropId_.clear();
     collectDig_.reset();
+    collectFailAttempts_ = 0;
     resetCollectionSweep();
 }
 
@@ -547,10 +552,6 @@ void AutoMineMod::tick() {
     }
     if (chainWaitingCobble_ && phase_ == Phase::Scan) {
         if (countAllItems("cobblestone") >= 3) {
-            const double tdx = chainTablePos_.x + .5 - feet.x;
-            const double tdy = chainTablePos_.y + .5 - feet.y;
-            const double tdz = chainTablePos_.z + .5 - feet.z;
-            const double tableDist = std::sqrt(tdx * tdx + tdy * tdy + tdz * tdz);
             if (!chainTablePlaced_ && countAllItems("crafting_table") >= 1) {
                 chainSteps_.insert(chainSteps_.begin() + chainStep_,
                                    ChainStep{ChainStep::Kind::PlaceTable});
@@ -561,7 +562,7 @@ void AutoMineMod::tick() {
                 note("craft chain: placing carried table for the stone pickaxe");
             } else if (!chainTablePlaced_) {
                 chainFail("作業台が無い");
-            } else if (tableDist <= 4.0) {
+            } else if (workstationReachableFrom(feet, chainTablePos_)) {
                 chainWaitingCobble_ = false;
                 phase_ = Phase::Craft;
                 chainStepTicks_ = 0;
@@ -612,8 +613,8 @@ void AutoMineMod::tick() {
                     target_ = chainTablePos_;
                     hasTarget_ = true;
                     navReturn_ = true;
-                    path_.clear();
-                    pathFor_ = {INT_MIN, 0, 0};
+                    invalidateRoute();
+                    navTicks_ = stuckTicks_ = replans_ = jumpHoldTicks_ = 0;
                     phase_ = Phase::Navigate;
                     note("craft chain: returning to the crafting table");
                 } else {
@@ -626,8 +627,8 @@ void AutoMineMod::tick() {
                 target_ = chainTablePos_;
                 hasTarget_ = true;
                 navReturn_ = true;
-                path_.clear();
-                pathFor_ = {INT_MIN, 0, 0};
+                invalidateRoute();
+                navTicks_ = stuckTicks_ = replans_ = jumpHoldTicks_ = 0;
                 phase_ = Phase::Navigate;
                 note("craft chain: returning to the crafting table");
             } else {

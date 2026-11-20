@@ -1,4 +1,5 @@
 #include "auto_mine.hpp"
+#include "collection_geometry.hpp"
 #include "diagnostics.hpp"
 
 namespace automine::client {
@@ -9,11 +10,8 @@ bool AutoMineMod::isPassableCell(const std::string &id) {
     if (isAir(id))
         return true;
     const auto l = localPart(id);
-    return l == "grass" || l == "short_grass" || l == "tall_grass" || l == "fern" ||
-           l == "large_fern" || l == "snow_layer" || l == "dead_bush" || l == "leaf_litter" ||
-           l == "bush" || l == "vine" || l == "sculk_vein" || l == "glow_lichen" ||
-           contains(l, "flower") || contains(l, "sapling") || contains(l, "carpet") ||
-           l == "torch" || l == "wall_torch";
+    return isWalkThroughVegetation(l) || l == "snow_layer" || l == "sculk_vein" ||
+           l == "glow_lichen" || contains(l, "carpet") || l == "torch" || l == "wall_torch";
 }
 
 bool AutoMineMod::isFluidCell(const std::string &id) {
@@ -144,6 +142,7 @@ void AutoMineMod::invalidateRoute() {
     pathPartial_ = false;
     pathFor_ = {INT_MIN, 0, 0};
     planFailTick_ = tickCount_ - 200;
+    jumpHoldTicks_ = 0;
     parkourWaypoint_ = {INT_MIN, 0, 0};
     pillarWpTicks_ = pillarLandingTicks_ = 0;
     ++pathRevision_;
@@ -153,7 +152,12 @@ void AutoMineMod::invalidateRoute() {
 bool AutoMineMod::planPath(bedrock::Vec3 feet) {
     crashrec::Section section("planPath");
     ++pathRevision_;
-    if (!(mineRejectedFor_ == target_)) {
+    const bool pickup = phase_ == Phase::Collect;
+    const bool workstation = phase_ == Phase::Navigate && navReturn_;
+    const bool walkOnly = pickup || workstation;
+    const automine::PlanCell targetCell{target_.x, target_.y, target_.z};
+    const automine::NavPoint item{collectEntityPos_.x, collectEntityPos_.y, collectEntityPos_.z};
+    if (!walkOnly && !(mineRejectedFor_ == target_)) {
         mineRejectedStances_.clear();
         mineRejectedFor_ = target_;
     }
@@ -161,8 +165,14 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
         planBlocked_.clear();
         planBlockedFor_ = target_;
     }
-    planSpares_ = spareCount();
+    planSpares_ = walkOnly ? 0 : spareCount();
     CellCache cache;
+    const auto stepKind = [&](CellKey p) {
+        if (workstation && automine::onWorkstationColumn({p.x, p.y, p.z}, targetCell))
+            return CellKind::Blocked;
+        const auto kind = classifyCell(p, cache);
+        return walkOnly && kind != CellKind::Stand ? CellKind::Blocked : kind;
+    };
     std::unordered_map<CellKey, automine::Terrain, CellKeyHash> terrainCache;
     terrainCache.reserve(8192);
     const auto terrainAt = [&](automine::PlanCell p) {
@@ -177,7 +187,9 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
     };
     CellKey start{static_cast<int>(std::floor(feet.x)), static_cast<int>(std::floor(feet.y)),
                   static_cast<int>(std::floor(feet.z))};
-    if (classifyCell(start, cache) == CellKind::Blocked) {
+    // Do not teleport the origin of a walking route into a neighbouring goal.
+    // If we're airborne the real origin can still generate a safe drop edge.
+    if (!walkOnly && classifyCell(start, cache) == CellKind::Blocked) {
         double bestD = 1e18;
         CellKey best = start;
         bool found = false;
@@ -200,21 +212,31 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
         if (found)
             start = best;
     }
-    // Goal cells: Stand/Dig cells around the target whose eye point is
-    // within the same reach envelope used during execution.
+    // Goal acceptance depends on the action, not just the target block.
     std::vector<CellKey> goals;
     bool anyStandGoal = false;
-    for (int dx = -3; dx <= 3; ++dx)
-        for (int dy = -4; dy <= 2; ++dy)
-            for (int dz = -3; dz <= 3; ++dz) {
-                const CellKey g{target_.x + dx, target_.y + dy, target_.z + dz};
-                // Failed mining stances remain walkable (including the actual
-                // start), but cannot be chosen as another mining endpoint.
-                if (mineRejectedStances_.count({g.x, g.y, g.z}))
-                    continue;
-                const bedrock::Vec3 goalEye{g.x + .5f, g.y + 1.62f, g.z + .5f};
-                if (automine::inMiningReach({goalEye.x, goalEye.y, goalEye.z},
-                                            {target_.x, target_.y, target_.z})) {
+    if (pickup) {
+        for (const auto g : automine::pickupStances(item, [&](automine::PlanCell p) {
+                 return stepKind({p.x, p.y, p.z}) == CellKind::Stand;
+             }))
+            goals.push_back({g.x, g.y, g.z});
+        anyStandGoal = !goals.empty();
+    } else {
+        for (int dx = -3; dx <= 3; ++dx)
+            for (int dy = -4; dy <= 2; ++dy)
+                for (int dz = -3; dz <= 3; ++dz) {
+                    const CellKey g{target_.x + dx, target_.y + dy, target_.z + dz};
+                    if (workstation) {
+                        if (stepKind(g) == CellKind::Stand &&
+                            workstationReachableFrom({g.x + .5f, float(g.y), g.z + .5f}, target_))
+                            goals.push_back(g);
+                        continue;
+                    }
+                    // Rejected mining stances are still walkable, but cannot be used as endpoints.
+                    const bedrock::Vec3 goalEye{g.x + .5f, g.y + 1.62f, g.z + .5f};
+                    if (mineRejectedStances_.count({g.x, g.y, g.z}) ||
+                        !automine::inMiningReach({goalEye.x, goalEye.y, goalEye.z}, targetCell))
+                        continue;
                     const auto gk = classifyCell(g, cache);
                     if (gk == CellKind::Blocked) {
                         const bool buildable = !planBlocked_.count(g) && planSpares_ > 0 &&
@@ -232,13 +254,13 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                     if (gk == CellKind::Stand)
                         anyStandGoal = true;
                 }
-            }
+    }
     if (goals.empty()) {
         note("path: no standpoint near target");
         discardPathIfExhausted();
         return false;
     }
-    const double hWeight = anyStandGoal ? 1.15 : 1.5;
+    const double hWeight = walkOnly ? 1.0 : anyStandGoal ? 1.15 : 1.5;
     const double placementCost = 4.5 + 8.0 / (planSpares_ + 1.0);
     int segmentUsed = 0;
     const std::unordered_set<CellKey, CellKeyHash> goalSet(goals.begin(), goals.end());
@@ -253,7 +275,12 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                          dz = static_cast<double>(c.z) - g.z;
             bestSquared = std::min(bestSquared, dx * dx + dy * dy + dz * dz);
         }
-        const double value = std::sqrt(bestSquared) * hWeight;
+        double value = std::sqrt(bestSquared) * hWeight;
+        // Break near-ties in favour of a stance closer to the item.
+        if (pickup && value == 0.) {
+            const auto p = automine::pickupStancePoint({c.x, c.y, c.z}, item);
+            value = std::hypot(p.x - item.x, p.y - item.y, p.z - item.z);
+        }
         if (heuristicCache.size() < 100000)
             heuristicCache.emplace(c, value);
         return value;
@@ -266,9 +293,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
         } // min-heap
     };
     constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-    constexpr int kMaxExpansions = 24000;
-    constexpr int kMaxTotalExpansions = 72000;
-    constexpr int kMaxSegments = 4;
+    const auto budget = automine::routeBudget(walkOnly);
     constexpr int kMaxPillarRun = 4; // r11's three-step cap can stop one step short of reach
     int expansions = 0;
     int segments = 0;
@@ -277,7 +302,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
     std::unordered_map<CellKey, bool, CellKeyHash> allDig, allBridge, allParkour, allPillar;
     CellKey segStart = start;
     bool reachedGoal = false;
-    while (segments < kMaxSegments && expansions < kMaxTotalExpansions) {
+    while (segments < budget.segments) {
         ++segments;
         std::priority_queue<OpenNode> open;
         std::unordered_map<CellKey, double, CellKeyHash> gScore;
@@ -302,8 +327,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
         CellKey bestNode = segStart;
         const double startH = heuristic(segStart);
         double bestH = startH;
-        while (!open.empty() && segExpansions < kMaxExpansions &&
-               expansions < kMaxTotalExpansions) {
+        while (!open.empty() && segExpansions < budget.perSegment) {
             const OpenNode cur = open.top();
             open.pop();
             const double cg = gScore.count(cur.c) ? gScore[cur.c] : 1e18;
@@ -344,7 +368,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                 const int nx = cur.c.x + d[0], nz = cur.c.z + d[1];
                 { // walk, same level
                     const CellKey n{nx, cur.c.y, nz};
-                    const auto k = classifyCell(n, cache);
+                    const auto k = stepKind(n);
                     if (k != CellKind::Blocked)
                         relax(n,
                               k == CellKind::Dig      ? digCostOf(n, cache)
@@ -354,10 +378,10 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                 }
                 { // step up one block: the block above our own head
                     const CellKey n{nx, cur.c.y + 1, nz};
-                    const auto k = classifyCell(n, cache);
+                    const auto k = stepKind(n);
                     const auto aboveHead = blockAt({cur.c.x, cur.c.y + 2, cur.c.z});
                     const bool ahPass = isPassableCell(aboveHead);
-                    const bool ahDig = !ahPass && isDiggableCell(aboveHead);
+                    const bool ahDig = !walkOnly && !ahPass && isDiggableCell(aboveHead);
                     const auto stepTerrain = [&](automine::PlanCell p) {
                         if (ahDig && p == automine::PlanCell{cur.c.x, cur.c.y + 2, cur.c.z})
                             return automine::Terrain::Air;
@@ -375,11 +399,11 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                         relax(n, cost, k);
                     }
                 }
-                // drop 1-3 blocks onto a Stand cell, fall shaft passable
+                // Collection also allows the existing four-block descent.
                 if (isPassableCell(blockAt({nx, cur.c.y + 1, nz}))) {
-                    for (int drop = 1; drop <= 3; ++drop) {
+                    for (int drop = 1; drop <= (pickup ? automine::pickupMaxDrop : 3); ++drop) {
                         const CellKey n{nx, cur.c.y - drop, nz};
-                        const auto nk = classifyCell(n, cache);
+                        const auto nk = stepKind(n);
                         if (nk == CellKind::Dig) {
                             if (drop == 1)
                                 relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
@@ -408,7 +432,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                 for (int dz : {-1, 1}) {
                     const CellKey next{cur.c.x + dx, cur.c.y, cur.c.z + dz};
                     if (classifyCell(cur.c, cache) != CellKind::Stand ||
-                        classifyCell(next, cache) != CellKind::Stand)
+                        stepKind(next) != CellKind::Stand)
                         continue;
                     if (automine::walkClear(
                             {cur.c.x + .5, static_cast<double>(cur.c.y), cur.c.z + .5},
@@ -417,7 +441,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                 }
             { // dig straight down: the cell below is a Dig cell whose
                 const CellKey n{cur.c.x, cur.c.y - 1, cur.c.z};
-                if (classifyCell(n, cache) == CellKind::Dig)
+                if (stepKind(n) == CellKind::Dig)
                     relax(n, digCostOf(n, cache) + 0.3, CellKind::Dig);
             }
             if (planSpares_ > 0 && !flagOf(digFlag, cur.c) &&
@@ -466,7 +490,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                         for (int rise : {0, 1, -1}) {
                             const CellKey land{cur.c.x + d[0] * dist, cur.c.y + rise,
                                                cur.c.z + d[1] * dist};
-                            const auto kind = classifyCell(land, cache);
+                            const auto kind = stepKind(land);
                             const bool pad = kind == CellKind::Bridge;
                             if (kind != CellKind::Stand && !pad)
                                 continue;
@@ -520,7 +544,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                 }
             }
         }
-        const bool progressed = !(bestNode == segStart) && bestH < startH - 1.0;
+        const bool progressed = !open.empty() && !(bestNode == segStart) && bestH < startH - 1.0;
         const CellKey segEnd = haveFound ? found : bestNode;
         if (!haveFound && !progressed) {
             if (cells.empty()) {
@@ -564,9 +588,14 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
     // Partial segments are approaches only; they must never imply mining reach.
     if (reachedGoal && !cells.empty()) {
         const auto end = cells.back();
-        if (!automine::inMiningReach({end.x + .5, end.y + 1.62, end.z + .5},
-                                     {target_.x, target_.y, target_.z})) {
-            note("path: final stance outside mining reach; discarded");
+        const bool valid = pickup ? automine::inPickupReach(
+                                       automine::pickupStancePoint({end.x, end.y, end.z}, item), item)
+                           : workstation ? workstationReachableFrom(
+                                               {end.x + .5f, float(end.y), end.z + .5f}, target_)
+                                         : automine::inMiningReach(
+                                               {end.x + .5, end.y + 1.62, end.z + .5}, targetCell);
+        if (!valid) {
+            note("path: final stance outside action reach; discarded");
             invalidateRoute();
             return false;
         }
@@ -579,7 +608,10 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
     pathIdx_ = 0;
     // Retain every executable cell, including the approach to a dig.
     // Compression lost the stance needed for subsequent movement actions.
-    for (std::size_t i = 1; i < cells.size(); ++i) {
+    // A cell-centre goal can be valid even when the player's actual position
+    // in that same cell isn't. Walk the remaining sub-cell distance.
+    const std::size_t first = walkOnly && reachedGoal && cells.size() == 1 ? 0 : 1;
+    for (std::size_t i = first; i < cells.size(); ++i) {
         path_.push_back({cells[i].x, cells[i].y, cells[i].z});
         pathDig_.push_back(allDig.count(cells[i]) && allDig[cells[i]]);
         pathBridge_.push_back(allBridge.count(cells[i]) && allBridge[cells[i]]);

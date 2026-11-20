@@ -32,6 +32,15 @@ int main() {
     assert(!handoff(landed, true, false));
     assert(!handoff(landed, false, true));
     assert(handoff(landed, false, false));
+    const PlanCell table{0, 64, 0};
+    const auto visible = [](NavPoint) { return true; };
+    assert(workstationReachable({1.5,64.,.5}, table, visible));
+    assert(!workstationReachable({.5,65.,.5}, table, visible)); // top of table
+    assert(!workstationReachable({1.5,64.,.5}, table, [](NavPoint) { return false; }));
+    assert(!workstationReachable({5.5,64.,.5}, table, visible));
+    constexpr auto walkBudget = routeBudget(true), mineBudget = routeBudget(false);
+    static_assert(walkBudget.perSegment * walkBudget.segments == 1200);
+    static_assert(mineBudget.perSegment * mineBudget.segments == 8192);
     const auto near=miningPoint({.5,2.62,.5},{4,1,0});assert(near.x==4.05 && near.y==1.95);
     auto arc=jumpTrajectory({0,1,0},{4,1,0});assert(arc.size()>35);
     double peak=0.;for (const auto& p:arc) peak=std::max(peak,p.y);

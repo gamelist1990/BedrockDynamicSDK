@@ -11,7 +11,7 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <bedrock/logging/logger.hpp>
@@ -376,7 +376,7 @@ bool looksLikeActor(void* actor) noexcept {
     return valid >= 2;
 }
 
-class HitBoxAccess final : public bedrock::GameAccess {
+class HitBoxAccess final : public bedrock::ClientAccess {
 public:
     void setLayouts(bedrock::NativeItemLayout items, bedrock::NativeActorLayout actors,
                     std::size_t actorTypeOffset, std::uint32_t playerType) {
@@ -546,7 +546,7 @@ private:
 };
 
 HitBoxAccess access;
-bedrock::GameApi gameApi{access};
+bedrock::detail::HookDispatch dispatch{access};
 std::unique_ptr<bedrock::GameHooks> gameHooks;
 
 hitbox::NameMailbox nameMailbox;
@@ -1558,12 +1558,12 @@ DWORD WINAPI startClient(void*) {
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
     log(workerCount," processing workers + 1 log writer ready [RuntimeID partitions; 20Hz coalesced snapshots; packed text quads; copied scalars only]");
-    gameHooks = std::make_unique<bedrock::GameHooks>(gameApi);
-    gameApi.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event) {
+    gameHooks = std::make_unique<bedrock::GameHooks>(dispatch);
+    dispatch.on<bedrock::GameplayEvent>([](const bedrock::GameplayEvent& event) {
         if (event.clientInstance) access.setClient(event.clientInstance);
     });
-    gameApi.Event.Enum.LevelTick.then(&observeWorld);
-    gameApi.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event) {
+    dispatch.on<bedrock::LevelTickEvent>(&observeWorld);
+    dispatch.on<bedrock::WorldChangeEvent>([](const bedrock::WorldChangeEvent& event) {
         // Workers/renderers already fence their snapshots by this generation.
         // Advancing it immediately hides old boxes, retained positions and text.
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);

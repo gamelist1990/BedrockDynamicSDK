@@ -15,6 +15,19 @@ struct Shadow {
 };
 int main() {
     using bedrock::detail::reconcileInventory;
+
+    // r17: native inventory indices are 0..35.  Empty item names are never
+    // evidence of a match, including the old slot-36 false positive.
+    const auto validNativeMatch = [](int slot, int count, const std::string &item) {
+        return slot >= 0 && slot < 36 && count > 0 && !item.empty();
+    };
+    assert(validNativeMatch(0, 1, "minecraft:oak_log"));
+    assert(validNativeMatch(35, 1, "minecraft:wooden_axe"));
+    assert(!validNativeMatch(36, 1, ""));
+    assert(!validNativeMatch(36, 1, "minecraft:wooden_axe"));
+    assert(!validNativeMatch(-1, 1, "minecraft:wooden_axe"));
+    assert(!validNativeMatch(8, 0, "minecraft:wooden_axe"));
+    assert(!validNativeMatch(8, 1, ""));
     std::map<int, Shadow> shadow{{8, {{8, "stone_pickaxe", 1, 42}, 42, 1}}};
     auto result = reconcileInventory(std::vector<Slot>{{8, {}, 0, 0}}, shadow, true);
     assert(shadow.empty());

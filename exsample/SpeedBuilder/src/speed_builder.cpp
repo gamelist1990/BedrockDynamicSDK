@@ -1,5 +1,5 @@
 #ifdef _WIN32
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/generated/symbols.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
@@ -25,7 +25,7 @@ namespace {
 namespace sb=speed_builder;
 using Clock=std::chrono::steady_clock;using Vec=bedrock::Vec3;
 bedrock::NativeWorldAccess worldAccess;
-bedrock::GameApi api;std::unique_ptr<bedrock::GameHooks> hooks;
+bedrock::detail::HookDispatch api;std::unique_ptr<bedrock::GameHooks> hooks;
 std::atomic<bool> stopped{},gameplay{},cancelRequested{};
 std::atomic<void*> client{};std::atomic<std::uint64_t> epoch{1};std::atomic<unsigned> status{};
 std::atomic<std::shared_ptr<const sb::Config>> config{std::make_shared<const sb::Config>()};
@@ -486,10 +486,10 @@ DWORD WINAPI start(void*){
         gameVersion=bedrock::parseNativeProfile(profile).at("target").value("version",std::string("unknown"));
         worldAccess.reserveCaches(4096,512);
         if(!packetTitles.install(profile,bedrock::generated::kSymbolDatabase,receiveTitle,error))throw std::runtime_error(error);
-        api.Event.Enum.Gameplay.then([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
-        api.Event.Enum.WorldChange.then([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});
-        api.Event.Enum.Keyboard.then([](const bedrock::KeyEvent& event){if(event.pressed&&event.inputKey()==config.load()->cancelKey)cancelRequested.store(true);});
-        api.Event.Enum.LevelTick.then(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);
+        api.on<bedrock::GameplayEvent>([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
+        api.on<bedrock::WorldChangeEvent>([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});
+        api.on<bedrock::KeyEvent>([](const bedrock::KeyEvent& event){if(event.pressed&&event.inputKey()==config.load()->cancelKey)cancelRequested.store(true);});
+        api.on<bedrock::LevelTickEvent>(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);
         if(!hooks->installInput(resolver,error)||!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
         if(titleOnlyMode)note("partial ready: Packet ID 88 title observer active [runtime unverified]; automatic recording/build disabled; missing PlayerInventory selection and BlockType placement ABI");
         note("ready; press Esc and return to gameplay; title/subtitle trigger enabled; cancel key="+std::to_string(config.load()->cancelKey));note(BDS_HookRuntimeDiagnostic());status.store(2);worker(dir);

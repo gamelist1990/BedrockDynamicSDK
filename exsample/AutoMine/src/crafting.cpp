@@ -501,7 +501,18 @@ void AutoMineMod::chainFinish() {
         note("building supply: planks ready");
     } else if (chainForUtility_) {
         chainForUtility_ = false;
-        note("tool bootstrap: done " + utilityOutput_);
+        hotbarCacheTick_ = -1;
+        if (craftReady_ && !utilityOutput_.empty()) {
+            for (const auto &native : craft_.memorySnapshot(true, 0, 36)) {
+                if (native.count && localPart(native.item) == localPart(utilityOutput_) &&
+                    native.slot >= 0 && native.slot < 36)
+                    craft_.invalidateInventorySlot(native.slot);
+            }
+            note("tool bootstrap: done " + utilityOutput_ +
+                 "; native inventory resync forced from craft result");
+        } else {
+            note("tool bootstrap: done " + utilityOutput_);
+        }
         scanCursor_ = 0;
         bestDist2_ = 1e18;
         hasTarget_ = false;
