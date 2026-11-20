@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/automation_controls.hpp>
+#include <bedrock/detail/automation_motion.hpp>
 #include <bedrock/detail/automation_input.hpp>
 #include <bedrock/detail/native_player_context.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>

@@ -9,7 +9,7 @@
 namespace bedrock {
 // Opt-in native adapter: no hooks or worker thread are installed. Bindings remain
 // candidates; caller must explicitly opt in and provide an exact live profile.
-class NativeWorld final : public BlockAccess {
+class NativeWorld final {
 public:
     struct Budget { unsigned operations=256; unsigned microseconds=500; };
     struct Capabilities { bool readBlocks{}, placeBlocks{}; bool candidate=true; };
@@ -111,7 +111,7 @@ public:
         if(!onOwnerThread())return {BlockError::wrongThread};
         return worldSetBlock(level_,target,identifier,options);
     }
-    PlacementResult worldSetBlock(void* world,BlockPos target,std::string_view identifier,const BlockSetOptions& options) override {
+    PlacementResult worldSetBlock(void* world,BlockPos target,std::string_view identifier,const BlockSetOptions& options) {
         auto error=check(world);if(error!=BlockError::none)return {error};
         if(!bindings_.placementReady)return {BlockError::unsupported};
         if(identifier.empty()||identifier=="minecraft:air"||(options.hotbarSlot&&*options.hotbarSlot>8))return {BlockError::invalidRequest};
@@ -138,7 +138,7 @@ public:
         return last;
     }
     void* handle()const noexcept{return onOwnerThread()&&active_?level_:nullptr;}
-    BlockResult worldBlock(void* world,BlockPos pos,bool fresh=false) override {
+    BlockResult worldBlock(void* world,BlockPos pos,bool fresh=false) {
         auto error=check(world);if(error!=BlockError::none)return {{},error};
         if(!fresh){auto it=cache_.find(pos);if(it!=cache_.end())return it->second;}
         if(!consume())return {{},BlockError::budgetExceeded};
@@ -147,7 +147,7 @@ public:
         if(result.block.kind==CellKind::unknown)result.error=BlockError::unavailable;
         cache_.insert_or_assign(pos,result);return result;
     }
-    PlacementResult worldPlaceBlock(void* world,const BlockPlacement& q) override {
+    PlacementResult worldPlaceBlock(void* world,const BlockPlacement& q) {
         auto error=check(world);if(error!=BlockError::none)return {error};
         if(!bindings_.placementReady)return {BlockError::unsupported};
         const auto face=static_cast<unsigned>(q.face);

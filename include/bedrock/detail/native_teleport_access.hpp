@@ -3,7 +3,7 @@
 // Guarded owner-tick adapter used by NativeSafeTeleport. No placement or inventory writes.
 #include <bedrock/native/world.hpp>
 #include <bedrock/native/motion.hpp>
-#include <bedrock/api/safe_teleport.hpp>
+#include <bedrock/detail/teleport_types.hpp>
 namespace bedrock::teleport_native {
 namespace n=bedrock::world_native;
 using Vec=bedrock::Vec3;using Pos=bedrock::BlockPos;

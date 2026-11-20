@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/runtime/hook_runtime.h>

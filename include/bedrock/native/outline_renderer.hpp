@@ -3,7 +3,7 @@
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/native/world_render.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <atomic>
 #include <span>
 
@@ -48,6 +48,11 @@ public:
         } catch (const std::exception& e) { error = e.what(); return false; }
     }
     void* renderTarget() const noexcept { return ready_ ? target_ : nullptr; }
+    // Borrowed renderer player, valid only during the render callback.
+    void* renderPlayer(void* renderer) const noexcept {
+        void* player{};
+        return ready_ && native_profile::read(renderer, layout_.player, player) ? player : nullptr;
+    }
     std::optional<Vec3> renderOrigin(void* renderer) const noexcept {
         void* camera{}; Vec3 origin;
         if (!ready_ || !native_profile::read(renderer, layout_.player, camera) ||

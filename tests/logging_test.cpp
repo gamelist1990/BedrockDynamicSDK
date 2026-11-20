@@ -89,6 +89,40 @@ int main() {
     std::fprintf(stderr, "logging-test: done\n");
 #endif
 
+    // Content-log bridge: the SDK logger feeds the vanilla Content Log in
+    // addition to its existing sink, with level and mod tag preserved.
+    struct ContentLine {
+        bedrock::LogLevel level;
+        std::string tag;
+        std::string text;
+    };
+    static std::vector<ContentLine> contentLines;
+    contentLines.clear();
+    const auto contentWriter = +[](bedrock::LogLevel level, std::string_view tag,
+                                   std::string_view text, void*) noexcept {
+        contentLines.push_back({level, std::string(tag), std::string(text)});
+    };
+    bedrock::setContentLogWriter(contentWriter);
+    log.setLevel(LogLevel::Info);
+    log.info("creator-info");
+    log.warn("creator-warn");
+    log.error("creator-error");
+    log.debug("creator-filtered");
+    assert(contentLines.size() == 3);
+    assert(contentLines[0].level == LogLevel::Info && contentLines[0].tag == "AutoSprint" &&
+           contentLines[0].text == "creator-info");
+    assert(contentLines[1].level == LogLevel::Warn && contentLines[1].text == "creator-warn");
+    assert(contentLines[2].level == LogLevel::Error && contentLines[2].text == "creator-error");
+    // The bridge is independent of the ordinary sink (file/debug output).
+    Captured ordinary;
+    log.setSink(&sink, &ordinary);
+    log.info("with-sink");
+    assert(ordinary.lines.size() == 1 && contentLines.size() == 4);
+    log.setSink(nullptr);
+    bedrock::setContentLogWriter(nullptr);
+    log.info("after-clear");
+    assert(contentLines.size() == 4); // no writer => no content-log lines
+
 #ifndef _WIN32
     assert(!bedrock::Console::isOpen());
     assert(!bedrock::Console::open());

@@ -23,6 +23,5 @@ struct ItemStack {
         return identifier;
     }
 };
-using HeldItemInfo = ItemStack; // source-compatible name for older examples
 
 } // namespace bedrock

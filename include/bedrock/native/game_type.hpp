@@ -1,12 +1,12 @@
 #pragma once
 #include <bedrock/profiles/profile_json.hpp>
-#include <bedrock/api/game_type.hpp>
+#include <bedrock/detail/native_game_type.hpp>
 #include <bedrock/detail/native_player_context.hpp>
 
 namespace bedrock {
 // Independent of CameraRig, visual spectator rendering and gamma overrides.
 // Invokes the native Player game-mode core setter; no raw component writes.
-class NativeGameType final : public GameTypeAccess {
+class NativeGameType final {
 public:
     using Scope = native_player::Context::Scope;
     bool load(const RuntimeProfile& profile, std::string& error) {
@@ -33,13 +33,13 @@ public:
     }
     void reset() noexcept { context_.reset(); }
     Scope tick(void* client, WorldEpoch epoch) { return context_.tick(ready_ ? client : nullptr, epoch); }
-    std::optional<GameType> gameType() const override {
+    std::optional<GameType> gameType() const {
         if (!context_.valid()) return std::nullopt;
         int value{};
         return world_native::read(context_.component(typeHash_), typeOffset_, value) ? gameTypeFromNative(value) : std::nullopt;
     }
     bool canChangeGameType() const noexcept { return ready_ && setter_; }
-    GameTypeChange setGameType(GameType value) override {
+    GameTypeChange setGameType(GameType value) {
         if (!gameTypeFromNative(static_cast<int>(value))) return GameTypeChange::InvalidType;
         if (!context_.onThread()) return GameTypeChange::WrongThread;
         if (!context_.valid()) return GameTypeChange::WorldChanged;

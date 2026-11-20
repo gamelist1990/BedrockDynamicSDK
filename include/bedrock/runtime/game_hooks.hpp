@@ -1,7 +1,7 @@
 #pragma once
 
 #ifdef _WIN32
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <bedrock/native/keyboard.hpp>
 #include <bedrock/native/world_events.hpp>
@@ -18,13 +18,12 @@ namespace bedrock {
 // can subscribe to the same native call without installing competing detours.
 class GameHooks final {
 public:
-    explicit GameHooks(GameApi& api) noexcept : api_(&api) {}
+    explicit GameHooks(detail::HookDispatch& api) noexcept : dispatch_(&api) {}
     ~GameHooks() { stop(); }
     GameHooks(const GameHooks&) = delete;
     GameHooks& operator=(const GameHooks&) = delete;
 
     bool install(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (active()) { error.clear(); return true; }
         if (!installInput(resolver, error) || !installActorNameTag(resolver, error)) {
             stop(); return false;
@@ -34,7 +33,6 @@ public:
     }
 
     bool installInput(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[0] && tokens_[1]) { error.clear(); return true; }
         const auto keyboard = resolveSharedHook(
             resolver, "Keyboard::feed", BDS_HOOK_KEYBOARD_FEED);
@@ -53,7 +51,6 @@ public:
     }
 
     bool installActorNameTag(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[2]) { error.clear(); return true; }
         const auto nameTag = resolveSharedHook(
             resolver, "Actor::getNameTag", BDS_HOOK_ACTOR_GET_NAME_TAG);
@@ -79,7 +76,6 @@ public:
     }
 
     bool installFov(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[3]) { error.clear(); return true; }
         const auto fov = resolveSharedHook(resolver, "LevelRendererPlayer::getFov",
                                            BDS_HOOK_GET_FOV);
@@ -92,7 +88,6 @@ public:
     }
 
     bool installGameplay(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[4] && tokens_[5]) { error.clear(); return true; }
         const auto grab = resolveSharedHook(resolver, "ClientInstance::grabCursor",
                                             BDS_HOOK_GRAB_CURSOR);
@@ -109,7 +104,6 @@ public:
     }
 
     bool installLevelTick(const Resolver& resolver, std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[7]) { error.clear(); return true; }
         const auto level = resolveSharedHook(resolver, "MultiPlayerLevel::_subTick",
                                              BDS_HOOK_LEVEL_SUB_TICK);
@@ -126,7 +120,6 @@ public:
     // entries before subscribing, and roll back only this group on failure.
     bool installWorldEvents(const Resolver& resolver, std::string_view profile,
                             std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (worldEventsActive()) { error.clear(); return true; }
         const auto layout = parseNativeWorldEventsLayout(profile, error);
         if (!layout) return false;
@@ -169,7 +162,6 @@ public:
 
     bool installNativeKeyboard(const Resolver& resolver, std::string_view profile,
                                std::string& error) {
-        if (!api_) { error = "GameApi is unavailable"; return false; }
         if (tokens_[6]) { error.clear(); return true; }
         const auto layout = parseNativeKeyboardLayout(profile, error);
         if (!layout) return false;
@@ -191,7 +183,7 @@ public:
         for (auto& token : tokens_) {
             if (token) BDS_HookUnsubscribe(std::exchange(token, nullptr));
         }
-        if (api_) api_->clearNativeKeyboard();
+        dispatch_->clearNativeKeyboard();
     }
     [[nodiscard]] bool active() const noexcept {
         return tokens_[0] && tokens_[1] && tokens_[2];
@@ -202,7 +194,7 @@ private:
                                             BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_ClientPlayerLoadedArgs*>(raw);
         next(frame, raw);
-        static_cast<GameHooks*>(user)->api_->dispatchWorldChange(
+        static_cast<GameHooks*>(user)->dispatch_->dispatchWorldChange(
             WorldChangeReason::Joined, args.self, args.player);
     }
     static void BDS_HOOK_CALL onLevelExit(void* user, void* raw,
@@ -212,23 +204,23 @@ private:
             static_cast<BDS_ClientWorldArgs*>(raw)->self);
         bool notified = false;
         if (self >= hooks.worldLayout_.exitClientOffset && self != 0)
-            notified = hooks.api_->dispatchWorldChange(WorldChangeReason::Left,
+            notified = hooks.dispatch_->dispatchWorldChange(WorldChangeReason::Left,
                 reinterpret_cast<void*>(self - hooks.worldLayout_.exitClientOffset));
-        const auto epoch = hooks.api_->worldEpoch();
+        const auto epoch = hooks.dispatch_->worldEpoch();
         next(frame, raw); // keep original GameCallbacks*, never pass normalized this
-        if (notified && hooks.api_->worldEpoch() == epoch)
-            try { hooks.api_->clearObservedActors(); } catch (...) { }
+        if (notified && hooks.dispatch_->worldEpoch() == epoch)
+            try { hooks.dispatch_->clearObservedActors(); } catch (...) { }
     }
     static void BDS_HOOK_CALL onDimensionChanged(void* user, void* raw,
                                                 BDS_HookNext next, void* frame) noexcept {
         next(frame, raw);
-        static_cast<GameHooks*>(user)->api_->dispatchWorldChange(
+        static_cast<GameHooks*>(user)->dispatch_->dispatchWorldChange(
             WorldChangeReason::DimensionChanged,
             static_cast<BDS_ClientWorldArgs*>(raw)->self);
     }
     static void BDS_HOOK_CALL onJoinCancelled(void* user, void* raw,
                                              BDS_HookNext next, void* frame) noexcept {
-        auto& api = *static_cast<GameHooks*>(user)->api_;
+        auto& api = *static_cast<GameHooks*>(user)->dispatch_;
         const bool notified = api.dispatchWorldChange(
             WorldChangeReason::JoinCancelled,
             static_cast<BDS_ClientWorldArgs*>(raw)->self);
@@ -240,12 +232,12 @@ private:
     bool subscribe(BDS_HookPoint point, std::uintptr_t address,
                    BDS_HookCallback callback, BDS_HookToken* token) noexcept {
         return BDS_HookSubscribe(point, reinterpret_cast<void*>(address), callback,
-                                 api_, token) != 0;
+                                 dispatch_, token) != 0;
     }
     static void BDS_HOOK_CALL onKeyboard(void* user, void* raw,
                                          BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_KeyboardArgs*>(raw);
-        auto& api = *static_cast<GameApi*>(user);
+        auto& api = *static_cast<detail::HookDispatch*>(user);
         try {
             if (args.key < 0) { next(frame, &args); return; }
             KeyEvent event{static_cast<unsigned>(args.key), args.down != 0, false};
@@ -258,7 +250,7 @@ private:
     static void BDS_HOOK_CALL onMouse(void* user, void* raw,
                                       BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_MouseArgs*>(raw);
-        auto& api = *static_cast<GameApi*>(user);
+        auto& api = *static_cast<detail::HookDispatch*>(user);
         try {
             api.observeMouseDevice(args);
             MouseEvent event{args.action, args.state, args.x, args.y,
@@ -274,7 +266,7 @@ private:
                                    BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_FovArgs*>(raw);
         next(frame, &args);
-        auto& api = *static_cast<GameApi*>(user);
+        auto& api = *static_cast<detail::HookDispatch*>(user);
         FovEvent event{args.self, args.result, args.result};
         api.dispatchFov(event);
         args.result = event.resultFov;
@@ -284,19 +276,19 @@ private:
         auto& args = *static_cast<BDS_LevelArgs*>(raw);
         next(frame, &args);
         static std::atomic<std::uint64_t> sequence{0};
-        static_cast<GameApi*>(user)->dispatchLevelTick(
+        static_cast<detail::HookDispatch*>(user)->dispatchLevelTick(
             args.level, sequence.fetch_add(1, std::memory_order_relaxed) + 1);
     }
     static void BDS_HOOK_CALL onGrab(void* user, void* raw,
                                      BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_CursorArgs*>(raw);
         next(frame, &args);
-        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{true, args.self});
+        static_cast<detail::HookDispatch*>(user)->dispatchGameplay(GameplayEvent{true, args.self});
     }
     static void BDS_HOOK_CALL onRelease(void* user, void* raw,
                                         BDS_HookNext next, void* frame) noexcept {
         auto& args = *static_cast<BDS_CursorArgs*>(raw);
-        static_cast<GameApi*>(user)->dispatchGameplay(GameplayEvent{false, args.self});
+        static_cast<detail::HookDispatch*>(user)->dispatchGameplay(GameplayEvent{false, args.self});
         next(frame, &args);
     }
     static void BDS_HOOK_CALL onNativeKeyboard(void* user, void* raw,
@@ -305,7 +297,7 @@ private:
         next(frame, &args);
         auto& hooks = *static_cast<GameHooks*>(user);
         const auto input = captureNativeKeyboardEvent(args.context, hooks.keyboardLayout_);
-        if (input) hooks.api_->dispatchNativeKeyboard(*input);
+        if (input) hooks.dispatch_->dispatchNativeKeyboard(*input);
     }
     static void BDS_HOOK_CALL onNameTag(void* user, void* raw,
                                         BDS_HookNext next, void* frame) noexcept {
@@ -314,13 +306,13 @@ private:
         if (!args.actor || !args.name_tag) return;
         try {
             const auto& value = *static_cast<const std::string*>(args.name_tag);
-            static_cast<GameApi*>(user)->observeActorNameTag(args.actor, value);
+            static_cast<detail::HookDispatch*>(user)->observeActorNameTag(args.actor, value);
         } catch (...) {
             // Never let an SDK listener or cache failure escape into Minecraft.
         }
     }
 
-    GameApi* api_{};
+    detail::HookDispatch* dispatch_;
     NativeKeyboardLayout keyboardLayout_{};
     NativeWorldEventsLayout worldLayout_{};
     std::array<BDS_HookToken, 12> tokens_{};

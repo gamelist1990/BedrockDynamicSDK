@@ -8,12 +8,12 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <bedrock/native/actors.hpp>
 #include <bedrock/native/items.hpp>
 #include <entt/entt.hpp>
 #include <nlohmann/json.hpp>
-#include <bedrock/api/blocks.hpp>
+#include <bedrock/detail/block_types.hpp>
 #include <array>
 #include <algorithm>
 #include <cmath>

@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/automation_controls.hpp>
+#include <bedrock/detail/automation_motion.hpp>
 #include <array>
 #include <cstdint>
 

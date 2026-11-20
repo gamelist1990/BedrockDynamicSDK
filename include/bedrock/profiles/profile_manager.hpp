@@ -1,6 +1,6 @@
 #pragma once
 #include <bedrock/enums/profiles.hpp>
-#include <bedrock/api/api_types.hpp>
+#include <bedrock/detail/validated_values.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/resolver.hpp>
 #include <functional>
@@ -45,6 +45,7 @@ public:
     // its required layouts/entry guards before installing hooks. Failure triggers
     // an exact-build embedded fallback, then a throttled GitHub refresh.
     // ForceRemote still attempts GitHub before the embedded fallback.
+    // EmbeddedOnly uses the bundled exact-build profile without cache or network.
     using Adapter=std::function<bool(const RuntimeProfile&,std::string&)>;
     bool prepare(const ProfileRequirements& requirements,const ProfileOptions& options,const Adapter& adapter,std::string& error);
     bool open(const ProfileRequirements& requirements,const ProfileOptions& options,std::string& error){

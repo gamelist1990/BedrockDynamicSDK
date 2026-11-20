@@ -1,7 +1,7 @@
 #pragma once
 #include <bedrock/packets/wire_packet.hpp>
 #include <bedrock/generated/protocol.hpp>
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>

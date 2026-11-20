@@ -1,7 +1,7 @@
 #pragma once
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <optional>
-#include <bedrock/api/api_types.hpp>
+#include <bedrock/detail/validated_values.hpp>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -87,5 +87,4 @@ private:
     static bool finite(Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<30000000&&std::abs(p.z)<30000000&&std::abs(p.y)<10000;}
     bool active_{};std::uint64_t runtime_{},epoch_{};Vec3 anchor_{};ActorBounds anchorBounds_{};CameraFrame frame_{};ActorRotation rotation_{};
 };
-using FreeCameraRig = CameraRig; // compatibility name; new integrations use CameraRig
 } // namespace bedrock

@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <array>
 #include <chrono>
 #include <cstdint>

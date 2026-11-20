@@ -129,7 +129,9 @@ bool ProfileManager::prepare(const ProfileRequirements& requirements,const Profi
     std::lock_guard preparation(prepareMutex_);
     if(!adapter){error="profile adapter is empty";return false;}
     const auto previous=snapshot();
-    if(options.updates!=UpdatePolicy::ForceRemote&&previous&&previous->candidatePolicy()==options.candidates&&previous->supports(requirements,error)){
+    if(options.updates!=UpdatePolicy::ForceRemote&&previous&&
+       (options.updates!=UpdatePolicy::EmbeddedOnly||previous->choice().source==ProfileSource::Embedded)&&
+       previous->candidatePolicy()==options.candidates&&previous->supports(requirements,error)){
         try{if(adapter(*previous,error)){error.clear();return true;}}catch(const std::exception& e){error=e.what();}catch(...){error="profile adapter threw an unknown exception";}
     }
     std::string json;ProfileChoice choice;GameIdentity identity;std::string failures;
@@ -155,6 +157,10 @@ bool ProfileManager::prepare(const ProfileRequirements& requirements,const Profi
         }catch(const std::exception& e){error=e.what();}
         embeddedFailure=error;return false;
     };
+    if(options.updates==UpdatePolicy::EmbeddedOnly){
+        if(!inspectLoadedGame(identity,error))return false;
+        return tryEmbedded();
+    }
     if(options.updates==UpdatePolicy::ForceRemote){
         if(!inspectLoadedGame(identity,error))return false;
         if(refreshSupportedProfile(identity,json,choice,error)&&attempt(json,choice))return true;

@@ -1,6 +1,6 @@
 #pragma once
 #include <bedrock/enums/camera.hpp>
-#include <bedrock/api/camera.hpp>
+#include <bedrock/detail/camera_rig.hpp>
 #include <bedrock/native/motion.hpp>
 #include <bedrock/detail/native_player_context.hpp>
 

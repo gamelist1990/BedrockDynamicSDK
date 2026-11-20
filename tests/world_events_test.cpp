@@ -1,4 +1,4 @@
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/hook_dispatch.hpp>
 #include <bedrock/generated/symbols.hpp>
 #include <bedrock/native/world_events.hpp>
 #include <bedrock/enums/packet_id.hpp>
@@ -9,22 +9,22 @@ int main() {
     using namespace bedrock;
     // A dimension change is a notification even with an unchanged Level*.
     // Its generation must fence worker jobs and clear the observed roster.
-    GameApi api;
+    detail::HookDispatch api;
     void* const client = reinterpret_cast<void*>(0x1000);
     void* const level = reinterpret_cast<void*>(0x2000);
     unsigned general{}, joins{}, dimensions{}, exits{}, cancelled{};
-    api.Event.Enum.WorldChange.then([&](const WorldChangeEvent& e) {
+    api.on<WorldChangeEvent>([&](const WorldChangeEvent& e) {
         assert(e.epoch == api.worldEpoch());
         assert(e.clientInstance == client);
         ++general;
     });
-    api.Event.Enum.ClientJoinLevel.then([&](const auto&) { ++joins; });
-    api.Event.Enum.DimensionChange.then([&](const auto& e) {
+    api.on<ClientJoinLevelEvent>([&](const auto&) { ++joins; });
+    api.on<DimensionChangeEvent>([&](const auto& e) {
         assert(e.level == level);
         ++dimensions;
     });
-    api.Event.Enum.ClientExitLevel.then([&](const auto&) { ++exits; });
-    api.Event.Enum.ClientCancelJoinLevel.then([&](const auto&) { ++cancelled; });
+    api.on<ClientExitLevelEvent>([&](const auto&) { ++exits; });
+    api.on<ClientCancelJoinLevelEvent>([&](const auto&) { ++cancelled; });
     api.dispatchWorldChange(WorldChangeReason::Joined, client);
     assert(joins == 1 && api.worldEpoch() == 1);
     api.dispatchLevelTick(level, 1);
@@ -40,10 +40,10 @@ int main() {
     api.dispatchWorldChange(WorldChangeReason::Left, client);
     api.dispatchWorldChange(WorldChangeReason::JoinCancelled, client);
     assert(exits == 1 && cancelled == 1 && general == 5);
-    api.Event.Enum.WorldChange.then([](const auto&) { throw std::runtime_error("listener"); });
+    api.on<WorldChangeEvent>([](const auto&) { throw std::runtime_error("listener"); });
     api.dispatchWorldChange(WorldChangeReason::Joined, client);
     assert(joins == 2); // failed general handler does not swallow typed event
-    GameApi replacementClient;
+    detail::HookDispatch replacementClient;
     replacementClient.dispatchWorldChange(WorldChangeReason::Joined, client);
     replacementClient.dispatchWorldChange(WorldChangeReason::Left, client);
     replacementClient.dispatchWorldChange(WorldChangeReason::Joined, reinterpret_cast<void*>(0x4000));

@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/api_types.hpp>
+#include <bedrock/detail/validated_values.hpp>
 #include <concepts>
 #include <functional>
 #include <optional>

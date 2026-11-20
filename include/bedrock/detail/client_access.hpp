@@ -1,8 +1,7 @@
 #pragma once
-#include <bedrock/api/geometry.hpp>
-#include <bedrock/api/item_stack.hpp>
-#include <bedrock/api/server_address.hpp>
-#include <bedrock/api/blocks.hpp>
+#include <bedrock/detail/spatial_types.hpp>
+#include <bedrock/detail/item_snapshot.hpp>
+#include <bedrock/detail/server_endpoint.hpp>
 #include <bedrock/enums/actors.hpp>
 #include <bedrock/enums/input.hpp>
 #include <optional>
@@ -10,9 +9,9 @@
 namespace bedrock {
 // Implemented by the game-specific adapter after it has validated the live
 // pointers/layout for the exact executable. All returned pointers are borrowed.
-class GameAccess : public BlockAccess {
+class ClientAccess {
   public:
-    virtual ~GameAccess() = default;
+    virtual ~ClientAccess() = default;
     virtual void observeClient(void*) noexcept {}
     virtual bool beginWorldTick(void*) noexcept { return true; }
     virtual void endWorldTick() noexcept {}
@@ -57,7 +56,7 @@ class GameAccess : public BlockAccess {
     // Return only this Actor's currently held hand item. Do not enumerate or
     // expose the Actor's full inventory; local-player inventory access is a
     // separate API with a different lifetime and access path.
-    [[nodiscard]] virtual std::optional<HeldItemInfo> heldItem(void *actor) const {
+    [[nodiscard]] virtual std::optional<ItemStack> heldItem(void *actor) const {
         (void)actor;
         return std::nullopt;
     }
@@ -65,7 +64,7 @@ class GameAccess : public BlockAccess {
                                                                  EquipmentSlot slot) const {
         return slot == EquipmentSlot::MainHand ? heldItem(actor) : std::nullopt;
     }
-    // Inventory access is exposed only through LocalPlayer. Implementations
+    // Inventory access is limited to the local player. Implementations
     // must validate the supplied handle against the live local player before
     // reading any inventory pointer.
     [[nodiscard]] virtual std::size_t localInventorySize(void *localPlayer) const {
@@ -116,9 +115,8 @@ class GameAccess : public BlockAccess {
     }
 };
 
-// Useful for input-only examples that do not need to provide version-specific
-// Actor/world access. The hook-backed keyboard and mouse APIs still work.
-class EmptyGameAccess final : public GameAccess {
+// Input-only hook consumers have no native actor/world adapter.
+class InactiveClientAccess final : public ClientAccess {
   public:
     [[nodiscard]] bool isActorValid(void *) const noexcept override {
         return false;
@@ -139,8 +137,8 @@ class EmptyGameAccess final : public GameAccess {
         return std::nullopt;
     }
 };
-inline EmptyGameAccess &emptyGameAccess() {
-    static EmptyGameAccess access;
+inline InactiveClientAccess &inactiveClientAccess() {
+    static InactiveClientAccess access;
     return access;
 }
 

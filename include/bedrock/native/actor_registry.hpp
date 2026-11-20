@@ -1,6 +1,6 @@
 #pragma once
-#include <bedrock/api/actor_samples.hpp>
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/actor_tracking_types.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/native/actors.hpp>
 #include <entt/entt.hpp>
@@ -95,6 +95,10 @@ public:
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return nullptr;
         }
+    }
+    bool readActorType(void *actor, std::uint32_t &output) const noexcept {
+        void *type = component(actor, layout_.actorTypeComponentHash, 0);
+        return type && world_native::read(type, actorTypeValueOffset_, output);
     }
     bool readBounds(void *actor, ActorBounds &output) const noexcept {
         void *shape = component(actor, layout_.aabbShapeComponentHash,

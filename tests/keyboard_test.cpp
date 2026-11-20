@@ -1,4 +1,4 @@
-#include "bedrock/api/keyboard.hpp"
+#include "bedrock/detail/window_key_observer.hpp"
 #include <cassert>
 #include <iostream>
 

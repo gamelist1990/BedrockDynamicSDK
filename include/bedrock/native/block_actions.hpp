@@ -1,6 +1,6 @@
 #pragma once
 #include <bedrock/native/world_access.hpp>
-#include <bedrock/api/block_actions.hpp>
+#include <bedrock/detail/block_action_report.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <array>
 #include <vector>

@@ -85,7 +85,28 @@ public:
     using Handler = std::function<void(const std::string& line)>;
     using Diagnostic = std::function<void(const std::string& message)>;
 
+    // Stage B (D-1): `add`/`addEnum` are frozen after load(), but a plugin
+    // reload must be able to change the injected definition set. The rewrite
+    // already re-reads definitions on every AvailableCommands packet, and the
+    // wire interceptor keyed off `active_`; swapping the vectors under the
+    // definitions mutex makes both paths pick up the new set safely.
+    struct EnumEntry {
+        std::string name;
+        std::vector<std::string> values; // fixed values, or extras when merged
+        std::string mergedFrom;          // packet enum name when merged
+        bool merged = false;
+    };
+    struct CommandEntry {
+        std::string name;
+        std::string description;
+        std::vector<std::vector<InjectedParam>> overloads;
+        Handler handler;
+    };
+
     void setDiagnostic(Diagnostic diagnostic) { diagnostic_ = std::move(diagnostic); }
+
+    // True once load() has frozen the initial definition set (§6.3).
+    [[nodiscard]] bool isLoaded() const noexcept { return loaded_; }
 
     // A hard enum with fixed values, offered by completion wherever
     // a parameter references it via InjectedType::customEnum(name).
@@ -120,10 +141,64 @@ public:
         }
         for (const auto& overload : overloads)
             if (overload.size() > 16) { error = "too many parameters"; return false; }
-        for (const auto& entry : commands_)
-            if (entry.name == name) { error = "duplicate command: " + name; return false; }
-        commands_.push_back({std::move(name), std::move(description), std::move(overloads),
-                             std::move(handler)});
+        {
+            std::lock_guard lock(definitionsMutex_);
+            for (const auto& entry : commands_)
+                if (entry.name == name) { error = "duplicate command: " + name; return false; }
+            commands_.push_back({std::move(name), std::move(description), std::move(overloads),
+                                 std::move(handler)});
+        }
+        error.clear();
+        return true;
+    }
+
+    // Replace the complete definition set (including after load()). Callers
+    // must pass the full set; removed commands stop being intercepted on the
+    // very next CommandRequest, and completion catches up on the next
+    // AvailableCommands packet. Existing Mods that never call this are
+    // unaffected (§6.3 D-1).
+    bool replaceDefinitions(std::vector<EnumEntry> enums,
+                            std::vector<CommandEntry> commands,
+                            std::string& error) {
+        auto validEnumName = [](const std::string& name) {
+            return !name.empty() && name.size() <= 64 &&
+                name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                       "0123456789_") == std::string::npos;
+        };
+        std::unordered_set<std::string> enumNames;
+        for (const auto& entry : enums) {
+            if (!validEnumName(entry.name) || entry.values.size() > 8192 ||
+                (!entry.merged && entry.values.empty())) {
+                error = "invalid injected enum definition: " + entry.name;
+                return false;
+            }
+            if (!enumNames.insert(entry.name).second) {
+                error = "duplicate enum: " + entry.name;
+                return false;
+            }
+        }
+        std::unordered_set<std::string> commandNames;
+        for (const auto& entry : commands) {
+            if (!entry.handler || entry.name.empty() || entry.name.size() > 64 ||
+                entry.description.size() > 1024 ||
+                entry.name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") !=
+                    std::string::npos ||
+                entry.description.find('\0') != std::string::npos || entry.overloads.size() > 8) {
+                error = "invalid injected command definition: " + entry.name;
+                return false;
+            }
+            for (const auto& overload : entry.overloads)
+                if (overload.size() > 16) { error = "too many parameters"; return false; }
+            if (!commandNames.insert(entry.name).second) {
+                error = "duplicate command: " + entry.name;
+                return false;
+            }
+        }
+        {
+            std::lock_guard lock(definitionsMutex_);
+            enums_ = std::move(enums);
+            commands_ = std::move(commands);
+        }
         error.clear();
         return true;
     }
@@ -164,19 +239,6 @@ public:
     }
 
 private:
-    struct EnumEntry {
-        std::string name;
-        std::vector<std::string> values; // fixed values, or extras when merged
-        std::string mergedFrom;          // packet enum name when merged
-        bool merged = false;
-    };
-    struct CommandEntry {
-        std::string name;
-        std::string description;
-        std::vector<std::vector<InjectedParam>> overloads;
-        Handler handler;
-    };
-
     bool addEnumImpl(std::string name, std::vector<std::string> values,
                      std::string mergedFrom, bool merged, std::string& error) {
         if (loaded_) { error = "enums must be added before load"; return false; }
@@ -187,9 +249,12 @@ private:
             error = "invalid injected enum definition";
             return false;
         }
-        for (const auto& entry : enums_)
-            if (entry.name == name) { error = "duplicate enum: " + name; return false; }
-        enums_.push_back({std::move(name), std::move(values), std::move(mergedFrom), merged});
+        {
+            std::lock_guard lock(definitionsMutex_);
+            for (const auto& entry : enums_)
+                if (entry.name == name) { error = "duplicate enum: " + name; return false; }
+            enums_.push_back({std::move(name), std::move(values), std::move(mergedFrom), merged});
+        }
         error.clear();
         return true;
     }
@@ -202,6 +267,7 @@ private:
     // Returns nullopt when nothing was injected (packet untouched).
     std::optional<std::string> rewrite(const std::string& body) const {
         namespace acp = detail::acpwire;
+        std::lock_guard definitionsLock(definitionsMutex_);
         std::string cur = body;
         bool changed = false;
         std::unordered_map<std::string, std::uint64_t> customIndex;
@@ -330,11 +396,15 @@ private:
             std::lock_guard lock(activeMutex_);
             if (!active_.count(name)) return; // not ours (or not injected here)
         }
-        for (const auto& entry : commands_) {
-            if (entry.name != name) continue;
-            if (entry.handler) entry.handler(line);
+        Handler handler;
+        {
+            std::lock_guard lock(definitionsMutex_);
+            for (const auto& entry : commands_)
+                if (entry.name == name) { handler = entry.handler; break; }
+        }
+        if (handler) {
+            handler(line); // never call JS while holding a definitions lock
             event.cancel(); // handled locally; never reaches the server
-            return;
         }
     }
 
@@ -376,6 +446,7 @@ private:
     std::vector<BDS_HookToken> routeTokens_;
     std::size_t streamViewOff_{}, streamSizeOff_{}, streamCursorOff_{};
     bool loaded_ = false;
+    mutable std::mutex definitionsMutex_; // enums_ / commands_ (Stage B D-1)
     mutable std::mutex activeMutex_;
     mutable std::unordered_set<std::string> active_; // names injected by the latest rewrite
 };

@@ -1,5 +1,6 @@
 #pragma once
 #include <bedrock/enums/logging.hpp>
+#include <bedrock/logging/content_log.hpp>
 
 // Small, opt-in, header-only logger. Works without Bedrock resolver or hooks.
 // By default on Windows logs go to OutputDebugStringA, and to the console
@@ -78,13 +79,18 @@ public:
         // Deferred formatting: filtered debug logs cause no string allocations.
         std::ostringstream message;
         (message << ... << std::forward<Args>(args));
-        const std::string line = makeLine(level, tag_, message.str());
+        const std::string text = message.str();
+        const std::string line = makeLine(level, tag_, text);
 
         if (auto sink = sink_.load(std::memory_order_acquire)) {
             sink(level, line, sinkUserdata_.load(std::memory_order_acquire));
-            return;
+        } else {
+            defaultOutput(line);
         }
-        defaultOutput(line);
+        // Primary surface: the game's vanilla Content Log viewer. This is a
+        // no-op until the SDK native core resolves the game's write function,
+        // so file/debug logging keeps working unchanged when it cannot.
+        emitContentLog(level, tag_, text);
     }
 
     static std::string makeLine(LogLevel level, std::string_view tag,

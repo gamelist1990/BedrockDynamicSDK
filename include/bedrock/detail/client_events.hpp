@@ -1,6 +1,6 @@
 #pragma once
 #include <bedrock/enums/actors.hpp>
-#include <bedrock/api/world_events.hpp>
+#include <bedrock/detail/world_lifecycle_events.hpp>
 // Lightweight, header-only, typed event dispatcher.
 // No Minecraft binary offsets, Win32 headers, hooks, JSON, downloads, or threads.
 // The event source belongs to the client (or an independently validated adapter).
@@ -44,7 +44,7 @@ private:
 };
 // A post-dispatch key transition captured from Minecraft's native HID route.
 // Unlike KeyEvent (which is cancellable before Keyboard::feed), this event has
-// a usable native send route attached to GameApi for synchronous callbacks.
+// a usable native send route captured by the hook dispatcher for synchronous callbacks.
 struct NativeKeyEvent {
     unsigned inputKey{};
     bool pressed{};

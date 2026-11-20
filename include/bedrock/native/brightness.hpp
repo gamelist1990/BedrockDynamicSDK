@@ -1,6 +1,6 @@
 #pragma once
 #include <bedrock/profiles/profile_json.hpp>
-#include <bedrock/api/brightness.hpp>
+#include <bedrock/detail/gamma.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 #include <algorithm>

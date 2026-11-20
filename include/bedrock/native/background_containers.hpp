@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/blocks.hpp>
+#include <bedrock/detail/block_types.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/packets/protocol_codec.hpp>
 #include <bedrock/runtime/hook_runtime.h>

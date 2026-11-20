@@ -10,7 +10,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <bedrock/api/camera.hpp>
+#include <bedrock/detail/camera_rig.hpp>
 #include <bedrock/native/actors.hpp>
 #include <nlohmann/json.hpp>
 #include <cstring>

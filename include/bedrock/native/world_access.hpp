@@ -1,6 +1,6 @@
 #pragma once
-#include <bedrock/api/blocks.hpp>
-#include <bedrock/api/geometry.hpp>
+#include <bedrock/detail/block_types.hpp>
+#include <bedrock/detail/spatial_types.hpp>
 #include <bedrock/detail/native_world_access.hpp>
 #include <bedrock/native/actors.hpp>
 #include <array>

@@ -16,14 +16,4 @@ inline std::optional<GameType> gameTypeFromNative(std::int32_t value) noexcept {
     default: return std::nullopt;
     }
 }
-
-
-// Stable engine boundary. Native adapters must invoke the engine's setter;
-// updating an ECS integer alone does not update abilities or GameMode state.
-class GameTypeAccess {
-public:
-    virtual ~GameTypeAccess() = default;
-    virtual std::optional<GameType> gameType() const = 0;
-    virtual GameTypeChange setGameType(GameType value) = 0;
-};
 } // namespace bedrock

@@ -3,7 +3,7 @@
 // Owned block snapshots. Safe to process on workers; stateIdentity is an opaque,
 // world-scoped comparison token, never a dereferenceable pointer.
 #include <array>
-#include <bedrock/api/api_types.hpp>
+#include <bedrock/detail/validated_values.hpp>
 #include <compare>
 #include <cstdint>
 #include <map>
@@ -81,18 +81,10 @@ struct BlockSetOptions {
     double maxReach=4.5;
     std::shared_ptr<const BlockProperties> expectedProperties;
 };
-class BlockAccess {
-public:
-    virtual ~BlockAccess() = default;
-    virtual BlockResult worldBlock(void*, BlockPos, bool = false) { return {{},BlockError::unsupported}; }
-    virtual PlacementResult worldPlaceBlock(void*, const BlockPlacement&) { return {}; }
-    virtual PlacementResult worldSetBlock(void*, BlockPos, std::string_view, const BlockSetOptions&) { return {}; }
-};
 } // namespace bedrock
 
 namespace bedrock {
-// Typed construction for the stable placement options; legacy aggregate remains
-// source-compatible while new callers cannot swap yaw/pitch/slot argument types.
+// Typed construction prevents swapping yaw, pitch and slot values.
 class BlockSetBuilder {
     BlockSetOptions options_;
 public:

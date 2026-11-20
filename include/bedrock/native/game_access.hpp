@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/game_access.hpp>
+#include <bedrock/detail/client_access.hpp>
 #include <bedrock/packets/player_list_packets.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
 #include <bedrock/enums/game_type.hpp>
@@ -14,7 +14,7 @@ struct EquipmentSnapshot {
 };
 // Exact-profile client access. Native pointers, STL/EnTT layouts, item calls and
 // caches live in the SDK implementation. Native reads are limited to LevelTick.
-class NativeGameAccess final : public GameAccess {
+class NativeGameAccess final : public ClientAccess {
   public:
     using RosterProvider = std::function<std::shared_ptr<const std::vector<PacketPlayer>>() >;
     using NameProvider = std::function<std::optional<std::string>(void*)>;

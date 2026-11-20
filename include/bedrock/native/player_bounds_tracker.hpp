@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/api/actor_samples.hpp>
+#include <bedrock/detail/actor_tracking_types.hpp>
 #include <bedrock/native/actor_components.hpp>
 #include <bedrock/native/world_render.hpp>
 namespace bedrock {

@@ -1,5 +1,5 @@
 #include <bedrock/native/resource_packs.hpp>
-#include <bedrock/api/resource_packs.hpp>
+#include <bedrock/detail/resource_pack_menu_policy.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/runtime/hook_runtime.h>
