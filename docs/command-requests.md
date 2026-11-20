@@ -1,9 +1,9 @@
-# CommandRequest / CommandOutput API
+# CommandRequest / CommandOutput（内部アダプター）
 
 `<bedrock/commands/command_requests.hpp>` は通信方式に依存しない要求・応答APIです。
-Windows x64 MSVC Release向けの `<bedrock/layouts.CommandRequestPacket.hpp>` が
+Windows x64 MSVC Release向けの `<bedrock/native/command_requests.hpp>` が
 ゲームのPacketSenderとCommandOutputPacketに接続します。
-`bedrock::sdk` と `bedrock::hook_runtime` をリンクしてください。
+第一者 Mod では内部ターゲット `bedrock::symbols` と `bedrock::hook_runtime` をリンクします。
 
 ```cpp
 bedrock::NativeCommandRequests transport; // retain for process lifetime
@@ -32,7 +32,7 @@ transport.addLocalCommand("hello", [&](std::string_view fullLine) {
 Gameplayから観測したClientInstanceとLevelTickのlevelを
 `transport.update(client, level)` へ渡します。
 設定とイベント購読を終えてからフックを有効にしてください。
-起動から停止までの例は [Fake](../exsample/Fake/src/fake.cpp) にあります。
+起動から停止までの例は [Fake](../exsample/DevClient/Fake/src/fake.cpp) にあります。
 
 要求の作成・結果の受信はスレッドセーフです。送信と `then` は
 `update()` の所有tickスレッド上で実行します。

@@ -1,9 +1,15 @@
-name: API documentation
+name: Documentation site
 on:
   push:
     branches: ["main"]
   pull_request:
-    paths: ['docs/site/**', 'include/bedrock/**', 'src/profile_manager.cpp', '.github/workflows/docs.yml']
+    paths:
+      - 'site/**'
+      - 'docs/site/**'
+      - 'docs/**.md'
+      - 'include/bedrock/**'
+      - 'src/profile_manager.cpp'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,7 +35,9 @@ jobs:
       - name: Package static documentation
         run: |
           mkdir -p _site
-          cp -R docs/site/. _site/
+          cp -R site/. _site/
+          mkdir -p _site/api
+          cp -R docs/site/. _site/api/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -46,6 +54,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/configure-pages@v5
-      - name: Deploy API documentation
+      - name: Deploy documentation site
         id: deployment
         uses: actions/deploy-pages@v5

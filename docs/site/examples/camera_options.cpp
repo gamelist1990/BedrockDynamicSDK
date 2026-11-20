@@ -1,6 +1,6 @@
-#include <bedrock/api/camera.hpp>
-#include <bedrock/api/brightness.hpp>
-#include <bedrock/api/game_type.hpp>
+#include <bedrock/detail/camera_rig.hpp>
+#include <bedrock/detail/gamma.hpp>
+#include <bedrock/detail/native_game_type.hpp>
 
 std::optional<bedrock::CameraFrame> moveCopiedCamera(bedrock::CameraRig& camera,
     bedrock::Yaw yaw, bedrock::CameraInput input, std::uint64_t runtime, std::uint64_t epoch) {

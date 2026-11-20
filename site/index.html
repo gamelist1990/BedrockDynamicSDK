@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BedrockDynamicSDK 開発ノート</title>
+  <style>
+    :root { --bg:#0d1117; --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --card:#161b22; --border:#30363d; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; margin: 0; padding: 2rem; }
+    header { max-width: 960px; margin: 0 auto 2rem; }
+    h1 { margin: 0 0 .5rem; font-size: 1.8rem; }
+    p { margin: .5rem 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    #search { max-width: 960px; margin: 0 auto 1.5rem; display: block; width: 100%; box-sizing: border-box; padding: .6rem 1rem; font-size: 1rem; background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; }
+    main { max-width: 960px; margin: 0 auto; }
+    section { margin-bottom: 2rem; }
+    h2 { font-size: 1.3rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; margin-top: 0; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .card h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .9rem; }
+    .tags { margin-top: .6rem; }
+    .tag { display: inline-block; font-size: .75rem; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: .15rem .55rem; margin: .15rem .15rem 0 0; }
+    .hidden { display: none; }
+    footer { max-width: 960px; margin: 3rem auto 0; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BedrockDynamicSDK 開発ノート</h1>
+    <p>docs/ の設計メモ・API ガイド・調査ログの索引。各項目はリポジトリ内の Markdown へリンクしています。</p>
+    <p>API リファレンスは <a href="api/">api/</a>、リポジトリは <a href="https://github.com/gamelist1990/BedrockDynamicSDK">GitHub</a>。</p>
+  </header>
+  <input id="search" type="search" placeholder="タイトル・概要・タグで絞り込み" autocomplete="off">
+  <main id="root">
+    <p>データを読み込んでいます...</p>
+  </main>
+  <footer>
+    このページは <code>site/data.xml</code> を fetch して描画しています。
+  </footer>
+  <script>
+    const REPO = 'https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/';
+    async function load() {
+      const root = document.getElementById('root');
+      try {
+        const res = await fetch('data.xml');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const xml = await res.text();
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const parseErr = doc.querySelector('parsererror');
+        if (parseErr) throw new Error(parseErr.textContent);
+
+        const cats = Array.from(doc.querySelectorAll('category')).map(c => ({ id: c.getAttribute('id'), label: c.getAttribute('label') }));
+        const articles = Array.from(doc.querySelectorAll('article')).map(a => ({
+          id: a.getAttribute('id'),
+          title: a.getAttribute('title'),
+          category: a.getAttribute('category'),
+          file: a.getAttribute('file'),
+          summary: (a.querySelector('summary')?.textContent || '').trim(),
+          tags: (a.querySelector('tags')?.textContent || '').split(',').map(t => t.trim()).filter(Boolean)
+        }));
+
+        root.innerHTML = '';
+        for (const cat of cats) {
+          const section = document.createElement('section');
+          section.dataset.category = cat.id;
+          section.innerHTML = `<h2>${escapeHtml(cat.label)}</h2><div class="cards"></div>`;
+          const cards = section.querySelector('.cards');
+          for (const art of articles.filter(a => a.category === cat.id)) {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.dataset.search = (art.title + ' ' + art.summary + ' ' + art.tags.join(' ')).toLowerCase();
+            card.innerHTML = `
+              <h3><a href="${REPO + encodeURIComponent(art.file).replace(/%2F/g, '/')}" target="_blank" rel="noopener">${escapeHtml(art.title)}</a></h3>
+              <p>${escapeHtml(art.summary)}</p>
+              <div class="tags">${art.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
+            `;
+            cards.appendChild(card);
+          }
+          if (cards.children.length) root.appendChild(section);
+        }
+      } catch (e) {
+        root.innerHTML = `<p>データの読み込みに失敗しました: ${escapeHtml(e.message)}</p>`;
+      }
+    }
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    document.getElementById('search').addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      document.querySelectorAll('.card').forEach(c => {
+        c.classList.toggle('hidden', q && !c.dataset.search.includes(q));
+      });
+      document.querySelectorAll('section').forEach(s => {
+        s.classList.toggle('hidden', !s.querySelector('.card:not(.hidden)'));
+      });
+    });
+    load();
+  </script>
+</body>
+</html>

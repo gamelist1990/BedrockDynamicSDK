@@ -2,7 +2,6 @@
 
 Freecam専用の新しいAPIは追加しません。`CameraRig`（コピー値の計算）と
 `NativeCamera`（ローカルPlayerプロキシの操作）を組み合わせます。
-`FreeCameraRig`は既存ソースのための互換名です。
 
 ## カメラを動かす
 

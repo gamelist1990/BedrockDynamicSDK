@@ -1,7 +1,7 @@
-# World / Block / Camera API
+# World / Block / Camera API（内部アダプター）
 
-型付きの新しい入口は [HTML APIガイド](site/index.html#world) と
-[移行ガイド](typed-sdk-api.md) を参照してください。
+外部 Mod の公開インターフェースは [Stage A SDK](stage-a-sdk-design.md) を参照してください。
+ここでは SDK と第一者 Mod が使う内部アダプターを説明します。
 
 ## 設計
 
@@ -11,11 +11,11 @@ ModにRVA・vtableスロット・メモリオフセットを複製せず、SDK�
 
 | API | 用途 |
 | --- | --- |
-| `World.getBlock(pos)` / `NativeWorld.getBlock(pos)` | ID・位置・状態属性・空気判定の所有コピー |
-| `World.setBlock(pos, id, options)` | ホットバーから一致するアイテムを選び、隣接支持面を探して配置 |
-| `World.placeBlock(request)` | 面・支持座標・ヒット位置・向きを指定して配置 |
+| `NativeWorld.getBlock(pos)` | ID・位置・状態属性・空気判定の所有コピー |
+| `NativeWorld.setBlock(pos, id, options)` | ホットバーから一致するアイテムを選び、隣接支持面を探して配置 |
+| `NativeWorld.placeBlock(request)` | 面・支持座標・ヒット位置・向きを指定して配置 |
 | `NativeWorld.capabilities()` | 読み取り・配置の利用可否。候補であることも明示 |
-| `FreeCameraRig` | カメラ状態・RuntimeID/epochの照合・被弾時解除。native操作はホストが担当 |
+| `CameraRig` | カメラ状態・RuntimeID/epochの照合・被弾時解除。native操作はホストが担当 |
 | `moveCamera()` | yawに沿う前後左右・上下移動。斜め移動を正規化 |
 | `interpolateCamera()` | コピー済み座標の補間 |
 | `translateBounds()` | 座標差に合わせてAABBを移動 |
@@ -37,7 +37,8 @@ target_link_libraries(MyMod PRIVATE bedrock::world)
 ```
 
 EnTTの互換バージョンもこのターゲットが提供します。
-純粋な値型は `bedrock/api/blocks.hpp`、カメラ計算は `bedrock/api/camera.hpp` にあります。
+純粋な値型は `bedrock/detail/block_types.hpp`、カメラ計算は
+`bedrock/detail/camera_rig.hpp` にあります。
 これらだけを使用する場合、EnTTやWindows専用アダプターは不要です。
 
 ## 最小例
@@ -71,10 +72,6 @@ if (!world.load(exactBuildProfileJson, true, error)) {
 }
 // scope終了後はworld.getBlock/placeBlockがstaleWorldを返す。
 ```
-
-`World`ファサードを使う既存GameAccess実装では `worldBlock` / `worldPlaceBlock` /
-`worldSetBlock` を上のNativeWorldに転送してください。省略したアダプターは
-`unsupported`を返します。公開Worldへ新しいnative依存は強制しません。
 
 ## 状態と向き
 
@@ -128,6 +125,5 @@ Freecamのパケット固定・RenderDragon固有Hook・所有権管理は引き
 
 ### 再ビルド
 
-`GameAccess`のC++仮想インターフェースにブロック用の拡張を加えています。
-このインターフェースをDLL間で共有する場合は利用側も一緒に再ビルドしてください。
+内部アダプターを使う第一者 Mod は SDK と合わせて再ビルドしてください。
 BedrockHookRuntimeのC ABIやバージョン番号は変更していません。

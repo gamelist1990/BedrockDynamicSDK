@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BedrockDynamicSDKの型付きC++20 API。コマンドBuilder、World、Actor、イベント、GitHubプロファイル更新のガイドと使用例。">
-<title>BedrockDynamicSDK — API Guide</title>
+<title>BedrockDynamicSDK — Internal Native Adapter Guide</title>
 <link rel="stylesheet" href="assets/style.css"><script src="assets/app.js" defer></script>
 </head>
 <body>
@@ -15,11 +15,12 @@
 <nav aria-label="ドキュメント"><a href="#overview">はじめに</a><a href="#quickstart">導入と初期化</a><a href="#types">型とエラー</a><a href="#commands">Command Builder</a><a href="#profiles">プロファイル更新</a><a href="#packets">Packet / PlayerList</a><a href="#world">World / ブロック配置</a><a href="#actors">Actor / Player</a><a href="#events">イベントとスレッド</a><a href="#camera">Camera / Freecam</a><a href="#reference">APIリファレンス</a><a href="#migration">移行とバージョン対応</a><a href="#publishing">このドキュメントの公開</a></nav>
 <div class="sidebar-footer"><a href="https://github.com/gamelist1990/BedrockDynamicSDK">GitHub ↗</a><p>本体定義はSDKへ。<br>Modは機能の実装に集中。</p></div>
 </aside>
-<div class="content"><header class="topbar"><span>Documentation / API Guide</span><a href="examples/native_bootstrap.cpp" download>サンプルをダウンロード ↓</a></header>
+<div class="content"><header class="topbar"><span>Documentation / Internal Native Adapters</span><a href="examples/native_bootstrap.cpp" download>サンプルをダウンロード ↓</a></header>
 <main id="main">
 <section id="overview" data-title="はじめに SDK API 概要">
 <p class="eyebrow">BUILD ON A STABLE INTERFACE</p><h1>読みやすく、<br><span>間違えにくいAPI。</span></h1>
 <p class="lead">Minecraft Bedrockのネイティブ処理を、型付きのC++ APIから。プロファイルの選択と取得はSDKへまとめ、Modごとのバージョン依存コードを減らします。</p>
+<div class="note"><strong>第一者 Mod 向けの内部資料</strong> 外部 Mod は <code>bedrock::sdk</code> をリンクし、<code>&lt;bedrock/sdk.hpp&gt;</code> を使います。<a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/docs/stage-a-sdk-design.md">公開 Stage A SDK と最小例 →</a></div>
 <div class="hero-links"><a class="button" href="#quickstart">使い始める <span>→</span></a><a href="#commands">コマンドを作る ↗</a></div>
 <div class="cards"><article><span class="card-number">01 / TYPE</span><h3>型で意図を表す</h3><p>名前・引数・スロット・角度を区別。暗黙の変換や引数の取り違えを防ぎます。</p></article><article><span class="card-number">02 / PROFILE</span><h3>更新処理を一箇所へ</h3><p>EXE指紋、キャッシュ、GitHub、埋め込み定義をProfileManagerが扱います。</p></article><article><span class="card-number">03 / LIFETIME</span><h3>実行場所を明確に</h3><p>native操作は所有tickで。workerへはコピー済みの値を渡します。</p></article></div>
 <div class="note"><strong>対応範囲</strong> 同じABIを使うゲーム版はプロファイル追加で対応しやすくなります。ABI・EnTT・構造の形が変わる場合はSDK側の更新とModの再ビルドが必要です。未知の版を自動で安全と判定する仕組みではありません。</div>
@@ -33,9 +34,9 @@ FetchContent_Declare(bedrock_sdk
     GIT_TAG main)
 FetchContent_MakeAvailable(bedrock_sdk)
 target_link_libraries(MyMod PRIVATE bedrock::world)</code></pre>
-<p>コマンド登録・ProfileManagerだけなら <code>bedrock::sdk</code> をリンクします。EnTTは不要です。再現可能な配布ビルドでは、<code>GIT_TAG</code>を検証したコミットに固定してください。</p>
-<pre><code>#include &lt;bedrock/profile_manager.hpp&gt;
-#include &lt;bedrock/native_world.hpp&gt;
+<p>内部のコマンド登録・ProfileManagerだけなら <code>bedrock::symbols</code> をリンクします。EnTTは不要です。再現可能な配布ビルドでは、<code>GIT_TAG</code>を検証したコミットに固定してください。</p>
+<pre><code>#include &lt;bedrock/profiles/profile_manager.hpp&gt;
+#include &lt;bedrock/native/world.hpp&gt;
 
 bedrock::ProfileManager profiles;
 bedrock::NativeWorld world;
@@ -69,8 +70,8 @@ if (!ready) { /* errorをログへ。機能を有効にしない */ }</code></pr
 </section>
 <section id="commands" data-title="CommandBuilder コマンド 登録 autocomplete optionalInteger requiredInteger then NativeCommandService NativeSafeTeleport">
 <p class="eyebrow">DECLARE → ARGUMENT → HANDLER</p><h2>Command Builder</h2><p>名前・説明・引数・ハンドラーを順に指定します。引数定義とハンドラーが揃うまでは登録可能な <code>CommandDefinition</code> ができません。</p>
-<pre><code>#include &lt;bedrock/native_command_service.hpp&gt;
-#include &lt;bedrock/native_safe_teleport.hpp&gt;
+<pre><code>#include &lt;bedrock/native/command_service.hpp&gt;
+#include &lt;bedrock/native/safe_teleport.hpp&gt;
 
 bedrock::NativeCommandService commands;
 bedrock::NativeSafeTeleport teleport;
@@ -149,11 +150,11 @@ const bedrock::BlockSetOptions placement = bedrock::BlockSetBuilder{}
     .build();
 const bedrock::PlacementResult result = world.setBlock(
     target, bedrock::BlockIdentifier{"minecraft:stone"}, placement);</code></pre>
-<p><code>World</code>ファサードと <code>NativeWorld</code>の両方で型付き呼び出しを使えます。WorldファサードはGameAccessアダプターがブロック機能を提供する必要があります。標準の未実装アダプターはunsupportedを返します。</p>
+<p>第一者 Mod では、所有する tick 内で <code>NativeWorld</code> を使います。</p>
 <pre><code>// NativeWorldを使用する場合、ローカルclientのLevelTick内だけで有効化
 using namespace std::chrono_literals;
 auto scope = world.tick(clientInstance, event.level,
-    bedrock::WorldEpoch{game.worldEpoch()}, bedrock::TickBudget{64, 250us});
+    bedrock::WorldEpoch{dispatch.worldEpoch()}, bedrock::TickBudget{64, 250us});
 if (!scope) return;
 // このスコープ内でgetBlock / setBlockを呼ぶ</code></pre>
 <p><code>setBlock</code>はホットバーの実アイテムを選択して本体の配置処理を呼びます。空気への置換・既存ブロックの破壊は未対応。<code>accepted</code>はnative受付であり、サーバー確定ではありません。後続tickで状態を確認してください。接続状態・階段などの厳密な属性には <code>expect(properties)</code> を指定できます。</p>
@@ -162,28 +163,25 @@ if (!scope) return;
 </section>
 <section id="actors" data-title="Actor LocalPlayer アイテム 名前 RuntimeID EntityID">
 <p class="eyebrow">ACTOR & PLAYER</p><h2>ActorとPlayer</h2>
-<pre><code>const bedrock::LocalPlayer player = game.localPlayer();
-const auto position = player.getPosition();
-const auto runtimeId = player.getRuntimeId();
-const bedrock::World currentWorld = player.getWorld();
-for (const bedrock::Actor&amp; actor : currentWorld.getActors()) {
-    const std::string name = actor.getName();
-    const auto held = actor.getHeldItem();
-    // 返された値だけを別スレッドの処理に渡す
+<pre><code>// NativeGameAccess（ローカル client の LevelTick 内）
+for (void* actor : access.actorHandles(event.level)) {
+    const auto identity = bedrock::detail::readActorIdentity(access, actor);
+    const auto held = access.equipmentSnapshot(actor, bedrock::EquipmentSlot::MainHand);
+    // コピーした値だけを worker に渡す
 }</code></pre>
-<p>Actorのハンドル・RuntimeID・EnTT EntityIDは別物です。ワールド変更時に照合をやり直し、同じIDを別ワールドの同一人物と断定しないでください。nativeアクセスはGameAccess実装が担当します。API名を使っただけで全アダプターが取得能力を持つわけではありません。</p>
+<p>Actor ハンドル・RuntimeID・EnTT EntityID は別物です。ワールド変更時に照合をやり直し、別ワールドにハンドルを保持しないでください。</p>
 </section>
 <section id="events" data-title="イベント GameHooks WorldChange LevelTick Keyboard threading worker">
 <p class="eyebrow">OWNERSHIP & THREADS</p><h2>イベントとスレッド</h2>
-<pre><code>game.Event.Enum.WorldChange.then([&amp;](const bedrock::WorldChangeEvent&amp; event) {
+<pre><code>dispatch.on&lt;bedrock::WorldChangeEvent&gt;([&amp;](const bedrock::WorldChangeEvent&amp; event) {
     commands.reset();
     // 自分のコピー済みキュー・ワールド固有キャッシュを失効させる
 });
-game.Event.Enum.LevelTick.then([&amp;](const bedrock::LevelTickEvent&amp; event) {
+dispatch.on&lt;bedrock::LevelTickEvent&gt;([&amp;](const bedrock::LevelTickEvent&amp; event) {
     // 自分のキューから要求を取り出し、予算内でnative操作
 });
 const auto selected = profiles.snapshot();
-hooks = std::make_unique&lt;bedrock::GameHooks&gt;(game);
+hooks = std::make_unique&lt;bedrock::GameHooks&gt;(dispatch);
 hooks-&gt;installGameplay(selected-&gt;resolver(), error);
 hooks-&gt;installLevelTick(selected-&gt;resolver(), error);
 hooks-&gt;installWorldEvents(selected-&gt;resolver(), selected-&gt;json(), error);</code></pre>
@@ -192,7 +190,7 @@ hooks-&gt;installWorldEvents(selected-&gt;resolver(), selected-&gt;json(), error
 </section>
 <section id="camera" data-title="CameraRig NativeCamera NativeGameType GameType Gamma NativeBrightness full_bright カメラ ガンマ">
 <p class="eyebrow">CAMERA • GAME TYPE • BRIGHTNESS</p><h2>Camera / GameType / Brightness</h2>
-<p>Freecamは汎用APIの組合せで実装します。<code>CameraRig</code> はコピー値の移動と補間、<code>NativeCamera</code> はローカルPlayerプロキシの操作、<code>NativeGameType</code> は本体のゲームモード変更、<code>NativeBrightness</code> はガンマを担当します。旧 <code>FreeCameraRig</code> は互換名です。</p>
+<p>Freecamは汎用APIの組合せで実装します。<code>CameraRig</code> はコピー値の移動と補間、<code>NativeCamera</code> はローカルPlayerプロキシの操作、<code>NativeGameType</code> は本体のゲームモード変更、<code>NativeBrightness</code> はガンマを担当します。</p>
 <pre><code>bedrock::CameraRig rig;
 rig.begin(saved.position, saved.bounds, saved.runtimeId, saved.worldEpoch);
 auto frame = rig.advance(bedrock::Yaw{90.f}, {1.f, 0.f, 0.f}, {10.f, 5.f},
@@ -224,17 +222,17 @@ if (types.canChangeGameType()) {
 brightness.setGamma(bedrock::Gamma{2.f});
 brightness.fullBright(); // 25.f
 brightness.reset();     // 自分の要求を解除し、元のgetterの値へ</code></pre>
-<p>Gammaは有限値0..25。同じSDKモジュール内の要求を最大値で合成し、Optionsの保存値は変更しません。Hookは寿命中保持し、要求のない間は元のgetterを使用します。必要FeatureはCamera+Motion / GameType / Brightness。nativeカメラ・GameTypeには <code>bedrock::world</code>、Brightnessだけなら <code>bedrock::sdk</code> を使います。</p>
+<p>Gammaは有限値0..25。同じSDKモジュール内の要求を最大値で合成し、Optionsの保存値は変更しません。Hookは寿命中保持し、要求のない間は元のgetterを使用します。必要FeatureはCamera+Motion / GameType / Brightness。内部アダプターからはnativeカメラ・GameTypeに <code>bedrock::world</code>、NativeBrightnessに <code>bedrock::symbols</code> を使います。</p>
 <a class="download-link" href="examples/camera_options.cpp">コンパイル対象のC++使用例 →</a>
 </section>
 <section id="reference" data-title="API reference include headers resolver logger GUI input">
 <p class="eyebrow">REFERENCE MAP</p><h2>ヘッダー別リファレンス</h2><div class="table-wrap"><table><thead><tr><th>ヘッダー</th><th>主な型 / 役割</th></tr></thead><tbody>
-<tr><td><a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/include/bedrock/api_types.hpp">api_types.hpp ↗</a></td><td>用途別の型・CandidatePolicy・UpdatePolicy・ReadPolicy</td></tr>
+<tr><td><a href="https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/include/bedrock/detail/validated_values.hpp">validated_values.hpp ↗</a></td><td>用途別の型・CandidatePolicy・UpdatePolicy・ReadPolicy</td></tr>
 <tr><td>command_builder.hpp</td><td>CommandBuilder・IntegerCommandBuilder・CommandDefinition</td></tr>
 <tr><td>native_command_service.hpp / command_queue.hpp</td><td>候補登録・パケットfallback・型付きキュー</td></tr><tr><td>native_safe_teleport.hpp / safe_teleport.hpp</td><td>予算付き上方探索・安全検査・型付き結果</td></tr><tr><td>native_client_commands.hpp</td><td>低水準の本体CommandRegistry登録</td></tr>
 <tr><td>profile_manager.hpp</td><td>ProfileManager・RuntimeProfile・ProfileRequirements・Feature</td></tr>
 <tr><td>native_outline_renderer.hpp / world_text_win32.hpp</td><td>ワールド枠描画とUnicode文字メッシュ。使用例: BlockOutline</td></tr><tr><td>native_world.hpp / blocks.hpp</td><td>NativeWorld・BlockPos・BlockResult・BlockSetBuilder・TickBudget</td></tr>
-<tr><td>game_api.hpp / game_hooks.hpp</td><td>GameApi・GameAccess・World・Actor・LocalPlayer・GameHooks</td></tr>
+<tr><td>hook_dispatch.hpp / game_hooks.hpp</td><td>第一者向けの型付きフック通知</td></tr>
 <tr><td>camera.hpp / native_camera.hpp</td><td>CameraRig・時間指定移動・補間・ローカルPlayerプロキシ</td></tr><tr><td>game_type.hpp / native_game_type.hpp</td><td>型付きGameType・本体setter・結果コード</td></tr><tr><td>brightness.hpp / native_brightness.hpp</td><td>Gamma・Full bright・オーナーごとの解除</td></tr>
 <tr><td>keyboard.hpp / native_keyboard.hpp</td><td>キー状態・nativeゲーム入力</td></tr>
 <tr><td>events.hpp / world_events.hpp</td><td>イベントの購読・ワールド世代</td></tr>
@@ -242,7 +240,7 @@ brightness.reset();     // 自分の要求を解除し、元のgetterの値へ</
 <tr><td>gui.hpp / gui_overlay.hpp / native_world_render.hpp</td><td>任意導入のGUI・ワールド描画</td></tr>
 <tr><td>remote_catalog.hpp / resolver.hpp</td><td>高度な統合向けの取得・解決プリミティブ</td></tr>
 </tbody></table></div>
-<p>関数の完全な宣言・既存APIは <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/include/bedrock">公開ヘッダー一覧</a>、実例は <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample">サンプルMod</a> を参照してください。</p>
+<p>関数の完全な宣言は <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/include/bedrock">内部ヘッダー一覧</a>、実例は <a href="https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample">サンプルMod</a> を参照してください。</p>
 </section>
 <section id="migration" data-title="移行 バージョン ABI 後方互換 更新 legacy">
 <p class="eyebrow">EVOLVE THE ADAPTER</p><h2>既存コードからの移行</h2>

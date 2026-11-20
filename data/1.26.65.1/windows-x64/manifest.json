@@ -152,6 +152,10 @@
       "sha256": "ff408a9ee890914053d2db06fd83f235d246e920c4bf8ae7a8a1bd0c63f982ac"
     },
     {
+      "path": "classes/OreUISettings.json",
+      "sha256": "30a7c685cd47ed7de01df8db965b55ee8e640637bd2a130bcf2b3924b7211a5a"
+    },
+    {
       "path": "classes/PacketSender.json",
       "sha256": "55150a129b75d2526112e50cd907898abc24f53b699be1cda9a4a95fc80c4ece"
     },
@@ -194,6 +198,14 @@
     {
       "path": "classes/BackgroundContainers.json",
       "sha256": "3e56008a86e9e7ec752d9bea35cf4e0559665af6ce7af2d4c9b7cf36c934d983"
+    },
+    {
+      "path": "analysis/content_log_investigation.json",
+      "sha256": "cab22a011daf17864cae88f4944661a7dc54178cf59572a28c26589c03cb88e7"
+    },
+    {
+      "path": "classes/MobEffect.json",
+      "sha256": "b71d509c5c6dbbd85f9540d632e8f085065358449438136636ea89e70a4796fc"
     }
   ]
 }

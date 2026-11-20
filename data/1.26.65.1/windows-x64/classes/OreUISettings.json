@@ -1,0 +1,99 @@
+{
+  "layouts": {
+    "OreUISettings": {
+      "schema": 1,
+      "status": "candidate",
+      "runtime_verified": false,
+      "hybrid_resource": {"symbol": "OreUI::HybridResourceHandler::onResourceRequest"},
+      "pack_resource": {"symbol": "OreUI::PackResourceHandler::onResourceRequest"},
+      "cohtml": {
+        "module": "cohtml.WindowsDesktop.dll",
+        "sha256": "9ad9a26235c016e55fe68800cb3d00843a83840f9683cc478a2a6079d59b4669",
+        "image_size": 7565312,
+        "text_rva": "0x1000",
+        "text_size": 6281216,
+        "view_vtable_rva": "0x604078",
+        "advance_slot": 6,
+        "execute_script_slot": 62,
+        "load_url_slot": 2,
+        "reload_slot": 3,
+        "current_url_offset": "0x2E8",
+        "url_string": {"inline_tag_mask": 1, "inline_offset": 1, "heap_pointer_offset": 16},
+        "symbols": {
+          "cohtml::View::Advance": {
+            "rva": "0x4CF40",
+            "entry_check": "48 8B C4 F2 0F 11 48 10 55 53 56 57 41 54 41 56 41 57 48 8D 68 A1",
+            "abi": "unsigned __fastcall(View*, double)"
+          },
+          "cohtml::View::LoadURL": {
+            "rva": "0x16B914",
+            "entry_check": "45 33 C0 E9 00 00 00 00",
+            "abi": "void __fastcall(View*, const char*)"
+          },
+          "cohtml::View::Reload": {
+            "rva": "0x559A60",
+            "entry_check": "40 53 48 83 EC 30 48 8B D9 E8 06 78 BA FF 48 8D 4C 24 40",
+            "abi": "void __fastcall(View*)"
+          },
+          "cohtml::View::ExecuteScript": {
+            "rva": "0xF3F38",
+            "entry_check": "48 89 74 24 10 48 89 7C 24 20 55 48 8D 6C 24 A9",
+            "abi": "void __fastcall(View*, const char*)",
+            "source": "Cohtml PE .pdata 0xF3F38..0xF4031, slot 62 on the live View, Gameface public View declaration neighbors, and BOL XHR marker-r9-execute-20261119"
+          },
+          "cohtml::Url::serializedString": {
+            "rva": "0xBA75C",
+            "entry_check": "48 8B 01 48 85 C0 74 10 80 B8 C0 00 00 00 00 74 07",
+            "abi": "const void* __fastcall(const void* urlHandle)"
+          }
+        },
+        "source": "Exact cohtml PE .pdata, View vtable, Reload calling the LoadURL slot with the serialized current URL; REA/dacd67e72d7f-oreui-settings/phase-2.md"
+      },
+      "request": {
+        "url_offset": 0,
+        "string_size_offset": 16,
+        "string_capacity_offset": 24,
+        "string_inline_bytes": 16,
+        "has_range_offset": 88
+      },
+      "response": {
+        "implementation_offset": 0,
+        "allocate_buffer_vslot": 1,
+        "set_header_vslot": 7,
+        "handled_status": 0
+      },
+      "bundle": {
+        "file": "index-196362d73210d5a80339.js",
+        "sha256": "caf536deb8584e5aef0547dad970afbf422f7074a91e74294afc0386ae29b7e2",
+        "bol_sha256": "c6edbef81cb93fb9bc2f1965dbb4ada68b156d3889c4cdb77bbef5882c687bb2",
+        "directory": "data/gui/dist/hbui",
+        "document": "index.html",
+        "document_sha256": "86c6e0e1de69b6f658cb7715328cb9f299a0cddfe50d839f68c04ae209cadc83"
+      }
+    }
+  },
+  "symbols": {
+    "OreUI::HybridResourceHandler::onResourceRequest": {
+      "rva": "0x1F54420",
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80 00 00 00",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi": "uint32_t __fastcall(void* handler, const ResourceRequest* request, ResourceResponse* response)",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "source": "Exact PE .pdata and Ghidra 12.1.4; 141F54420 -> 141F4DCD0 -> 141F4CE40. REA/dacd67e72d7f-oreui-settings/phase-1.md"
+    },
+    "OreUI::PackResourceHandler::onResourceRequest": {
+      "rva": "0x1F4E300",
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 18 01 00 00 48 8D AC 24 80 00 00 00",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "status": "candidate",
+      "abi": "uint32_t __fastcall(void* handler, const ResourceRequest* request, ResourceResponse* response)",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "source": "Exact PE .pdata and Ghidra 12.1.4; 141F4E300 -> 141F4D130 -> 141F4CE40. REA/dacd67e72d7f-oreui-settings/phase-1.md"
+    }
+  }
+}

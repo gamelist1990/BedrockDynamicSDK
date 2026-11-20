@@ -8,8 +8,8 @@ on:
       version:
         description: Minecraft version to embed
         type: choice
-        options: ['1.26.52.3', '1.26.60.5']
-        default: '1.26.60.5'
+        options: ['1.26.60.5', '1.26.65.1']
+        default: '1.26.65.1'
       mods:
         description: all, or comma separated Mod names (for example CheckSig,Fake)
         type: string
@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: build-${{ github.ref }}-${{ inputs.version || '1.26.60.5' }}-${{ inputs.mods || 'all' }}
+  group: build-${{ github.ref }}-${{ inputs.version || '1.26.65.1' }}-${{ inputs.mods || 'all' }}
   cancel-in-progress: false
 jobs:
   plan:
@@ -32,26 +32,29 @@ jobs:
     steps:
       - id: plan
         env:
-          GAME_VERSION: ${{ inputs.version || '1.26.60.5' }}
+          GAME_VERSION: ${{ inputs.version || '1.26.65.1' }}
           MODS: ${{ inputs.mods || 'all' }}
         run: |
           python3 - <<'PYCODE'
           import os, json
           version = os.environ['GAME_VERSION']
-          if version not in ('1.26.52.3', '1.26.60.5'): raise SystemExit('Unsupported version')
-          available = ['Freecam','SpeedBuilder','Top','HitBox','TabList','Zoom','AutoSprint','CheckSig']
-          if version == '1.26.60.5': available.extend(['Fake', 'GlobalResourcePack'])
+          if version not in ('1.26.60.5', '1.26.65.1'): raise SystemExit('Unsupported version')
+          clients = ['HitBox', 'SpeedBuilder']
+          tools = ['CheckSig', 'Top']
+          if version == '1.26.65.1':
+              clients.extend(['DynamicClient', 'AutoMine'])
+              tools.extend(['BlockProbe', 'CraftProbe', 'InputProbe', 'StackProbe', 'Fake', 'GlobalResourcePack', 'ModSettingsDemo'])
+          available = clients + tools
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
           if not selected or any(x not in available for x in selected): raise SystemExit('Unknown Mod or Mod unavailable for this version')
+          matrix = [{'mod': mod, 'source': 'exsample/' + ('DevClient/' if mod in tools else '') + mod} for mod in selected]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write('matrix=' + json.dumps({'mod': selected}) + '\nversion=' + version + '\n')
+              out.write('matrix=' + json.dumps({'include': matrix}) + '\nversion=' + version + '\n')
           PYCODE
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - uses: astral-sh/setup-uv@v6
       - name: Verify data and Python
         run: |
@@ -78,10 +81,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build resource pack example for 1.26.60.5
+      - name: Build resource pack example for 1.26.65.1
         shell: pwsh
         run: |
-          cmake -S exsample/GlobalResourcePack -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" "-DBEDROCK_GAME_VERSION=1.26.60.5" -DBEDROCK_BUILD_ID=${{ github.sha }}
+          cmake -S exsample/DevClient/GlobalResourcePack -B build-brpm -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" "-DBEDROCK_GAME_VERSION=1.26.65.1" -DBEDROCK_BUILD_ID=${{ github.sha }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-brpm --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -89,10 +92,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: GlobalResourcePack-1.26.60.5-windows-x64
+          name: GlobalResourcePack-windows-smoke
           path: |
             build-brpm/Release/GlobalResourcePack.dll
-            exsample/GlobalResourcePack/README_ja.md
+            exsample/DevClient/GlobalResourcePack/README_ja.md
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -132,26 +135,24 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
           $extraArgs = @()
           if ("${{ matrix.mod }}" -eq "CheckSig") { $extraArgs += "-DCHECKSIG_BUILD_TESTS=ON" }
-          cmake -S exsample/${{ matrix.mod }} -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
+          cmake -S "${{ matrix.source }}" -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2
       - name: Mod input and DLL smoke tests
-        if: matrix.mod == 'CheckSig' || matrix.mod == 'GlobalResourcePack' || matrix.mod == 'TabList'
+        if: matrix.mod == 'CheckSig' || matrix.mod == 'GlobalResourcePack' || matrix.mod == 'DynamicClient'
         run: ctest --test-dir build-mod -C Release --output-on-failure
       - name: CheckSig profile installer tests (Windows PowerShell 5.1)
         if: matrix.mod == 'CheckSig'
         env:
           CHECKSIG_PROFILE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: powershell
-        run: ./exsample/CheckSig/tests/profile_installer_test.ps1
+        run: ./exsample/DevClient/CheckSig/tests/profile_installer_test.ps1
       - name: Verify CheckSig DLL
         if: matrix.mod == 'CheckSig'
         shell: pwsh
@@ -163,8 +164,8 @@ jobs:
         if: matrix.mod == 'CheckSig'
         shell: pwsh
         run: |
-          Copy-Item exsample/CheckSig/README_ja.md build-mod/Release/
-          Copy-Item exsample/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
+          Copy-Item exsample/DevClient/CheckSig/README_ja.md build-mod/Release/
+          Copy-Item exsample/DevClient/CheckSig/Get-CheckSigProfile.ps1 build-mod/Release/
           Copy-Item docs/checksig-jobs.md build-mod/Release/
           Copy-Item docs/checksig-126605.md build-mod/Release/
           Copy-Item docs/checksig-auto-dev.md build-mod/Release/
@@ -181,12 +182,18 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path "build-mod/Release/Fake.dll")) { throw "Fake.dll was not produced" }
-          Copy-Item exsample/Fake/README_ja.md build-mod/Release/
+          Copy-Item exsample/DevClient/Fake/README_ja.md build-mod/Release/
           Copy-Item docs/command-requests.md build-mod/Release/
       - name: Package resource pack example usage
         if: matrix.mod == 'GlobalResourcePack'
         shell: pwsh
-        run: Copy-Item exsample/GlobalResourcePack/README_ja.md build-mod/Release/
+        run: Copy-Item exsample/DevClient/GlobalResourcePack/README_ja.md build-mod/Release/
+      - name: Package DynamicClient usage and notices
+        if: matrix.mod == 'DynamicClient'
+        shell: pwsh
+        run: |
+          Copy-Item exsample/DynamicClient/README.md build-mod/Release/
+          Copy-Item exsample/DynamicClient/LICENSE.Zoom build-mod/Release/LICENSE.Zoom.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-${{ needs.plan.outputs.version }}-windows-x64
@@ -194,6 +201,7 @@ jobs:
             build-mod/Release/*.dll
             build-mod/Release/BedrockHitBoxLoader.exe
             build-mod/Release/*.md
+            build-mod/Release/LICENSE.Zoom.txt
             build-mod/Release/Get-CheckSigProfile.ps1
           if-no-files-found: error
       - name: Package release ZIP
@@ -205,7 +213,7 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item "data/$env:GAME_VERSION/windows-x64" build-mod/Release/profile -Recurse
           @{ mod = $env:MOD; game_version = $env:GAME_VERSION; source_sha = "${{ github.sha }}"; architecture = "windows-x64" } | ConvertTo-Json | Set-Content -Encoding utf8 build-mod/Release/build-info.json
-          $files = Get-ChildItem build-mod/Release -File | Where-Object { $_.Extension -in '.dll', '.exe', '.md', '.ps1', '.json' }
+          $files = Get-ChildItem build-mod/Release -File | Where-Object { $_.Extension -in '.dll', '.exe', '.md', '.ps1', '.json', '.txt' }
           Compress-Archive -Path ($files.FullName + @((Join-Path $PWD "build-mod/Release/profile"))) -DestinationPath "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:

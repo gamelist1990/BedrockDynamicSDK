@@ -1,12 +1,12 @@
-# SDK native client commands
+# SDK native client commands (internal)
 
 `bedrock/native/client_commands.hpp` の `NativeClientCommands` は、Topにあった
-本体CommandRegistry登録処理をSDKへ移したものです。`bedrock::sdk`で利用できます。
+本体CommandRegistry登録処理をSDKへ移したものです。内部ターゲット `bedrock::symbols` で利用できます。
 EnTTやWorld APIへの依存はありません。Windows x64 / MSVC Release向けです。
 
 ## 新しい型付き入口
 
-新しいModでは [HTML APIガイド](site/index.html#commands) のCommandBuilderと
+第一者 Mod では [内部アダプターガイド](site/index.html#commands) のCommandBuilderと
 ProfileManagerを使用してください。以下の文字列/boolを使う入口は移行用です。
 
 ## 互換APIの使用例

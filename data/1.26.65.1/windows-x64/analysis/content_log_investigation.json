@@ -1,0 +1,40 @@
+{
+  "analysis": {
+    "content_log_investigation": {
+    "status": "unresolved-symbol-fallback",
+    "version": "1.26.65.1",
+    "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+    "text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
+    "goal": "Identify a stable callable function that writes entries visible in Settings -> Creator -> Content Log, so the SDK logger and ScriptClient LogSink can hook the game's own path.",
+    "findings": [
+      {
+        "kind": "gui-surface",
+        "evidence": "OreUI strings menu.creator.contentLog.history/.location/.delete, content_log_item, content_log_grid_item, content_log_history.content_log_history_screen, content_log_gui_level_dropdown",
+        "note": "Confirms the in-game viewer is backed by a ContentLog store/file; this is the acceptance surface."
+      },
+      {
+        "kind": "settings",
+        "evidence": "CONTENT_LOG_FILE / CONTENT_LOG_GUI / CONTENT_LOG_GUI_LEVEL / CONTENT_LOG_GUI_SHOW_ON_ERRORS at rdata 0xf298b0e..0xf298b45; options.content_log_file_enabled / options.content_log_gui_enabled",
+        "note": "Shows a configurable Content Log file and GUI filter; the debug/OutputDebugString sink is a different, non-GUI surface."
+      },
+      {
+        "kind": "logger-subsystem",
+        "evidence": "BedrockLog::LogDetails::createLog RTTI lambda type in .data; Bedrock::ResultLogger::log(LogLevel, LogArea, const std::string&, const CallStack&) __FUNCSIG__ at rdata 0xf830f69; Bedrock::LogOrAssertLevel / Bedrock::LogArea parameter types; ContentLog::ThreadSpecificData inside Bedrock::Threading::InstancedThreadLocal RTTI at .data 0x123241e0",
+        "note": "The game has a structured BedrockLog/ContentLog logger with level+area parameters. No callable RVA was recovered: the release EXE has no PDB, Ghidra auto-analysis of the 327MB image times out, and the ContentLog strings are pooled with zero direct xrefs."
+      },
+      {
+        "kind": "reader-anchor",
+        "evidence": "RVA 0x886b530..0x886d523 reads all three menu.creator.contentLog strings (lea at 0x886c0d3 / 0x886c7e6 / 0x886ce81); supplied by Muse 2026-11-20",
+        "note": "This is the GUI reader side, NOT the write function. Follow its store access to reach the writer in a future live/PDB-assisted round."
+      }
+    ],
+    "symbol_to_add_when_resolved": {
+      "name": "ContentLog::write",
+      "required_fields": ["rva", "signature", "entry_check", "abi", "status"],
+      "expected_shape": "void __fastcall(level, area, message) or void __fastcall(message, level, area); the adapter selects via the optional 'call' field ('level_area_message' default, or 'message_level_area')",
+      "status_policy": "candidate until exact-build entry guard + ABI are verified; runtime_verified false until a live BOL observation"
+    },
+      "runtime_behavior": "Until the symbol is added, the SDK content-log adapter fails closed: it emits one OutputDebugString line and keeps the existing file/debug logs. No native call is attempted and the game cannot be crashed by an unresolved symbol."
+    }
+  }
+}

@@ -1,5 +1,12 @@
 # Build Windows x64 DLLs from Linux
 
+For the complete latest-version set, use `./build-linux.sh` from the
+repository root. It uses `clang-cl` and `lld-link` with an xwin MSVC toolchain,
+which is required for the native ABI used by DynamicClient and other native Mods.
+See the prerequisites in the script header. Output goes to `dist/<version>/`.
+
+The instructions below are for the separate LLVM-MinGW toolchain path.
+
 This repository can cross-compile its Windows DLL examples from Linux with
 `llvm-mingw` and CMake/Ninja. Use the LLVM-MinGW release for Linux x86-64; the
 toolchain includes Windows headers, import libraries, and an x64 SEH-capable

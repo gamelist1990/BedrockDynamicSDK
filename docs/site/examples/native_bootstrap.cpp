@@ -7,7 +7,7 @@
 // Own this object for the DLL lifetime. Definitions precede hooks; native
 // registration pins the provider. Stop callbacks before destroying the object.
 class ExampleMod {
-    bedrock::GameApi game;
+    bedrock::detail::HookDispatch game;
     bedrock::NativeCommandService commands;
     bedrock::NativeSafeTeleport teleport;
     std::unique_ptr<bedrock::GameHooks> hooks;
@@ -32,12 +32,12 @@ public:
         if (!profiles.prepare(required, options, [this](const bedrock::RuntimeProfile& profile, std::string& failure) {
             return teleport.load(profile, failure) && commands.load(profile, failure);
         }, error)) return false;
-        game.Event.Enum.Gameplay.then([this](const bedrock::GameplayEvent& event) { client.store(event.clientInstance); });
-        game.Event.Enum.WorldChange.then([this](const bedrock::WorldChangeEvent&) {
+        game.on<bedrock::GameplayEvent>([this](const bedrock::GameplayEvent& event) { client.store(event.clientInstance); });
+        game.on<bedrock::WorldChangeEvent>([this](const bedrock::WorldChangeEvent&) {
             const auto current = ++epoch;
             commands.reset(current); teleport.reset(current);
         });
-        game.Event.Enum.LevelTick.then([this](const bedrock::LevelTickEvent& event) {
+        game.on<bedrock::LevelTickEvent>([this](const bedrock::LevelTickEvent& event) {
             const auto current = epoch.load();
             auto scope = teleport.tick(client.load(), event.level, current);
             if (!scope) return;

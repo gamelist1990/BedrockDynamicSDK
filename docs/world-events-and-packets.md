@@ -1,22 +1,22 @@
 # World lifecycle events and Packet IDs
 
-## Subscribe from an ordinary SDK mod
+## Subscribe from a first-party Mod
 
-Link `bedrock::game_hooks`, load and attach the exact-build profile as usual,
-and keep `GameApi` and `GameHooks` alive while subscribed:
+Link the internal `bedrock::game_hooks` target, load and attach the exact-build profile,
+and keep `HookDispatch` and `GameHooks` alive while subscribed:
 
 ```cpp
 #include <bedrock/runtime/game_hooks.hpp>
 #include <bedrock/enums/packet_id.hpp>
 
-bedrock::GameApi api{access};
-bedrock::GameHooks hooks{api};
-api.Event.Enum.WorldChange.then([&](const bedrock::WorldChangeEvent& event) {
+bedrock::detail::HookDispatch dispatch{access};
+bedrock::GameHooks hooks{dispatch};
+dispatch.on<bedrock::WorldChangeEvent>([&](const bedrock::WorldChangeEvent& event) {
     // Clear feature-owned names, retained positions and queued snapshots here.
     // Copy event.epoch into worker jobs; discard results whose generation
-    // no longer equals api.worldEpoch(). Keep native pointers on the game thread.
+    // no longer equals dispatch.worldEpoch(). Keep native pointers on the game thread.
 });
-api.Event.Enum.DimensionChange.then([](const bedrock::DimensionChangeEvent& event) {
+dispatch.on<bedrock::DimensionChangeEvent>([](const bedrock::DimensionChangeEvent& event) {
     // Native notification, including changes with an unchanged Level pointer.
 });
 std::string error;
@@ -27,8 +27,8 @@ if (!hooks.installWorldEvents(resolver, profileJson, error)) {
 
 `WorldChange` reports `Joined`, `Left`, `JoinCancelled` or `DimensionChanged`.
 Typed channels are `ClientJoinLevel`, `ClientExitLevel`, `ClientCancelJoinLevel`
-and `DimensionChange`. Every notification advances `api.worldEpoch()` and
-invalidates SDK names, Actor reads and render-view caches before callbacks.
+and `DimensionChange`. Every notification advances `dispatch.worldEpoch()` and
+invalidates the dispatcher’s name-tag observations before callbacks.
 Joined/dimension callbacks follow the native method; exit/cancel callbacks
 precede teardown. General and specific channels share one generation.
 Callbacks execute synchronously on the native caller thread; enqueue copied
@@ -40,7 +40,7 @@ when available, or the last observed `LevelTick` level for a boundary. Install
 dimension callback has no dimension-ID parameters; none are fabricated.
 The first notification binds the client for that session, and exit/cancel
 releases the automatic binding. For split-screen, pin a client using
-`api.setWorldEventClient(client)`; pass `nullptr` to restore automatic selection.
+`dispatch.setWorldEventClient(client)`; pass `nullptr` to restore automatic selection.
 
 HitBox installs this source, advances its worker/render epoch at each boundary
 and immediately hides old boxes, retained positions and names. Its profile

@@ -1,23 +1,27 @@
 # SDKと定義ファイルの構造
 
-## C++公開ヘッダー
+## C++ 公開 SDK
+
+外部 Mod は `bedrock::sdk` をリンクし、`<bedrock/sdk.hpp>`
+（`sdk/include/bedrock/sdk.hpp`）を使用します。[Stage A の最小例](stage-a-sdk-design.md)を参照してください。
+
+## SDK と第一者 Mod の内部ヘッダー（`include/bedrock/`）
 
 | フォルダ | 内容 |
 | --- | --- |
-| `api/` | GameApi、Actor/World等の公開ファサード、値型 |
+| `detail/` | 内部値型、フック通知、OreUI バックエンド |
 | `enums/` | PacketId、コマンドOrigin、入力、Actor、機能、更新方針等のEnum |
 | `packets/` | PacketAPI、wire読書き、protocol codec、PlayerList名簿 |
 | `native/` | MinecraftのABI、ゲームスレッドでの読取・書込、構造体検査 |
 | `profiles/` | 定義の選択・取得・分割ファイルの結合・Resolver |
 | `runtime/` | 共有Hook、クライアント観測、ロード済みDLL識別 |
 | `commands/` | コマンド登録・キュー・要求と応答 |
-| `render/` | GUI、オーバーレイ、描画用の公開API |
+| `render/` | GUI、オーバーレイ、描画用アダプター |
 | `analysis/` | CheckSig auto-devの探索と実行管理 |
 | `logging/` | ログ・コンソール |
-| `detail/` | SDK内部の共有処理。Modから直接使用しない |
+| `detail/` | SDK 内部と第一者 Mod の共有処理 |
 
-旧includeの転送ヘッダーは削除しました。SDKと各Modは上表の新パスを使用します。
-新しいModでは例えば`<bedrock/packets/packet_api.hpp>`を使用します。
+旧公開パスの転送ヘッダーはありません。SDK と第一者 Mod の実装は上表の内部パスを使用します。
 クラス内部だけで使う状態Enumは、そのクラス内部に置きます。
 
 ## data
@@ -66,15 +70,15 @@ CMakeの`BEDROCK_GAME_VERSION`で版を選択します。空の場合は`data/ma
 版名付きのC++プロトコルファイルを追加する必要はありません。
 プロトコルの取得元commitとSHAは版別manifestの`protocol`へ記録します。
 
-## 公開APIの分割
+## 内部アダプターの分割
 
-- `api/geometry.hpp`：Vec3・ActorBounds・ActorRotation。
-- `api/item_stack.hpp` / `server_address.hpp`：所有する値スナップショット。
-- `api/game_access.hpp`：ゲーム固有アダプターのインターフェース。
-- `api/game_event_registry.hpp`：イベントチャンネルの一覧。
-- `api/actor_samples.hpp`：ワーカーへ渡せる追跡AABBフレーム。
+- `detail/spatial_types.hpp`：Vec3・ActorBounds・ActorRotation。
+- `detail/item_snapshot.hpp` / `detail/server_endpoint.hpp`：所有する値スナップショット。
+- `detail/client_access.hpp`：ゲーム固有アダプターのインターフェース。
+- `detail/hook_dispatch.hpp`：第一者向けの型付きフック通知。
+- `detail/actor_tracking_types.hpp`：ワーカーへ渡せる追跡AABBフレーム。
 - `native/actor_components.hpp`：版別hash/offsetを使うゲームtickのコンポーネント取得。
 - `native/player_bounds_tracker.hpp`：Actorの世代・runtime IDを確認し、時間上限付きでPlayerのAABBを追跡。
 - `packets/title_packets.hpp`：wire/旧native両方を覆うタイトル購読。
 
-`game_api.hpp`はこれらを組み合わせるファサードです。コピー済み座標だけの処理はgeometry.hppを直接includeできます。
+コピー済み座標だけの処理は `detail/spatial_types.hpp` を直接インクルードできます。

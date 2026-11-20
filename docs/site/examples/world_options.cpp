@@ -1,10 +1,17 @@
-#include <bedrock/api/game_api.hpp>
+#include <bedrock/detail/block_types.hpp>
 
-bedrock::PlacementResult placeStone(bedrock::World world, bedrock::BlockPos target) {
-    const bedrock::BlockSetOptions options = bedrock::BlockSetBuilder{}
+bedrock::BlockSetOptions stonePlacementOptions() {
+    return bedrock::BlockSetBuilder{}
         .slot(bedrock::HotbarIndex{0})
         .orientation(bedrock::Yaw{90.0f}, bedrock::Pitch{0.0f})
         .reach(bedrock::Reach{4.5})
         .build();
-    return world.setBlock(target, bedrock::BlockIdentifier{"minecraft:stone"}, options);
 }
+
+#ifdef _WIN32
+#include <bedrock/native/world.hpp>
+
+bedrock::PlacementResult placeStone(bedrock::NativeWorld& world, bedrock::BlockPos target) {
+    return world.setBlock(target, bedrock::BlockIdentifier{"minecraft:stone"}, stonePlacementOptions());
+}
+#endif
