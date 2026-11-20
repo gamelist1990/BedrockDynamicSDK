@@ -9,7 +9,7 @@ OLD='1.26.52.3'
 def generate_catalog():
  old=load_profile(ROOT/f'data/{OLD}/windows-x64/manifest.json')
  new=load_profile(ROOT/f'data/{VERSION}/windows-x64/manifest.json')
- aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/CheckSig/src/check_sig.cpp').read_text(encoding='utf-8')))
+ aliases=dict(re.findall(r'if \(symbol == "([^"]+)"\) symbol = "([^"]+)";', (ROOT/'exsample/DevClient/CheckSig/src/check_sig.cpp').read_text(encoding='utf-8')))
  inverse={v:k for k,v in aliases.items()}
  legacy={'GameCore':'native_keyboard','Actor':'native_actors','ItemStack':'native_items','LocalPlayer':'native_player_identity','BlockSource':'native_world','StateVectorComponent':'native_motion','Camera':'native_camera','PacketSender':'native_packets','CommandRegistry':'native_client_commands','GuiData':'native_gui','LevelRenderer':'native_world_render','ClientInstance':'native_world_events'}
  groups=[]; requirements=[]
@@ -123,7 +123,7 @@ def generate_catalog():
 def make_bundle(out):
  out.mkdir(parents=True,exist_ok=True)
  profile=load_profile(ROOT/f'data/{VERSION}/windows-x64/manifest.json')
- catalog=json.loads((ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json').read_text(encoding='utf-8'))
+ catalog=json.loads((ROOT/f'exsample/DevClient/CheckSig/investigation/requirements-{VERSION}.json').read_text(encoding='utf-8'))
  output=profile['layouts']['CommandRequestPacket']['output_read'].copy()
  output.update(signature='',cross_version_signature_available=False)
  profile['symbols']['CommandOutputPacket::read']=output
@@ -174,5 +174,5 @@ def make_bundle(out):
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--catalog',action='store_true');p.add_argument('--bundle',type=Path);args=p.parse_args()
  if args.catalog:
-  path=ROOT/f'exsample/CheckSig/investigation/requirements-{VERSION}.json';path.write_text(json.dumps(generate_catalog(),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+  path=ROOT/f'exsample/DevClient/CheckSig/investigation/requirements-{VERSION}.json';path.write_text(json.dumps(generate_catalog(),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
  if args.bundle:make_bundle(args.bundle)

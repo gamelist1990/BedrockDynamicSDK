@@ -18,19 +18,11 @@ if(NOT BEDROCK_DATA_RESULT EQUAL 0)
     message(FATAL_ERROR "Could not embed selected data profile and protocol")
 endif()
 
-# Tiny optional header-only event API; it has ZERO runtime dependencies.
-add_library(bedrock_events INTERFACE)
-target_include_directories(bedrock_events INTERFACE "${BEDROCK_GENERATED_INCLUDE}" ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_features(bedrock_events INTERFACE cxx_std_20)
-add_library(bedrock::events ALIAS bedrock_events)
-
-# Bukkit-inspired, data-source-independent actor/player facade. A game adapter
-# supplies only version-validated accessors; the API itself has no game offsets.
-add_library(bedrock_game_api INTERFACE)
-target_include_directories(bedrock_game_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_features(bedrock_game_api INTERFACE cxx_std_20)
-target_link_libraries(bedrock_game_api INTERFACE bedrock::events)
-add_library(bedrock::game_api ALIAS bedrock_game_api)
+# Shared headers for SDK internals, first-party Mods and tests.
+add_library(bedrock_internal_headers INTERFACE)
+target_include_directories(bedrock_internal_headers INTERFACE "${BEDROCK_GENERATED_INCLUDE}" ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(bedrock_internal_headers INTERFACE cxx_std_20)
+add_library(bedrock::internal_headers ALIAS bedrock_internal_headers)
 
 # Independent opt-in console/logger API: header only; nothing is initialized
 # until a mod explicitly logs or opens a console.
@@ -38,6 +30,19 @@ add_library(bedrock_logging INTERFACE)
 target_include_directories(bedrock_logging INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(bedrock_logging INTERFACE cxx_std_20)
 add_library(bedrock::logging ALIAS bedrock_logging)
+
+add_library(bedrock_mod_settings_store STATIC EXCLUDE_FROM_ALL
+    src/mod_settings_store.cpp src/mod_settings_oreui.cpp)
+target_include_directories(bedrock_mod_settings_store PUBLIC include PRIVATE third_party)
+target_compile_features(bedrock_mod_settings_store PUBLIC cxx_std_20)
+if(MSVC)
+    target_compile_options(bedrock_mod_settings_store PRIVATE /utf-8)
+endif()
+
+if(MSVC)
+    set_property(TARGET bedrock_mod_settings_store PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 # Dear ImGui and DirectX backend are opt-in; ordinary clients build neither.
 option(BEDROCK_SDK_ENABLE_GUI "Enable optional Dear ImGui GUI module" OFF)
 if(BEDROCK_SDK_ENABLE_GUI)
@@ -57,16 +62,15 @@ if(NOT BEDROCK_BUILD_ID MATCHES "^[A-Za-z0-9_.-]+$")
     message(FATAL_ERROR "Invalid BEDROCK_BUILD_ID")
 endif()
 target_compile_definitions(bedrock_resolver PUBLIC BEDROCK_SDK_BUILD_ID="${BEDROCK_BUILD_ID}")
-target_link_libraries(bedrock_resolver PUBLIC bedrock::game_api)
+target_link_libraries(bedrock_resolver PUBLIC bedrock::internal_headers)
 add_library(bedrock::symbols ALIAS bedrock_resolver)
-add_library(bedrock::sdk ALIAS bedrock_resolver) # legacy name
 
 option(BEDROCK_SDK_BUILD_DOC_EXAMPLES "Compile documentation examples without executing them" OFF)
 if(BEDROCK_SDK_BUILD_DOC_EXAMPLES)
     add_library(bedrock_doc_examples OBJECT
         docs/site/examples/typed_command.cpp docs/site/examples/world_options.cpp
         docs/site/examples/camera_options.cpp)
-    target_link_libraries(bedrock_doc_examples PRIVATE bedrock::sdk)
+    target_link_libraries(bedrock_doc_examples PRIVATE bedrock::symbols)
     if(WIN32 AND MSVC AND BEDROCK_SDK_ENABLE_NATIVE_WORLD)
         target_sources(bedrock_doc_examples PRIVATE docs/site/examples/native_bootstrap.cpp)
         target_link_libraries(bedrock_doc_examples PRIVATE EnTT::EnTT)
@@ -74,8 +78,8 @@ if(BEDROCK_SDK_BUILD_DOC_EXAMPLES)
 endif()
 
 
-# Opt-in header adapter for world/block operations. EnTT must match the exact
-# layout consumed by the versioned adapter; ordinary SDK users do not fetch it.
+# Internal opt-in native adapters. EnTT must match the exact layout consumed
+# by the versioned adapter; public SDK consumers do not include these headers.
 option(BEDROCK_SDK_ENABLE_NATIVE_WORLD "Expose Windows native world/block adapter" OFF)
 option(BEDROCK_SDK_ENABLE_NATIVE_CLIENT "Enable owning-tick native client access" OFF)
 option(BEDROCK_SDK_ENABLE_NATIVE_ACTOR_REGISTRY "Expose Windows native Actor registry capture adapter" OFF)
@@ -99,7 +103,7 @@ if(BEDROCK_SDK_ENABLE_NATIVE_WORLD OR BEDROCK_SDK_ENABLE_NATIVE_CLIENT OR BEDROC
     target_link_libraries(bedrock_resolver PRIVATE EnTT::EnTT)
     if(BEDROCK_SDK_ENABLE_NATIVE_WORLD)
         add_library(bedrock_native_world INTERFACE)
-        target_link_libraries(bedrock_native_world INTERFACE bedrock::sdk EnTT::EnTT)
+        target_link_libraries(bedrock_native_world INTERFACE bedrock::symbols EnTT::EnTT)
         add_library(bedrock::world ALIAS bedrock_native_world)
     endif()
     if(BEDROCK_SDK_ENABLE_NATIVE_ACTOR_REGISTRY)
@@ -111,9 +115,15 @@ endif()
 
 
 
-# When consumed through FetchContent, only expose the reusable C++ SDK.
-# Tools, hooks and tests are for this repo's own CI, not plugin consumers.
+# Keep diagnostics and tests opt-in in subprojects. The hook and OreUI
+# targets below are implementation dependencies, not Mod author APIs.
 option(BEDROCK_SDK_BUILD_TOOLS "Build SDK diagnostic DLLs and tests" ${PROJECT_IS_TOP_LEVEL})
+option(BEDROCK_SDK_ENABLE_MOD_SETTINGS "Build the embedded OreUI Mod Settings adapter" OFF)
+if(BEDROCK_SDK_ENABLE_MOD_SETTINGS AND
+    (NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
+     NOT BEDROCK_GAME_VERSION STREQUAL "1.26.65.1"))
+    message(FATAL_ERROR "OreUI Mod Settings requires Windows x64 and BEDROCK_GAME_VERSION=1.26.65.1")
+endif()
 if(WIN32)
     target_sources(bedrock_resolver PRIVATE src/windows.cpp src/http_catalog.cpp)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -157,29 +167,43 @@ if(WIN32)
         endforeach()
     endif()
     add_library(bedrock::hook_runtime ALIAS bedrock_hook_runtime)
+    if(BEDROCK_SDK_ENABLE_MOD_SETTINGS)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/oreui/mod_settings.js")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/oreui/mod_settings.js" BEDROCK_OREUI_RENDERER)
+        configure_file(src/oreui/mod_settings_js.hpp.in
+            "${BEDROCK_GENERATED_INCLUDE}/bedrock/generated/mod_settings_js.hpp" @ONLY)
+        add_library(bedrock_mod_settings STATIC src/native_mod_settings.cpp)
+        add_library(bedrock::oreui_settings_backend ALIAS bedrock_mod_settings)
+        target_link_libraries(bedrock_mod_settings PRIVATE bedrock_mod_settings_store
+            bedrock::symbols bedrock::hook_runtime shell32 ole32 uuid)
+        target_include_directories(bedrock_mod_settings PUBLIC include)
+        target_compile_features(bedrock_mod_settings PUBLIC cxx_std_20)
+        target_compile_options(bedrock_mod_settings PRIVATE /W4 /permissive- /utf-8)
+        set_target_properties(bedrock_mod_settings PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_library(bedrock_resource_packs STATIC EXCLUDE_FROM_ALL src/native_resource_packs.cpp)
         add_library(bedrock::resource_packs ALIAS bedrock_resource_packs)
-        target_link_libraries(bedrock_resource_packs PUBLIC bedrock::sdk bedrock::hook_runtime)
+        target_link_libraries(bedrock_resource_packs PUBLIC bedrock::symbols bedrock::hook_runtime)
         target_compile_options(bedrock_resource_packs PRIVATE /W4 /permissive- /utf-8)
         set_property(TARGET bedrock_resource_packs PROPERTY MSVC_RUNTIME_LIBRARY
             "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 
-    # GameApi's optional native mouse sender dispatches through the shared
-    # broker, so Win32 consumers of the facade must link its implementation.
-    target_link_libraries(bedrock_game_api INTERFACE bedrock::hook_runtime)
     function(bedrock_enable_hook_runtime consumer_target)
         if(NOT TARGET ${consumer_target})
             message(FATAL_ERROR "Unknown hook-runtime consumer: ${consumer_target}")
         endif()
         target_link_libraries(${consumer_target} PRIVATE bedrock::hook_runtime)
     endfunction()
+    # Internal hook wiring for the native host and first-party Mods.
     add_library(bedrock_game_hooks INTERFACE)
     target_include_directories(bedrock_game_hooks INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_features(bedrock_game_hooks INTERFACE cxx_std_20)
     target_link_libraries(bedrock_game_hooks INTERFACE
-        bedrock::game_api bedrock::symbols bedrock::hook_runtime)
+        bedrock::symbols bedrock::hook_runtime)
     add_library(bedrock::game_hooks ALIAS bedrock_game_hooks)
     if(BEDROCK_SDK_BUILD_TOOLS)
     add_library(BedrockHookRuntime SHARED src/hook_runtime_dll.cpp)
@@ -206,7 +230,28 @@ endif()
 if(BEDROCK_SDK_BUILD_TOOLS)
   include(CTest)
 endif()
+# Public Stage A entry point: link bedrock::sdk and include <bedrock/sdk.hpp>.
+# The OreUI, resolver and native adapters are implementation dependencies.
+add_subdirectory(sdk)
 if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
+    add_executable(mod_settings_test tests/mod_settings_test.cpp)
+    target_link_libraries(mod_settings_test PRIVATE bedrock_mod_settings_store)
+    if(MSVC)
+        target_compile_options(mod_settings_test PRIVATE /UNDEBUG /utf-8)
+    else()
+        target_compile_options(mod_settings_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME mod_settings_test COMMAND mod_settings_test)
+    if(NOT CMAKE_CROSSCOMPILING)
+        find_program(BEDROCK_NODE_EXECUTABLE node)
+        if(BEDROCK_NODE_EXECUTABLE)
+            add_test(NAME oreui_settings_js_syntax COMMAND "${BEDROCK_NODE_EXECUTABLE}" --check
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/oreui/mod_settings.js")
+            add_test(NAME oreui_keybind_test COMMAND "${BEDROCK_NODE_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/oreui_keybind_test.js"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/oreui/mod_settings.js")
+        endif()
+    endif()
     add_executable(resolver_tests tests/resolver_test.cpp)
     target_link_libraries(resolver_tests PRIVATE bedrock_resolver)
     if(MSVC)
@@ -242,23 +287,23 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     endif()
     add_test(NAME native_actors_test COMMAND native_actors_test)
     add_executable(events_test tests/events_test.cpp)
-    target_link_libraries(events_test PRIVATE bedrock::events)
+    target_link_libraries(events_test PRIVATE bedrock::internal_headers)
     if(MSVC)
         target_compile_options(events_test PRIVATE /UNDEBUG)
     else()
         target_compile_options(events_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME events_test COMMAND events_test)
-    add_executable(game_api_test tests/game_api_test.cpp)
-    target_link_libraries(game_api_test PRIVATE bedrock::game_api)
+    add_executable(hook_dispatch_test tests/hook_dispatch_test.cpp)
+    target_link_libraries(hook_dispatch_test PRIVATE bedrock::internal_headers)
     if(MSVC)
-        target_compile_options(game_api_test PRIVATE /UNDEBUG)
+        target_compile_options(hook_dispatch_test PRIVATE /UNDEBUG)
     else()
-        target_compile_options(game_api_test PRIVATE -UNDEBUG)
+        target_compile_options(hook_dispatch_test PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME game_api_test COMMAND game_api_test)
+    add_test(NAME hook_dispatch_test COMMAND hook_dispatch_test)
     add_executable(world_events_test tests/world_events_test.cpp)
-    target_link_libraries(world_events_test PRIVATE bedrock::sdk)
+    target_link_libraries(world_events_test PRIVATE bedrock::symbols)
     if(MSVC)
         target_compile_options(world_events_test PRIVATE /UNDEBUG)
     else()
@@ -266,7 +311,7 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     endif()
     add_test(NAME world_events_test COMMAND world_events_test)
     add_executable(gui_input_policy_test tests/gui_input_policy_test.cpp)
-    target_link_libraries(gui_input_policy_test PRIVATE bedrock::events)
+    target_link_libraries(gui_input_policy_test PRIVATE bedrock::internal_headers)
     if(MSVC)
         target_compile_options(gui_input_policy_test PRIVATE /UNDEBUG)
     else()
@@ -283,7 +328,7 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     endif()
     add_test(NAME logging_test COMMAND logging_test)
     add_executable(available_commands_wire_test tests/available_commands_wire_test.cpp)
-    target_link_libraries(available_commands_wire_test PRIVATE bedrock::sdk)
+    target_link_libraries(available_commands_wire_test PRIVATE bedrock::symbols)
     if(MSVC)
         target_compile_options(available_commands_wire_test PRIVATE /UNDEBUG)
     else()
