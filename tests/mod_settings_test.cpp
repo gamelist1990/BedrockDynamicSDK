@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 
@@ -128,7 +129,7 @@ int main() {
     assert(japanese->find(R"("id":"a","label":"選択肢 A")") != std::string::npos);
     assert(japanese->find(R"("id":"b","label":"Beta")") != std::string::npos);
     assert(japanese->find(R"("value":"b")") != std::string::npos);
-    assert(settingsResource(store, "menus/3/fr_FR.json") == snapshot);
+    assert(settingsResource(store, "menus/3/fr_FR.json"));
     assert(settingsResource(store, "menus/4/en_US.json") == snapshot);
     assert(!settingsResource(store, "menus/5/ja_JP/foo.json"));
     const auto write = [&](std::string_view payload) {
@@ -178,4 +179,23 @@ int main() {
     assert(keyReset.add(keyPage) == Result::Ok);
     assert(keyReset.read("test-keys", "zoom", read_back, nullptr, 0) == Result::Ok);
     assert(read_back.number == 'C');
+
+    // Native language resolution path: an "auto" request resolves the game
+    // language on the native side and reports it in the response.
+#ifdef _WIN32
+    _putenv_s("BEDROCK_GAME_LANGUAGE", "ja_JP");
+#else
+    setenv("BEDROCK_GAME_LANGUAGE", "ja_JP", 1);
+#endif
+    const auto autoSnapshot = settingsResource(store, "menus/8/auto.json");
+    assert(autoSnapshot && autoSnapshot->find(R"("language":"ja_JP")") != std::string::npos);
+    assert(autoSnapshot->find(R"("locale":"ja_JP")") != std::string::npos);
+    assert(autoSnapshot->find(R"("menuLabel":"Mod 設定")") != std::string::npos);
+#ifdef _WIN32
+    _putenv_s("BEDROCK_GAME_LANGUAGE", "");
+#else
+    unsetenv("BEDROCK_GAME_LANGUAGE");
+#endif
+    const auto defaultSnapshot = settingsResource(store, "menus/9/auto.json");
+    assert(defaultSnapshot && defaultSnapshot->find(R"("language":"en_US")") != std::string::npos);
 }

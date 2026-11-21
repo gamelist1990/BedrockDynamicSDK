@@ -2,6 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -105,11 +110,85 @@ Result write(Store& store, std::string_view input) {
 }
 } // namespace
 
+namespace {
+std::string trimCopy(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::string currentGameLanguage() {
+    if (const char* overrideValue = std::getenv("BEDROCK_GAME_LANGUAGE")) {
+        const std::string candidate = trimCopy(overrideValue);
+        if (validLocale(candidate)) return candidate;
+    }
+#if defined(_WIN32)
+    std::vector<std::filesystem::path> roots;
+    if (const char* appData = std::getenv("APPDATA")) {
+        roots.emplace_back(std::filesystem::path(appData) / "Minecraft Bedrock" / "Users");
+    }
+    if (const char* localAppData = std::getenv("LOCALAPPDATA")) {
+        roots.emplace_back(std::filesystem::path(localAppData) / "Packages" /
+                           "Microsoft.MinecraftUWP_8wekyb3d8bbwe" / "LocalState");
+    }
+    for (const auto& root : roots) {
+        std::error_code error;
+        if (!std::filesystem::is_directory(root, error)) continue;
+        if (root.filename() == "Users") {
+            for (const auto& user : std::filesystem::directory_iterator(root, error)) {
+                if (!user.is_directory(error)) continue;
+                const auto options = user.path() / "games" / "com.mojang" / "minecraftpe" / "options.txt";
+                std::ifstream stream(options);
+                std::string line;
+                while (std::getline(stream, line)) {
+                    const auto colon = line.find(':');
+                    if (colon == std::string::npos) continue;
+                    const std::string key = trimCopy(line.substr(0, colon));
+                    const std::string value = trimCopy(line.substr(colon + 1));
+                    if ((key == "game_language" || key == "language") && validLocale(value))
+                        return value;
+                }
+            }
+        } else {
+            // Fall back to a bounded recursive search for the Bedrock options file.
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(root, error)) {
+                if (error || !entry.is_regular_file()) continue;
+                if (entry.path().filename() != "options.txt") continue;
+                std::ifstream stream(entry.path());
+                std::string line;
+                while (std::getline(stream, line)) {
+                    const auto colon = line.find(':');
+                    if (colon == std::string::npos) continue;
+                    const std::string key = trimCopy(line.substr(0, colon));
+                    const std::string value = trimCopy(line.substr(colon + 1));
+                    if ((key == "game_language" || key == "language") && validLocale(value))
+                        return value;
+                }
+            }
+        }
+    }
+#endif
+    return "en_US";
+}
+
+bool isNativeLanguageToken(std::string_view token) {
+    return token == "auto" || token == "current" || token == "game" || token == "native";
+}
+} // namespace
+
 std::optional<std::string> settingsResource(Store& store, std::string_view endpoint) {
     if (endpoint.starts_with("menus/") && endpoint.ends_with(".json") && endpoint.size() > 11) {
         const auto args = endpoint.substr(6, endpoint.size() - 11);
         const auto slash = args.find('/');
-        const auto language = slash == std::string_view::npos ? "en_US" : args.substr(slash + 1);
+        std::string language;
+        if (slash == std::string_view::npos) {
+            language = "en_US";
+        } else {
+            const auto token = args.substr(slash + 1);
+            if (isNativeLanguageToken(token)) language = currentGameLanguage();
+            else language = std::string(token);
+        }
         if (!sequence(args.substr(0, slash)) || !validLocale(language)) return {};
         Json menus = Json::array();
         Json keyGroups = Json::array();
@@ -142,7 +221,9 @@ std::optional<std::string> settingsResource(Store& store, std::string_view endpo
         return Json{{"ok", true}, {"menus", std::move(menus)}, {"keyGroups", std::move(keyGroups)},
                      {"keyTranslations", keyTranslations},
                     {"menuLabel", japanese ? "Mod 設定" : "Mod Menu"},
-                    {"actionLabel", japanese ? "実行" : "Run"}}.dump();
+                    {"actionLabel", japanese ? "実行" : "Run"},
+                    {"language", language},
+                    {"locale", language}}.dump();
     }
     if (!endpoint.starts_with("write/") || !endpoint.ends_with(".json")) return {};
     endpoint.remove_prefix(6);

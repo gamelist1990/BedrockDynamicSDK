@@ -29,6 +29,12 @@
   let keyText = {};
   let capture = null;
   let language = "en_US";
+  function normalizeLocale(value) {
+    if (typeof value !== "string") return null;
+    const next = value.replace(/^([a-z]{2})[-_]?([a-z]{2})$/i,
+      (_, lang, region) => lang.toLowerCase() + "_" + region.toUpperCase());
+    return /^[a-z]{2}_[A-Z]{2}$/.test(next) ? next : null;
+  }
   let menuLabel = "Mod Menu";
   let actionLabel = "Run";
   let menuRequest = 0;
@@ -125,12 +131,14 @@
     const ticket = ++menuRequest;
     writes.then(() => {
       if (ticket !== menuRequest) return;
-      request("menus/" + ++sequence + "/" + language, data => {
+      request("menus/" + ++sequence + "/auto", data => {
         if (ticket !== menuRequest) return;
         if (!data || !data.ok || !Array.isArray(data.menus)) {
           log("menus-read-failed");
           return;
         }
+        const reported = normalizeLocale(data.language || data.locale);
+        if (reported) language = reported;
         menuLabel = data.menuLabel;
         actionLabel = data.actionLabel;
         pages = new Map();
@@ -158,9 +166,8 @@
 
   function onLocale(data) {
     if (!data || typeof data.locale !== "string") return;
-    const next = data.locale.replace(/^([a-z]{2})[-_]?([a-z]{2})$/i,
-      (_, lang, region) => lang.toLowerCase() + "_" + region.toUpperCase());
-    if (!/^[a-z]{2}_[A-Z]{2}$/.test(next) || next === language) return;
+    const next = normalizeLocale(data.locale);
+    if (!next) return;
     language = next;
     loadMenus();
   }

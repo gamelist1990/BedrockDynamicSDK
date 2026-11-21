@@ -29,6 +29,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -155,6 +156,42 @@ struct TabRowsBuild {
 std::mutex tabRowsWorkerMutex;
 std::thread& tabRowsWorker = *new std::thread;
 std::condition_variable tabRowsReady;
+
+class TabThreadPool {
+public:
+    explicit TabThreadPool(std::size_t count) {
+        for (std::size_t i = 0; i < count; ++i)
+            threads_.emplace_back(&TabThreadPool::run, this);
+    }
+    void enqueue(std::function<void()> task) {
+        {
+            std::lock_guard lock(mutex_);
+            tasks_.push_back(std::move(task));
+        }
+        condition_.notify_one();
+    }
+private:
+    void run() {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(mutex_);
+                condition_.wait(lock, [this] { return stopping_ || !tasks_.empty(); });
+                if (stopping_ && tasks_.empty()) return;
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+            }
+            try { task(); } catch (...) {}
+        }
+    }
+    std::vector<std::thread> threads_;
+    std::deque<std::function<void()>> tasks_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool stopping_{};
+};
+TabThreadPool& tabThreadPool = *new TabThreadPool(4);
 std::shared_ptr<TabRowsBuild> pendingTabRowsBuild;
 struct FaceUpdate {
     std::uint64_t worldEpoch{};
@@ -662,6 +699,7 @@ bool collectRowsChunk(std::vector<PlayerRow>& rows,
 }
 
 void buildTabRowsInBackground(const std::shared_ptr<TabRowsBuild>& build) noexcept {
+    const auto buildStarted = std::chrono::steady_clock::now();
     try {
         if (build->config->sortByNameColor) build->actorTags = snapshotActorNameTags();
         {
@@ -670,19 +708,44 @@ void buildTabRowsInBackground(const std::shared_ptr<TabRowsBuild>& build) noexce
             build->roles = murderRolesByPlayer;
             build->spectators = spectatorPlayers;
         }
-        constexpr std::size_t batchSize = 8;
-        build->rows.reserve(build->names.size());
-        for (std::size_t begin = 0; begin < build->names.size(); begin += batchSize) {
-            const auto end = std::min(begin + batchSize, build->names.size());
-            if (!collectRowsChunk(build->rows, build->names, begin, end,
+        const auto totalNames = build->names.size();
+        const std::size_t chunkCount = std::min<std::size_t>(4, totalNames == 0 ? 1 : totalNames);
+        std::vector<std::vector<PlayerRow>> chunkRows(chunkCount);
+        std::vector<char> chunkOk(chunkCount, 1);
+        std::atomic<std::size_t> remaining{chunkCount};
+        std::mutex doneMutex;
+        std::condition_variable doneCv;
+        for (std::size_t chunk = 0; chunk < chunkCount; ++chunk) {
+            const std::size_t begin = totalNames * chunk / chunkCount;
+            const std::size_t end = totalNames * (chunk + 1) / chunkCount;
+            tabThreadPool.enqueue([&, chunk, begin, end]() {
+                const bool ok = collectRowsChunk(chunkRows[chunk], build->names, begin, end,
                     build->config->sortByNameColor, build->config->gamemodeCheck,
                     build->config->murderDetect, build->config->debug,
-                    build->roles, build->spectators, build->actorTags)) {
+                    build->roles, build->spectators, build->actorTags);
+                chunkOk[chunk] = ok ? 1 : 0;
+                if (remaining.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                    std::lock_guard lock(doneMutex);
+                    doneCv.notify_one();
+                }
+            });
+        }
+        {
+            std::unique_lock lock(doneMutex);
+            doneCv.wait(lock, [&] { return remaining.load(std::memory_order_acquire) == 0; });
+        }
+        for (std::size_t chunk = 0; chunk < chunkCount; ++chunk) {
+            if (!chunkOk[chunk]) {
                 build->failed = true;
                 break;
             }
-            // Let other client work run between small batches.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        build->rows.clear();
+        if (!build->failed) {
+            build->rows.reserve(totalNames);
+            for (auto& chunk : chunkRows) {
+                std::move(chunk.begin(), chunk.end(), std::back_inserter(build->rows));
+            }
         }
         if (!build->failed) {
             const auto config = build->config;
@@ -747,6 +810,10 @@ void buildTabRowsInBackground(const std::shared_ptr<TabRowsBuild>& build) noexce
             }
         }
         const auto publishedCount=build->rows.size();
+        const auto buildDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - buildStarted).count();
+        diagnostic("TabList roster build: ", buildDurationMs, " ms thread=", std::this_thread::get_id(),
+                   " rows=", publishedCount);
         cachedTabRows.store(std::make_shared<const std::vector<PlayerRow>>(std::move(build->rows)),
             std::memory_order_release);
         if (!loggedTabRowsReady.exchange(true, std::memory_order_acq_rel))
