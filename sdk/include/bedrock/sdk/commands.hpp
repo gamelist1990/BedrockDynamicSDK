@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+namespace bedrock::sdk { class Profile; }
 namespace bedrock::sdk {
 enum class CommandParameterType { Integer, Message, CustomEnum, PacketEnum };
 struct CommandParameter { std::string name; CommandParameterType type{CommandParameterType::Message}; std::string enumName; bool optional{}; };
@@ -16,7 +17,9 @@ struct CommandEnum {
 class Commands { public:
  Commands(); ~Commands(); Commands(const Commands&) = delete; Commands& operator=(const Commands&) = delete;
  bool load(const std::string& profileJson, const std::vector<CommandEnum>& enums,
-           const std::vector<CommandDefinition>& commands, std::string& error);
+          const std::vector<CommandDefinition>& commands, std::string& error);
+ bool load(const Profile& profile, const std::vector<CommandEnum>& enums,
+          const std::vector<CommandDefinition>& commands, std::string& error);
  bool replace(const std::vector<CommandEnum>& enums,
               const std::vector<CommandDefinition>& commands, std::string& error);
  bool isLoaded() const noexcept;

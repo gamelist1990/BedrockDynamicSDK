@@ -14,15 +14,15 @@ class Logger { public:
  void setLevel(LogLevel level) noexcept; LogLevel level() const noexcept;
  void debug(std::string_view message); void info(std::string_view message);
  void warn(std::string_view message); void error(std::string_view message);
- template<class... Parts> void debug(Parts&&... parts) { debug(join(std::forward<Parts>(parts)...)); }
- template<class... Parts> void info(Parts&&... parts) { info(join(std::forward<Parts>(parts)...)); }
- template<class... Parts> void warn(Parts&&... parts) { warn(join(std::forward<Parts>(parts)...)); }
- template<class... Parts> void error(Parts&&... parts) { error(join(std::forward<Parts>(parts)...)); }
+ template<class... Parts> void debug(Parts&&... parts) { debug(std::string_view{join(std::forward<Parts>(parts)...)}); }
+ template<class... Parts> void info(Parts&&... parts) { info(std::string_view{join(std::forward<Parts>(parts)...)}); }
+ template<class... Parts> void warn(Parts&&... parts) { warn(std::string_view{join(std::forward<Parts>(parts)...)}); }
+ template<class... Parts> void error(Parts&&... parts) { error(std::string_view{join(std::forward<Parts>(parts)...)}); }
  private:
  template<class T> static void append(std::ostringstream& out, T&& value) { out << std::forward<T>(value); }
  template<class First, class... Rest> static std::string join(First&& first, Rest&&... rest) {
-   std::ostringstream out; append(out, std::forward<First>(first));
-   (append(out, std::forward<Rest>(rest)), ...); return out.str();
+  std::ostringstream out; append(out, std::forward<First>(first));
+  (append(out, std::forward<Rest>(rest)), ...); return out.str();
  }
  struct Impl; std::unique_ptr<Impl> impl_; friend class FileLogSink;
 };

@@ -18,6 +18,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <bedrock/logging/content_log.hpp>
+#include <bedrock/sdk/profiles.hpp>
 
 #ifndef STAGEB_GOLDEN_DIR
 #define STAGEB_GOLDEN_DIR "/home/pexserver/WorkSpace/ts-mods/EffectFake"
@@ -813,6 +814,21 @@ export default class ModB extends Mod {
 // ---------------------------------------------------------------------------
 // 7. Stage B BOL live-fix regressions (bugs 2-5)
 // ---------------------------------------------------------------------------
+void testProfileFacadeRegression() {
+#ifdef _WIN32
+    bedrock::sdk::Profiles profiles;
+    std::string error;
+    if (profiles.open(bedrock::sdk::ProfileUpdatePolicy::EmbeddedOnly, error)) {
+        const auto profile = profiles.snapshot();
+        CHECK(!profile.version().empty(), "facade Profile::version uses selected RuntimeProfile");
+    } else {
+        CHECK(false, "embedded profile fixture should open: " + error);
+    }
+#else
+    CHECK(true, "snapshot Profile::version regression requires Windows runtime fixture");
+#endif
+}
+
 void testLiveFixRegressions() {
     // Bug 4 wire shape: a declaration with no literals must emit neither an
     // empty Action enum nor a leading action parameter.
@@ -1173,6 +1189,7 @@ int main() {
     testLifecycle();
     testBindingRegistry();
     testSettingsKeybindsBrightnessAndEvents();
+    testProfileFacadeRegression();
     testLiveFixRegressions();
     testContentLogBridge();
     testFilesApi();

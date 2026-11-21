@@ -336,7 +336,7 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     add_test(NAME gui_input_policy_test COMMAND gui_input_policy_test)
 
     add_executable(logging_test tests/logging_test.cpp)
-    target_link_libraries(logging_test PRIVATE bedrock::logging)
+    target_link_libraries(logging_test PRIVATE bedrock::logging bedrock::sdk)
     if(MSVC)
         target_compile_options(logging_test PRIVATE /UNDEBUG)
     else()

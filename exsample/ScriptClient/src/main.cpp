@@ -684,13 +684,18 @@ DWORD WINAPI start(LPVOID parameter) {
         wchar_t path[32768]{};
         const auto length = GetModuleFileNameW(static_cast<HMODULE>(parameter), path,
                                                ARRAYSIZE(path));
-        if (!length || length >= ARRAYSIZE(path)) return 2;
+        if (!length || length >= ARRAYSIZE(path)) {
+            OutputDebugStringA("[ScriptClient] start worker exit code=2 reason=invalid DLL directory\n");
+            return 2;
+        }
         const auto directory = std::filesystem::path(path).parent_path();
-        if (fileLog.open(directory / L"ScriptClient.log")) fileLog.attach(logger);
+        const bool fileLogOpened = fileLog.open(directory / L"ScriptClient.log");
+        if (fileLogOpened) fileLog.attach(logger);
 
         bedrock::sdk::Profiles profiles;
         std::string error;
-        if (!profiles.open(bedrock::sdk::ProfileUpdatePolicy::EmbeddedOnly, error)) {
+        const bool profilesOpened = profiles.open(bedrock::sdk::ProfileUpdatePolicy::EmbeddedOnly, error);
+        if (!profilesOpened) {
             logger.error("Game profile unavailable: " + error);
             return 4;
         }
@@ -740,12 +745,14 @@ DWORD WINAPI start(LPVOID parameter) {
             logger.error("PluginHost initialization failed: ", error);
             return 5;
         }
-        for (const auto& view : state.host->list())
+        for (const auto& view : state.host->list()) {
             logger.info("mod ", view.name, " [", stageb::statusName(view.status), "] api ",
                         view.apiVersion, view.error.empty() ? "" : " - " + view.error);
+        }
 
         const auto profileSnapshot = profile;
-        if (!state.commands->load(profileSnapshot, state.host->definitions(), error)) {
+        auto defs = state.host->definitions();
+        if (!state.commands->load(profileSnapshot, defs, error)) {
             logger.error("CommandService load failed: ", error);
             return 6;
         }
@@ -761,7 +768,7 @@ DWORD WINAPI start(LPVOID parameter) {
         return 8;
     }
 }
-} // namespace
+}
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

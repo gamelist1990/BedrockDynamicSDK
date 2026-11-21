@@ -1,7 +1,9 @@
 #include "command_service.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <unordered_set>
+#include <windows.h>
 
 namespace stageb {
 namespace {
@@ -82,6 +84,7 @@ void CommandService::enqueue(const std::string& line) {
 
 bool CommandService::load(const bedrock::sdk::Profile& profile,
                           const WireDefinitions& definitions, std::string& error) {
+    const std::string& profileJson = profile.json();
     auto set = makeDefinitions(definitions, this);
 
     // §6.5: /mods is handled by C++ directly and is always present.
@@ -102,9 +105,9 @@ bool CommandService::load(const bedrock::sdk::Profile& profile,
     mods.overloads.push_back({action, modName});
     mods.handler = [this](const std::string& line) { enqueue(line); };
     set.commands.push_back(std::move(mods));
-
     error.clear();
-    return commands_.load(profile.json(), set.enums, set.commands, error);
+    (void)profileJson;
+    return commands_.load(profile, set.enums, set.commands, error);
 }
 
 bool CommandService::replaceDefinitions(const WireDefinitions& definitions,

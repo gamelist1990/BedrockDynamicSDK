@@ -48,6 +48,7 @@ public:
     // EmbeddedOnly uses the bundled exact-build profile without cache or network.
     using Adapter=std::function<bool(const RuntimeProfile&,std::string&)>;
     bool prepare(const ProfileRequirements& requirements,const ProfileOptions& options,const Adapter& adapter,std::string& error);
+    bool prepareEmbeddedJson(const std::string& json,const Adapter& adapter,std::string& error);
     bool open(const ProfileRequirements& requirements,const ProfileOptions& options,std::string& error){
         return prepare(requirements,options,[](const RuntimeProfile&,std::string&){return true;},error);
     }

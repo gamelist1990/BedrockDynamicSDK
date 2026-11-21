@@ -1,5 +1,6 @@
 #include <bedrock/logging/console.hpp>
 #include <bedrock/logging/logger.hpp>
+#include <bedrock/sdk/logging.hpp>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -88,6 +89,34 @@ int main() {
 #ifdef _WIN32
     std::fprintf(stderr, "logging-test: done\n");
 #endif
+
+    // Public SDK facade regression: variadic calls and std::string calls must
+    // select the string_view overload instead of recursing through the template.
+    {
+        bedrock::sdk::Logger facade("FacadeProbe", bedrock::sdk::LogLevel::Debug);
+        const auto facadePath = std::filesystem::temp_directory_path() /
+            ("bedrock-facade-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+        bedrock::sdk::FileLogSink facadeSink;
+        assert(facadeSink.open(facadePath, bedrock::sdk::FileLogSink::OpenMode::ClearOnOpen));
+        facadeSink.attach(facade);
+        facade.debug("alpha ", "beta");
+        const std::string single = "gamma";
+        facade.info(single);
+        facade.warn("delta ", 1);
+        facade.error("epsilon ", 2);
+        facadeSink.close();
+        std::ifstream saved(facadePath, std::ios::binary);
+        const std::string savedText{std::istreambuf_iterator<char>(saved), {}};
+        assert(savedText.find("alpha beta") != std::string::npos);
+        assert(savedText.find("gamma") != std::string::npos);
+        assert(savedText.find("delta 1") != std::string::npos);
+        assert(savedText.find("epsilon 2") != std::string::npos);
+        saved.close();
+        std::error_code removeError;
+        std::filesystem::remove(facadePath, removeError);
+        assert(!removeError);
+    }
 
     // Content-log bridge: the SDK logger feeds the vanilla Content Log in
     // addition to its existing sink, with level and mod tag preserved.
