@@ -203,36 +203,64 @@ inline std::vector<std::uint32_t> scanAobInModule(std::string_view pattern,
 
     // Fallback: no usable >=4-byte fixed anchor. Longest fixed run is 1-3 bytes;
     // scan chunk-wise testing the full pattern at every offset whose first fixed
-    // byte matches. Keep the 256-hit cap.
+    // byte matches, handling chunk boundaries via a carry buffer.
     std::size_t firstFixedIdx = std::string::npos;
     for (std::size_t t = 0; t < bytes.size(); ++t) {
         if (mask[t] == 0xFF) { firstFixedIdx = t; break; }
     }
     const std::uint8_t firstFixedByte = (firstFixedIdx == std::string::npos) ? 0 : bytes[firstFixedIdx];
+    const std::size_t patLen = bytes.size();
+    const std::size_t carrySize = patLen ? (patLen - 1) : 0; // bytes to carry from previous chunk
 
+    std::vector<std::uint8_t> carry; // holds up to patLen-1 bytes from previous chunk
     constexpr std::size_t kChunk = 1 << 20; // 1 MiB
+
     for (std::uintptr_t readOff = 0; readOff < moduleSize; readOff += kChunk) {
         std::size_t chunkSize = std::min(kChunk, moduleSize - readOff);
         std::vector<std::uint8_t> chunk;
         if (!guardedReadBytes(reinterpret_cast<const void*>(moduleBase), readOff,
                               chunkSize, chunk))
-            continue; // skip unmapped chunks
+            { carry.clear(); continue; } // skip unmapped chunks (stream break)
 
-        for (std::size_t pos = 0; pos + bytes.size() <= chunk.size(); ++pos) {
-            if (firstFixedIdx != std::string::npos && chunk[pos + firstFixedIdx] != firstFixedByte) {
-                continue; // first fixed byte does not match; skip full-pattern test
+        // Build the scan buffer: carry bytes prepended to chunk data
+        const std::size_t carryLen = carry.size();
+        std::vector<std::uint8_t> chunkData = carry;
+        chunkData.insert(chunkData.end(), chunk.begin(), chunk.end());
+
+        // Scan for candidates where the first fixed byte matches
+        for (std::size_t pos = 0; pos + patLen <= chunkData.size(); ++pos) {
+            if (firstFixedIdx != std::string::npos && chunkData[pos + firstFixedIdx] != firstFixedByte) {
+                continue;
             }
+            // Verify full pattern
             bool match = true;
-            for (std::size_t t = 0; t < bytes.size(); ++t) {
-                std::uint8_t got = chunk[pos + t];
-                if ((mask[t] & got) != (mask[t] & bytes[t])) { match = false; break; }
+            for (std::size_t t = 0; t < patLen; ++t) {
+                std::uint8_t got = chunkData[pos + t];
+                if ((mask[t] & got) != (mask[t] & bytes[t])) {
+                    match = false;
+                    break;
+                }
             }
             if (match) {
-                std::uintptr_t absOff = readOff + pos;
-                if (absOff + bytes.size() > moduleSize) break; // pattern would overrun
+                // Compute absolute offset in the module image
+                std::uintptr_t absOff = readOff - carryLen + pos;
+                // Ensure the pattern fits within the module bounds
+                if (absOff + patLen > moduleSize) {
+                    continue;
+                }
                 results.push_back(static_cast<std::uint32_t>(absOff));
-                if (results.size() >= cap) return results; // capped
+                if (results.size() >= cap) {
+                    return results; // capped
+                }
             }
+        }
+
+        // Update carry for next iteration: keep the last (patLen-1) bytes of this chunk as carry.
+        if (patLen > 1) {
+            carry.resize(std::min(chunkSize, carrySize));
+            std::copy_n(chunk.end() - carry.size(), carry.size(), carry.begin());
+        } else {
+            carry.clear();
         }
     }
     return results;
