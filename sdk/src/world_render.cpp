@@ -132,7 +132,14 @@ bool WorldRender::install(const Profile& profile,std::string& error) {
 #ifdef _WIN32
     const auto runtime=ProfileRuntimeAccess::runtime(profile);
     if(!runtime) { error="world render profile runtime snapshot unavailable"; return false; }
-    if(!impl_->outline.load(*runtime,error)) return false;
+    // The world-render capability is candidate-status in current
+    // profiles. Load the outline from a candidate-tolerant
+    // re-preparation of the same profile JSON; the caller
+    // snapshot itself stays verified.
+    bedrock::ProfileManager manager;
+    if(!manager.prepareEmbeddedJson(runtime->json(), [&](const bedrock::RuntimeProfile& candidate,std::string& inner){
+        return impl_->outline.load(candidate,inner);
+    },error,bedrock::CandidatePolicy::AllowCandidates)) return false;
     auto* target=impl_->outline.renderTarget();
     if(!target) { error="world render target unavailable"; return false; }
     if(!BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,target,&worldRenderHookPost,impl_.get(),&impl_->token)) {
