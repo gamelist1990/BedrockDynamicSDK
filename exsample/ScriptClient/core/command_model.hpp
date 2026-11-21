@@ -14,6 +14,7 @@ struct ArgSpec {
     ArgKind kind = ArgKind::String;
     bool optional = false;
     bool infinity = false;
+    bool hasDefault = false;
     double defaultValue = 0.0;
     std::string stringDefault;
     // Unspecified int bounds mean the whole int32 range, not [0, 0].

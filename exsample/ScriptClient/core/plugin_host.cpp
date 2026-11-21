@@ -472,6 +472,11 @@ JSValue PluginHost::contextCallback(JSContext* ctx, JSValueConst, int argc,
                 return JS_Throw(ctx, error.release());
             }
             const auto& value = it->second;
+            // getOptional answers "what did the user actually supply":
+            // an argument filled from its declared default (or left
+            // unset) was not supplied, so it reads as undefined. `get`
+            // keeps returning the effective value including defaults.
+            if (magic == 1 && !value.present) return JS_UNDEFINED;
             switch (value.kind) {
                 case ArgKind::Effect:
                 case ArgKind::String:

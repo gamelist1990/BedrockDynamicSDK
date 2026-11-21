@@ -308,6 +308,8 @@ void testCommandParsing() {
     const auto clearOne = parseCommandLine(decl, "/effectfake clear speed");
     CHECK(clearOne.ok && clearOne.values.at("effect").text == "minecraft:speed",
           "clear with effect");
+    CHECK(clearOne.values.at("effect").present, "supplied arg marked present");
+    CHECK(!defaults.values.at("duration").present, "defaulted arg marked not present");
 
     CHECK(!parseCommandLine(decl, "/effectfake give").ok, "missing required effect rejected");
     CHECK(!parseCommandLine(decl, "/effectfake give speed 30 999 true").ok,
@@ -877,6 +879,11 @@ export default class Probe extends Mod {
        .executes((ctx: any) => {
          ctx.respond(`got=${String(ctx.get("n"))}|opt=${String(ctx.getOptional("n"))}|raw=${ctx.rawLine()}`);
        });
+      b.literal("clear")
+       .argument("effect", Arg.effect({ optional: true }))
+       .executes((ctx: any) => {
+         ctx.respond(`opt=${String(ctx.getOptional("effect"))}|type=${typeof ctx.getOptional("effect")}`);
+       });
     });
   }
 }
@@ -908,6 +915,21 @@ export default class NoLit extends Mod {
     CHECK(response.find("got=42|opt=42|raw=/probe run 42") != std::string::npos,
           "handler first arg is a populated CommandContext (Bug 2) / Arg.int range (Bug 3): " +
               response);
+
+    response.clear();
+    CHECK(host.dispatchCommand("/probe run", response), "probe dispatch absent defaulted arg");
+    CHECK(response.find("got=7|opt=undefined") != std::string::npos,
+          "absent optional: get yields the declared default, getOptional yields undefined: " + response);
+
+    response.clear();
+    CHECK(host.dispatchCommand("/probe clear", response), "probe dispatch absent no-default arg");
+    CHECK(response.find("opt=undefined|type=undefined") != std::string::npos,
+          "absent optional WITHOUT default yields real undefined from getOptional: " + response);
+
+    response.clear();
+    CHECK(host.dispatchCommand("/probe clear speed", response), "probe dispatch present no-default arg");
+    CHECK(response.find("opt=minecraft:speed|type=string") != std::string::npos,
+          "present optional without default yields its value: " + response);
 
     response.clear();
     CHECK(host.dispatchCommand("/nolit", response), "no-literal command dispatch");

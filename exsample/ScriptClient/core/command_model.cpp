@@ -238,6 +238,7 @@ ParseResult parseCommandLine(const CommandDecl& declaration, const std::string& 
         }
 
         const auto token = tokens[index++];
+        value.present = true;
         switch (arg.second.kind) {
             case ArgKind::Effect:
                 value.text = normalizeEffect(token);

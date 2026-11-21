@@ -62,13 +62,21 @@ ArgSpec specFromValue(JSContext* ctx, JSValueConst value) {
         for (const auto& entry : jsToStringArray(ctx, suggested.get()))
             spec.suggestions.push_back(entry);
     const JsValue fallback(ctx, JS_GetPropertyStr(ctx, value, "default"));
-    if (JS_IsBool(fallback.get()))
-        spec.stringDefault = jsToBool(ctx, fallback.get()) ? "true" : "false";
-    else
-        spec.stringDefault = jsToString(ctx, fallback.get());
-    if (spec.kind == ArgKind::Int || spec.kind == ArgKind::Duration ||
-        spec.kind == ArgKind::Float)
-        spec.defaultValue = jsToNumber(ctx, fallback.get(), 0);
+    // An absent `default` property is JS undefined; stringifying it would
+    // produce the literal text "undefined" as the default (the historical
+    // no-arg /effectfake clear bug). Track presence explicitly so the
+    // parser can leave undeclared-default optionals out of the values map
+    // and getOptional can return real undefined for them.
+    spec.hasDefault = !JS_IsUndefined(fallback.get());
+    if (spec.hasDefault) {
+        if (JS_IsBool(fallback.get()))
+            spec.stringDefault = jsToBool(ctx, fallback.get()) ? "true" : "false";
+        else
+            spec.stringDefault = jsToString(ctx, fallback.get());
+        if (spec.kind == ArgKind::Int || spec.kind == ArgKind::Duration ||
+            spec.kind == ArgKind::Float)
+            spec.defaultValue = jsToNumber(ctx, fallback.get(), 0);
+    }
     return spec;
 }
 
