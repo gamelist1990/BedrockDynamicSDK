@@ -1071,6 +1071,7 @@ DWORD WINAPI startClient(void*) {
         if(stopRequested.load(std::memory_order_acquire)) return;
         const auto origin=renderer.origin();
         const auto epoch=worldEpoch.load(std::memory_order_acquire);
+        if(origin) renderCamera.publish(epoch,*origin);
         const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
         ++nameDiagnostics.renderCalls;
         ++nameDiagnostics.renderFrames;
