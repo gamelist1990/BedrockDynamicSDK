@@ -1,4 +1,5 @@
 #include <bedrock/profiles/remote_catalog.hpp>
+#include <bedrock/profiles/profile_parts.hpp>
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -45,5 +46,18 @@ int main() {
           R"(","module_text_sha256":")"+std::string(64,'c')+
           R"(","size_of_image":2048,"text_rva":"0x100","text_size":256}}}})";
     assert(!chooseProfile(hostile,game,error));
+    // Part-level diff decision: only missing/mismatched parts are fetched.
+    const std::string vmanifest=R"({"parts":[
+      {"path":"classes/A.json","sha256":")"+std::string(64,'1')+R"("},
+      {"path":"classes/B.json","sha256":")"+std::string(64,'2')+R"("}
+    ]})";
+    auto available=[&](const std::string& p,const std::string& h){
+        return p=="classes/A.json"; // B missing
+    };
+    auto missing=bedrock::missingProfileParts(vmanifest,available);
+    assert(missing.size()==1 && missing[0]=="classes/B.json");
+    // all present -> empty
+    auto all=[&](const std::string&,const std::string&){return true;};
+    assert(bedrock::missingProfileParts(vmanifest,all).empty());
     std::cout<<"remote_catalog_test: PASS\n";
 }

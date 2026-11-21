@@ -51,6 +51,8 @@ endif()
 
 
 
+option(BEDROCK_DEV_BUILD "Dev build: disable remote profile fetch (offline only)" OFF)
+
 add_library(bedrock_resolver STATIC src/resolver.cpp src/remote_catalog.cpp src/profile_manager.cpp src/native_keyboard.cpp src/native_items.cpp src/native_actors.cpp src/native_world_events.cpp)
 if(NOT PROJECT_IS_TOP_LEVEL)
     set_target_properties(bedrock_resolver PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -63,6 +65,9 @@ if(NOT BEDROCK_BUILD_ID MATCHES "^[A-Za-z0-9_.-]+$")
 endif()
 target_compile_definitions(bedrock_resolver PUBLIC BEDROCK_SDK_BUILD_ID="${BEDROCK_BUILD_ID}")
 target_link_libraries(bedrock_resolver PUBLIC bedrock::internal_headers)
+if(BEDROCK_DEV_BUILD)
+    target_compile_definitions(bedrock_resolver PUBLIC BEDROCK_DEV_BUILD=1)
+endif()
 add_library(bedrock::symbols ALIAS bedrock_resolver)
 
 option(BEDROCK_SDK_BUILD_DOC_EXAMPLES "Compile documentation examples without executing them" OFF)

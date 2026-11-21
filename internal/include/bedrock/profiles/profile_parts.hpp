@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace bedrock {
 // Transport authenticates each returned part with the expected SHA256.
@@ -69,4 +70,25 @@ inline std::string assembleProfileParts(
         root["symbols"] = Json::object();
     return root.dump();
 }
+// Returns the list of part paths whose stored content is missing or has a
+// differing SHA-256. A part is considered present only when partAvailable
+// returns true for its path and expected hash.
+inline std::vector<std::string> missingProfileParts(
+    std::string_view versionManifest,
+    const std::function<bool(const std::string &, const std::string &)> &partAvailable) {
+    using Json = nlohmann::json;
+    std::vector<std::string> result;
+    try {
+        const auto manifest = Json::parse(versionManifest.begin(), versionManifest.end());
+        if (!manifest.contains("parts") || !manifest.at("parts").is_array()) return result;
+        for (const auto &entry : manifest.at("parts")) {
+            const auto path = entry.at("path").get<std::string>();
+            const auto hash = entry.at("sha256").get<std::string>();
+            if (!partAvailable(path, hash)) result.push_back(path);
+        }
+    } catch (...) {
+    }
+    return result;
+}
+
 } // namespace bedrock

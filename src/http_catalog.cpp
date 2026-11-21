@@ -23,9 +23,9 @@
 #pragma comment(lib, "winhttp.lib")
 namespace bedrock {
 namespace {
-constexpr wchar_t kHost[] = L"raw.githubusercontent.com";
+constexpr wchar_t kHost[] = L"gamelist1990.github.io";
 constexpr wchar_t kManifest[] =
-    L"/gamelist1990/BedrockDynamicSDK/main/data/manifest.json";
+    L"/BedrockDynamicSDK/data/manifest.json";
 constexpr std::size_t kManifestLimit = 256 * 1024;
 constexpr std::size_t kProfileLimit = 4 * 1024 * 1024;
 constexpr auto kCacheFreshness = std::chrono::hours(24);
@@ -184,44 +184,249 @@ bool loadCandidate(std::string_view candidate, const GameIdentity& identity,
     }
 }
 
+std::filesystem::path exeDirectory();
+bool exeDirectoryWritableTree(std::filesystem::path& root) {
+    root = exeDirectory();
+    if (root.empty()) return false;
+    root /= L"data";
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    if (ec) return false;
+    const auto probe = root / L".bedrock_write_probe";
+    {
+        std::ofstream stream(probe, std::ios::binary | std::ios::trunc);
+        if (!stream) return false;
+        stream << "ok";
+        if (!stream) return false;
+    }
+    std::filesystem::remove(probe, ec);
+    return true;
+}
+
+std::filesystem::path exeDirectory() {
+    std::wstring buffer(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+        static_cast<DWORD>(buffer.size()));
+    if (!length || length >= buffer.size()) return {};
+    buffer.resize(length);
+    return std::filesystem::path(buffer).parent_path();
+}
+
+bool loadTreeProfile(const GameIdentity& identity, std::string& profileJson,
+                     ProfileChoice& choice, std::string& error) {
+    const auto root = exeDirectory();
+    if (root.empty()) { error = "no executable directory"; return false; }
+    const auto topPath = root / L"data" / L"manifest.json";
+    std::ifstream topStream(topPath, std::ios::binary);
+    if (!topStream) { error = "no exe-adjacent top manifest"; return false; }
+    const std::string topManifest((std::istreambuf_iterator<char>(topStream)), {});
+    auto selected = chooseProfile(topManifest, identity, error);
+    if (!selected) return false;
+    selected->identity = identity;
+    const std::wstring wpath(selected->path.begin(), selected->path.end());
+    const auto versionManifestPath = root / std::filesystem::path(wpath);
+    std::ifstream vmStream(versionManifestPath, std::ios::binary);
+    if (!vmStream) { error = "no exe-adjacent version manifest"; return false; }
+    const std::string versionManifest((std::istreambuf_iterator<char>(vmStream)), {});
+    std::string vmHash;
+    if (!sha256(versionManifest, vmHash) || vmHash != selected->contentSha256) {
+        error = "exe-adjacent version manifest checksum mismatch";
+        return false;
+    }
+    std::string assembled;
+    try {
+        assembled = assembleProfileParts(versionManifest, selected->path,
+            [&root](const std::string& path, const std::string& hash) {
+                const std::wstring wp(path.begin(), path.end());
+                const auto partPath = root / std::filesystem::path(wp);
+                std::ifstream stream(partPath, std::ios::binary);
+                if (!stream) throw std::runtime_error("missing exe-adjacent part: " + path);
+                const std::string contents((std::istreambuf_iterator<char>(stream)), {});
+                std::string actual;
+                if (!sha256(contents, actual) || actual != hash)
+                    throw std::runtime_error("exe-adjacent part checksum mismatch: " + path);
+                return contents;
+            });
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+    if (!validateDownloadedProfile(assembled, *selected, identity, error)) return false;
+    Resolver resolver;
+    if (!resolver.loadJson(assembled, error) ||
+        !resolver.attachWindowsMainModule(identity, error) || !resolver.exactBuild()) {
+        error = "exe-adjacent profile did not resolve against the loaded game: " + error;
+        return false;
+    }
+    selected->source = ProfileSource::Cache;
+    profileJson = std::move(assembled);
+    choice = std::move(*selected);
+    error.clear();
+    return true;
+}
+
+void writeAtomic(const std::filesystem::path& path, std::string_view contents) {
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) return;
+    auto temporary = path;
+    temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetCurrentThreadId()) + L".tmp";
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) return;
+        stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        if (!stream) return;
+    }
+    if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        DeleteFileW(temporary.c_str());
+}
+
 bool fetchRemoteProfile(const GameIdentity& identity,
                         const std::filesystem::path& cache,
                         std::string& profileJson, ProfileChoice& choice,
                         std::string& error) {
+#if defined(BEDROCK_DEV_BUILD) && BEDROCK_DEV_BUILD
+    error = "dev build: remote fetch disabled";
+    return false;
+#endif
+    std::filesystem::path treeRoot;
+    const bool useTree = exeDirectoryWritableTree(treeRoot);
+
     std::string manifest;
     if (!httpsGet(kManifest, kManifestLimit, manifest, error)) return false;
     auto selected = chooseProfile(manifest, identity, error);
     if (!selected) return false;
     selected->identity = identity;
-    std::wstring resource = L"/gamelist1990/BedrockDynamicSDK/main/";
+
+    if (!useTree) {
+        // Legacy single-file cache path.
+        std::wstring resource = L"/BedrockDynamicSDK/";
+        for (char c : selected->path) resource.push_back(static_cast<wchar_t>(c));
+        std::string downloaded;
+        if (!httpsGet(resource, kProfileLimit, downloaded, error)) return false;
+        std::string downloadedHash;
+        if (!sha256(downloaded, downloadedHash) ||
+            downloadedHash != selected->contentSha256) {
+            error = "profile checksum mismatch";
+            return false;
+        }
+        try {
+            downloaded = assembleProfileParts(downloaded, selected->path,
+                [&error](const std::string& path, const std::string& hash) {
+                    std::wstring url = L"/BedrockDynamicSDK/";
+                    for (char ch : path) url.push_back(static_cast<wchar_t>(ch));
+                    std::string part, actual;
+                    if (!httpsGet(url, kProfileLimit, part, error))
+                        throw std::runtime_error(error + ": " + path);
+                    if (!sha256(part, actual) || actual != hash)
+                        throw std::runtime_error("profile part checksum mismatch: " + path);
+                    return part;
+                });
+        } catch (const std::exception& e) { error = e.what(); return false; }
+        if (!validateDownloadedProfile(downloaded, *selected, identity, error)) return false;
+        Resolver resolver;
+        if (!resolver.loadJson(downloaded, error) ||
+            !resolver.attachWindowsMainModule(identity, error) || !resolver.exactBuild()) {
+            error = "profile did not resolve against the loaded game: " + error;
+            return false;
+        }
+        selected->source = ProfileSource::Remote;
+        writeCache(cache, downloaded);
+        profileJson = std::move(downloaded);
+        choice = std::move(*selected);
+        error.clear();
+        return true;
+    }
+
+    const auto exeDir = treeRoot.parent_path();
+    // Save top-level manifest to tree.
+    writeAtomic(treeRoot / L"manifest.json", manifest);
+
+    // Fetch version manifest.
+    std::wstring resource = L"/BedrockDynamicSDK/";
     for (char c : selected->path) resource.push_back(static_cast<wchar_t>(c));
-    std::string downloaded;
-    if (!httpsGet(resource, kProfileLimit, downloaded, error)) return false;
-    std::string downloadedHash;
-    if (!sha256(downloaded, downloadedHash) ||
-        downloadedHash != selected->contentSha256) {
-        error = "profile checksum mismatch";
+    std::string versionManifest;
+    if (!httpsGet(resource, kProfileLimit, versionManifest, error)) return false;
+    std::string vmHash;
+    if (!sha256(versionManifest, vmHash) || vmHash != selected->contentSha256) {
+        error = "version manifest checksum mismatch";
         return false;
     }
+    const std::wstring vmpath(selected->path.begin(), selected->path.end());
+    writeAtomic(exeDir / std::filesystem::path(vmpath), versionManifest);
+
+    // Diff fetch parts: download only missing/differing.
     try {
-        downloaded=assembleProfileParts(downloaded,selected->path,[&](const std::string& path,const std::string& hash){
-            std::wstring url=L"/gamelist1990/BedrockDynamicSDK/main/";for(char ch:path)url.push_back(static_cast<wchar_t>(ch));
-            std::string part,actual;
-            if(!httpsGet(url,kProfileLimit,part,error))throw std::runtime_error(error+": "+path);
-            if(!sha256(part,actual)||actual!=hash)throw std::runtime_error("profile part checksum mismatch: "+path);
-            return part;
-        });
-    }catch(const std::exception& e){error=e.what();return false;}
-    if (!validateDownloadedProfile(downloaded, *selected, identity, error)) return false;
+        const auto vm = nlohmann::json::parse(versionManifest);
+        const auto& parts = vm.at("parts");
+        const std::string parent = [&]() {
+            const auto slash = selected->path.find_last_of('/');
+            return slash == std::string::npos ? std::string{} : selected->path.substr(0, slash + 1);
+        }();
+        for (const auto& entry : parts) {
+            const std::string rel = entry.at("path").get<std::string>();
+            const std::string hash = entry.at("sha256").get<std::string>();
+            const std::string fullRel = parent + rel;
+            const std::wstring wfull(fullRel.begin(), fullRel.end());
+            const auto fullPath = exeDir / std::filesystem::path(wfull);
+            bool needFetch = true;
+            std::error_code ec;
+            if (std::filesystem::exists(fullPath, ec)) {
+                std::ifstream s(fullPath, std::ios::binary);
+                if (s) {
+                    const std::string contents((std::istreambuf_iterator<char>(s)), {});
+                    std::string actual;
+                    if (sha256(contents, actual) && actual == hash) needFetch = false;
+                }
+            }
+            if (needFetch) {
+                std::wstring url = L"/BedrockDynamicSDK/";
+                for (char ch : fullRel) url.push_back(static_cast<wchar_t>(ch));
+                std::string part, actual;
+                if (!httpsGet(url, kProfileLimit, part, error))
+                    throw std::runtime_error(error + ": " + fullRel);
+                if (!sha256(part, actual) || actual != hash)
+                    throw std::runtime_error("profile part checksum mismatch: " + fullRel);
+                writeAtomic(fullPath, part);
+            }
+        }
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+
+    // Assemble from disk.
+    std::string assembled;
+    try {
+        assembled = assembleProfileParts(versionManifest, selected->path,
+            [&exeDir](const std::string& path, const std::string& hash) {
+                const std::wstring wp(path.begin(), path.end());
+                const auto partPath = exeDir / std::filesystem::path(wp);
+                std::ifstream stream(partPath, std::ios::binary);
+                if (!stream) throw std::runtime_error("missing exe-adjacent part: " + path);
+                const std::string contents((std::istreambuf_iterator<char>(stream)), {});
+                std::string actual;
+                if (!sha256(contents, actual) || actual != hash)
+                    throw std::runtime_error("exe-adjacent part checksum mismatch: " + path);
+                return contents;
+            });
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+    if (!validateDownloadedProfile(assembled, *selected, identity, error)) return false;
     Resolver resolver;
-    if (!resolver.loadJson(downloaded, error) ||
+    if (!resolver.loadJson(assembled, error) ||
         !resolver.attachWindowsMainModule(identity, error) || !resolver.exactBuild()) {
         error = "profile did not resolve against the loaded game: " + error;
         return false;
     }
     selected->source = ProfileSource::Remote;
-    writeCache(cache, downloaded);
-    profileJson = std::move(downloaded);
+    writeCache(cache, assembled);
+    profileJson = std::move(assembled);
     choice = std::move(*selected);
     error.clear();
     return true;
@@ -375,12 +580,17 @@ bool refreshProfileAfterMissingSymbols(const GameIdentity& identity,
 
 void startRemoteRefresh(const GameIdentity& identity,
                         const std::filesystem::path& cache) noexcept {
+#if defined(BEDROCK_DEV_BUILD) && BEDROCK_DEV_BUILD
+    (void)identity; (void)cache;
+    return;
+#else
     if (!markRefreshAttempt(cache)) return;
     try {
         std::thread(refreshRemoteProfile, identity, cache).detach();
     } catch (...) {
         // The durable attempt marker prevents repeated launch retries.
     }
+#endif
 }
 } // namespace
 
@@ -392,21 +602,10 @@ bool fetchSupportedProfile(std::string& profileJson,
     GameIdentity identity;
     if (!inspectLoadedGame(identity,error))
         return false;
-    if (progress) progress("check cache");
     const auto cachedPath = cachePath(identity);
-    std::string cached;
-    bool cacheFresh = false;
-    const bool hasCache = readCache(cachedPath, cached, cacheFresh);
     std::string cacheError;
-    if (hasCache && loadCandidate(cached, identity,
-            ProfileSource::Cache, profileJson, choice, cacheError)) {
-        if (progress) progress(cacheFresh ? "cache ready" : "stale cache ready");
-        if (!cacheFresh) startRemoteRefresh(identity, cachedPath);
-        return true;
-    }
 
-    // Prefer a bundled exact-build profile for immediate startup. The network
-    // refresh updates the cache for the next launch without blocking this one.
+    // 1. Embedded exact-build profile.
     if (loadCandidate(generated::kSymbolDatabase, identity, ProfileSource::Embedded,
                       profileJson, choice, cacheError)) {
         writeCache(cachedPath, profileJson);
@@ -416,10 +615,43 @@ bool fetchSupportedProfile(std::string& profileJson,
         return true;
     }
 
-    // A newer game build has no usable local profile, so GitHub is required.
+    // 2. Exe-adjacent data tree (validated).
+    if (loadTreeProfile(identity, profileJson, choice, cacheError)) {
+        if (progress) progress("exe-adjacent profile ready");
+        startRemoteRefresh(identity, cachedPath);
+        error.clear();
+        return true;
+    }
+
+    // 3. Remote diff fetch (disabled in dev builds).
+#if !(defined(BEDROCK_DEV_BUILD) && BEDROCK_DEV_BUILD)
     if (progress) progress("GitHub profile required");
-    return fetchRemoteProfileSingleFlight(identity, cachedPath, profileJson,
-                                          choice, error);
+    if (fetchRemoteProfileSingleFlight(identity, cachedPath, profileJson,
+                                       choice, error)) {
+        if (progress) progress("remote profile ready");
+        error.clear();
+        return true;
+    }
+#endif
+
+    // 4. Fallback: LOCALAPPDATA single-file cache.
+    std::string cached;
+    bool cacheFresh = false;
+    if (readCache(cachedPath, cached, cacheFresh) &&
+        loadCandidate(cached, identity, ProfileSource::Cache,
+                      profileJson, choice, cacheError)) {
+        if (progress) progress(cacheFresh ? "cache ready" : "stale cache ready");
+        if (!cacheFresh) startRemoteRefresh(identity, cachedPath);
+        error.clear();
+        return true;
+    }
+
+#if defined(BEDROCK_DEV_BUILD) && BEDROCK_DEV_BUILD
+    error = "dev build: remote fetch disabled";
+#else
+    if (error.empty()) error = "no profile available";
+#endif
+    return false;
 }
 
 bool refreshSupportedProfile(const GameIdentity& identity,
@@ -427,9 +659,15 @@ bool refreshSupportedProfile(const GameIdentity& identity,
                              ProfileChoice& choice, std::string& error,
                              ProfileProgressCallback progress) {
     profileJson.clear();
+#if defined(BEDROCK_DEV_BUILD) && BEDROCK_DEV_BUILD
+    (void)progress;
+    error = "dev build: remote fetch disabled";
+    return false;
+#else
     if (progress) progress("force-check latest exact-build GitHub definition");
     return refreshProfileAfterMissingSymbols(identity, cachePath(identity),
                                              profileJson, choice, error);
+#endif
 }
 } // namespace bedrock
 #endif
