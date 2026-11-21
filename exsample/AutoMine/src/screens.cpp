@@ -16,15 +16,24 @@ void AutoMineMod::loadScreen(const bedrock::RuntimeProfile &profile) {
     }
 }
 
+// MSVC C2712: a function containing __try must not require object unwinding,
+// so the SEH-wrapped game call lives in this POD-only helper and
+// topScreenName (which builds std::string results) stays __try-free.
+bool AutoMineMod::callTopScreenNameSeh(GetTopScreenName fn, void *client, void *buf) {
+    __try {
+        fn(client, buf);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 std::string AutoMineMod::topScreenName() {
     if (!screenReady_ || !client_.load())
         return {};
     alignas(8) std::byte buf[32]{};
-    __try {
-        topScreenFn_(client_.load(), buf);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (!callTopScreenNameSeh(topScreenFn_, client_.load(), buf))
         return {};
-    }
     std::uint64_t size = 0, cap = 0;
     std::memcpy(&size, buf + 16, sizeof(size));
     std::memcpy(&cap, buf + 24, sizeof(cap));

@@ -277,14 +277,25 @@ void AutoMineMod::craftUpdateInner(void *level) {
     }
 }
 
-void AutoMineMod::craftUpdateGuarded(void *level) {
+// MSVC C2712: a function containing __try must not require object unwinding.
+// The handler's side effects (note() takes std::string by value) therefore
+// live in craftUpdateGuarded, and this helper holds only the __try call —
+// the same split the SDK core uses for its game calls.
+bool AutoMineMod::craftUpdateSeh(void *level) {
     __try {
         craftUpdateInner(level);
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        InterlockedIncrement(&crashrec::g_sehFaults);
-        note("craft adapter update faulted (SEH); disabling craft");
-        craftReady_ = false;
+        return false;
     }
+}
+
+void AutoMineMod::craftUpdateGuarded(void *level) {
+    if (craftUpdateSeh(level))
+        return;
+    InterlockedIncrement(&crashrec::g_sehFaults);
+    note("craft adapter update faulted (SEH); disabling craft");
+    craftReady_ = false;
 }
 
 void AutoMineMod::drawPathInner(void *raw) {

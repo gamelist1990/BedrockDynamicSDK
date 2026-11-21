@@ -205,6 +205,7 @@ class AutoMineMod {
     void tickGuarded();
     void onSehFault(const char *where);
     void craftUpdateInner(void *level);
+    bool craftUpdateSeh(void *level);
     void craftUpdateGuarded(void *level);
     void drawPathInner(void *raw);
     void drawPathGuarded(void *raw);
@@ -241,6 +242,7 @@ class AutoMineMod {
 
     // Screen state (screens.cpp).
     void loadScreen(const bedrock::RuntimeProfile &profile);
+    static bool callTopScreenNameSeh(GetTopScreenName fn, void *client, void *buf);
     std::string topScreenName();
     bool inventoryScreenUp();
     bool screenUp(const char *needle);
