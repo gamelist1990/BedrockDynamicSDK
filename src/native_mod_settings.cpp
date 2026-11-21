@@ -325,8 +325,11 @@ RequestInfo requestInfo(const void* request, const Abi& abi) {
     return {path.substr(route.size()), range != 0};
 }
 
-bool respond(void* response, const Abi& abi, std::string_view bytes, const char* type) noexcept {
-    if (!response || bytes.empty() || bytes.size() > 48 * 1024 * 1024) return false;
+// MSVC C2712: a function containing __try must not require object unwinding.
+// respond() needs a std::string for Content-Length, so the SEH-wrapped game
+// calls live in this POD-only helper (same split as runViewScript above).
+bool respondSeh(void* response, const Abi& abi, const void* data, std::size_t size,
+                const char* type, const char* length) noexcept {
     __try {
         auto* implementation = *reinterpret_cast<void**>(static_cast<std::byte*>(response) + abi.implementation);
         if (!implementation) return false;
@@ -334,16 +337,22 @@ bool respond(void* response, const Abi& abi, std::string_view bytes, const char*
         const auto allocate = reinterpret_cast<Allocate>(table[abi.allocate]);
         const auto header = reinterpret_cast<SetHeader>(table[abi.set_header]);
         if (!allocate || !header) return false;
-        auto* output = allocate(implementation, bytes.size());
+        auto* output = allocate(implementation, size);
         if (!output) return false;
-        std::memcpy(output, bytes.data(), bytes.size());
+        std::memcpy(output, data, size);
         header(implementation, "Content-Type", type);
-        header(implementation, "Content-Length", std::to_string(bytes.size()).c_str());
+        header(implementation, "Content-Length", length);
         header(implementation, "Cache-Control", "no-store");
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+bool respond(void* response, const Abi& abi, std::string_view bytes, const char* type) noexcept {
+    if (!response || bytes.empty() || bytes.size() > 48 * 1024 * 1024) return false;
+    const std::string length = std::to_string(bytes.size());
+    return respondSeh(response, abi, bytes.data(), bytes.size(), type, length.c_str());
 }
 
 template<std::size_t Index> unsigned __fastcall resource(void* self, const void* request, void* response) {
