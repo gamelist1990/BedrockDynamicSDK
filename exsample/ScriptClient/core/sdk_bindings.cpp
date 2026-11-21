@@ -156,15 +156,60 @@ inline std::vector<std::uint32_t> scanAobInModule(std::string_view pattern,
         }
         s = e;
     }
-    if (bestAnchorStart == std::string::npos) return {}; // no usable anchor
 
-    std::uint8_t anchorFirst = bytes[bestAnchorStart];
-    std::vector<std::uint8_t> anchorBytes(bytes.begin() + bestAnchorStart,
-                                          bytes.begin() + bestAnchorStart + bestAnchorLen);
-    std::vector<std::uint8_t> anchorMask(bestAnchorLen, 0xFF);
+    if (bestAnchorStart != std::string::npos) {
+        std::uint8_t anchorFirst = bytes[bestAnchorStart];
+        std::vector<std::uint8_t> anchorBytes(bytes.begin() + bestAnchorStart,
+                                              bytes.begin() + bestAnchorStart + bestAnchorLen);
+        std::vector<std::uint8_t> anchorMask(bestAnchorLen, 0xFF);
 
-    // Chunked scan: read the module image in chunks and search for the anchor,
-    // then verify the full pattern at each anchor hit.
+        // Chunked scan: read the module image in chunks and search for the anchor,
+        // then verify the full pattern at each anchor hit.
+        constexpr std::size_t kChunk = 1 << 20; // 1 MiB
+        for (std::uintptr_t readOff = 0; readOff < moduleSize; readOff += kChunk) {
+            std::size_t chunkSize = std::min(kChunk, moduleSize - readOff);
+            std::vector<std::uint8_t> chunk;
+            if (!guardedReadBytes(reinterpret_cast<const void*>(moduleBase), readOff,
+                                  chunkSize, chunk))
+                continue; // skip unmapped chunks
+
+            // Search for the anchor within this chunk
+            std::size_t pos = 0;
+            while ((pos = std::search(chunk.begin() + pos, chunk.end(),
+                                     anchorBytes.begin(), anchorBytes.end(),
+                                     [](std::uint8_t a, std::uint8_t b) { return a == b; }) -
+                    chunk.begin()) < chunk.size()) {
+                // The pattern starts bestAnchorStart bytes before the anchor hit.
+                if (pos < bestAnchorStart) { ++pos; continue; }
+                const std::size_t start = pos - bestAnchorStart;
+                if (start + bytes.size() > chunk.size()) { ++pos; continue; }
+                std::uintptr_t absOff = readOff + start;
+                if (absOff + bytes.size() > moduleSize) break; // pattern would overrun
+                // Verify the full pattern at the candidate start
+                bool match = true;
+                for (std::size_t t = 0; t < bytes.size(); ++t) {
+                    std::uint8_t got = chunk[start + t];
+                    if ((mask[t] & got) != (mask[t] & bytes[t])) { match = false; break; }
+                }
+                if (match) {
+                    results.push_back(static_cast<std::uint32_t>(absOff));
+                    if (results.size() >= cap) return results; // capped
+                }
+                ++pos; // advance past this anchor match
+            }
+        }
+        return results;
+    }
+
+    // Fallback: no usable >=4-byte fixed anchor. Longest fixed run is 1-3 bytes;
+    // scan chunk-wise testing the full pattern at every offset whose first fixed
+    // byte matches. Keep the 256-hit cap.
+    std::size_t firstFixedIdx = std::string::npos;
+    for (std::size_t t = 0; t < bytes.size(); ++t) {
+        if (mask[t] == 0xFF) { firstFixedIdx = t; break; }
+    }
+    const std::uint8_t firstFixedByte = (firstFixedIdx == std::string::npos) ? 0 : bytes[firstFixedIdx];
+
     constexpr std::size_t kChunk = 1 << 20; // 1 MiB
     for (std::uintptr_t readOff = 0; readOff < moduleSize; readOff += kChunk) {
         std::size_t chunkSize = std::min(kChunk, moduleSize - readOff);
@@ -173,34 +218,35 @@ inline std::vector<std::uint32_t> scanAobInModule(std::string_view pattern,
                               chunkSize, chunk))
             continue; // skip unmapped chunks
 
-        // Search for the anchor within this chunk
-        std::size_t pos = 0;
-        while ((pos = std::search(chunk.begin() + pos, chunk.end(),
-                                  anchorBytes.begin(), anchorBytes.end(),
-                                  [](std::uint8_t a, std::uint8_t b) { return a == b; }) -
-                chunk.begin()) < chunk.size()) {
-            std::uintptr_t absOff = readOff + pos;
-            if (absOff + bytes.size() > moduleSize) break; // pattern would overrun
-            // Verify the full pattern at this anchor location
+        for (std::size_t pos = 0; pos + bytes.size() <= chunk.size(); ++pos) {
+            if (firstFixedIdx != std::string::npos && chunk[pos + firstFixedIdx] != firstFixedByte) {
+                continue; // first fixed byte does not match; skip full-pattern test
+            }
             bool match = true;
             for (std::size_t t = 0; t < bytes.size(); ++t) {
                 std::uint8_t got = chunk[pos + t];
                 if ((mask[t] & got) != (mask[t] & bytes[t])) { match = false; break; }
             }
             if (match) {
+                std::uintptr_t absOff = readOff + pos;
+                if (absOff + bytes.size() > moduleSize) break; // pattern would overrun
                 results.push_back(static_cast<std::uint32_t>(absOff));
                 if (results.size() >= cap) return results; // capped
             }
-            ++pos; // advance past this anchor match
         }
     }
     return results;
 }
 
+
 // Parse profile JSON symbols. Returns entries from root["symbols"].
 // Schema: { name, rva, status, signature?, entry_check? } where status
 // is a string description; signature and entry_check are raw byte strings
 // (AOB with ?? wildcards) that may be empty when absent.
+// The RUNTIME profile stores rva as a hex STRING ("0xBBE440"), not a number;
+// every read below is type-checked so a type mismatch can never throw (the
+// previous def.value(...) with a numeric default threw type_error.302 and the
+// catch-all returned an empty vector, making dev.symbols.list()/status() empty).
 inline std::vector<nlohmann::json> parseProfileSymbols(const std::string& profileJson) {
     std::vector<nlohmann::json> entries;
     try {
@@ -211,11 +257,32 @@ inline std::vector<nlohmann::json> parseProfileSymbols(const std::string& profil
             if (!def.is_object()) continue;
             nlohmann::json entry;
             entry["name"] = name;
-            entry["rva"] = def.value("rva", std::uint64_t{0});
-            entry["status"] = def.value("status", std::string(""));
-            // New fields – empty string when the profile does not provide them.
-            entry["signature"] = def.value("signature", std::string(""));
-            entry["entry_check"] = def.value("entry_check", std::string(""));
+            // rva: number → use it; string → parse "0x"-prefixed hex or plain
+            // decimal (base 0); anything else → 0. Never throws.
+            std::uint64_t rva = 0;
+            if (def.contains("rva")) {
+                if (def["rva"].is_number()) {
+                    rva = def["rva"].get<std::uint64_t>();
+                } else if (def["rva"].is_string()) {
+                    const std::string rvaStr = def["rva"].get<std::string>();
+                    try {
+                        rva = std::stoull(rvaStr, nullptr, 0); // base 0: 0x hex or decimal
+                    } catch (...) {
+                        rva = 0;
+                    }
+                }
+            }
+            entry["rva"] = rva;
+            // status / signature / entry_check: only read when is_string.
+            entry["status"] =
+                (def.contains("status") && def["status"].is_string())
+                    ? def["status"].get<std::string>() : std::string("");
+            entry["signature"] =
+                (def.contains("signature") && def["signature"].is_string())
+                    ? def["signature"].get<std::string>() : std::string("");
+            entry["entry_check"] =
+                (def.contains("entry_check") && def["entry_check"].is_string())
+                    ? def["entry_check"].get<std::string>() : std::string("");
             entries.push_back(entry);
         }
     } catch (...) {
@@ -1557,7 +1624,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             if (!guardedReadBytes(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)),
                                   0, static_cast<std::size_t>(len), bytes))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.readBytes validation failed at address 0x" + toHex(addr));
+                    "dev.memory.readBytes validation failed at address " + toHex(addr));
             JsValue array(ctx, JS_NewArray(ctx));
             for (std::size_t i = 0; i < bytes.size(); ++i) {
                 JS_SetPropertyInt64(ctx, array.get(), i, JS_NewInt64(ctx, static_cast<int64_t>(bytes[i])));
@@ -1572,7 +1639,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             std::uint32_t val{};
             if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.readU32 validation failed at address 0x" + toHex(addr));
+                    "dev.memory.readU32 validation failed at address " + toHex(addr));
             return JS_NewUint32(ctx, val);
         }
         case Op::DevMemoryReadI64: {
@@ -1583,7 +1650,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             std::int64_t val{};
             if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.readI64 validation failed at address 0x" + toHex(addr));
+                    "dev.memory.readI64 validation failed at address " + toHex(addr));
             return JS_NewFloat64(ctx, static_cast<double>(val));
         }
         case Op::DevMemoryReadF32: {
@@ -1594,7 +1661,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             float val{};
             if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.readF32 validation failed at address 0x" + toHex(addr));
+                    "dev.memory.readF32 validation failed at address " + toHex(addr));
             return JS_NewFloat64(ctx, static_cast<double>(val));
         }
         case Op::DevMemoryReadPtr: {
@@ -1605,7 +1672,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             std::uintptr_t val{};
             if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.readPtr validation failed at address 0x" + toHex(addr));
+                    "dev.memory.readPtr validation failed at address " + toHex(addr));
             return JS_NewFloat64(ctx, static_cast<double>(val));
         }
         case Op::DevMemoryWriteBytes: {
@@ -1648,10 +1715,10 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             auto writeValid = bedrock::detail::validateWriteRange(writePtr, data.size());
             if (!writeValid.first || writeValid.second < data.size())
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.writeBytes write-validation failed at address 0x" + toHex(addr));
+                    "dev.memory.writeBytes write-validation failed at address " + toHex(addr));
             if (!sehCopyBytes(writePtr, data.data(), data.size()))
                 return throwJsError(ctx, "Unavailable",
-                    "dev.memory.writeBytes write faulted at address 0x" + toHex(addr));
+                    "dev.memory.writeBytes write faulted at address " + toHex(addr));
             return JS_UNDEFINED;
         }
         case Op::DevMemoryScanAob: {
@@ -1661,6 +1728,10 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             auto [base, size] = moduleBaseAndSize();
             if (!base || !size) return throwJsError(ctx, "Unavailable",
                 "dev.memory.scanAob: main module base/size unavailable");
+            // Parse the pattern; throw on invalid pattern instead of silently returning empty.
+            std::vector<std::uint8_t> bytes, mask;
+            if (!parseAobPattern(pattern, bytes, mask)) return throwJsError(ctx, "Invalid",
+                "dev.memory.scanAob invalid pattern");
             auto hits = scanAobInModule(pattern, base, size, 256);
             JsValue array(ctx, JS_NewArray(ctx));
             for (std::size_t i = 0; i < hits.size(); ++i)
