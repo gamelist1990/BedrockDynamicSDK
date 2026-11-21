@@ -8,6 +8,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <bedrock/detail/checked_access.hpp>
 #include <bedrock/detail/spatial_types.hpp>
 #include <bedrock/native/actors.hpp>
 #include <bedrock/native/items.hpp>
@@ -31,14 +32,22 @@ struct Traits{using value_type=Entity;using entity_type=std::uint32_t;using vers
 namespace entt{template<>struct entt_traits<bedrock::world_native::Entity>:basic_entt_traits<bedrock::world_native::Traits>{static constexpr std::size_t page_size=2048;};}
 namespace bedrock::world_native {
 using Pos=bedrock::BlockPos;using Vec=bedrock::Vec3;
-template<class T>bool read(const void* ptr,std::size_t offset,T& out)noexcept{
-    if(!ptr||reinterpret_cast<std::uintptr_t>(ptr)<0x10000)return false;
-    __try{std::memcpy(&out,static_cast<const std::byte*>(ptr)+offset,sizeof(T));return true;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+
+template<class T>
+inline bool read(const void* pointer, std::size_t offset, T& out) noexcept {
+    if (!pointer || reinterpret_cast<std::uintptr_t>(pointer) < 0x10000) return false;
+    // VirtualQuery range validation + SEH second line of defence live in the
+    // shared checked-access primitives (checkedRead validates the range before
+    // touching memory, then wraps the access in __try/__except).
+    return detail::checkedRead<T>(pointer, offset, out);
 }
-template<class T>bool write(void* ptr,std::size_t offset,const T& value)noexcept{
-    if(!ptr)return false;
-    __try{std::memcpy(static_cast<std::byte*>(ptr)+offset,&value,sizeof(T));return true;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+
+template<class T>
+inline bool write(void* pointer, std::size_t offset, const T& value) noexcept {
+    if (!pointer) return false;
+    return detail::checkedWrite<T>(pointer, offset, value);
 }
+
 struct StringCopy{char bytes[2049]{};std::size_t size{};};
 inline bool copyString(const void* value,StringCopy* out)noexcept{
     if(!value||!out)return false;

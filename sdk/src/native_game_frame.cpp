@@ -43,6 +43,12 @@ constexpr std::uint32_t kMobEffectsComponentHash = 0xE6A1B550u;
 constexpr std::size_t kEffectSlotStride = 0xA8;
 
 bool readGameMemory(const void* src, void* dst, std::size_t size) {
+    // Memory-misuse guard: VirtualQuery range validation + SEH second line
+    // of defence. Range must be committed & readable; access is wrapped in
+    // __try/__except (SEH code lives in small functions with POD-only
+    // parameters/locals per MSVC C2712).
+    auto [validBase, validBytes] = bedrock::detail::validateReadRange(src, size);
+    if (!validBase || validBytes < size) return false;
     __try {
         std::memcpy(dst, src, size);
         return true;
