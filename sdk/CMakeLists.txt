@@ -1,7 +1,7 @@
 add_library(bedrock_stage_a STATIC
     src/settings.cpp src/system.cpp src/mod.cpp src/keybinds.cpp
     src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
-    src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp)
+    src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp)
 if(WIN32)
     target_sources(bedrock_stage_a PRIVATE
         src/commands.cpp src/title_packets.cpp src/game_hooks.cpp)
@@ -93,4 +93,14 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         target_compile_options(stage_a_facades_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME stage_a_facades_test COMMAND stage_a_facades_test)
+
+    add_executable(stage_a_world_render_test tests/world_render_test.cpp)
+    target_link_libraries(stage_a_world_render_test PRIVATE bedrock::stage_a)
+    target_compile_features(stage_a_world_render_test PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(stage_a_world_render_test PRIVATE /UNDEBUG /utf-8)
+    else()
+        target_compile_options(stage_a_world_render_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME stage_a_world_render_test COMMAND stage_a_world_render_test)
 endif()

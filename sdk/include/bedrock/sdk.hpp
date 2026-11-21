@@ -16,3 +16,4 @@
 #include "bedrock/sdk/game_hooks.hpp"
 #include "bedrock/sdk/resolver.hpp"
 #include "bedrock/sdk/actors.hpp"
+#include "bedrock/sdk/world_render.hpp"
