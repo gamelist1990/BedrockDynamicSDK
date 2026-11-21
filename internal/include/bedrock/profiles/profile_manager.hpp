@@ -37,6 +37,12 @@ public:
     const ProfileChoice& choice()const noexcept{return choice_;}
     const Resolver& resolver()const noexcept{return resolver_;}
     CandidatePolicy candidatePolicy()const noexcept{return candidates_;}
+    // A view of this same snapshot (same selection, same resolver)
+    // under a different candidate policy. The snapshot itself is
+    // immutable and stays as selected.
+    std::shared_ptr<const RuntimeProfile> withCandidatePolicy(CandidatePolicy policy)const{
+        return std::shared_ptr<const RuntimeProfile>(new RuntimeProfile(json_,choice_,resolver_,policy));
+    }
     bool supports(const ProfileRequirements& requirements,std::string& error)const;
 };
 class ProfileManager {
