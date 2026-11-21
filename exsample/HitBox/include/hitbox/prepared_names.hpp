@@ -6,10 +6,10 @@ struct PreparedName {
     std::size_t boxIndex{},firstVertex{},vertexCount{};
 };
 struct PreparedNames {
-    bedrock::Vec3 origin{};
+    bedrock::sdk::Vector3 origin{};
     Clock::time_point preparedAt{};
     float height{};
-    std::vector<bedrock::Vec3> vertices;
+    std::vector<bedrock::sdk::Vector3> vertices;
     std::vector<PreparedName> labels;
     std::size_t budgetSkipped{};
 };
@@ -17,7 +17,7 @@ struct PreparedNames {
 // snapshot and submits these immutable vertices; no per-glyph billboard math.
 inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
     const std::vector<std::shared_ptr<const NameMesh>>& names,
-    const bedrock::Vec3& origin,Clock::time_point now,float height,std::size_t maximumVertices) {
+    const bedrock::sdk::Vector3& origin,Clock::time_point now,float height,std::size_t maximumVertices) {
     PreparedNames output;
     output.origin=origin; output.preparedAt=now; output.height=height;
     const auto count=std::min(boxes.size(),names.size());
@@ -50,9 +50,9 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
             const auto quad=mesh->quads.empty()
                 ? std::array<TextPoint,4>{mesh->triangles[p*3],mesh->triangles[p*3+1],mesh->triangles[p*3+2],mesh->triangles[p*3+2]}
                 : mesh->quads[p];
-            std::array<bedrock::Vec3,4> points;
+            std::array<bedrock::sdk::Vector3,4> points;
             for(std::size_t j=0;j<4;++j) points[j]=nameVertex(billboard,quad[j],height,origin);
-            for(const auto& vertex:std::array<bedrock::Vec3,8>{points[0],points[1],points[2],points[3],
+            for(const auto& vertex:std::array<bedrock::sdk::Vector3,8>{points[0],points[1],points[2],points[3],
                     points[3],points[2],points[1],points[0]}) output.vertices.push_back(vertex);
         }
         output.labels.push_back({i,first,needed});
@@ -65,11 +65,11 @@ inline PreparedNames prepareNames(const std::vector<BoxRecord>& boxes,
 inline bool canReuseNames(const PreparedNames& prepared,
     const std::vector<BoxRecord>& oldBoxes,const std::vector<std::shared_ptr<const NameMesh>>& oldNames,
     const std::vector<BoxRecord>& boxes,const std::vector<std::shared_ptr<const NameMesh>>& names,
-    const bedrock::Vec3& origin,Clock::time_point now,float height) noexcept {
+    const bedrock::sdk::Vector3& origin,Clock::time_point now,float height) noexcept {
     if(prepared.height!=height || distanceSquared(prepared.origin,origin)>0.01f*0.01f ||
         oldBoxes.size()!=boxes.size() || oldNames.size()!=oldBoxes.size() ||
         oldNames.size()!=names.size() || names.size()!=boxes.size()) return false;
-    const auto closeEnough=[](const bedrock::Vec3& a,const bedrock::Vec3& b) {
+    const auto closeEnough=[](const bedrock::sdk::Vec3Value& a,const bedrock::sdk::Vec3Value& b) {
         return std::abs(a.x-b.x)<=0.001f && std::abs(a.y-b.y)<=0.001f && std::abs(a.z-b.z)<=0.001f;
     };
     for(std::size_t i=0;i<boxes.size();++i) {

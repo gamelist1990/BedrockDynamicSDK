@@ -11,12 +11,15 @@
 
 namespace bedrock::sdk {
 
-struct ActorBoundsValue { Vec3Value minimum; Vec3Value maximum; };
+struct ActorBoundsValue { Vec3Value minimum; Vec3Value maximum; bool valid{}; };
 struct ActorSample {
     std::uint64_t runtimeId{};
     ActorBoundsValue bounds;
     bool isPlayer{};
     std::uint32_t entityId{};
+    std::uint64_t capturedAt{};
+    std::uintptr_t actorKey{};
+    std::uint64_t uniqueId{};
 };
 struct PlayerNameValue {
     std::uint64_t uuidLow{};
@@ -46,6 +49,29 @@ public:
                  std::size_t& cursor,
                  std::vector<ActorSample>& samples,
                  std::string& error) const noexcept;
+
+    struct ActorCaptureStatsValue {
+        const char* stage{};
+        const char* failure{};
+        std::uint32_t faultCode{};
+        std::uintptr_t faultAddress{};
+        std::size_t population{}, nativePlayers{}, rememberedPlayers{}, missingRuntime{},
+                    filteredActors{}, invalidOwner{}, missingShape{}, invalidBounds{};
+    };
+    bool capture(void* local,
+                 bool playersOnly,
+                 std::size_t& cursor,
+                 std::size_t count,
+                 std::vector<ActorSample>& samples,
+                 std::size_t& visited,
+                 ActorCaptureStatsValue& stats,
+                 std::string& error) const noexcept;
+
+    bool registryIdentity(void* actor, std::uintptr_t& identity) const noexcept;
+    bool refreshTrackedPoses(void* local,
+                             std::vector<ActorSample>& handles,
+                             std::vector<ActorSample>& copies,
+                             std::size_t& copied) const noexcept;
 
     std::vector<PlayerNameValue> playerNames(void* level) const;
 

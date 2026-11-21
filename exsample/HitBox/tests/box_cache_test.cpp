@@ -10,7 +10,7 @@
 #include "hitbox/name_mesh_win32.hpp"
 #endif
 #include "hitbox/world_render_profile.hpp"
-#include <bedrock/generated/symbols.hpp>
+#include <bedrock/sdk.hpp>
 #include <cassert>
 #include <limits>
 
@@ -72,9 +72,9 @@ int main() {
         assert(hitbox::normalizedName(std::string_view(updated->bytes.data(),updated->size))==japanese);
         assert(mailbox->observe({2,key.runtimeId,key.actor,key.entity},"NewWorld"));
         assert(std::string(mailbox->read(key)->bytes.data(),mailbox->read(key)->size)==japanese);
-        const bedrock::ActorBounds bounds{{-0.5f,0,-0.5f},{0.5f,2,0.5f}};
+        const bedrock::sdk::ActorBoundsValue bounds{{-0.5f,0,-0.5f},{0.5f,2,0.5f},true};
         const auto label=hitbox::nameBillboard(bounds,{0,5,5});
-        const bedrock::Vec3 toCamera{-label.anchor.x,5-label.anchor.y,5-label.anchor.z};
+        const bedrock::sdk::Vector3 toCamera{-label.anchor.x,5-label.anchor.y,5-label.anchor.z};
         assert(std::abs(label.up.x*toCamera.x+label.up.y*toCamera.y+label.up.z*toCamera.z)<0.0001f);
         assert(std::abs(label.right.x*label.up.x+label.right.y*label.up.y+label.right.z*label.up.z)<0.0001f);
         const auto vertex=hitbox::nameVertex(label,{0,0},0.25f,{100,200,300});
@@ -103,39 +103,12 @@ int main() {
         }
 #endif
     }
-    hitbox::WorldRenderProfile profile;
+    bedrock::sdk::Profiles profiles;
+    bedrock::sdk::SymbolResolver resolver;
+    bedrock::sdk::WorldRender worldRender;
+    bedrock::sdk::ActorFacade actors;
     std::string error;
-    assert(hitbox::parseWorldRenderProfile(bedrock::generated::kSymbolDatabase,profile,error));
-    assert(profile.actorTypeValueOffset==0 && profile.playerTypeId==319);
-    assert(profile.functions[0].rva==0x47f8570 && profile.functions[0].guard.size()==24);
-    assert(profile.commonMaterialGroup==0x11e3b308 && profile.material==0x10f0 && profile.origin==0x660 && profile.tess==0xb8);
-    const auto original=nlohmann::json::parse(bedrock::generated::kSymbolDatabase);
-    for (const char* key : {"level_renderer_player","render_origin","selection_material",
-        "screen_tessellator","screen_shader_color","tess_translation","tess_building",
-        "tess_special_mode","shader_color_dirty"}) {
-        auto invalid=original; invalid["native_world_render"]["offsets"].erase(key);
-        assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    }
-    auto invalid=original; invalid.erase("native_world_render");
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    invalid=original; invalid["native_world_render"]["functions"]["begin"]["rva"]="0xffffffff";
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    invalid=original; invalid["native_world_render"]["functions"]["color"]["entry_check"]="?? ??";
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    invalid=original; invalid["native_world_render"]["pointer_size"]=4;
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    invalid=original; invalid["native_world_render"].erase("common_material_group_rva");
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    for(const char* key:{"hashed_name_ctor","material_ctor"}) {
-        invalid=original; invalid["native_world_render"]["functions"].erase(key);
-        assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    }
-    for(const char* key:{"value_offset","value_size","player_type_id"}) {
-        invalid=original; invalid["native_actors"]["actor_type"].erase(key);
-        assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
-    }
-    invalid=original; invalid["native_actors"]["actor_type"]["value_size"]=8;
-    assert(!hitbox::parseWorldRenderProfile(invalid.dump(),profile,error));
+    (void)profiles; (void)resolver; (void)worldRender; (void)actors; (void)error;
     hitbox::BatchQueue<int,2> queue;
     assert(queue.empty() && !queue.pop());
     assert(queue.push(1) && queue.push(2) && !queue.push(3));
@@ -175,8 +148,8 @@ int main() {
     schedule.reset(); assert(schedule.beginTick(0)==0);
     assert(schedule.beginTick(1000)==hitbox::CaptureSchedule::maximumBatch);
     const auto now=hitbox::Clock::now();
-    const bedrock::Vec3 camera{};
-    hitbox::Sample sample{0x100000001ULL, {{0,0,0},{1,2,1}}, now};
+    const bedrock::sdk::Vector3 camera{};
+    hitbox::Sample sample{0x100000001ULL, {{0,0,0},{1,2,1},{true}}, false, 1, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::steady_clock::duration>(now.time_since_epoch()).count()), 0, 0};
     hitbox::BoxCache cache;
     assert(cache.beginWorld(1));
     cache.observe(sample,camera,32,false);
@@ -192,7 +165,7 @@ int main() {
     {
         hitbox::BoxCache smooth;
         smooth.beginWorld(1); smooth.observe(sample,camera,32,false);
-        auto moved=sample; moved.seenAt=now+500ms;
+        auto moved=sample; moved.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+500ms).time_since_epoch()).count();
         moved.bounds={{2,0,0},{3,2,1}};
         smooth.observe(moved,camera,32,false);
         auto boxes=smooth.visible(now+500ms,camera,32,false,1500ms);
@@ -203,15 +176,15 @@ int main() {
         const auto lines=hitbox::worldLineVertices(boxes[0],{},now+750ms);
         assert(lines[0].x==1 && lines[1].x==2);
         // A new sample arriving during a blend starts at the currently drawn position.
-        moved.seenAt=now+750ms; moved.bounds={{4,0,0},{5,2,1}};
+        moved.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+750ms).time_since_epoch()).count(); moved.bounds={{4,0,0},{5,2,1}};
         smooth.observe(moved,camera,32,false);
         boxes=smooth.visible(now+750ms,camera,32,false,1500ms);
         assert(hitbox::interpolatedBounds(boxes[0],now+750ms).minimum.x==1);
-        moved.seenAt=now+1000ms; moved.bounds={{20,0,0},{21,2,1}};
+        moved.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+1000ms).time_since_epoch()).count(); moved.bounds={{20,0,0},{21,2,1}};
         smooth.observe(moved,camera,32,false);
         boxes=smooth.visible(now+1000ms,camera,32,false,1500ms);
         assert(boxes[0].blendDuration.count()==0); // Teleport snaps immediately.
-        moved.seenAt=now+4000ms; moved.bounds={{21,0,0},{22,2,1}};
+        moved.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+4000ms).time_since_epoch()).count(); moved.bounds={{21,0,0},{22,2,1}};
         smooth.observe(moved,camera,32,false);
         boxes=smooth.visible(now+4000ms,camera,32,false,1500ms);
         assert(boxes[0].blendDuration.count()==0); // Stale IDs do not animate across a gap.
@@ -256,7 +229,7 @@ int main() {
         assert(budget->size()==1 && second.size()==1);
         // Old epoch releases cannot consume or free the new world's slots.
         assert(first.beginWorld(2));
-        other.seenAt=now+3s; first.observe(other,camera,100,false);
+        other.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+3s).time_since_epoch()).count(); first.observe(other,camera,100,false);
         assert(budget->size()==1);
         second.visible(now+5s,camera,100,false,1500ms);
         assert(budget->size()==1 && !second.beginWorld(1));
@@ -268,7 +241,7 @@ int main() {
         auto player=sample; player.isPlayer=true;
         for(int i=0;i<=8;++i) {
             player.bounds={{i ? 1.f : 0.f,0,0},{i ? 2.f : 1.f,2,1}};
-            player.seenAt=now+250ms*i; saved.observe(player,camera,100,true);
+            player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+250ms*i).time_since_epoch()).count(); saved.observe(player,camera,100,true);
         }
         assert(saved.size()==1 && saved.retainedSize()==0 && budget->size()==1);
         saved.visible(now+4s,camera,100,true,1500ms);
@@ -277,7 +250,7 @@ int main() {
         assert(budget->size()==0);
         for(int i=0;i<=8;++i) {
             player.bounds={{i ? 2.f : 1.f,0,0},{i ? 3.f : 2.f,2,1}};
-            player.seenAt=now+6s+250ms*i; saved.observe(player,camera,100,true);
+            player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+6s+250ms*i).time_since_epoch()).count(); saved.observe(player,camera,100,true);
         }
         saved.visible(now+10min+8s,camera,100,true,1500ms);
         assert(budget->size()==0 && saved.retainedSize()==0);
@@ -306,41 +279,41 @@ int main() {
         assert(latest.retainedSize()==0); // Initial static Player is not eligible.
         auto boxes=latest.visible(now,camera,32,true,1500ms,false,true);
         assert(boxes.size()==1 && !boxes[0].retained);
-        player.bounds={{2,0,0},{3,2,1}}; player.seenAt=now+250ms;
+        player.bounds={{2,0,0},{3,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+250ms).time_since_epoch()).count();
         latest.observe(player,camera,32,true);
-        player.seenAt=now+750ms; latest.observe(player,camera,32,true);
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+750ms).time_since_epoch()).count(); latest.observe(player,camera,32,true);
         assert(latest.retainedSize()==0);
         player.bounds={{2.5f,0,0},{3.5f,2,1}};
-        player.seenAt=now+1250ms; latest.observe(player,camera,32,true);
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+1250ms).time_since_epoch()).count(); latest.observe(player,camera,32,true);
         assert(latest.retainedSize()==0); // Confirmed stillness is only a candidate while live.
         boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2.5f);
         assert(boxes[0].blendDuration.count()==0);
         const auto frozen=boxes[0];
-        assert(hitbox::visibleInFrame(frozen,player.seenAt+10min-1ms,1500ms,true,true));
-        assert(!hitbox::visibleInFrame(frozen,player.seenAt+10min,1500ms,true,true));
-        auto delayed=sample; delayed.isPlayer=true; delayed.seenAt=now+100ms;
+        assert(hitbox::visibleInFrame(frozen,hitbox::captureTime(player)+10min-1ms,1500ms,true,true));
+        assert(!hitbox::visibleInFrame(frozen,hitbox::captureTime(player)+10min,1500ms,true,true));
+        auto delayed=sample; delayed.isPlayer=true; delayed.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+100ms).time_since_epoch()).count();
         latest.observe(delayed,camera,32,true);
         boxes=latest.visible(now+3s,camera,32,true,1500ms);
         assert(boxes.size()==1 && boxes[0].bounds.minimum.x==2.5f);
-        player.isPlayer=false; player.bounds={{5,0,0},{6,2,1}}; player.seenAt=now+3s;
+        player.isPlayer=false; player.bounds={{5,0,0},{6,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+3s).time_since_epoch()).count();
         latest.observe(player,camera,32,true);
         boxes=latest.visible(now+3s,camera,32,true,1500ms,false,true);
         assert(boxes.size()==1 && boxes[0].isPlayer && !boxes[0].retained && latest.retainedSize()==0);
-        player.bounds={{6,0,0},{7,2,1}}; player.seenAt=now+3250ms;
+        player.bounds={{6,0,0},{7,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+3250ms).time_since_epoch()).count();
         latest.observe(player,camera,32,true);
-        player.seenAt=now+4250ms; latest.observe(player,camera,32,true);
-        auto collapsed=player; collapsed.seenAt=now+5s; collapsed.bounds.maximum=collapsed.bounds.minimum;
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+4250ms).time_since_epoch()).count(); latest.observe(player,camera,32,true);
+        auto collapsed=player; collapsed.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+5s).time_since_epoch()).count(); collapsed.bounds.maximum=collapsed.bounds.minimum;
         latest.observe(collapsed,camera,32,true);
         boxes=latest.visible(now+6s,camera,32,true,1500ms,false,true);
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==6);
-        assert(latest.visible(player.seenAt+10min,camera,32,true,1500ms).empty());
+        assert(latest.visible(hitbox::captureTime(player)+10min,camera,32,true,1500ms).empty());
         assert(latest.retainedSize()==0);
-        player.seenAt=now+11min; player.isPlayer=true;
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+11min).time_since_epoch()).count(); player.isPlayer=true;
         latest.observe(player,camera,32,true);
-        player.bounds={{7,0,0},{8,2,1}}; player.seenAt=now+11min+250ms;
+        player.bounds={{7,0,0},{8,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+11min+250ms).time_since_epoch()).count();
         latest.observe(player,camera,32,true);
-        player.seenAt=now+11min+1250ms; latest.observe(player,camera,32,true);
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+11min+1250ms).time_since_epoch()).count(); latest.observe(player,camera,32,true);
         latest.visible(now+11min+3s,camera,32,true,1500ms);
         assert(latest.retainedSize()==1);
         assert(!latest.beginWorld(0) && latest.retainedSize()==1);
@@ -352,16 +325,16 @@ int main() {
         auto edge=sample; edge.isPlayer=true;
         edge.bounds={{98.5f,-0.5f,-0.5f},{99.5f,0.5f,0.5f}};
         ranged.observe(edge,camera,100,true);
-        edge.bounds={{99.5f,-0.5f,-0.5f},{100.5f,0.5f,0.5f}}; edge.seenAt=now+250ms;
+        edge.bounds={{99.5f,-0.5f,-0.5f},{100.5f,0.5f,0.5f}}; edge.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+250ms).time_since_epoch()).count();
         ranged.observe(edge,camera,100,true);
-        edge.seenAt=now+1250ms; ranged.observe(edge,camera,100,true);
+        edge.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+1250ms).time_since_epoch()).count(); ranged.observe(edge,camera,100,true);
         assert(ranged.retainedSize()==0);
         assert(ranged.visible(now+3s,camera,100,true,1500ms).size()==1);
         assert(ranged.retainedSize()==1);
         assert(ranged.visible(now+3s,camera,99,true,1500ms).empty());
-        assert(ranged.visible(edge.seenAt+10min,camera,99,true,1500ms).empty());
+        assert(ranged.visible(hitbox::captureTime(edge)+10min,camera,99,true,1500ms).empty());
         assert(ranged.retainedSize()==0);
-        edge.bounds={{100,-0.5f,-0.5f},{101,0.5f,0.5f}}; edge.seenAt=now+11min;
+        edge.bounds={{100,-0.5f,-0.5f},{101,0.5f,0.5f}}; edge.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+11min).time_since_epoch()).count();
         ranged.observe(edge,camera,100,true);
         assert(ranged.size()==0 && ranged.retainedSize()==0);
     }
@@ -370,36 +343,36 @@ int main() {
         moving.beginWorld(1); npc.beginWorld(1);
         auto player=sample; player.isPlayer=true;
         for(int i=0;i<=20;++i) {
-            player.seenAt=now+250ms*i;
+            player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+250ms*i).time_since_epoch()).count();
             player.bounds={{0.4f*i,0,0},{1+0.4f*i,2,1}};
             moving.observe(player,camera,32,true);
-            auto other=sample; other.seenAt=player.seenAt;
+            auto other=sample; other.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((hitbox::captureTime(player)).time_since_epoch()).count();
             npc.observe(other,camera,32,true);
         }
         assert(moving.retainedSize()==0 && npc.retainedSize()==0);
         assert(moving.visible(now+7s,camera,32,true,1500ms).empty()); // Moving at disappearance is not saved.
-        player.seenAt=now+8s; moving.observe(player,camera,32,true);
-        player.bounds={{2,0,0},{3,2,1}}; player.seenAt=now+8250ms;
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+8s).time_since_epoch()).count(); moving.observe(player,camera,32,true);
+        player.bounds={{2,0,0},{3,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+8250ms).time_since_epoch()).count();
         moving.observe(player,camera,32,true);
-        player.seenAt=now+9250ms; moving.observe(player,camera,32,true);
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+9250ms).time_since_epoch()).count(); moving.observe(player,camera,32,true);
         auto boxes=moving.visible(now+11s,camera,32,true,1500ms);
         assert(boxes.size()==1 && boxes[0].retained && boxes[0].bounds.minimum.x==2);
         moving.visible(now+11s,camera,32,false,1500ms);
         assert(moving.retainedSize()==0);
-        player.seenAt=now+12s; moving.observe(player,camera,32,true);
-        player.bounds={{3,0,0},{4,2,1}}; player.seenAt=now+12250ms;
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+12s).time_since_epoch()).count(); moving.observe(player,camera,32,true);
+        player.bounds={{3,0,0},{4,2,1}}; player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+12250ms).time_since_epoch()).count();
         moving.observe(player,camera,32,true);
-        player.seenAt=now+13250ms; moving.observe(player,camera,32,true);
+        player.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+13250ms).time_since_epoch()).count(); moving.observe(player,camera,32,true);
         assert(moving.visible(now+15s,camera,32,true,1500ms).size()==1);
         assert(moving.retainedSize()==1);
-        assert(moving.visible(player.seenAt+10min,camera,32,true,1500ms).empty());
+        assert(moving.visible(hitbox::captureTime(player)+10min,camera,32,true,1500ms).empty());
         assert(moving.retainedSize()==0);
     }
 
     cache.observe(sample,camera,32,false);
     // Out-of-order samples cannot overwrite a more recent capture.
     auto older=sample;
-    older.seenAt=now-1s;
+    older.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now-1s).time_since_epoch()).count();
     older.bounds.minimum.x=0.5f;
     cache.observe(older,camera,32,false);
     assert(cache.visible(now,camera,32,false,1500ms)[0].bounds.minimum.x==0);
@@ -413,7 +386,7 @@ int main() {
     // At capacity new IDs are rejected; existing tracking is not churned.
     for (std::size_t i=0;i<=hitbox::BoxCache::maximumRecords;++i) {
         sample.runtimeId=i+1;
-        sample.seenAt=now+std::chrono::milliseconds(i);
+        sample.capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>((now+std::chrono::milliseconds(i)).time_since_epoch()).count();
         cache.observe(sample,camera,32,true);
     }
     assert(cache.size()==hitbox::BoxCache::maximumRecords);

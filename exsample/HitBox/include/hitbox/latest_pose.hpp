@@ -16,13 +16,14 @@ public:
                 auto& slot=slots_[(first+n)%capacity];
                 if(slot.epoch!=epoch || slot.box.runtimeId==sample.runtimeId) {selected=&slot;break;}
             }
-            if(!selected || (selected->epoch==epoch && selected->box.seenAt>=sample.seenAt))continue;
+            const auto captured=captureTime(sample);
+            if(!selected || (selected->epoch==epoch && selected->box.seenAt>=captured))continue;
             BoxRecord next;
-            static_cast<Sample&>(next)=sample;next.corners=corners(sample.bounds);
+            static_cast<Sample&>(next)=sample;next.seenAt=captured;next.corners=corners(sample.bounds);
             next.blendFrom=sample.bounds;
             if(selected->epoch==epoch && selected->box.runtimeId==sample.runtimeId &&
-               sample.seenAt-selected->box.seenAt<=std::chrono::milliseconds(250)) {
-                const auto from=interpolatedBounds(selected->box,sample.seenAt);
+               captured-selected->box.seenAt<=std::chrono::milliseconds(250)) {
+                const auto from=interpolatedBounds(selected->box,captured);
                 if(distanceSquared(center(from),center(sample.bounds))<=64.f) {
                     next.blendFrom=from;
                     next.blendDuration=std::chrono::milliseconds(50); // One 20Hz tick, never a long tail.

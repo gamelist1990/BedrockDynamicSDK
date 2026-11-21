@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/detail/actor_tracking_types.hpp>
+#include <bedrock/sdk.hpp>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -15,22 +15,26 @@ namespace hitbox {
 using Clock = std::chrono::steady_clock;
 // The capture sample itself is the SDK's value type; HitBox adds policy
 // (caching, blending, retention) around it, never native pointers.
-using Sample = bedrock::ActorRegistrySample;
+using Sample = bedrock::sdk::ActorSample;
 struct BoxRecord : Sample {
-    std::array<bedrock::Vec3, 8> corners{};
-    bedrock::ActorBounds blendFrom{};
+    Clock::time_point seenAt{};
+    std::array<bedrock::sdk::Vector3, 8> corners{};
+    bedrock::sdk::ActorBoundsValue blendFrom{};
     std::chrono::milliseconds blendDuration{};
     bool retained{};
 };
-inline float distanceSquared(const bedrock::Vec3& a, const bedrock::Vec3& b) noexcept {
+inline float distanceSquared(const bedrock::sdk::Vector3& a, const bedrock::sdk::Vector3& b) noexcept {
     const float x=a.x-b.x, y=a.y-b.y, z=a.z-b.z;
     return x*x+y*y+z*z;
 }
-inline bedrock::Vec3 center(const bedrock::ActorBounds& b) noexcept {
+inline Clock::time_point captureTime(const Sample& sample) noexcept {
+    return Clock::time_point{Clock::duration{static_cast<Clock::duration::rep>(sample.capturedAt)}};
+}
+inline bedrock::sdk::Vector3 center(const bedrock::sdk::ActorBoundsValue& b) noexcept {
     return {(b.minimum.x+b.maximum.x)*0.5f, (b.minimum.y+b.maximum.y)*0.5f,
             (b.minimum.z+b.maximum.z)*0.5f};
 }
-inline std::array<bedrock::Vec3, 8> corners(const bedrock::ActorBounds& b) noexcept {
+inline std::array<bedrock::sdk::Vector3, 8> corners(const bedrock::sdk::ActorBoundsValue& b) noexcept {
     return {{{b.minimum.x,b.minimum.y,b.minimum.z}, {b.maximum.x,b.minimum.y,b.minimum.z},
         {b.maximum.x,b.minimum.y,b.maximum.z}, {b.minimum.x,b.minimum.y,b.maximum.z},
         {b.minimum.x,b.maximum.y,b.minimum.z}, {b.maximum.x,b.maximum.y,b.minimum.z},
@@ -58,12 +62,12 @@ private:
     std::uint64_t tick_{},nextSweep_{};
     std::size_t remaining_{},population_{};
 };
-inline bedrock::ActorBounds interpolatedBounds(const BoxRecord& box, Clock::time_point now) noexcept {
+inline bedrock::sdk::ActorBoundsValue interpolatedBounds(const BoxRecord& box, Clock::time_point now) noexcept {
     if (box.blendDuration.count()<=0) return box.bounds;
     const float alpha=std::clamp(std::chrono::duration<float>(now-box.seenAt).count()/
         std::chrono::duration<float>(box.blendDuration).count(),0.f,1.f);
-    const auto lerp=[alpha](const bedrock::Vec3& from,const bedrock::Vec3& to) {
-        return bedrock::Vec3{from.x+(to.x-from.x)*alpha,from.y+(to.y-from.y)*alpha,from.z+(to.z-from.z)*alpha};
+    const auto lerp=[alpha](const bedrock::sdk::Vec3Value& from,const bedrock::sdk::Vec3Value& to) {
+        return bedrock::sdk::Vec3Value{from.x+(to.x-from.x)*alpha,from.y+(to.y-from.y)*alpha,from.z+(to.z-from.z)*alpha};
     };
     return {lerp(box.blendFrom.minimum,box.bounds.minimum),lerp(box.blendFrom.maximum,box.bounds.maximum)};
 }
@@ -74,14 +78,14 @@ inline std::array<float,4> opaqueColor(std::uint32_t packed) noexcept {
 }
 // The engine's 3D pass already owns the view/projection matrices. Supply line
 // vertices relative to its render origin; do not add an eye-height or FOV guess.
-inline std::array<bedrock::Vec3, 24> worldLineVertices(
-    const BoxRecord& box, const bedrock::Vec3& renderOrigin,
+inline std::array<bedrock::sdk::Vector3, 24> worldLineVertices(
+    const BoxRecord& box, const bedrock::sdk::Vector3& renderOrigin,
     Clock::time_point now=Clock::time_point::max()) noexcept {
     constexpr std::array<std::array<unsigned, 2>, 12> edges{{
         {{0,1}},{{1,2}},{{2,3}},{{3,0}},{{4,5}},{{5,6}},{{6,7}},{{7,4}},
         {{0,4}},{{1,5}},{{2,6}},{{3,7}}}};
     const auto currentCorners=now==Clock::time_point::max() ? box.corners : corners(interpolatedBounds(box,now));
-    std::array<bedrock::Vec3, 24> result{};
+    std::array<bedrock::sdk::Vector3, 24> result{};
     std::size_t index = 0;
     for (const auto& edge : edges) {
         for (const auto corner : edge) {
@@ -177,15 +181,16 @@ public:
         if (epoch != epoch_) { records_.clear(); retained_.clear(); retaining_=false; epoch_=epoch; }
         return true;
     }
-    void observe(const Sample& sample, const bedrock::Vec3& camera, float range, bool retain, bool allActors=false) {
+    void observe(const Sample& sample, const bedrock::sdk::Vector3& camera, float range, bool retain, bool allActors=false) {
         configureRetention(retain);
         const auto& bounds=sample.bounds;
-        if (!sample.runtimeId || !bounds.valid() || bounds.minimum.x==bounds.maximum.x ||
+        if (!sample.runtimeId || !bounds.valid || bounds.minimum.x==bounds.maximum.x ||
             bounds.minimum.y==bounds.maximum.y || bounds.minimum.z==bounds.maximum.z) return;
+        const auto captured=captureTime(sample);
         const auto old=records_.find(sample.runtimeId);
         const auto saved=retained_.find(sample.runtimeId);
-        if ((old!=records_.end() && old->second.box.seenAt>=sample.seenAt) ||
-            (saved!=retained_.end() && saved->second.seenAt>=sample.seenAt)) return;
+        if ((old!=records_.end() && old->second.box.seenAt>=captured) ||
+            (saved!=retained_.end() && saved->second.seenAt>=captured)) return;
         if (!allActors && distanceSquared(center(sample.bounds),camera)>range*range) {
             records_.erase(sample.runtimeId);
             retained_.erase(sample.runtimeId); // A fresh out-of-range observation is not disappearance.
@@ -198,6 +203,7 @@ public:
         const auto previousSeen=old!=records_.end() ? old->second.box.seenAt : Clock::time_point{};
         auto& box=entry.box;
         static_cast<Sample&>(box)=sample;
+        box.seenAt=captured;
         box.corners=hitbox::corners(sample.bounds);
         box.blendFrom=sample.bounds;
         box.blendDuration=std::chrono::milliseconds(0);
@@ -207,8 +213,8 @@ public:
                      retained_.contains(sample.runtimeId);
         if (old!=records_.end()) {
             const auto& previous=old->second;
-            const auto age=sample.seenAt-previous.box.seenAt;
-            const auto from=interpolatedBounds(previous.box,sample.seenAt);
+            const auto age=captured-previous.box.seenAt;
+            const auto from=interpolatedBounds(previous.box,captured);
             if (age<=std::chrono::seconds(2) &&
                 distanceSquared(center(from),center(sample.bounds))<=64.f) {
                 box.blendFrom=from;
@@ -219,21 +225,21 @@ public:
         // Qualification requires actual observed motion before a full second
         // of observed stillness. Missing reads never advance this timer.
         const auto position=feet(box.bounds);
-        if(!retain || old==records_.end() || sample.seenAt-previousSeen>std::chrono::seconds(2)) {
+        if(!retain || old==records_.end() || captured-previousSeen>std::chrono::seconds(2)) {
             entry.moved=false; entry.stationaryConfirmed=false;
-            entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
+            entry.stationaryAnchor=position; entry.stationarySince=captured;
         } else if((!entry.moved && distanceSquared(position,entry.stationaryAnchor)>0.03f*0.03f) ||
                   distanceSquared(position,entry.stationaryAnchor)>1.0f) {
             entry.moved=true; entry.stationaryConfirmed=false;
-            entry.stationaryAnchor=position; entry.stationarySince=sample.seenAt;
+            entry.stationaryAnchor=position; entry.stationarySince=captured;
         } else {
-            entry.stationaryConfirmed=entry.moved && sample.seenAt-entry.stationarySince>=std::chrono::seconds(1);
+            entry.stationaryConfirmed=entry.moved && captured-entry.stationarySince>=std::chrono::seconds(1);
         }
         // Returning/moving Actors must not leave an older saved box behind.
         retained_.erase(sample.runtimeId);
         records_.insert_or_assign(sample.runtimeId,std::move(entry));
     }
-    std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::Vec3& camera,
+    std::vector<BoxRecord> visible(Clock::time_point now, const bedrock::sdk::Vector3& camera,
         float range, bool retain, std::chrono::milliseconds liveLifetime, bool allActors=false, bool playersOnly=false,
         std::chrono::milliseconds retainedLifetime=std::chrono::minutes(10)) {
         configureRetention(retain);
@@ -280,13 +286,13 @@ public:
     std::size_t size() const noexcept { return records_.size(); }
     std::size_t retainedSize() const noexcept { return retained_.size(); }
 private:
-    static bedrock::Vec3 feet(const bedrock::ActorBounds& bounds) noexcept {
+    static bedrock::sdk::Vector3 feet(const bedrock::sdk::ActorBoundsValue& bounds) noexcept {
         return {(bounds.minimum.x+bounds.maximum.x)*0.5f,bounds.minimum.y,
                 (bounds.minimum.z+bounds.maximum.z)*0.5f};
     }
     struct Entry {
         BoxRecord box;
-        bedrock::Vec3 stationaryAnchor{};
+        bedrock::sdk::Vector3 stationaryAnchor{};
         Clock::time_point stationarySince{};
         bool moved{},stationaryConfirmed{};
     };

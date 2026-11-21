@@ -1,6 +1,6 @@
 #pragma once
-#include <bedrock/native/world_render.hpp>
+#include <bedrock/sdk.hpp>
 namespace hitbox {
-using bedrock::WorldRenderProfile;
-using bedrock::parseWorldRenderProfile;
-}
+// HitBox no longer parses native render-layout structures locally.
+// The public Profiles/WorldRender facades own exact-build profile resolution.
+} // namespace hitbox

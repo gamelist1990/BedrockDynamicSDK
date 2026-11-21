@@ -1,7 +1,5 @@
-#include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/sdk.hpp>
 #ifdef _WIN32
-#include <bedrock/native/local_player.hpp>
-#include <bedrock/native/player_list.hpp>
 #if !defined(_MSC_VER)
 #error "HitBox native EnTT access requires the Microsoft C++ ABI (MSVC or clang-cl)."
 #endif
@@ -10,17 +8,7 @@
 #include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
-
-#include <bedrock/detail/hook_dispatch.hpp>
-#include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/runtime/hook_runtime.h>
-#include <bedrock/logging/logger.hpp>
-#include <bedrock/native/actor_registry.hpp>
-#include <bedrock/native/actors.hpp>
-#include <bedrock/native/items.hpp>
-#include <bedrock/profiles/remote_catalog.hpp>
-#include <bedrock/profiles/resolver.hpp>
-#include <bedrock/generated/symbols.hpp>
+#endif
 #if _ITERATOR_DEBUG_LEVEL != 0
 #error "HitBox must use the release STL layout: build Release with iterator debugging disabled."
 #endif
@@ -87,7 +75,7 @@ hitbox::LatestPoseMailbox latestPoses;
 hitbox::PlayerNameArchive playerNames;
 struct CameraState {
     std::uint64_t epoch{};
-    bedrock::Vec3 cameraPosition{};
+    bedrock::sdk::Vector3 cameraPosition{};
 };
 struct RenderSnapshot {
     std::uint64_t epoch{};
@@ -138,14 +126,14 @@ std::atomic<std::int64_t> gameHeartbeatMs{};
 struct RenderCameraMailbox {
     std::mutex mutex;
     std::uint64_t epoch{};
-    bedrock::Vec3 origin{};
-    void publish(std::uint64_t value,const bedrock::Vec3& position) {
+    bedrock::sdk::Vector3 origin{};
+    void publish(std::uint64_t value,const bedrock::sdk::Vector3& position) {
         std::unique_lock lock(mutex,std::try_to_lock);
         if(lock) { epoch=value; origin=position; }
     }
-    std::optional<bedrock::Vec3> read(std::uint64_t value) {
+    std::optional<bedrock::sdk::Vector3> read(std::uint64_t value) {
         std::lock_guard lock(mutex);
-        return epoch==value ? std::optional<bedrock::Vec3>{origin} : std::nullopt;
+        return epoch==value ? std::optional<bedrock::sdk::Vector3>{origin} : std::nullopt;
     }
 } renderCamera;
 std::atomic<std::uint64_t> renderBoundaryChanges{};
@@ -376,181 +364,16 @@ bool looksLikeActor(void* actor) noexcept {
     return valid >= 2;
 }
 
-class HitBoxAccess final : public bedrock::ClientAccess {
-public:
-    void setLayouts(bedrock::NativeItemLayout items, bedrock::NativeActorLayout actors,
-                    std::size_t actorTypeOffset, std::uint32_t playerType) {
-        itemLayout_ = std::move(items);
-        actorLayout_ = std::move(actors);
-        registry_.configure(actorLayout_, actorTypeOffset, playerType);
-    }
-    void loadNativePlayers(std::string_view profile){localGetter_.load(profile);
-        try{playerRoster_.load(profile);}catch(const std::exception&){}}
-    void setClient(void* client) noexcept { client_.store(client, std::memory_order_release); }
-    void* clientIdentity() const noexcept { return client_.load(std::memory_order_acquire); }
-    void setWorld(void* world) noexcept { world_.store(world, std::memory_order_release); }
-    void resetPlayerTracking() noexcept { knownPlayers_.reset(); }
-    bool copyNameEntityId(void* actor,std::uint32_t& id) const noexcept {
-        return registry_.readEntityId(actor,id);
-    }
+bedrock::sdk::ActorFacade actorFacade;
+std::atomic<void*> hitboxClient{};
+std::atomic<void*> hitboxWorld{};
 
-    bool isActorValid(void* actor) const noexcept override { return looksLikeActor(actor); }
-    void* localPlayer() const noexcept override {
-        void* client = client_.load(std::memory_order_acquire);
-        void* world = world_.load(std::memory_order_acquire);
-        if (!client) return nullptr;
-        struct LocalCache {
-            const HitBoxAccess* adapter{};
-            void* client{};
-            void* world{};
-            void* actor{};
-            void* registry{};
-            std::uint32_t entity{};
-            Clock::time_point expires{};
-        };
-        static thread_local LocalCache cached;
-        void* registry = nullptr;
-        std::uint32_t entity = 0;
-        if (cached.adapter == this && cached.client == client && cached.world == world && cached.actor && Clock::now() < cached.expires &&
-            (registry = registry_.registryOf(cached.actor)) &&
-            registry == cached.registry &&
-            registry_.readEntityId(cached.actor, entity) &&
-            entity == cached.entity) return cached.actor;
-        cached = {};
-        void* actor = localGetter_.get(client);
-        if (actor && (registry = registry_.registryOf(actor)) && registry &&
-            registry_.readEntityId(actor, entity))
-            cached = {this, client, world, actor, registry, entity, Clock::now()+std::chrono::milliseconds(50)};
-        return actor;
-    }
 
-    void* worldOf(void* actor) const noexcept override {
-        return isActorValid(actor) ? world_.load(std::memory_order_acquire) : nullptr;
-    }
-    std::optional<std::string> nameTag(void*) const override { return std::nullopt; }
-    std::vector<std::string> playerListNames(void*) const override { return {}; }
-    std::optional<bedrock::ServerAddress> serverAddress(void*) const override {
-        return std::nullopt;
-    }
-    std::optional<bedrock::ActorBounds> actorBounds(void* actor) const override {
-        bedrock::ActorBounds result{};
-        return registry_.readBounds(actor, result) && result.valid()
-            ? std::optional<bedrock::ActorBounds>{result} : std::nullopt;
-    }
-    std::optional<bedrock::Vec3> actorPosition(void* actor) const override {
-        bedrock::Vec3 result{};
-        return registry_.readPosition(actor, result)
-            ? std::optional<bedrock::Vec3>{result} : std::nullopt;
-    }
-    std::optional<bedrock::ActorRotation> actorRotation(void* actor) const override {
-        bedrock::ActorRotation result{};
-        return registry_.readRotation(actor, result)
-            ? std::optional<bedrock::ActorRotation>{result} : std::nullopt;
-    }
-    std::optional<std::uint32_t> actorEntityId(void* actor) const override {
-        std::uint32_t entityId = 0;
-        return isActorValid(actor) && registry_.readEntityId(actor, entityId)
-            ? std::optional<std::uint32_t>{entityId} : std::nullopt;
-    }
-
-    std::uint64_t runtimeIdentity(void* actor) const noexcept {
-        return registry_.runtimeIdentity(actor);
-    }
-    std::uintptr_t registryIdentity(void* actor) const noexcept {
-        return registry_.registryIdentity(actor);
-    }
-    bool captureBatch(void* local, std::size_t& cursor, hitbox::CaptureSchedule& schedule, CaptureBatch& batch,
-                      std::size_t& visited) const noexcept {
-        // No EnTT iterator/storage/component pointer survives the callback;
-        // the SDK registry walk publishes value samples and diagnostics only.
-        visited = 0;
-        bedrock::ActorRegistryCaptureStats stats;
-        const auto publish = [&] {
-            batch.captureStage = stats.stage;
-            batch.captureFailure = stats.failure;
-            batch.faultCode = stats.faultCode;
-            batch.faultAddress = stats.faultAddress;
-            batch.population = stats.population;
-            batch.missingRuntime = stats.missingRuntime;
-            batch.filteredActors = stats.filteredActors;
-            batch.invalidOwner = stats.invalidOwner;
-            batch.nativePlayers = stats.nativePlayers;
-            batch.rememberedPlayers = stats.rememberedPlayers;
-            batch.missingShape = stats.missingShape;
-            batch.invalidBounds = stats.invalidBounds;
-        };
-        if (!registry_.registryPopulation(local, stats)) { publish(); return false; }
-        if (!stats.population) { cursor = 0; schedule.beginTick(0); publish(); return true; }
-        const auto count = schedule.beginTick(stats.population);
-        bedrock::ActorRegistryCapturePolicy policy;
-        policy.playersOnly = batch.config->playersOnly;
-        policy.knownPlayer = [](void* context, std::uint64_t runtimeId) noexcept {
-            return static_cast<const hitbox::PlayerIdentityCache*>(context)->known(runtimeId);
-        };
-        policy.classifyPlayer = [](void* context, std::uint64_t runtimeId) noexcept {
-            static_cast<hitbox::PlayerIdentityCache*>(context)->classify(runtimeId, true);
-        };
-        policy.context = &knownPlayers_;
-        std::size_t sampleCount = 0;
-        const bool ok = registry_.captureBatch(local, policy, count, cursor, batch.samples.data(),
-                                               batch.samples.size(), sampleCount, visited, stats);
-        batch.count = sampleCount;
-        schedule.visited(visited);
-        publish();
-        return ok;
-    }
-    void capturePlayerNames(void* world,std::uint64_t epoch,int minutes) const noexcept {
-        if(!playerRoster_.ready())return;
-        const auto now=Clock::now();
-        if(now<nextRoster_ && rosterEpoch_==epoch)return;
-        nextRoster_=now+std::chrono::seconds(1);rosterEpoch_=epoch;
-        const auto rows=playerRoster_.snapshot(world);if(!rows)return;
-        std::size_t count{};for(const auto& row:*rows){if(count==rosterCopies_.size())break;
-            auto& target=rosterCopies_[count++];target={};target.uuid={row.uuid.low,row.uuid.high};target.uniqueId=row.uniqueId;
-            target.size=std::min(row.name.size(),target.bytes.size());std::memcpy(target.bytes.data(),row.name.data(),target.size);}
-        playerNames.publish(epoch,rosterCopies_.data(),count,std::chrono::minutes(minutes));
-    }
-    // Keep stable EnTT handles for already discovered Actors. New Actor discovery
-    // stays bounded; positions of all tracked live handles are copied once per
-    // LevelTick, without walking Actor objects, names or equipment again.
-    void refreshTrackedPoses(void* local,CaptureBatch& batch) const noexcept {
-        const auto begin=Clock::now();
-        if(poseEpoch_!=batch.camera.epoch) {poseEpoch_=batch.camera.epoch;poseCount_=0;}
-        for(std::size_t n=0;n<batch.count;++n) {
-            const auto& sample=batch.samples[n];
-            std::size_t i=0;
-            for(;i<poseCount_;++i) if(poseHandles_[i].runtimeId==sample.runtimeId)break;
-            if(i==poseCount_) {if(poseCount_==poseHandles_.size())continue;++poseCount_;}
-            poseHandles_[i]=sample;
-        }
-        if(!registry_.registryOf(local))return;
-        batch.tickPoseCount=registry_.copyTrackedPoses(local,poseHandles_.data(),poseCount_,poseCopies_.data());
-        latestPoses.publish(batch.camera.epoch,poseCopies_.data(),batch.tickPoseCount);
-        batch.tickPoseUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-begin).count());
-    }
-private:
-    bedrock::NativePlayerList playerRoster_;
-    mutable Clock::time_point nextRoster_{};mutable std::uint64_t rosterEpoch_{};
-    mutable std::array<hitbox::CopiedPlayerName,512> rosterCopies_{};
-    mutable std::uint64_t poseEpoch_{};
-    bedrock::NativeLocalPlayerGetter localGetter_;
-    mutable std::size_t poseCount_{};
-    mutable std::array<hitbox::Sample,hitbox::TrackingBudget::maximumActors> poseHandles_{},poseCopies_{};
-
-    bedrock::NativeItemLayout itemLayout_{};
-    bedrock::NativeActorLayout actorLayout_{};
-    bedrock::NativeActorRegistry registry_;
-    mutable hitbox::PlayerIdentityCache knownPlayers_;
-    std::atomic<void*> client_{};
-    std::atomic<void*> world_{};
-};
-
-HitBoxAccess access;
-bedrock::detail::HookDispatch dispatch{access};
-std::unique_ptr<bedrock::GameHooks> gameHooks;
+std::unique_ptr<bedrock::sdk::Hooks> gameHooks;
 
 hitbox::NameMailbox nameMailbox;
-BDS_HookToken nameTagToken{};
+std::unique_ptr<bedrock::sdk::HookSubscription> nameTagSubscription;
+std::vector<bedrock::sdk::HookSubscription> gameSubscriptions;
 std::atomic<void*> nameGetter{};
 struct NameDiagnostics {
     std::atomic<std::uint64_t> hookCalls{},hookCopied{},hookRejected{},nativeCalls{},nativeCopied{},
@@ -602,29 +425,23 @@ bool copyObservedName(const void* native,char* bytes,std::size_t* count) noexcep
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-void BDS_HOOK_CALL observeNameTag(void*,void* raw,BDS_HookNext next,void* frame) noexcept {
-    next(frame,raw);
+void observeNameTag(const bedrock::sdk::Hooks::ActorNameTagEventValue& event) noexcept {
     ++nameDiagnostics.hookCalls;
     if(stopRequested.load(std::memory_order_acquire)) return;
     try {
         const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
         if(!config->enabled || !config->showNameTags) return;
         const auto epoch=worldEpoch.load(std::memory_order_acquire);
-        if(!epoch || !raw) return;
-        const auto& args=*static_cast<BDS_ActorNameTagArgs*>(raw);
-        NativeReadWindow window;
+        if(!epoch || !event.actor || event.nameTag.empty()) return;
         std::uint32_t entity=0;
-        std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
-        std::size_t count=0;
-        const auto runtimeId=args.actor ? access.runtimeIdentity(args.actor) : 0;
-        if(!args.actor || !runtimeId || !access.copyNameEntityId(args.actor,entity) ||
-            !copyObservedName(args.name_tag,bytes.data(),&count) ||
-            epoch!=worldEpoch.load(std::memory_order_acquire)) { ++nameDiagnostics.hookRejected; return; }
+        const auto runtimeId=actorFacade.runtimeId(event.actor);
+        if(!runtimeId || !(actorFacade.entityId(event.actor)&&actorFacade.entityId(event.actor).value_or(0))) { ++nameDiagnostics.hookRejected; return; }
+        entity=*actorFacade.entityId(event.actor);
         ++nameDiagnostics.hookCopied;
-        nameMailbox.observe({epoch,runtimeId,reinterpret_cast<std::uintptr_t>(args.actor),entity},
-            std::string_view(bytes.data(),count));
+        nameMailbox.observe({epoch,runtimeId,reinterpret_cast<std::uintptr_t>(event.actor),entity},event.nameTag);
     } catch(...) {}
 }
+
 // Only called on the game thread for a freshly validated capture sample.
 // Missing names are spread over ticks; known names use the observation cache.
 int copyMissingName(void* target,void* actor,char* bytes,std::size_t* count) noexcept {
@@ -955,15 +772,15 @@ void refreshGameTickSnapshot() {
     // Pointer addresses may be reused after leaving/rejoining a world.
     const bool interrupted=lastTick!=Clock::time_point{} && now-lastTick>std::chrono::seconds(2);
     lastTick=now;
-    if (snapshotWorld != world || snapshotClient!=access.clientIdentity() || interrupted ||
+    if (snapshotWorld != world || snapshotClient!=hitboxClient.load(std::memory_order_acquire) || interrupted ||
         snapshotEpoch!=worldEpoch.load(std::memory_order_acquire)) {
         snapshotWorld = world;
-        snapshotClient=access.clientIdentity(); snapshotRuntime=0;
+        snapshotClient=hitboxClient.load(std::memory_order_acquire); snapshotRuntime=0;
         snapshotRegistry = 0;
         snapshotLocal=nullptr; snapshotEntity=0;
         localActorIdentity.store(0,std::memory_order_release);
-        access.setWorld(world);
-        access.resetPlayerTracking();
+        hitboxWorld.store(world,std::memory_order_release);
+        ((void)0);
         diagnostics={};
         worldEpoch.fetch_add(1, std::memory_order_acq_rel);
         cursor = 0;
@@ -992,31 +809,31 @@ void refreshGameTickSnapshot() {
         lock.unlock(); worker.ready.notify_one(); return true;
     };
     NativeReadWindow readWindow;
-    auto* local = access.localPlayer();
+    auto* local = actorFacade.localPlayer(hitboxClient.load(std::memory_order_acquire));
     const auto localReadyAt = Clock::now();
-    const auto registry=local ? access.registryIdentity(local) : 0;
+    const auto registry=local ? ([&]()->std::uintptr_t { std::uintptr_t v=0; actorFacade.registryIdentity(local,v); return v; }()) : 0;
     std::uint32_t entity=0;
-    const bool identityReady=local && registry && access.copyNameEntityId(local,entity);
+    const bool identityReady=local && registry && actorFacade.entityId(local).has_value() && ([&]{entity=actorFacade.entityId(local).value_or(0);return true;}());
     if (!identityReady) {
         if(now>=nextFailureReport){nextFailureReport=now+std::chrono::seconds(5);
-            log("local Actor unavailable: client=",access.clientIdentity()," actor=",local," registry=",reinterpret_cast<void*>(registry)," [exact-build getter; Actor context required]");}
+            log("local Actor unavailable: client=",hitboxClient.load(std::memory_order_acquire)," actor=",local," registry=",reinterpret_cast<void*>(registry)," [exact-build getter; Actor context required]");}
 
         localActorIdentity.store(0,std::memory_order_release);
         if(snapshotRegistry) {
             worldEpoch.fetch_add(1,std::memory_order_acq_rel);
             snapshotEpoch=worldEpoch.load(std::memory_order_acquire);
             snapshotRegistry=0; snapshotLocal=nullptr; snapshotEntity=0;
-            cursor=0; schedule.reset(); delivery.clear(); access.resetPlayerTracking();
+            cursor=0; schedule.reset(); delivery.clear(); ((void)0);
             log("local world unavailable; saved positions cleared");
         }
         return;
     }
-    const auto runtime=access.runtimeIdentity(local);
+    const auto runtime=actorFacade.runtimeId(local);
     if (snapshotRegistry && (registry!=snapshotRegistry || local!=snapshotLocal || entity!=snapshotEntity ||
         (snapshotRuntime && runtime && snapshotRuntime!=runtime))) {
         worldEpoch.fetch_add(1,std::memory_order_acq_rel);
         cursor=0; schedule.reset(); delivery.clear();
-        access.resetPlayerTracking();
+        ((void)0);
         diagnostics={};
         averageVisited=maximumNativeBatch;
         loggedNativeReady=loggedCameraWaiting=loggedNativeFailure=false;
@@ -1031,7 +848,12 @@ void refreshGameTickSnapshot() {
     const bool workerReady=delivery.flush(sendBatch);
     // All-Actor mode does not need local position for distance filtering.
     const auto cameraPosition = config->showAllActors
-        ? std::optional<bedrock::Vec3>{bedrock::Vec3{}} : access.actorPosition(local);
+        ? std::optional<bedrock::sdk::Vector3>{bedrock::sdk::Vector3{}}
+        : ([&]() -> std::optional<bedrock::sdk::Vector3> {
+              const auto native=actorFacade.position(local);
+              if(!native) return std::nullopt;
+              return bedrock::sdk::Vector3{native->x,native->y,native->z};
+          })();
     const auto positionReadyAt = Clock::now();
     if (!cameraPosition) {
         if (!loggedCameraWaiting) { loggedCameraWaiting = true;
@@ -1042,7 +864,27 @@ void refreshGameTickSnapshot() {
     batch.config = config;
     batch.camera = {worldEpoch.load(std::memory_order_acquire), *cameraPosition};
     std::size_t visited = 0;
-    const bool captured=access.captureBatch(local, cursor, schedule, batch, visited);
+    bedrock::sdk::ActorFacade::ActorCaptureStatsValue stats;
+    std::string captureError;
+    std::vector<bedrock::sdk::ActorSample> publicSamples;
+    const bool captured=actorFacade.capture(local, config->playersOnly, cursor,
+        maximumNativeBatch, publicSamples, visited, stats, captureError);
+    batch.count=std::min(publicSamples.size(), batch.samples.size());
+    batch.population=stats.population;
+    schedule.beginTick(stats.population);
+    schedule.visited(visited);
+    batch.nativePlayers=stats.nativePlayers;
+    batch.rememberedPlayers=stats.rememberedPlayers;
+    batch.missingRuntime=stats.missingRuntime;
+    batch.filteredActors=stats.filteredActors;
+    batch.invalidOwner=stats.invalidOwner;
+    batch.missingShape=stats.missingShape;
+    batch.invalidBounds=stats.invalidBounds;
+    batch.captureStage=stats.stage ? stats.stage : "capture";
+    batch.captureFailure=stats.failure ? stats.failure : (captured ? nullptr : captureError.c_str());
+    batch.faultCode=stats.faultCode;
+    batch.faultAddress=stats.faultAddress;
+    for(std::size_t i=0;i<batch.count;++i) batch.samples[i]=publicSamples[i];
     if (!captured || batch.captureFailure) {
         if (!loggedNativeFailure || now>=nextFailureReport) {
             loggedNativeFailure=true;
@@ -1053,14 +895,41 @@ void refreshGameTickSnapshot() {
                 " registry=", reinterpret_cast<void*>(registry), " pool=", batch.population,
                 " visited=", visited, " copied=", batch.count, " [will retry on next tick]");
         }
-        if (!captured) {access.refreshTrackedPoses(local,batch);return;}
+        if (!captured) {
+            std::size_t copied=0;
+            std::vector<bedrock::sdk::ActorSample> copies;
+            std::vector<bedrock::sdk::ActorSample> handles;
+            actorFacade.refreshTrackedPoses(local,handles,copies,copied);
+            return;
+        }
     } else if (loggedNativeFailure) {
         loggedNativeFailure=false;
         log("Actor capture recovered: pool=", batch.population, " copied=", batch.count);
     }
-    access.capturePlayerNames(world,batch.camera.epoch,config->nameCacheMinutes);
+    {
+        auto rows=actorFacade.playerNames(world);
+        if(!rows.empty()) {
+            std::array<hitbox::CopiedPlayerName,512> rosterCopies{};
+            std::size_t count=0;
+            for(const auto& row:rows) {
+                if(count==rosterCopies.size()) break;
+                auto& target=rosterCopies[count++];
+                target={}; target.uuid={row.uuidLow,row.uuidHigh}; target.uniqueId=row.uniqueId;
+                target.size=std::min(row.name.size(),target.bytes.size());
+                std::memcpy(target.bytes.data(),row.name.data(),target.size);
+            }
+            playerNames.publish(batch.camera.epoch,rosterCopies.data(),count,std::chrono::minutes(config->nameCacheMinutes));
+        }
+    }
     // Native position capture is one game tick for every tracked valid handle.
-    access.refreshTrackedPoses(local,batch);
+    {
+        std::size_t copied=0;
+        std::vector<bedrock::sdk::ActorSample> handles(batch.samples.begin(),batch.samples.begin()+batch.count);
+        std::vector<bedrock::sdk::ActorSample> copies;
+        if(actorFacade.refreshTrackedPoses(local,handles,copies,copied)) {
+            for(std::size_t i=0;i<std::min(copied,batch.count);++i) batch.samples[i]=copies[i];
+        }
+    }
     fillMissingName(batch);
     const auto actorsReadyAt = Clock::now();
     const std::array<std::size_t,9> counts{visited,batch.count,batch.nativePlayers,
@@ -1102,7 +971,7 @@ void refreshGameTickSnapshot() {
         diagnostics={};
     }
 }
-void observeWorld(const bedrock::LevelTickEvent& event) {
+void observeWorld(const bedrock::sdk::LevelTickEventValue& event) {
     if (!event.level) {
         if(currentWorld.exchange(nullptr,std::memory_order_acq_rel))
             worldEpoch.fetch_add(1,std::memory_order_acq_rel);
@@ -1113,344 +982,8 @@ void observeWorld(const bedrock::LevelTickEvent& event) {
     catch (...) { log("native capture skipped; retaining worker snapshots"); }
 }
 
-// Win64 prototypes corroborated by exact-build register use and native callers.
-// Borrow game-owned render objects only during LevelRenderer::renderLevel.
-using RenderLevelFn = void(__fastcall*)(void*, void*, void*);
-using BeginFn = void(__fastcall*)(void*, int, int, int, bool);
-using VertexFn = void(__fastcall*)(void*, float, float, float);
-struct FloatColor { float r,g,b,a; };
-using ColorFn = void(__fastcall*)(void*, float, float, float, float);
-using MeshFn = void(__fastcall*)(void*, void*, void*, void*);
-using HashedNameCtorFn = void*(__fastcall*)(void*, const char*);
-using MaterialCtorFn = void*(__fastcall*)(void*, void*, const void*);
-HashedNameCtorFn hashedNameCtor{};
-MaterialCtorFn materialCtor{};
-void* commonMaterialGroup{};
-// Native constructors own any internal allocations. Keep these two constructed
-// objects for the pinned DLL lifetime; never run another STL's destructor on them.
-alignas(16) std::array<std::byte,48> overlayNameStorage{};
-alignas(16) std::array<std::byte,16> overlayMaterialStorage{};
-std::atomic<int> overlayMaterialState{}; // 0 waiting, 1 constructing, 2 ready, -1 fault
-int ensureOverlayMaterial() noexcept {
-    const auto state=overlayMaterialState.load(std::memory_order_acquire);
-    if (state==2 || state==-1) return state==2 ? 1 : -1;
-    void* vtable=nullptr; void* factory=nullptr;
-    if (!safeRead(commonMaterialGroup,0,vtable) || !vtable ||
-        !safeRead(vtable,sizeof(void*),factory) || !isExecutable(factory)) return 0;
-    int expected=0;
-    if (!overlayMaterialState.compare_exchange_strong(expected,1,std::memory_order_acq_rel)) return 0;
-    __try {
-        hashedNameCtor(overlayNameStorage.data(),"name_tag");
-        materialCtor(overlayMaterialStorage.data(),commonMaterialGroup,overlayNameStorage.data());
-        void* info=nullptr;
-        if (!safeRead(overlayMaterialStorage.data(),0,info) || !info) {
-            overlayMaterialState.store(-1,std::memory_order_release); return -1;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        overlayMaterialState.store(-1,std::memory_order_release); return -1;
-    }
-    overlayMaterialState.store(2,std::memory_order_release); return 1;
-}
-hitbox::WorldRenderProfile worldRenderProfile;
-RenderLevelFn originalRenderLevel{};
-BeginFn tessBegin{};
-VertexFn tessVertex{};
-ColorFn tessColor{};
-MeshFn renderMesh{};
-BDS_HookToken renderHookToken{};
-std::atomic<bool> worldRenderFault{};
-
-// This mod is pinned for process lifetime. On Stop the direct hook remains a
-// forwarding trampoline: removing it while another render call uses its original
-// would free executable code still in flight. No worker/native data is touched.
-constexpr std::size_t boxesPerMesh = 512; // Submission size, never a total visibility limit.
-struct NativeDrawRange { const BoxRecord* boxes{}; std::size_t count{};
-    const std::uint8_t* visible{};
-    const hitbox::PreparedNames* names{};
-    std::chrono::milliseconds liveLifetime{};
-    const BoxRecord* preparedBoxes{}; };
-struct NativeDrawInput {
-    std::array<NativeDrawRange, workerCapacity> ranges{};
-    std::array<std::uint8_t,hitbox::TrackingBudget::maximumActors> visible{};
-    std::uintptr_t localActor{};
-    Config config;
-    Clock::time_point now;
-};
-
-template<class T>
-bool safeWrite(void* base, std::size_t offset, const T& value) noexcept {
-    static_assert(std::is_trivially_copyable_v<T>);
-    const auto start=reinterpret_cast<std::uintptr_t>(base);
-    if (!start || start>UINTPTR_MAX-offset) return false;
-    auto* dest=reinterpret_cast<T*>(start+offset);
-    if (!permittedAddress(dest,sizeof(T),false,true)) return false;
-    __try { *dest=value; return true; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
-
-struct NameQuadBatch {
-    void* screen{};
-    void* tess{};
-    void* shader{};
-    FloatColor color{};
-    std::size_t remaining{},inMesh{};
-    bool failed{};
-    void flush() noexcept {
-        if(!inMesh || failed) return;
-        // Each native mesh submission gets its own uniform update. Do not rely
-        // on state surviving a previous engine submission or mesh split.
-        const std::uint8_t dirty=1;
-        if(!safeWrite(shader,0,color) || !safeWrite(shader,worldRenderProfile.dirty,dirty)) {
-            failed=true; ++nameDiagnostics.renderFaults; return;
-        }
-        alignas(16) std::array<std::byte,0x58> scratch{};
-        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
-        inMesh=0;
-    }
-    void quad(const std::array<bedrock::Vec3,4>& vertices) noexcept {
-        if(failed) return;
-        if(!inMesh) tessBegin(tess,0,1,static_cast<int>(std::min<std::size_t>(remaining,16384)),false);
-        for(const auto& p:vertices) tessVertex(tess,p.x,p.y,p.z);
-        inMesh+=4; remaining-=4;
-        if(inMesh==16384 || !remaining) flush();
-    }
-};
-bool drawNativeNames(void* screen,void* tess,void* shader,const bedrock::Vec3& origin,
-                     const NativeDrawInput* input) noexcept {
-    ++nameDiagnostics.renderCalls;
-    std::size_t submitted=0,missing=0,hidden=0;
-    for(const auto& range:input->ranges) {
-        if(!range.names) { missing+=range.count; continue; }
-        const auto& prepared=*range.names;
-        missing+=range.count-std::min(range.count,prepared.labels.size());
-        // Vertices were transformed on a worker against a copied render origin.
-        // Native Tessellator::vertex applies this constant translation; no label
-        // triangle/billboard construction happens in the render callback.
-        const bedrock::Vec3 delta{prepared.origin.x-origin.x,prepared.origin.y-origin.y,prepared.origin.z-origin.z};
-        if(!safeWrite(tess,worldRenderProfile.translation,delta)) { ++nameDiagnostics.renderFaults; return false; }
-        for(unsigned pass=0;pass<2;++pass) {
-            std::size_t vertices=0;
-            for(const auto& label:prepared.labels) {
-                if(label.boxIndex>=range.count) continue;
-                const auto& box=range.boxes[label.boxIndex];
-                if(!range.visible[label.boxIndex]) { if(!pass) ++hidden; continue; }
-                if(box.retained==(pass==1)) vertices+=label.vertexCount;
-            }
-            if(!vertices) continue;
-            const auto rgba=hitbox::opaqueColor(input->config.retainedColor);
-            const FloatColor color=pass==0 ? FloatColor{1,1,1,1} : FloatColor{rgba[0],rgba[1],rgba[2],1};
-            NameQuadBatch batch{screen,tess,shader,color,vertices};
-            for(const auto& label:prepared.labels) {
-                if(label.boxIndex>=range.count || label.firstVertex>prepared.vertices.size() ||
-                    label.vertexCount>prepared.vertices.size()-label.firstVertex) continue;
-                const auto& box=range.boxes[label.boxIndex];
-                if(box.retained!=(pass==1) || !range.visible[label.boxIndex]) continue;
-                // Text glyphs stay cached, but their anchor follows the same
-                // newest copied AABB as the outline, without font rebuilds.
-                bedrock::Vec3 translation=delta;
-                if(range.preparedBoxes) {
-                    const auto before=hitbox::interpolatedBounds(range.preparedBoxes[label.boxIndex],prepared.preparedAt);
-                    const auto after=hitbox::interpolatedBounds(box,input->now);
-                    translation.x+=(after.minimum.x+after.maximum.x-before.minimum.x-before.maximum.x)*0.5f;
-                    translation.y+=after.maximum.y-before.maximum.y;
-                    translation.z+=(after.minimum.z+after.maximum.z-before.minimum.z-before.maximum.z)*0.5f;
-                }
-                if(!safeWrite(tess,worldRenderProfile.translation,translation)) return false;
-                for(std::size_t p=label.firstVertex;p<label.firstVertex+label.vertexCount;p+=4)
-                    batch.quad({prepared.vertices[p],prepared.vertices[p+1],prepared.vertices[p+2],prepared.vertices[p+3]});
-                ++submitted;
-            }
-            batch.flush();
-            if(batch.failed) return false;
-        }
-    }
-    nameDiagnostics.renderNoMesh+=missing;
-    nameDiagnostics.renderHidden+=hidden;
-    nameDiagnostics.renderSubmitted+=submitted;
-    return true;
-}
-
-int drawNativeGuarded(void* renderer, void* screen, const NativeDrawInput* input) noexcept {
-    // No owning C++ objects inside SEH. Snapshots remain owned by drawWorldBoxes.
-    const auto& p=worldRenderProfile;
-    void* player=nullptr; void* tess=nullptr; void* shader=nullptr; void* materialInfo=nullptr;
-    bedrock::Vec3 origin{}, oldTranslation{};
-    FloatColor oldColor{};
-    std::uint8_t building=0, special=0;
-    if (!safeRead(renderer,p.player,player) || !player ||
-        !safeRead(player,p.origin,origin) || !std::isfinite(origin.x) ||
-        !std::isfinite(origin.y) || !std::isfinite(origin.z) ||
-        !safeRead(screen,p.tess,tess) || !tess ||
-        !safeRead(screen,p.shader,shader) || !shader ||
-        !safeRead(tess,p.building,building) || building ||
-        !safeRead(tess,p.special,special) || special ||
-        !safeRead(tess,p.translation,oldTranslation) || !safeRead(shader,0,oldColor)) return 0;
-    const auto materialReady=ensureOverlayMaterial();
-    if (materialReady<=0) return materialReady;
-    if (!safeRead(overlayMaterialStorage.data(),0,materialInfo) || !materialInfo ||
-        !permittedAddress(materialInfo,sizeof(void*))) return -1;
-    const bedrock::Vec3 zero{};
-    const std::uint8_t dirty=1;
-    if (!safeWrite(tess,p.translation,zero)) return 0;
-    bool success=true;
-    __try {
-        // name_tag uses Position + current_color, depth Always, no depth writes.
-        // Draw every copied Actor; split each color into bounded mesh submissions.
-        std::size_t total=0;
-        for (const auto& range:input->ranges) total+=range.count;
-        for (unsigned pass=0;pass<2;++pass) {
-            std::size_t visited=0, count=0;
-            for (const auto& range:input->ranges) {
-                for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
-                    if(!range.visible[i]) continue;
-                    const bool retained=range.boxes[i].retained;
-                    if (retained==(pass==1)) ++count;
-                }
-            }
-            if (!count) continue;
-            const auto rgba=hitbox::opaqueColor(pass ? input->config.retainedColor : input->config.liveColor);
-            const FloatColor color{rgba[0],rgba[1],rgba[2],rgba[3]};
-            std::size_t remaining=count, inMesh=0;
-            visited=0;
-            for (const auto& range:input->ranges) {
-                for (std::size_t i=0;i<range.count && visited<total;++i,++visited) {
-                    const auto& box=range.boxes[i];
-                    if(!range.visible[i]) continue;
-                    const bool retained=box.retained;
-                    if (retained!=(pass==1)) continue;
-                    if(!inMesh) {
-                        if(!safeWrite(shader,0,color) || !safeWrite(shader,p.dirty,dirty)) { success=false; break; }
-                        tessBegin(tess,0,4,static_cast<int>(std::min(remaining,boxesPerMesh)*24),false);
-                    }
-                    const auto vertices=hitbox::worldLineVertices(box,origin,input->now);
-                    for (const auto& v:vertices) tessVertex(tess,v.x,v.y,v.z);
-                    ++inMesh; --remaining;
-                    if(inMesh==boxesPerMesh || !remaining) {
-                        alignas(16) std::array<std::byte,0x58> scratch{};
-                        renderMesh(screen,tess,overlayMaterialStorage.data(),scratch.data());
-                        inMesh=0;
-                    }
-                }
-                if(!success) break;
-            }
-            if(!success) break;
-        }
-        if(success && input->config.showNameTags)
-            success=drawNativeNames(screen,tess,shader,origin,input);
-    } __except(EXCEPTION_EXECUTE_HANDLER) { success=false; }
-    // Restore the borrowed scalar state, also after a guarded native fault.
-    safeWrite(shader,0,oldColor); safeWrite(shader,p.dirty,dirty);
-    safeWrite(tess,p.translation,oldTranslation);
-    return success ? 1 : -1;
-}
-void drawWorldBoxes(void* renderer, void* screen) {
-    if (stopRequested.load(std::memory_order_acquire) || worldRenderFault.load()) return;
-    const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
-    if (!config->enabled) return;
-    const auto now=Clock::now();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()-
-        gameHeartbeatMs.load(std::memory_order_acquire)>1000) { ++nameDiagnostics.frameStale; return; }
-    const auto epoch=worldEpoch.load(std::memory_order_acquire);
-    std::array<std::shared_ptr<const RenderSnapshot>,workerCapacity> snapshots;
-    NativeDrawInput input; input.config=*config; input.now=now;
-    input.localActor=localActorIdentity.load(std::memory_order_acquire);
-    // Fixed TLS storage: no per-frame allocation and no native Actor reads.
-    static thread_local std::array<BoxRecord,hitbox::TrackingBudget::maximumActors> frameBoxes;
-    std::size_t count=0;
-    for (std::size_t i=0;i<workerCount;++i) {
-        snapshots[i]=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
-        if (!snapshots[i] || snapshots[i]->epoch!=epoch) continue;
-        // Old and new worker snapshots can overlap during slot handover.
-        // Bound the combined frame even during that asynchronous transition.
-        const auto size=std::min(snapshots[i]->boxes.size(),hitbox::TrackingBudget::maximumActors-count);
-        auto* current=frameBoxes.data()+count;
-        std::copy_n(snapshots[i]->boxes.data(),size,current);
-        latestPoses.apply(epoch,current,size);
-
-        input.ranges[i]={current,size,input.visible.data()+count,
-            snapshots[i]->preparedNames.get(),snapshots[i]->liveLifetime,snapshots[i]->boxes.data()};
-        // Evaluate identity/expiry once, shared by line and both text passes.
-        for(std::size_t j=0;j<input.ranges[i].count;++j) {
-            const auto& box=input.ranges[i].boxes[j];
-            input.visible[count+j]=box.actorKey!=input.localActor &&
-                hitbox::visibleInFrame(box,now,snapshots[i]->liveLifetime,config->retainLastPosition,
-                    config->playersOnly,std::chrono::minutes(config->retentionMinutes));
-        }
-        count+=input.ranges[i].count;
-    }
-    if (!count || worldEpoch.load(std::memory_order_acquire)!=epoch) { ++nameDiagnostics.frameNoBoxes; return; }
-    NativeReadWindow window;
-    const auto renderBegin=Clock::now();
-    const auto result=drawNativeGuarded(renderer,screen,&input);
-    const auto renderUs=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-renderBegin).count());
-    ++nameDiagnostics.renderFrames; nameDiagnostics.renderUs+=renderUs;
-    auto peak=nameDiagnostics.renderPeakUs.load(std::memory_order_relaxed);
-    while(peak<renderUs && !nameDiagnostics.renderPeakUs.compare_exchange_weak(peak,renderUs,std::memory_order_relaxed)) {}
-    static std::atomic<bool> loggedDraw{};
-    if (result>0 && !loggedDraw.exchange(true))
-        log("native world mesh submitted [12 edges/box; engine render origin + name_tag; depth Always; opaque uniform colors; interpolated]");
-    if (result<0 && !worldRenderFault.exchange(true))
-        log("world rendering disabled after guarded native fault [restart required]");
-}
-void observeRenderContext(void* renderer) {
-    static void* previousRenderer=nullptr;
-    static void* previousPlayer=nullptr;
-    void* player=nullptr;
-    bedrock::Vec3 origin{};
-    const bool ready=safeRead(renderer,worldRenderProfile.player,player) && player &&
-        safeRead(player,worldRenderProfile.origin,origin) && std::isfinite(origin.x) &&
-        std::isfinite(origin.y) && std::isfinite(origin.z);
-    if(!ready) {
-        if(previousRenderer) {
-            previousRenderer=previousPlayer=nullptr;
-            ++renderBoundaryChanges; worldEpoch.fetch_add(1,std::memory_order_acq_rel);
-        }
-        return;
-    }
-    if(previousRenderer && (renderer!=previousRenderer || player!=previousPlayer)) {
-        ++renderBoundaryChanges; worldEpoch.fetch_add(1,std::memory_order_acq_rel);
-    }
-    previousRenderer=renderer; previousPlayer=player;
-    renderCamera.publish(worldEpoch.load(std::memory_order_acquire),origin);
-}
-void BDS_HOOK_CALL renderLevelSubscriber(void*, void* raw, BDS_HookNext next, void* frame) {
-    auto& args=*static_cast<BDS_RenderLevelArgs*>(raw);
-    next(frame,raw);
-    void* renderer=args.renderer; void* screen=args.screen;
-    // The native world pass supplies view/projection matrices, origin and depth.
-    static thread_local bool drawing=false;
-    if (drawing) return;
-    drawing=true;
-    try { observeRenderContext(renderer); drawWorldBoxes(renderer,screen); }
-    catch (...) { if(!worldRenderFault.exchange(true)) log("world rendering disabled after exception"); }
-    drawing=false;
-}
-bool installWorldRenderer(std::string& error) {
-    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    std::array<void*,7> addresses{};
-    for (std::size_t i=0;i<addresses.size();++i) {
-        const auto& f=worldRenderProfile.functions[i];
-        auto* target=reinterpret_cast<const std::byte*>(base+f.rva);
-        if (!isExecutable(target)) { error="world render target is not executable"; return false; }
-        if (i==0 && BDS_HookOwnsTarget(BDS_HOOK_RENDER_LEVEL,const_cast<std::byte*>(target))) {
-            addresses[i]=const_cast<std::byte*>(target); continue;
-        }
-        for (std::size_t j=0;j<f.guard.size();++j) {
-            std::uint8_t value{};
-            if(!safeRead(target,j,value) || value!=f.guard[j]) {
-                error="world render entry guard mismatch: function "+std::to_string(i); return false;
-            }
-        }
-        addresses[i]=const_cast<std::byte*>(target);
-    }
-    tessBegin=reinterpret_cast<BeginFn>(addresses[1]); tessVertex=reinterpret_cast<VertexFn>(addresses[2]);
-    tessColor=reinterpret_cast<ColorFn>(addresses[3]); renderMesh=reinterpret_cast<MeshFn>(addresses[4]);
-    hashedNameCtor=reinterpret_cast<HashedNameCtorFn>(addresses[5]);
-    materialCtor=reinterpret_cast<MaterialCtorFn>(addresses[6]);
-    commonMaterialGroup=reinterpret_cast<void*>(base+worldRenderProfile.commonMaterialGroup);
-    return BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,addresses[0],&renderLevelSubscriber,nullptr,&renderHookToken)!=0 ||
-        (error="world render direct hook conflict/install failure",false);
-}
+// Direct native render implementation is replaced by bedrock::sdk::WorldRender;
+// HitBox keeps snapshot/cache/worker state and submits through drawLines/drawNameQuad.
 
 std::filesystem::path configPath() { return dataDirectory() / L"config.json"; }
 
@@ -1481,130 +1014,78 @@ DWORD WINAPI startClient(void*) {
     loadConfigFile(cfgPath);
     log("config ready");
 
-    bedrock::ProfileChoice choice;
-    std::string profile, error;
-    if (!bedrock::fetchSupportedProfile(profile, choice, error,
-            [](std::string_view stage) { log("profile ", stage); })) {
-        log("profile unavailable: ", error);
-        status.store(Status::Failed, std::memory_order_release);
+    std::string error;
+    bedrock::sdk::Profiles profiles;
+    if(!profiles.open(bedrock::sdk::ProfileUpdatePolicy::RefreshIfNeeded,error)) {
+        log("profile unavailable: ",error);
+        status.store(Status::Failed,std::memory_order_release);
         return 1;
     }
-    bedrock::Resolver resolver;
-    bedrock::NativeItemLayout itemLayout;
-    bedrock::NativeActorLayout actorLayout;
-    const auto identity = choice.identity;
-    const auto prepareProfile = [&](std::string_view candidate) {
-        // Profile selection checks executable identity, but an older cache can
-        // still lack layouts required by a newer mod. Validate the whole set
-        // before accepting it or installing any native hooks.
-        bedrock::Resolver candidateResolver;
-        bedrock::NativeItemLayout candidateItems;
-        bedrock::NativeActorLayout candidateActors;
-        if (!candidateResolver.loadJson(candidate, error) ||
-            !candidateResolver.attachWindowsMainModule(identity, error) ||
-            !candidateResolver.exactBuild()) return false;
-        if (!bedrock::parseNativeItemLayout(candidate, candidateItems, error)) {
-            error = "native_items: " + error;
-            return false;
-        }
-        if (!bedrock::parseNativeActorLayout(candidate, candidateActors, error)) {
-            error = "native_actors: " + error;
-            return false;
-        }
-        hitbox::WorldRenderProfile candidateRender;
-        if (!hitbox::parseWorldRenderProfile(candidate, candidateRender, error)) return false;
-        if (!bedrock::parseNativeWorldEventsLayout(candidate, error)) return false;
-        try{access.loadNativePlayers(candidate);}
-        catch(const std::exception& ex){error=ex.what();return false;}
-        worldRenderProfile = std::move(candidateRender);
-        resolver = std::move(candidateResolver);
-        itemLayout = std::move(candidateItems);
-        actorLayout = std::move(candidateActors);
-        return true;
-    };
-    bool profileReady = prepareProfile(profile);
-    if (!profileReady) {
-        log("profile lacks required native layouts; checking GitHub: ", error);
-        std::string updatedProfile;
-        bedrock::ProfileChoice updatedChoice;
-        if (bedrock::refreshSupportedProfile(identity, updatedProfile, updatedChoice, error,
-                [](std::string_view stage) { log("profile ", stage); }) &&
-            prepareProfile(updatedProfile)) {
-            profile = std::move(updatedProfile);
-            choice = std::move(updatedChoice);
-            profileReady = true;
-            log("native layouts recovered from latest exact-build profile");
-        } else {
-            log("latest native profile unavailable: ", error);
-        }
-    }
-    if (!profileReady && prepareProfile(bedrock::generated::kSymbolDatabase)) {
-        // Reuse the original live fingerprint. A bundled profile from another
-        // executable/build is rejected by attachWindowsMainModule above.
-        choice.source = bedrock::ProfileSource::Embedded;
-        profile = bedrock::generated::kSymbolDatabase;
-        profileReady = true;
-        log("native layouts recovered from embedded exact-build profile");
-    }
-    if (!profileReady) {
-        log("exact-build native Actor profile unavailable: ", error);
-        status.store(Status::Failed, std::memory_order_release);
+    const auto profile=profiles.snapshot();
+    bedrock::sdk::SymbolResolver resolver;
+    if(!resolver.open(profile,error)) {
+        log("profile resolver unavailable: ",error);
+        status.store(Status::Failed,std::memory_order_release);
         return 1;
     }
-    access.setLayouts(std::move(itemLayout), std::move(actorLayout),
-                      worldRenderProfile.actorTypeValueOffset, worldRenderProfile.playerTypeId);
+    if(!actorFacade.configure(profile.json(),0,319,error)) {
+        log("Actor facade configure failed: ",error);
+        status.store(Status::Failed,std::memory_order_release);
+        return 1;
+    }
     log("native Actor registry source ready [all valid RuntimeID/AABB Actors including Players; ActorType + remembered RuntimeID player filter; no name filter; profile candidate]");
 
     if (!startProcessingWorkers()) { status.store(Status::Failed); return 1; }
     struct WorkerStop { ~WorkerStop() { stopProcessingWorkers(); } } workerStop;
     log(workerCount," processing workers + 1 log writer ready [RuntimeID partitions; 20Hz coalesced snapshots; packed text quads; copied scalars only]");
-    gameHooks = std::make_unique<bedrock::GameHooks>(dispatch);
-    dispatch.on<bedrock::GameplayEvent>([](const bedrock::GameplayEvent& event) {
-        if (event.clientInstance) access.setClient(event.clientInstance);
-    });
-    dispatch.on<bedrock::LevelTickEvent>(&observeWorld);
-    dispatch.on<bedrock::WorldChangeEvent>([](const bedrock::WorldChangeEvent& event) {
-        // Workers/renderers already fence their snapshots by this generation.
-        // Advancing it immediately hides old boxes, retained positions and text.
-        worldEpoch.fetch_add(1, std::memory_order_acq_rel);
-        currentWorld.store(nullptr, std::memory_order_release);
-        access.setClient(event.clientInstance);
-        log("world lifecycle event: reason=", static_cast<unsigned>(event.reason),
-            " sdk_epoch=", event.epoch, " [old-world snapshots invalidated]");
-    });
-    if (!gameHooks->installGameplay(resolver, error) ||
-        !gameHooks->installLevelTick(resolver, error) ||
-        !gameHooks->installWorldEvents(resolver, profile, error)) {
-        log("SDK hook registration failed: ", error);
+    gameHooks = std::make_unique<bedrock::sdk::Hooks>();
+    nameTagSubscription=std::make_unique<bedrock::sdk::HookSubscription>(
+        gameHooks->onActorNameTag(observeNameTag));
+    gameSubscriptions.emplace_back(gameHooks->onGameplay([](const bedrock::sdk::GameplayEventValue& event) {
+        if(event.clientInstance) hitboxClient.store(event.clientInstance,std::memory_order_release);
+    }));
+    gameSubscriptions.emplace_back(gameHooks->onLevelTick(observeWorld));
+    gameSubscriptions.emplace_back(gameHooks->onWorldChange([](const bedrock::sdk::WorldChangeEventValue& event) {
+        worldEpoch.fetch_add(1,std::memory_order_acq_rel);
+        currentWorld.store(nullptr,std::memory_order_release);
+        hitboxClient.store(event.clientInstance,std::memory_order_release);
+    }));
+    if(!gameHooks->install(resolver,profile.json(),error)) {
+        log("SDK hook registration failed: ",error);
         gameHooks.reset();
-        status.store(Status::Failed, std::memory_order_release);
+        status.store(Status::Failed,std::memory_order_release);
         return 1;
     }
     log("NameTag configuration: show_name_tags=",std::atomic_load(&liveConfig)->showNameTags,
         " name_tag_scale=",std::atomic_load(&liveConfig)->nameTagScale);
-    const auto nameSource=bedrock::resolveSharedHook(resolver,"Actor::getNameTag",BDS_HOOK_ACTOR_GET_NAME_TAG);
-    log("NameTag resolved source: exact_build=",resolver.exactBuild()," target=",
-        nameSource ? reinterpret_cast<void*>(nameSource->address) : nullptr,
-        " usable=",nameSource && bedrock::isUsableSharedHookResolution(*nameSource));
-    if(resolver.exactBuild() && nameSource && bedrock::isUsableSharedHookResolution(*nameSource))
-        nameGetter.store(reinterpret_cast<void*>(nameSource->address),std::memory_order_release);
-    if(nameSource && bedrock::isUsableSharedHookResolution(*nameSource) &&
-        BDS_HookSubscribe(BDS_HOOK_ACTOR_GET_NAME_TAG,reinterpret_cast<void*>(nameSource->address),
-            &observeNameTag,nullptr,&nameTagToken))
-        log("NameTag observation active [RuntimeID cache; missing-name fallback <=3/tick + cooperative 200us budget; worker font geometry]");
-    else log("NameTag source unavailable; HitBox lines remain active");
-    struct NameHookStop { ~NameHookStop() {
-        if(nameTagToken) BDS_HookUnsubscribe(std::exchange(nameTagToken,nullptr));
-    } } nameHookStop;
-    if (!installWorldRenderer(error)) {
-        log("world renderer install failed: ", error);
+    log("NameTag observation active [SDK Hooks::onActorNameTag; missing-name fallback; worker font geometry]");
+    bedrock::sdk::WorldRender worldRender;
+    if(!worldRender.install(profile,error)) {
+        log("world renderer install failed: ",error);
         gameHooks.reset();
-        status.store(Status::Failed, std::memory_order_release);
+        status.store(Status::Failed,std::memory_order_release);
         return 1;
     }
-    log("native world rendering active [LevelRenderer::renderLevel + name_tag; depth Always; 1-tick target sweep; exact-build guards; runtime candidate]");
-    log(BDS_HookRuntimeDiagnostic());
-    log("ready ", choice.version, " [native Actors]");
+    auto worldRenderSubscription=worldRender.onPostRender([](bedrock::sdk::WorldRenderer& renderer) {
+        if(stopRequested.load(std::memory_order_acquire)) return;
+        const auto origin=renderer.origin();
+        const auto epoch=worldEpoch.load(std::memory_order_acquire);
+        std::vector<bedrock::sdk::WorldLineSegment> segments;
+        for(std::size_t i=0;i<workerCount;++i) {
+            const auto snapshot=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
+            if(!snapshot || snapshot->epoch!=epoch) continue;
+            for(const auto& box:snapshot->boxes) {
+                const auto cornersNow=hitbox::corners(interpolatedBounds(box,Clock::now()));
+                constexpr unsigned edges[12][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+                for(const auto& edge:edges) segments.push_back({{cornersNow[edge[0]].x-origin.x,cornersNow[edge[0]].y-origin.y,cornersNow[edge[0]].z-origin.z},
+                                                               {cornersNow[edge[1]].x-origin.x,cornersNow[edge[1]].y-origin.y,cornersNow[edge[1]].z-origin.z}});
+            }
+        }
+        if(!segments.empty()) renderer.drawLines(segments,{1.0f,1.0f,1.0f,1.0f},1.0f);
+    });
+    (void)worldRenderSubscription;
+    log("SDK world rendering active [WorldRender + name-tag hooks; 1-tick target sweep]");
+    log("ready ",profile.version()," [SDK native Actors]");
     status.store(Status::Running, std::memory_order_release);
 
     auto lastWrite = std::filesystem::last_write_time(cfgPath, ec);
@@ -1640,4 +1121,3 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     }
     return TRUE;
 }
-#endif

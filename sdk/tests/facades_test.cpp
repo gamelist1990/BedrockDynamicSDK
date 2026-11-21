@@ -12,6 +12,12 @@ int main() {
     assert(resolver.openFixture(fixture, error));
 
     bedrock::sdk::ActorFacade actors;
+    bedrock::sdk::ActorSample sample;
+    bedrock::sdk::ActorBoundsValue bounds{{0.0f,0.0f,0.0f},{1.0f,1.0f,1.0f},true};
+    sample.bounds=bounds;
+    sample.capturedAt=42;
+    assert(sample.bounds.valid);
+    assert(sample.capturedAt==42);
     bedrock::sdk::Hooks hooks;
     auto nameSubscription=hooks.onActorNameTag([](const bedrock::sdk::Hooks::ActorNameTagEventValue& event) {
         (void)event.actor; (void)event.nameTag;

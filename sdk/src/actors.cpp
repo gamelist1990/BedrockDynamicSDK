@@ -6,6 +6,7 @@
 #include <bedrock/native/local_player.hpp>
 #include <bedrock/native/player_list.hpp>
 #endif
+#include <chrono>
 #include <utility>
 
 namespace bedrock::sdk {
@@ -54,7 +55,7 @@ std::optional<ActorBoundsValue> ActorFacade::bounds(void* actor) const noexcept 
     bedrock::ActorBounds native{};
     if (!impl_->registry.readBounds(actor, native)) return std::nullopt;
     return ActorBoundsValue{{native.minimum.x,native.minimum.y,native.minimum.z},
-                            {native.maximum.x,native.maximum.y,native.maximum.z}};
+                            {native.maximum.x,native.maximum.y,native.maximum.z}, true};
 #else
     (void)actor;
     return std::nullopt;
@@ -114,15 +115,104 @@ bool ActorFacade::capture(void* local, bool playersOnly,
     samples.reserve(count);
     for (std::size_t i=0;i<count;++i) {
         const auto& src=native[i];
+        const auto capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>(src.seenAt.time_since_epoch()).count();
         samples.push_back({src.runtimeId,
                            {{src.bounds.minimum.x,src.bounds.minimum.y,src.bounds.minimum.z},
-                            {src.bounds.maximum.x,src.bounds.maximum.y,src.bounds.maximum.z}},
-                           src.isPlayer,src.entityId});
+                            {src.bounds.maximum.x,src.bounds.maximum.y,src.bounds.maximum.z}, src.bounds.valid()},
+                           src.isPlayer,src.entityId,
+                           static_cast<std::uint64_t>(capturedAt),src.actorKey,src.uniqueId});
     }
     if (!ok) error = stats.failure ? stats.failure : stats.stage;
     return ok;
 #else
     (void)local;(void)playersOnly;(void)cursor;samples.clear();error="native Actor facade unavailable on this host";return false;
+#endif
+}
+
+bool ActorFacade::capture(void* local,
+                          bool playersOnly,
+                          std::size_t& cursor,
+                          std::size_t count,
+                          std::vector<ActorSample>& samples,
+                          std::size_t& visited,
+                          ActorCaptureStatsValue& publicStats,
+                          std::string& error) const noexcept {
+#ifdef _WIN32
+    bedrock::ActorRegistryCaptureStats stats;
+    if (!impl_->registry.registryPopulation(local, stats)) {
+        publicStats = {stats.stage, stats.failure, stats.faultCode, stats.faultAddress,
+                       stats.population, stats.nativePlayers, stats.rememberedPlayers,
+                       stats.missingRuntime, stats.filteredActors, stats.invalidOwner,
+                       stats.missingShape, stats.invalidBounds};
+        error = stats.failure ? stats.failure : stats.stage;
+        return false;
+    }
+    bedrock::ActorRegistryCapturePolicy policy;
+    policy.playersOnly = playersOnly;
+    std::vector<bedrock::ActorRegistrySample> native(count ? count : stats.population);
+    std::size_t sampleCount{};
+    const bool ok = impl_->registry.captureBatch(local, policy, count,
+                                                 cursor, native.data(), native.size(),
+                                                 sampleCount, visited, stats);
+    samples.clear();
+    samples.reserve(sampleCount);
+    for (std::size_t i=0;i<sampleCount;++i) {
+        const auto& src=native[i];
+        const auto capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>(src.seenAt.time_since_epoch()).count();
+        samples.push_back({src.runtimeId,
+                           {{src.bounds.minimum.x,src.bounds.minimum.y,src.bounds.minimum.z},
+                            {src.bounds.maximum.x,src.bounds.maximum.y,src.bounds.maximum.z}, src.bounds.valid()},
+                           src.isPlayer,src.entityId,
+                           static_cast<std::uint64_t>(capturedAt),src.actorKey,src.uniqueId});
+    }
+    publicStats = {stats.stage, stats.failure, stats.faultCode, stats.faultAddress,
+                   stats.population, stats.nativePlayers, stats.rememberedPlayers,
+                   stats.missingRuntime, stats.filteredActors, stats.invalidOwner,
+                   stats.missingShape, stats.invalidBounds};
+    if (!ok) error = stats.failure ? stats.failure : stats.stage;
+    return ok;
+#else
+    (void)local;(void)playersOnly;(void)cursor;(void)count;(void)samples;(void)visited;(void)publicStats;
+    error="native Actor facade unavailable on this host";return false;
+#endif
+}
+
+bool ActorFacade::registryIdentity(void* actor, std::uintptr_t& identity) const noexcept {
+#ifdef _WIN32
+    identity = impl_->registry.registryIdentity(actor); return identity != 0;
+#else
+    (void)actor; identity=0; return false;
+#endif
+}
+
+bool ActorFacade::refreshTrackedPoses(void* local,
+                                      std::vector<ActorSample>& handles,
+                                      std::vector<ActorSample>& copies,
+                                      std::size_t& copied) const noexcept {
+#ifdef _WIN32
+    std::vector<bedrock::ActorRegistrySample> nativeHandles(handles.size());
+    for(std::size_t i=0;i<handles.size();++i) {
+        nativeHandles[i].runtimeId=handles[i].runtimeId;
+        nativeHandles[i].bounds={{handles[i].bounds.minimum.x,handles[i].bounds.minimum.y,handles[i].bounds.minimum.z},
+                                 {handles[i].bounds.maximum.x,handles[i].bounds.maximum.y,handles[i].bounds.maximum.z}};
+        nativeHandles[i].isPlayer=handles[i].isPlayer;
+        nativeHandles[i].entityId=handles[i].entityId;
+    }
+    std::vector<bedrock::ActorRegistrySample> nativeCopies(handles.size());
+    std::size_t count=handles.size();
+    impl_->registry.copyTrackedPoses(local,nativeHandles.data(),count,nativeCopies.data());
+    copied=count;
+    copies.resize(copied);
+    for(std::size_t i=0;i<copied;++i) {
+        const auto& src=nativeCopies[i];
+        const auto capturedAt=std::chrono::duration_cast<std::chrono::steady_clock::duration>(src.seenAt.time_since_epoch()).count();
+        copies[i]={src.runtimeId,{{src.bounds.minimum.x,src.bounds.minimum.y,src.bounds.minimum.z},
+                                  {src.bounds.maximum.x,src.bounds.maximum.y,src.bounds.maximum.z}, src.bounds.valid()},
+                                  src.isPlayer,src.entityId,static_cast<std::uint64_t>(capturedAt),src.actorKey,src.uniqueId};
+    }
+    return copied != 0;
+#else
+    (void)local;(void)handles;(void)copies;copied=0;return false;
 #endif
 }
 

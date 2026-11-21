@@ -192,22 +192,22 @@ inline void packNameQuads(NameMesh& mesh) {
         mesh.quads.push_back({mesh.triangles[i*3],mesh.triangles[i*3+1],mesh.triangles[i*3+2],mesh.triangles[i*3+2]});
 }
 // Camera-facing label basis in the same world coordinates as the native boxes.
-struct NameBillboard { bedrock::Vec3 anchor,right,up; };
-inline NameBillboard nameBillboard(const bedrock::ActorBounds& bounds,const bedrock::Vec3& origin) noexcept {
-    const bedrock::Vec3 anchor{(bounds.minimum.x+bounds.maximum.x)*0.5f,bounds.maximum.y+0.2f,
+struct NameBillboard { bedrock::sdk::Vector3 anchor,right,up; };
+inline NameBillboard nameBillboard(const bedrock::sdk::ActorBoundsValue& bounds,const bedrock::sdk::Vector3& origin) noexcept {
+    const bedrock::sdk::Vector3 anchor{(bounds.minimum.x+bounds.maximum.x)*0.5f,bounds.maximum.y+0.2f,
         (bounds.minimum.z+bounds.maximum.z)*0.5f};
-    auto direction=bedrock::Vec3{origin.x-anchor.x,origin.y-anchor.y,origin.z-anchor.z};
+    auto direction=bedrock::sdk::Vector3{origin.x-anchor.x,origin.y-anchor.y,origin.z-anchor.z};
     const float horizontal=std::hypot(direction.x,direction.z);
     const float length=std::sqrt(horizontal*horizontal+direction.y*direction.y);
     if(length<0.0001f) return {anchor,{1,0,0},{0,1,0}};
     if(horizontal<0.0001f) return {anchor,{1,0,0},{0,0,direction.y>0 ? -1.f : 1.f}};
-    const bedrock::Vec3 right{direction.z/horizontal,0,-direction.x/horizontal};
+    const bedrock::sdk::Vector3 right{direction.z/horizontal,0,-direction.x/horizontal};
     direction={direction.x/length,direction.y/length,direction.z/length};
     return {anchor,right,{direction.y*right.z,direction.z*right.x-direction.x*right.z,
         -direction.y*right.x}};
 }
-inline bedrock::Vec3 nameVertex(const NameBillboard& b,TextPoint p,float height,
-                               const bedrock::Vec3& origin) noexcept {
+inline bedrock::sdk::Vector3 nameVertex(const NameBillboard& b,TextPoint p,float height,
+                               const bedrock::sdk::Vector3& origin) noexcept {
     return {b.anchor.x+(b.right.x*p.x+b.up.x*p.y)*height-origin.x,
         b.anchor.y+(b.right.y*p.x+b.up.y*p.y)*height-origin.y,
         b.anchor.z+(b.right.z*p.x+b.up.z*p.y)*height-origin.z};
