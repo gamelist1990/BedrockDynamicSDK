@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include "world_access.hpp"
+#include "resolver.hpp"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,6 +39,12 @@ public:
                    std::uint32_t playerTypeId,
                    std::string& error);
 
+    bool configure(std::string_view profileJson,
+                   std::size_t actorTypeValueOffset,
+                   std::uint32_t playerTypeId,
+                   const SymbolResolver& resolver,
+                   std::string& error);
+
     void* localPlayer(void* client) const noexcept;
     std::optional<ActorBoundsValue> bounds(void* actor) const noexcept;
     std::optional<Vec3Value> position(void* actor) const noexcept;
@@ -68,6 +75,7 @@ public:
                  std::string& error) const noexcept;
 
     bool registryIdentity(void* actor, std::uintptr_t& identity) const noexcept;
+    bool nameTag(void* actor, std::string& out, std::string& error) const noexcept;
     bool refreshTrackedPoses(void* local,
                              std::vector<ActorSample>& handles,
                              std::vector<ActorSample>& copies,

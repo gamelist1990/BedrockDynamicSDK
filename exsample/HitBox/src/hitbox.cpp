@@ -374,7 +374,6 @@ std::unique_ptr<bedrock::sdk::Hooks> gameHooks;
 hitbox::NameMailbox nameMailbox;
 std::unique_ptr<bedrock::sdk::HookSubscription> nameTagSubscription;
 std::vector<bedrock::sdk::HookSubscription> gameSubscriptions;
-std::atomic<void*> nameGetter{};
 struct NameDiagnostics {
     std::atomic<std::uint64_t> hookCalls{},hookCopied{},hookRejected{},nativeCalls{},nativeCopied{},
         nativeEmpty{},nativeUnreadable{},nativeFaults{},mailboxMisses{},blankNames{},meshFailures{},workerExceptions{},
@@ -392,7 +391,7 @@ void reportNameDiagnostics() {
     auto& d=nameDiagnostics;
     log("NameTag diagnostic [5s]: epoch=",worldEpoch.load()," enabled=",config->enabled,
         " show_name_tags=",config->showNameTags," scale=",config->nameTagScale,
-        " draw_mode=text_only local_label=hidden getter=",nameGetter.load()," hook_calls=",d.hookCalls.exchange(0),
+        " draw_mode=lines_and_names local_label=hidden getter=facade hook_calls=",d.hookCalls.exchange(0),
         " hook_copied=",d.hookCopied.exchange(0)," hook_rejected=",d.hookRejected.exchange(0));
     log("NameTag getter [5s]: calls=",d.nativeCalls.exchange(0)," copied=",d.nativeCopied.exchange(0),
         " empty=",d.nativeEmpty.exchange(0)," unreadable=",d.nativeUnreadable.exchange(0),
@@ -444,18 +443,21 @@ void observeNameTag(const bedrock::sdk::Hooks::ActorNameTagEventValue& event) no
 
 // Only called on the game thread for a freshly validated capture sample.
 // Missing names are spread over ticks; known names use the observation cache.
-int copyMissingName(void* target,void* actor,char* bytes,std::size_t* count) noexcept {
-    using Getter=const std::string&(__fastcall*)(void*);
-    __try {
-        const auto& name=reinterpret_cast<Getter>(target)(actor);
-        if(name.empty()) return 0;
-        return copyObservedName(&name,bytes,count) ? 1 : -2;
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+int copyMissingName(void* actor,char* bytes,std::size_t* count) noexcept {
+    std::string name;
+    std::string error;
+    if(!actorFacade.nameTag(actor,name,error)) {
+        if(error.find("fault")!=std::string::npos) return -1;
+        return error.find("unavailable")!=std::string::npos ? -2 : 0;
+    }
+    if(name.empty()) return 0;
+    if(name.size()>hitbox::NameMailbox::maximumBytes) name.resize(hitbox::NameMailbox::maximumBytes);
+    std::memcpy(bytes,name.data(),name.size());
+    *count=name.size();
+    return 1;
 }
 void fillMissingName(const CaptureBatch& batch) {
     if(!batch.config->showNameTags || !batch.count) return;
-    auto* target=nameGetter.load(std::memory_order_acquire);
-    if(!target) return;
     struct Attempt { hitbox::NameKey key; Clock::time_point next; unsigned failures{}; };
     static std::array<Attempt,2048> attempts{};
     static Clock::time_point nextBatch{};
@@ -483,11 +485,10 @@ void fillMissingName(const CaptureBatch& batch) {
         std::array<char,hitbox::NameMailbox::maximumBytes> bytes{};
         std::size_t count=0;
         ++nameDiagnostics.nativeCalls;
-        const int result=copyMissingName(target,reinterpret_cast<void*>(sample.actorKey),bytes.data(),&count);
+        const int result=copyMissingName(reinterpret_cast<void*>(sample.actorKey),bytes.data(),&count);
         if(result==-1) {
             ++nameDiagnostics.nativeFaults;
-            nameGetter.store(nullptr,std::memory_order_release);
-            log("NameTag fallback fault; native name polling disabled, observation cache remains active");
+            log("NameTag fallback native fault; observation cache remains active");
         } else if(result>0 && batch.camera.epoch==worldEpoch.load(std::memory_order_acquire)) {
             ++nameDiagnostics.nativeCopied;
             nameMailbox.observe(key,std::string_view(bytes.data(),count));
@@ -1028,7 +1029,7 @@ DWORD WINAPI startClient(void*) {
         status.store(Status::Failed,std::memory_order_release);
         return 1;
     }
-    if(!actorFacade.configure(profile.json(),0,319,error)) {
+    if(!actorFacade.configure(profile.json(),0,319,resolver,error)) {
         log("Actor facade configure failed: ",error);
         status.store(Status::Failed,std::memory_order_release);
         return 1;
@@ -1058,7 +1059,7 @@ DWORD WINAPI startClient(void*) {
     }
     log("NameTag configuration: show_name_tags=",std::atomic_load(&liveConfig)->showNameTags,
         " name_tag_scale=",std::atomic_load(&liveConfig)->nameTagScale);
-    log("NameTag observation active [SDK Hooks::onActorNameTag; missing-name fallback; worker font geometry]");
+    log("NameTag observation active [SDK Hooks::onActorNameTag; missing-name fallback; worker font geometry] diagnostic=",bedrock::sdk::hookRuntimeDiagnostic());
     bedrock::sdk::WorldRender worldRender;
     if(!worldRender.install(profile,error)) {
         log("world renderer install failed: ",error);
@@ -1070,18 +1071,50 @@ DWORD WINAPI startClient(void*) {
         if(stopRequested.load(std::memory_order_acquire)) return;
         const auto origin=renderer.origin();
         const auto epoch=worldEpoch.load(std::memory_order_acquire);
-        std::vector<bedrock::sdk::WorldLineSegment> segments;
+        const auto config=std::atomic_load_explicit(&liveConfig,std::memory_order_acquire);
+        ++nameDiagnostics.renderCalls;
+        ++nameDiagnostics.renderFrames;
+        std::array<std::vector<bedrock::sdk::WorldLineSegment>,2> segments;
         for(std::size_t i=0;i<workerCount;++i) {
             const auto snapshot=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
             if(!snapshot || snapshot->epoch!=epoch) continue;
             for(const auto& box:snapshot->boxes) {
                 const auto cornersNow=hitbox::corners(interpolatedBounds(box,Clock::now()));
                 constexpr unsigned edges[12][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-                for(const auto& edge:edges) segments.push_back({{cornersNow[edge[0]].x-origin.x,cornersNow[edge[0]].y-origin.y,cornersNow[edge[0]].z-origin.z},
-                                                               {cornersNow[edge[1]].x-origin.x,cornersNow[edge[1]].y-origin.y,cornersNow[edge[1]].z-origin.z}});
+                auto& pass=segments[box.retained?1:0];
+                for(const auto& edge:edges) pass.push_back({{cornersNow[edge[0]].x-origin.x,cornersNow[edge[0]].y-origin.y,cornersNow[edge[0]].z-origin.z},
+                                                           {cornersNow[edge[1]].x-origin.x,cornersNow[edge[1]].y-origin.y,cornersNow[edge[1]].z-origin.z}});
             }
         }
-        if(!segments.empty()) renderer.drawLines(segments,{1.0f,1.0f,1.0f,1.0f},1.0f);
+        for(std::size_t pass=0;pass<2;++pass) if(!segments[pass].empty()) {
+            const auto packed=pass ? config->retainedColor : config->liveColor;
+            const auto rgba=hitbox::opaqueColor(packed);
+            if(!renderer.drawLines(segments[pass],{rgba[0],rgba[1],rgba[2],rgba[3]},config->lineThickness))
+                ++nameDiagnostics.renderFaults;
+        }
+
+        if(config->showNameTags) for(std::size_t i=0;i<workerCount;++i) {
+            const auto snapshot=std::atomic_load_explicit(&processingWorkers[i].snapshot,std::memory_order_acquire);
+            if(!snapshot || snapshot->epoch!=epoch || !snapshot->preparedNames) continue;
+            const auto& prepared=*snapshot->preparedNames;
+            for(const auto& label:prepared.labels) {
+                if(label.boxIndex>=snapshot->boxes.size() || label.firstVertex>=prepared.vertices.size() ||
+                   label.vertexCount>prepared.vertices.size()-label.firstVertex) { ++nameDiagnostics.renderNoMesh; continue; }
+                const auto& box=snapshot->boxes[label.boxIndex];
+                const auto packed=box.retained ? config->retainedColor : config->liveColor;
+                const auto rgba=hitbox::opaqueColor(packed);
+                std::size_t primitives=label.vertexCount/8;
+                for(std::size_t p=0;p<primitives;++p) {
+                    const auto first=label.firstVertex+p*8;
+                    std::array<bedrock::sdk::WorldNameVertex,4> quad{};
+                    quad[0].position=prepared.vertices[first]; quad[1].position=prepared.vertices[first+1];
+                    quad[2].position=prepared.vertices[first+2]; quad[3].position=prepared.vertices[first+3];
+                    if(renderer.drawNameQuad(quad,{rgba[0],rgba[1],rgba[2],rgba[3]}))
+                        ++nameDiagnostics.renderSubmitted;
+                    else ++nameDiagnostics.renderFaults;
+                }
+            }
+        }
     });
     (void)worldRenderSubscription;
     log("SDK world rendering active [WorldRender + name-tag hooks; 1-tick target sweep]");

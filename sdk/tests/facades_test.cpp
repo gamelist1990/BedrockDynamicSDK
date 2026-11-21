@@ -23,7 +23,10 @@ int main() {
         (void)event.actor; (void)event.nameTag;
     });
     (void)nameSubscription;
-    (void)actors;
+    std::string name;
+    std::string nameError;
+    assert(!actors.nameTag(nullptr, name, nameError));
+    assert(!nameError.empty());
     (void)hooks;
     return 0;
 }

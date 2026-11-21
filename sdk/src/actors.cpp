@@ -1,5 +1,7 @@
 #include <bedrock/sdk/actors.hpp>
+#include "resolver_access.hpp"
 #ifdef _WIN32
+#include <bedrock/runtime/hook_runtime.h>
 #include <bedrock/native/actors.hpp>
 #include <bedrock/native/items.hpp>
 #include <bedrock/native/actor_registry.hpp>
@@ -13,6 +15,7 @@ namespace bedrock::sdk {
 
 struct ActorFacade::Impl {
 #ifdef _WIN32
+    std::uintptr_t nameTagAddress{};
     bedrock::NativeActorRegistry registry;
     bedrock::NativeLocalPlayerGetter localPlayer;
     bedrock::NativePlayerList playerList;
@@ -28,12 +31,27 @@ bool ActorFacade::configure(std::string_view profileJson,
                             std::size_t actorTypeValueOffset,
                             std::uint32_t playerTypeId,
                             std::string& error) {
+    return configure(profileJson, actorTypeValueOffset, playerTypeId, SymbolResolver{}, error);
+}
+
+bool ActorFacade::configure(std::string_view profileJson,
+                            std::size_t actorTypeValueOffset,
+                            std::uint32_t playerTypeId,
+                            const SymbolResolver& resolver,
+                            std::string& error) {
 #ifdef _WIN32
     if (!bedrock::parseNativeItemLayout(profileJson, impl_->itemLayout, error)) return false;
     if (!bedrock::parseNativeActorLayout(profileJson, impl_->actorLayout, error)) return false;
     impl_->localPlayer.load(profileJson);
     impl_->playerList.load(profileJson);
     impl_->registry.configure(impl_->actorLayout, actorTypeValueOffset, playerTypeId);
+    impl_->nameTagAddress = 0;
+    const auto& nativeResolver = SymbolResolverRuntimeAccess::resolver(resolver);
+    if (auto nameTag = bedrock::resolveSharedHook(nativeResolver, "Actor::getNameTag",
+                                                  BDS_HOOK_ACTOR_GET_NAME_TAG)) {
+        if (bedrock::isUsableSharedHookResolution(*nameTag))
+            impl_->nameTagAddress = nameTag->address;
+    }
     return true;
 #else
     error = "native Actor facade unavailable on this host";
@@ -73,12 +91,43 @@ std::optional<Vec3Value> ActorFacade::position(void* actor) const noexcept {
 #endif
 }
 
+#ifdef _WIN32
+static int callActorNameTag(std::uintptr_t address, void* actor,
+                            std::string& out) noexcept {
+    using Getter = const std::string& (__fastcall*)(void*);
+    __try {
+        if (!address || !actor) return -2;
+        const auto& name = reinterpret_cast<Getter>(address)(actor);
+        out = name;
+        return name.empty() ? 0 : 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+#endif
+
 std::uint64_t ActorFacade::runtimeId(void* actor) const noexcept {
 #ifdef _WIN32
     return impl_->registry.runtimeIdentity(actor);
 #else
     (void)actor;
     return 0;
+#endif
+}
+
+bool ActorFacade::nameTag(void* actor, std::string& out, std::string& error) const noexcept {
+#ifdef _WIN32
+    out.clear();
+    if (!actor) { error = "Actor unavailable"; return false; }
+    if (!impl_->nameTagAddress) { error = "Actor::getNameTag unavailable"; return false; }
+    const int result = callActorNameTag(impl_->nameTagAddress, actor, out);
+    if (result == -1) { error = "Actor::getNameTag native fault"; return false; }
+    if (result == -2) { error = "Actor::getNameTag unavailable"; return false; }
+    if (result == 0) { error = "Actor name tag empty"; return false; }
+    error.clear();
+    return true;
+#else
+    (void)actor;(void)out;error="native Actor facade unavailable on this host";return false;
 #endif
 }
 
