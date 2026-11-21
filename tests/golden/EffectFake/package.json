@@ -1,0 +1,1 @@
+{"dependencies":{"@bedrock/sdk":"*"},"description":"EffectFake - client-side only potion effects for BedrockDynamicSDK","name":"effect-fake","private":true,"type":"module","version":"1.0.0"}

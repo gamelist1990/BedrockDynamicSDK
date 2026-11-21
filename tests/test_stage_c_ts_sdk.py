@@ -33,7 +33,14 @@ sys.path.insert(0, str(ROOT / "tools"))
 import generate_ts_sdk  # noqa: E402
 
 
-GOLDEN_EFFECTFAKE_DIR = Path.home() / "WorkSpace/ts-mods/EffectFake"
+# The golden EffectFake lives in the developer workspace; CI runners do not
+# have that layout, so an identical copy is vendored under tests/golden/ and
+# used whenever the workspace copy is absent. GOLDEN_MD5 pins both.
+_WORKSPACE_GOLDEN_DIR = Path.home() / "WorkSpace/ts-mods/EffectFake"
+_REPO_GOLDEN_DIR = Path(__file__).resolve().parent / "golden/EffectFake"
+GOLDEN_EFFECTFAKE_DIR = (
+    _WORKSPACE_GOLDEN_DIR if _WORKSPACE_GOLDEN_DIR.is_dir() else _REPO_GOLDEN_DIR
+)
 GOLDEN_MD5 = {
     "manifest.json": "0c94695308b86a509a61fae960983590",
     "package.json": "fd6432d5c15af0ac507a3f9b026b4240",

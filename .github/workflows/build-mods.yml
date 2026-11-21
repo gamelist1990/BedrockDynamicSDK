@@ -56,6 +56,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript compiler for the Stage C tests
+        run: npm install -g typescript@5.9.3
       - name: Verify data and Python
         run: |
           uv sync --extra dev

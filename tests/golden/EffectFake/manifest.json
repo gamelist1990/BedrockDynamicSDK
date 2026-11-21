@@ -1,0 +1,1 @@
+{"apiVersion":"1.0.0","description":"クライアント側だけでポーション効果を付ける Mod。サーバーには一切送られない。","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"EffectFake","version":"1.0.0"}
