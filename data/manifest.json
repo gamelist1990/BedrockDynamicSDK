@@ -1,69 +1,69 @@
 {
- "schema": 1,
- "versions": {
-  "1.26.52.3": {
-   "windows-x64": {
-    "path": "data/1.26.52.3/windows-x64/manifest.json",
-    "sha256": "93de9f1f0cfc57b13663bf0fce3dc9acdbe6a09d30a089e38707c18ea21606dd",
-    "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
-    "symbols": 17,
-    "vanilla_data": "data/vanilla/1.26.51.json",
-    "protocol": {
-     "path": "data/protocols/1.26.51/protocol.json",
-     "version_path": "data/protocols/1.26.51/version.json",
-     "sha256": "14fc38412ca259ab28c764b2d540d378e1bd65d23e059c1da2c61ec6843f7403",
-     "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
-     "wire_roster_available": false
+  "schema": 1,
+  "versions": {
+    "1.26.52.3": {
+      "windows-x64": {
+        "path": "data/1.26.52.3/windows-x64/manifest.json",
+        "sha256": "93de9f1f0cfc57b13663bf0fce3dc9acdbe6a09d30a089e38707c18ea21606dd",
+        "module_sha256": "4a92bfa3ce2428b40ee517b7c1125d9f6f79274382de03846351992663b2e2e4",
+        "symbols": 17,
+        "protocol": {
+          "path": "data/protocols/1.26.51/protocol.json",
+          "version_path": "data/protocols/1.26.51/version.json",
+          "sha256": "14fc38412ca259ab28c764b2d540d378e1bd65d23e059c1da2c61ec6843f7403",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": false
+        },
+        "vanilla_data": "data/vanilla/1.26.51.json",
+        "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
+        "size_of_image": 314576896,
+        "text_rva": "0x1000",
+        "text_size": 240802816,
+        "rtti_types": 0
+      }
     },
-    "module_text_sha256": "6fa218d247874940235aacb8fd7e3bbf0e3d1e259630d7f83fcb536f06733aeb",
-    "size_of_image": 314576896,
-    "text_rva": "0x1000",
-    "text_size": 240802816,
-    "rtti_types": 0
-   }
+    "1.26.60.5": {
+      "windows-x64": {
+        "path": "data/1.26.60.5/windows-x64/manifest.json",
+        "sha256": "f6ec43d2470d4fbca16179d4e571a05e87dbbd6885fa4df94226bbfcbf4af7a9",
+        "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "symbols": 91,
+        "protocol": {
+          "path": "data/protocols/1.26.60/protocol.json",
+          "version_path": "data/protocols/1.26.60/version.json",
+          "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": true
+        },
+        "vanilla_data": "data/vanilla/1.26.60.json",
+        "module_text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
+        "size_of_image": 327397376,
+        "text_rva": "0x1000",
+        "text_size": 250370560,
+        "rtti_types": 0
+      }
+    },
+    "1.26.65.1": {
+      "windows-x64": {
+        "path": "data/1.26.65.1/windows-x64/manifest.json",
+        "sha256": "87609d256e2a2e0f498d87c51e529af95abd05240203463ed7fed7f5e7e6fca9",
+        "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+        "symbols": 96,
+        "protocol": {
+          "path": "data/protocols/1.26.60/protocol.json",
+          "version_path": "data/protocols/1.26.60/version.json",
+          "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": true
+        },
+        "vanilla_data": "data/vanilla/1.26.60.json",
+        "module_text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
+        "size_of_image": 327409664,
+        "text_rva": "0x1000",
+        "text_size": 250377728,
+        "rtti_types": 0
+      }
+    }
   },
-  "1.26.60.5": {
-   "windows-x64": {
-    "path": "data/1.26.60.5/windows-x64/manifest.json",
-    "sha256": "f6ec43d2470d4fbca16179d4e571a05e87dbbd6885fa4df94226bbfcbf4af7a9",
-    "module_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
-    "symbols": 91,
-    "vanilla_data": "data/vanilla/1.26.60.json",
-    "protocol": {
-     "path": "data/protocols/1.26.60/protocol.json",
-     "version_path": "data/protocols/1.26.60/version.json",
-     "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
-     "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
-     "wire_roster_available": true
-    },
-    "module_text_sha256": "7ca5d1baef049979e9785d5bbafe7100a829e1107a3d374975962cc64ecc76fe",
-    "size_of_image": 327397376,
-    "text_rva": "0x1000",
-    "text_size": 250370560,
-    "rtti_types": 0
-   }
-  },
-  "1.26.65.1": {
-   "windows-x64": {
-    "path": "data/1.26.65.1/windows-x64/manifest.json",
-    "sha256": "87609d256e2a2e0f498d87c51e529af95abd05240203463ed7fed7f5e7e6fca9",
-    "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
-    "symbols": 96,
-    "vanilla_data": "data/vanilla/1.26.60.json",
-    "protocol": {
-     "path": "data/protocols/1.26.60/protocol.json",
-     "version_path": "data/protocols/1.26.60/version.json",
-     "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
-     "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
-     "wire_roster_available": true
-    },
-    "module_text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
-    "size_of_image": 327409664,
-    "text_rva": "0x1000",
-    "text_size": 250377728,
-    "rtti_types": 0
-   }
-  }
- },
- "default_version": "1.26.52.3"
+  "default_version": "1.26.52.3"
 }
