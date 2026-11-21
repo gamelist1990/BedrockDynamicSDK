@@ -32,6 +32,7 @@
     { "name": "world", "kind": "value", "cpp": "bedrock::sdk::World", "tsType": "World", "note": "realm-bound singleton" },
     { "name": "system", "kind": "value", "cpp": "bedrock::sdk::System", "tsType": "System", "note": "realm-bound singleton" },
     { "name": "files", "kind": "value", "cpp": "stageb::SdkBindings files surface", "tsType": "Files", "note": "per-Mod synchronous file API rooted at <ScriptClient.dll dir>/mod-data/<ModName>; paths are relative and sandboxed" },
+    { "name": "dev", "kind": "value", "cpp": "stageb::SdkBindings dev surface", "tsType": "Dev", "note": "guarded raw-memory and profile introspection surface for developer tooling" },
     { "name": "CommandContext", "kind": "type", "cpp": "CommandBridge::Context", "note": "get<T>/getOptional<T>/rawLine/respond" },
     { "name": "CommandBuilder", "kind": "type", "cpp": "CommandBridge::Builder", "note": "literal/argument/executes chain builder" },
     { "name": "CommandManager", "kind": "type", "cpp": "CommandBridge::Registry", "note": "register/unregister mod-scoped commands" },
@@ -137,7 +138,17 @@
     { "path": "Mod.commands.unregister", "cpp": "CommandBridge", "js": "method", "params": [{ "name": "name", "type": "string" }], "result": "void", "bound": true },
     { "path": "Mod.settings", "cpp": "SettingsPage", "js": "builder", "params": [{ "name": "titleKey", "type": "string" }], "result": "SettingsPage", "bound": true, "note": "translates to bedrock::sdk::SettingsPage (add/locale/onChange/modName/registerPage/unregisterPage/value)" },
     { "path": "Mod.keybinds", "cpp": "KeyBindings", "js": "object", "result": "KeyBindings", "bound": true, "note": "translates to bedrock::sdk::KeyBindings (add/locale/key/changed.subscribe)" },
-    { "path": "brightness.setGamma", "cpp": "BrightnessOverride::setGamma", "js": "method", "params": [{ "name": "gamma", "type": "number | undefined", "optional": true }], "result": "void", "bound": true, "note": "translates to bedrock::sdk::BrightnessOverride::setGamma with last-writer-wins and restore on unload" }
+    { "path": "brightness.setGamma", "cpp": "BrightnessOverride::setGamma", "js": "method", "params": [{ "name": "gamma", "type": "number | undefined", "optional": true }], "result": "void", "bound": true, "note": "translates to bedrock::sdk::BrightnessOverride::setGamma with last-writer-wins and restore on unload" },
+    { "path": "dev.memory.readBytes", "cpp": "SdkBindings::devMemoryReadBytes", "js": "method", "params": [{ "name": "address", "type": "number" }, { "name": "length", "type": "number" }], "result": "number[]", "bound": true, "note": "guarded read up to 4096 bytes; throws SdkError{code:'Invalid' | 'Unavailable'} on validation failure" },
+    { "path": "dev.memory.readU32", "cpp": "SdkBindings::devMemoryReadU32", "js": "method", "params": [{ "name": "address", "type": "number" }], "result": "number", "bound": true, "note": "guarded read 32-bit unsigned integer" },
+    { "path": "dev.memory.readI64", "cpp": "SdkBindings::devMemoryReadI64", "js": "method", "params": [{ "name": "address", "type": "number" }], "result": "number", "bound": true, "note": "guarded read 64-bit signed integer" },
+    { "path": "dev.memory.readF32", "cpp": "SdkBindings::devMemoryReadF32", "js": "method", "params": [{ "name": "address", "type": "number" }], "result": "number", "bound": true, "note": "guarded read 32-bit float" },
+    { "path": "dev.memory.readPtr", "cpp": "SdkBindings::devMemoryReadPtr", "js": "method", "params": [{ "name": "address", "type": "number" }], "result": "number", "bound": true, "note": "guarded read pointer-sized integer" },
+    { "path": "dev.memory.writeBytes", "cpp": "SdkBindings::devMemoryWriteBytes", "js": "method", "params": [{ "name": "address", "type": "number" }, { "name": "bytes", "type": "Uint8Array" }], "result": "void", "bound": true, "note": "guarded write bytes to memory; throws on validation failure" },
+    { "path": "dev.memory.scanAob", "cpp": "SdkBindings::devMemoryScanAob", "js": "method", "params": [{ "name": "pattern", "type": "string" }], "result": "number[]", "bound": true, "note": "AOB scan over main module image; returns RVAs (capped at 256); pattern: space-separated hex bytes with ?? wildcards" },
+    { "path": "dev.symbols.list", "cpp": "SdkBindings::devSymbolsList", "js": "method", "params": [], "result": "DevSymbolEntry[]", "bound": true, "note": "returns array of {name, rva, status} from loaded profile" },
+    { "path": "dev.symbols.status", "cpp": "SdkBindings::devSymbolsStatus", "js": "method", "params": [{ "name": "name", "type": "string" }], "result": "DevSymbolEntry | null", "bound": true, "note": "returns single symbol entry or null if not found" },
+    { "path": "dev.module.info", "cpp": "SdkBindings::devModuleInfo", "js": "method", "params": [], "result": "DevModuleInfo", "bound": true, "note": "returns {base, size, version} of main module" }
   ],
   "unsupportedLimitations": [
     {

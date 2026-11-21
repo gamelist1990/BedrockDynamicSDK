@@ -445,7 +445,12 @@ private:
         FilesDataDir, FilesReadText, FilesWriteText, FilesAppendText,
         FilesReadBytes, FilesWriteBytes, FilesExists, FilesStat, FilesList,
         FilesMkdir, FilesRemove, FilesRename,
-        WorldObject, SystemObject, BrightnessObject
+        WorldObject, SystemObject, BrightnessObject,
+        // --- dev namespace ---
+        DevMemoryReadBytes, DevMemoryReadU32, DevMemoryReadI64, DevMemoryReadF32,
+        DevMemoryReadPtr, DevMemoryWriteBytes, DevMemoryScanAob,
+        DevSymbolsList, DevSymbolsStatus,
+        DevModuleInfo
     };
     static JSValue hostCallback(JSContext* ctx, JSValueConst self, int argc,
                                 JSValueConst* argv, int magic);

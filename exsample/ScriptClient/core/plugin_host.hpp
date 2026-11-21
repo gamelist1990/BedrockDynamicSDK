@@ -73,6 +73,9 @@ public:
     // <ScriptClient.dll dir>/mod-data/<ModName>. Left empty in tests that do
     // not use files; tests set a temp directory for the same behavior.
     void setDataDirectory(fs::path dataDir) { dataDir_ = std::move(dataDir); }
+    // Production hook: pass the loaded game profile JSON (symbols, target) to
+    // every ScriptMod's bindings for the dev.* introspection surface.
+    void setProfileJson(std::string profileJson) { profileJson_ = std::move(profileJson); }
     std::size_t loadedCount() const noexcept { return loaded_.size(); }
 
 private:
@@ -113,6 +116,7 @@ private:
     fs::path logDir_;
     fs::path dataDir_;
     std::string gameVersion_;
+    std::string profileJson_;
     std::shared_ptr<WorldBackend> world_;
     std::vector<std::unique_ptr<LoadedMod>> loaded_;
     std::vector<ModCandidate> candidates_;

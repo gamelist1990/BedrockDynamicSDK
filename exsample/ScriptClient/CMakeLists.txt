@@ -41,7 +41,7 @@ target_include_directories(script_client_core PUBLIC
     "${BEDROCK_SDK_ROOT}/third_party"
     "${BEDROCK_SDK_ROOT}/third_party/quickjs-ng"
 )
-target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk)
+target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk bedrock::internal_headers)
 
 if(WIN32)
     add_library(ScriptClient SHARED

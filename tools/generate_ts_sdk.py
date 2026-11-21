@@ -481,6 +481,45 @@ def build_runtime_core_js(registry: dict[str, Any]) -> str:
     root.__stagebMakePlayer = function (id) {{ return new Player(id); }};
     root.__stagebMakeEntity = function (id) {{ return new Entity(id); }};
 
+    const devObject = {{
+      memory: {{
+        readBytes: function (address, length) {{
+          return H.devMemoryReadBytes(Number(address), Number(length));
+        }},
+        readU32: function (address) {{
+          return H.devMemoryReadU32(Number(address));
+        }},
+        readI64: function (address) {{
+          return H.devMemoryReadI64(Number(address));
+        }},
+        readF32: function (address) {{
+          return H.devMemoryReadF32(Number(address));
+        }},
+        readPtr: function (address) {{
+          return H.devMemoryReadPtr(Number(address));
+        }},
+        writeBytes: function (address, bytes) {{
+          return H.devMemoryWriteBytes(Number(address), bytes);
+        }},
+        scanAob: function (pattern) {{
+          return H.devMemoryScanAob(String(pattern));
+        }}
+      }},
+      symbols: {{
+        list: function () {{
+          return H.devSymbolsList();
+        }},
+        status: function (name) {{
+          return H.devSymbolsStatus(String(name));
+        }}
+      }},
+      module: {{
+        info: function () {{
+          return H.devModuleInfo();
+        }}
+      }}
+    }};
+
     const sdkModule = {{
       Mod: Mod,
       Arg: Arg,
@@ -490,7 +529,8 @@ def build_runtime_core_js(registry: dict[str, Any]) -> str:
       brightness: brightnessObject,
       files: filesObject,
       world: worldSingleton,
-      system: H.systemObject()
+      system: H.systemObject(),
+      dev: devObject
     }};
     root.__sdkModule = sdkModule;
     return sdkModule;
@@ -954,11 +994,62 @@ def build_sdk_dts(registry: dict[str, Any]) -> str:
         "export declare const files: Files;",
         "export declare const world: World;",
         "export declare const system: System;",
+        "export declare const dev: Dev;",
+        "",
+        "/**",
+        " * Guarded raw-memory and profile introspection surface for developer tooling.",
+        " * Every native read/write is range-validated through the SDK memory guard;",
+        " * invalid addresses throw `SdkError` (`code: \"Invalid\"` / `\"Unavailable\"`)",
+        " * instead of crashing the host process.",
+        " */",
+        "export interface DevMemory {",
+        "  /** Read up to 4096 bytes; returns an array of byte numbers. */",
+        "  readBytes(address: number, length: number): number[];",
+        "  readU32(address: number): number;",
+        "  readI64(address: number): number;",
+        "  readF32(address: number): number;",
+        "  /** Returns the pointer value at `address` as an exact JS number. */",
+        "  readPtr(address: number): number;",
+        "  /** Guarded write of a `Uint8Array`/`ArrayBuffer`/number[] to memory. */",
+        "  writeBytes(address: number, bytes: Uint8Array | ArrayBuffer | number[]): void;",
+        "  /** AOB scan over the main module image; returns RVAs (capped at 256). */",
+        "  scanAob(pattern: string): number[];",
+        "}",
+        "",
+        "export interface DevSymbolEntry {",
+        "  readonly name: string;",
+        "  readonly rva: number;",
+        "  readonly status: string;",
+        "  /** AOB signature pattern with ?? wildcards, empty when absent. */",
+        "  readonly signature: string;",
+        "  /** Entry-check bytes (hex string without spaces), empty when absent. */",
+        "  readonly entryCheck: string;",
+        "}",
+        "",
+        "export interface DevSymbols {",
+        "  list(): DevSymbolEntry[];",
+        "  status(name: string): DevSymbolEntry | null;",
+        "}",
+        "",
+        "export interface DevModuleInfo {",
+        "  readonly base: number;",
+        "  readonly size: number;",
+        "  readonly version: string;",
+        "}",
+        "",
+        "export interface Dev {",
+        "  readonly memory: DevMemory;",
+        "  readonly symbols: DevSymbols;",
+        "  readonly module: {",
+        "    /** Returns {base, size, version} of main module. */",
+        "    info(): DevModuleInfo;",
+        "  };",
+        "}",
         "",
     ]
 
     # Sanity check that every member prefix in the registry is represented in the generated declaration.
-    expected_prefixes = {"world", "system", "files", "player", "entity", "dimension", "block", "new ItemStack", "Mod", "brightness"}
+    expected_prefixes = {"world", "system", "files", "player", "entity", "dimension", "block", "new ItemStack", "Mod", "brightness", "dev"}
     unknown = set(members_by_prefix) - expected_prefixes
     if unknown:
         raise ValueError(f"Unmapped member prefixes in binding-registry.json: {sorted(unknown)}")

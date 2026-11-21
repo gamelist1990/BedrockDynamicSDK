@@ -22,6 +22,10 @@ struct HostContext {
     WorldBackend* world = nullptr;
     LogSink* log = nullptr;
 
+    // Game profile JSON (symbols, target info). Set once at load time; read-only
+    // during tick. Used by the dev.* symbol introspection surface.
+    std::string profileJson;
+
     // Set only while a command handler runs on the owning tick (§1.2).
     const std::map<std::string, ContextValue>* activeValues = nullptr;
     std::string* response = nullptr;

@@ -709,6 +709,7 @@ DWORD WINAPI start(LPVOID parameter) {
         });
         state.host = std::make_unique<stageb::PluginHost>(
             stageb::resolveModsDir(directory), version, state.world);
+        state.host->setProfileJson(profile.json());
         // Bug 5: persist each mod's console.log to <ScriptClient.dll dir>/<Mod>.log.
         state.host->setLogDirectory(directory);
         // File API roots are anchored to the DLL directory, not to the mods

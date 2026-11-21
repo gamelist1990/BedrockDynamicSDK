@@ -106,6 +106,8 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
     mod->loader = std::make_unique<ModuleLoader>(*mod->runtime, *mod->transpiler,
                                                  mod->dir, *mod->host);
     mod->loader->setBuiltin("@bedrock/sdk", mod->bindings->moduleObject());
+    // Pass the loaded game profile JSON to the SDK for dev.* introspection
+    if (mod->host) mod->host->profileJson = profileJson_;
 
     // §4.3: vanilla-data is generated from the same catalog as the C++/TS
     // headers (tools/vanilla_data.py). Built-ins always win over node_modules.

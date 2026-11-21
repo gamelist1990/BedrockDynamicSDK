@@ -9,15 +9,221 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <sstream>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <bedrock/detail/checked_access.hpp>
+#endif
+
+#include <nlohmann/json.hpp>
 
 namespace stageb {
 namespace {
+
+// Format an integer as a hex string without leading zeros, for error messages.
+template <class T>
+std::string toHex(T value) {
+    std::ostringstream ss;
+    ss << "0x" << std::hex << value;
+    return ss.str();
+}
 
 // §5.3 / §6.4 / §11: the frozen apiVersion 1.0.0 binding bootstrap is generated
 // by Stage C (`tools/generate_ts_sdk.py`) from `data/binding-registry.json`.
 // The C++ host functions are attached as __bedrockHost before this runs; plugin
 // code only sees the Mod/Arg/world/system/Setting/ItemStack/brightness surface.
 constexpr const char* kBootstrap = kGeneratedBootstrap;
+
+#ifdef _WIN32
+// Get the base address and image size of the main (script client / game) module.
+// On non-Windows builds (host tests) these helpers are unused.
+inline std::pair<std::uintptr_t, std::size_t> moduleBaseAndSize() noexcept {
+    HMODULE h = GetModuleHandleW(nullptr);
+    if (!h) return {0, 0};
+    IMAGE_DOS_HEADER const* dos = reinterpret_cast<IMAGE_DOS_HEADER const*>(h);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+        dos->e_lfanew > 0x1000000)
+        return {0, 0};
+    IMAGE_NT_HEADERS const* nt =
+        reinterpret_cast<IMAGE_NT_HEADERS const*>(reinterpret_cast<const std::byte*>(h) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return {0, 0};
+    return {reinterpret_cast<std::uintptr_t>(h), nt->OptionalHeader.SizeOfImage};
+}
+
+// SEH-guarded byte copy (POD-only body per MSVC C2712): second line of
+// defence behind the VirtualQuery validation, for pages unmapped between
+// validation and copy.
+inline bool sehCopyBytes(std::uint8_t* dst, const std::uint8_t* src, std::size_t len) noexcept {
+    __try {
+        std::memcpy(dst, src, len);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Guarded byte read over a contiguous range. Returns false on any validation
+// failure; never crashes.
+inline bool guardedReadBytes(const void* baseAddr, std::uintptr_t offset, std::size_t len,
+                             std::vector<std::uint8_t>& out) {
+    const auto ptr = reinterpret_cast<const std::byte*>(baseAddr) + offset;
+    auto valid = bedrock::detail::validateReadRange(ptr, len);
+    if (!valid.first || valid.second < len) return false;
+    out.resize(len);
+    if (!sehCopyBytes(out.data(), static_cast<const std::uint8_t*>(valid.first), len)) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
+template <class T>
+inline bool guardedReadPOD(const void* baseAddr, std::uintptr_t offset, T& out) noexcept {
+    if (!baseAddr) return false;
+    return bedrock::detail::checkedRead<T>(baseAddr, offset, out);
+}
+
+template <class T>
+inline bool guardedWritePOD(void* baseAddr, std::uintptr_t offset, const T& value) noexcept {
+    if (!baseAddr) return false;
+    return bedrock::detail::checkedWrite<T>(baseAddr, offset, value);
+}
+
+// Parse a space-separated hex pattern with ?? wildcards into token bytes.
+// Returns empty vector for invalid patterns.
+// Tokens: two hex digits (00..FF), ?? or ? = wildcard (-1). Max 512 tokens.
+// Matches CheckSig's parsePattern semantics.
+inline bool parseAobPattern(std::string_view pat, std::vector<std::uint8_t>& bytes,
+                            std::vector<std::uint8_t>& mask) {
+    bytes.clear();
+    mask.clear();
+    if (pat.empty()) return false;
+
+    std::size_t i = 0;
+    while (i < pat.size()) {
+        // Skip whitespace
+        while (i < pat.size() && std::isspace(static_cast<unsigned char>(pat[i]))) ++i;
+        if (i >= pat.size()) break;
+
+        if (pat[i] == '?') {
+            ++i;
+            if (i < pat.size() && pat[i] == '?') ++i; // allow ?? as single wildcard token
+            bytes.push_back(0);
+            mask.push_back(0); // wildcard bit = 0
+            if (bytes.size() > 512) return false;
+        } else if (std::isxdigit(static_cast<unsigned char>(pat[i]))) {
+            if (i + 1 >= pat.size() || !std::isxdigit(static_cast<unsigned char>(pat[i + 1])))
+                return false; // single hex digit without pair is invalid
+            unsigned int v0 = std::stoul(std::string(1, pat[i]), nullptr, 16);
+            unsigned int v1 = std::stoul(std::string(1, pat[i + 1]), nullptr, 16);
+            bytes.push_back(static_cast<std::uint8_t>((v0 << 4) | v1));
+            mask.push_back(0xFF); // fixed byte
+            i += 2;
+            if (bytes.size() > 512) return false;
+        } else {
+            return false; // unknown character
+        }
+    }
+    return !bytes.empty();
+}
+
+// Scan the main module image for AOB matches using chunked guarded reads.
+// Returns RVA list capped at 256 results.
+inline std::vector<std::uint32_t> scanAobInModule(std::string_view pattern,
+                                                  std::uintptr_t moduleBase,
+                                                  std::size_t moduleSize,
+                                                  std::size_t cap = 256) {
+    std::vector<std::uint8_t> bytes, mask;
+    if (!parseAobPattern(pattern, bytes, mask)) return {};
+    if (bytes.empty()) return {};
+
+    std::vector<std::uint32_t> results;
+    std::uint32_t baseRva = 0;
+
+    // Find the largest contiguous fixed-byte anchor run (>= 4 bytes).
+    std::size_t bestAnchorStart = std::string::npos;
+    std::size_t bestAnchorLen = 0;
+    for (std::size_t s = 0; s < bytes.size(); ++s) {
+        if (mask[s] != 0xFF) continue;
+        std::size_t e = s;
+        while (e < bytes.size() && mask[e] == 0xFF) ++e;
+        if (e - s > bestAnchorLen && e - s >= 4) {
+            bestAnchorLen = e - s;
+            bestAnchorStart = s;
+        }
+        s = e;
+    }
+    if (bestAnchorStart == std::string::npos) return {}; // no usable anchor
+
+    std::uint8_t anchorFirst = bytes[bestAnchorStart];
+    std::vector<std::uint8_t> anchorBytes(bytes.begin() + bestAnchorStart,
+                                          bytes.begin() + bestAnchorStart + bestAnchorLen);
+    std::vector<std::uint8_t> anchorMask(bestAnchorLen, 0xFF);
+
+    // Chunked scan: read the module image in chunks and search for the anchor,
+    // then verify the full pattern at each anchor hit.
+    constexpr std::size_t kChunk = 1 << 20; // 1 MiB
+    for (std::uintptr_t readOff = 0; readOff < moduleSize; readOff += kChunk) {
+        std::size_t chunkSize = std::min(kChunk, moduleSize - readOff);
+        std::vector<std::uint8_t> chunk;
+        if (!guardedReadBytes(reinterpret_cast<const void*>(moduleBase), readOff,
+                              chunkSize, chunk))
+            continue; // skip unmapped chunks
+
+        // Search for the anchor within this chunk
+        std::size_t pos = 0;
+        while ((pos = std::search(chunk.begin() + pos, chunk.end(),
+                                  anchorBytes.begin(), anchorBytes.end(),
+                                  [](std::uint8_t a, std::uint8_t b) { return a == b; }) -
+                chunk.begin()) < chunk.size()) {
+            std::uintptr_t absOff = readOff + pos;
+            if (absOff + bytes.size() > moduleSize) break; // pattern would overrun
+            // Verify the full pattern at this anchor location
+            bool match = true;
+            for (std::size_t t = 0; t < bytes.size(); ++t) {
+                std::uint8_t got = chunk[pos + t];
+                if ((mask[t] & got) != (mask[t] & bytes[t])) { match = false; break; }
+            }
+            if (match) {
+                results.push_back(static_cast<std::uint32_t>(absOff));
+                if (results.size() >= cap) return results; // capped
+            }
+            ++pos; // advance past this anchor match
+        }
+    }
+    return results;
+}
+
+// Parse profile JSON symbols. Returns entries from root["symbols"].
+// Schema: { name, rva, status, signature?, entry_check? } where status
+// is a string description; signature and entry_check are raw byte strings
+// (AOB with ?? wildcards) that may be empty when absent.
+inline std::vector<nlohmann::json> parseProfileSymbols(const std::string& profileJson) {
+    std::vector<nlohmann::json> entries;
+    try {
+        auto j = nlohmann::json::parse(profileJson);
+        auto syms = j.find("symbols");
+        if (syms == j.end() || !syms->is_object()) return {};
+        for (auto& [name, def] : syms->items()) {
+            if (!def.is_object()) continue;
+            nlohmann::json entry;
+            entry["name"] = name;
+            entry["rva"] = def.value("rva", std::uint64_t{0});
+            entry["status"] = def.value("status", std::string(""));
+            // New fields – empty string when the profile does not provide them.
+            entry["signature"] = def.value("signature", std::string(""));
+            entry["entry_check"] = def.value("entry_check", std::string(""));
+            entries.push_back(entry);
+        }
+    } catch (...) {
+        return {};
+    }
+    return entries;
+}
+#endif // _WIN32
 
 std::string filesSafeName(const std::string& name) {
     std::string safe = name.empty() ? std::string("unnamed-mod") : name;
@@ -557,7 +763,17 @@ bool SdkBindings::install(std::string& error) {
         {"filesList", Op::FilesList}, {"filesMkdir", Op::FilesMkdir},
         {"filesRemove", Op::FilesRemove}, {"filesRename", Op::FilesRename},
         {"worldObject", Op::WorldObject}, {"systemObject", Op::SystemObject},
-        {"brightnessObject", Op::BrightnessObject}
+        {"brightnessObject", Op::BrightnessObject},
+        {"devMemoryReadBytes", Op::DevMemoryReadBytes},
+        {"devMemoryReadU32", Op::DevMemoryReadU32},
+        {"devMemoryReadI64", Op::DevMemoryReadI64},
+        {"devMemoryReadF32", Op::DevMemoryReadF32},
+        {"devMemoryReadPtr", Op::DevMemoryReadPtr},
+        {"devMemoryWriteBytes", Op::DevMemoryWriteBytes},
+        {"devMemoryScanAob", Op::DevMemoryScanAob},
+        {"devSymbolsList", Op::DevSymbolsList},
+        {"devSymbolsStatus", Op::DevSymbolsStatus},
+        {"devModuleInfo", Op::DevModuleInfo}
     };
     for (const auto& entry : entries) {
         JsValue fn(ctx, JS_NewCFunctionMagic(ctx, &hostCallback, entry.name, 0,
@@ -1326,6 +1542,208 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             return JS_DupValue(ctx, self.systemObject_.get());
         case Op::BrightnessObject:
             return JS_DupValue(ctx, self.brightnessObject_.get());
+
+        // --- dev namespace: guarded memory / symbols / module introspection ---
+#ifdef _WIN32
+        case Op::DevMemoryReadBytes: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0) return throwJsError(ctx, "Invalid",
+                "dev.memory.readBytes address must be a finite number");
+            const auto len = jsToNumber(ctx, arg(1), 0.0);
+            if (len < 1 || len > 4096 || !std::isfinite(len))
+                return throwJsError(ctx, "Invalid",
+                    "dev.memory.readBytes length must be in 1..4096");
+            std::vector<std::uint8_t> bytes;
+            if (!guardedReadBytes(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)),
+                                  0, static_cast<std::size_t>(len), bytes))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.readBytes validation failed at address 0x" + toHex(addr));
+            JsValue array(ctx, JS_NewArray(ctx));
+            for (std::size_t i = 0; i < bytes.size(); ++i) {
+                JS_SetPropertyInt64(ctx, array.get(), i, JS_NewInt64(ctx, static_cast<int64_t>(bytes[i])));
+            }
+            return array.release();
+        }
+        case Op::DevMemoryReadU32: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0)
+                return throwJsError(ctx, "Invalid",
+                    "dev.memory.readU32 address must be finite and within range");
+            std::uint32_t val{};
+            if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.readU32 validation failed at address 0x" + toHex(addr));
+            return JS_NewUint32(ctx, val);
+        }
+        case Op::DevMemoryReadI64: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0)
+                return throwJsError(ctx, "Invalid",
+                    "dev.memory.readI64 address must be a finite number");
+            std::int64_t val{};
+            if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.readI64 validation failed at address 0x" + toHex(addr));
+            return JS_NewFloat64(ctx, static_cast<double>(val));
+        }
+        case Op::DevMemoryReadF32: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0)
+                return throwJsError(ctx, "Invalid",
+                    "dev.memory.readF32 address must be finite and within range");
+            float val{};
+            if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.readF32 validation failed at address 0x" + toHex(addr));
+            return JS_NewFloat64(ctx, static_cast<double>(val));
+        }
+        case Op::DevMemoryReadPtr: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0)
+                return throwJsError(ctx, "Invalid",
+                    "dev.memory.readPtr address must be finite and within range");
+            std::uintptr_t val{};
+            if (!guardedReadPOD(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(addr)), 0, val))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.readPtr validation failed at address 0x" + toHex(addr));
+            return JS_NewFloat64(ctx, static_cast<double>(val));
+        }
+        case Op::DevMemoryWriteBytes: {
+            const auto addr = jsToNumber(ctx, arg(0), -1.0);
+            if (!std::isfinite(addr) || addr < 0) return throwJsError(ctx, "Invalid",
+                "dev.memory.writeBytes address must be a finite number");
+
+            std::vector<std::uint8_t> data;
+            const int arrayType = JS_GetTypedArrayType(arg(1));
+            if (arrayType == JS_TYPED_ARRAY_UINT8 || arrayType == JS_TYPED_ARRAY_UINT8C) {
+                std::size_t dataSize = 0;
+                std::uint8_t* ptr = JS_GetUint8Array(ctx, &dataSize, arg(1));
+                if (!ptr || dataSize == 0) return throwJsError(ctx, "WrongType",
+                    "dev.memory.writeBytes expects a non-empty Uint8Array");
+                data.assign(ptr, ptr + dataSize);
+            } else if (JS_IsArrayBuffer(arg(1))) {
+                std::size_t dataSize = 0;
+                std::uint8_t* ptr = JS_GetArrayBuffer(ctx, &dataSize, arg(1));
+                if (!ptr || dataSize == 0) return throwJsError(ctx, "WrongType",
+                    "dev.memory.writeBytes expects a non-empty ArrayBuffer");
+                data.assign(ptr, ptr + dataSize);
+            } else if (JS_IsArray(arg(1))) {
+                std::int64_t len64 = 0;
+                if (JS_GetLength(ctx, arg(1), &len64) != 0 || len64 < 0)
+                    return throwJsError(ctx, "WrongType",
+                        "dev.memory.writeBytes array length unavailable");
+                const std::size_t len = static_cast<std::size_t>(len64);
+                data.reserve(len);
+                for (std::size_t i = 0; i < len; ++i) {
+                    JsValue el(ctx, JS_GetPropertyUint32(ctx, arg(1), i));
+                    data.push_back(static_cast<std::uint8_t>(jsToNumber(ctx, el.get(), 0)));
+                }
+            } else {
+                return throwJsError(ctx, "WrongType",
+                    "dev.memory.writeBytes expects a Uint8Array, ArrayBuffer, or number[]");
+            }
+            // Absolute address; the guard is the safety boundary: validate
+            // the whole range writable, then copy under SEH.
+            auto* writePtr = reinterpret_cast<std::uint8_t*>(static_cast<std::uintptr_t>(addr));
+            auto writeValid = bedrock::detail::validateWriteRange(writePtr, data.size());
+            if (!writeValid.first || writeValid.second < data.size())
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.writeBytes write-validation failed at address 0x" + toHex(addr));
+            if (!sehCopyBytes(writePtr, data.data(), data.size()))
+                return throwJsError(ctx, "Unavailable",
+                    "dev.memory.writeBytes write faulted at address 0x" + toHex(addr));
+            return JS_UNDEFINED;
+        }
+        case Op::DevMemoryScanAob: {
+            const auto pattern = jsToString(ctx, arg(0));
+            if (pattern.empty()) return throwJsError(ctx, "Invalid",
+                "dev.memory.scanAob pattern must not be empty");
+            auto [base, size] = moduleBaseAndSize();
+            if (!base || !size) return throwJsError(ctx, "Unavailable",
+                "dev.memory.scanAob: main module base/size unavailable");
+            auto hits = scanAobInModule(pattern, base, size, 256);
+            JsValue array(ctx, JS_NewArray(ctx));
+            for (std::size_t i = 0; i < hits.size(); ++i)
+                JS_SetPropertyUint32(ctx, array.get(), i, JS_NewUint32(ctx, hits[i]));
+            return array.release();
+        }
+        case Op::DevSymbolsList: {
+            const auto ctx_ = host->profileJson;
+            auto entries = parseProfileSymbols(ctx_);
+            JsValue array(ctx, JS_NewArray(ctx));
+            int idx = 0;
+            for (auto& e : entries) {
+                JsValue obj(ctx, JS_NewObject(ctx));
+                JS_DefinePropertyValueStr(ctx, obj.get(), "name",
+                    JS_NewString(ctx, e["name"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                JS_DefinePropertyValueStr(ctx, obj.get(), "rva",
+                    JS_NewFloat64(ctx, e["rva"].get<double>()), JS_PROP_C_W_E);
+                JS_DefinePropertyValueStr(ctx, obj.get(), "status",
+                    JS_NewString(ctx, e["status"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                JS_DefinePropertyValueStr(ctx, obj.get(), "signature",
+                    JS_NewString(ctx, e["signature"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                JS_DefinePropertyValueStr(ctx, obj.get(), "entryCheck",
+                    JS_NewString(ctx, e["entry_check"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                JS_SetPropertyUint32(ctx, array.get(), idx++, obj.release());
+            }
+            return array.release();
+        }
+        case Op::DevSymbolsStatus: {
+            const auto name = jsToString(ctx, arg(0));
+            if (name.empty()) return throwJsError(ctx, "Invalid",
+                "dev.symbols.status name must not be empty");
+            auto entries = parseProfileSymbols(host->profileJson);
+            for (auto& e : entries) {
+                if (e["name"].get<std::string>() == name) {
+                    JsValue obj(ctx, JS_NewObject(ctx));
+                    JS_DefinePropertyValueStr(ctx, obj.get(), "name",
+                        JS_NewString(ctx, e["name"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                    JS_DefinePropertyValueStr(ctx, obj.get(), "rva",
+                        JS_NewFloat64(ctx, e["rva"].get<double>()), JS_PROP_C_W_E);
+                    JS_DefinePropertyValueStr(ctx, obj.get(), "status",
+                        JS_NewString(ctx, e["status"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                    JS_DefinePropertyValueStr(ctx, obj.get(), "signature",
+                        JS_NewString(ctx, e["signature"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                    JS_DefinePropertyValueStr(ctx, obj.get(), "entryCheck",
+                        JS_NewString(ctx, e["entry_check"].get<std::string>().c_str()), JS_PROP_C_W_E);
+                    return obj.release();
+                }
+            }
+            return JS_NULL;
+        }
+        case Op::DevModuleInfo: {
+            auto [base, size] = moduleBaseAndSize();
+            std::string version;
+            // Try to extract version from profile JSON
+            try {
+                auto j = nlohmann::json::parse(host->profileJson);
+                version = j.value("version", std::string("unknown"));
+            } catch (...) { version = "unknown"; }
+            JsValue obj(ctx, JS_NewObject(ctx));
+            JS_DefinePropertyValueStr(ctx, obj.get(), "base",
+                JS_NewFloat64(ctx, static_cast<double>(base)), JS_PROP_C_W_E);
+            JS_DefinePropertyValueStr(ctx, obj.get(), "size",
+                JS_NewFloat64(ctx, static_cast<double>(size)), JS_PROP_C_W_E);
+            JS_DefinePropertyValueStr(ctx, obj.get(), "version",
+                JS_NewString(ctx, version.c_str()), JS_PROP_C_W_E);
+            return obj.release();
+        }
+#else
+        // Non-Windows (host build) fallback: dev memory ops are not supported
+        // outside the Windows game target.
+        case Op::DevMemoryReadBytes:
+        case Op::DevMemoryReadU32:
+        case Op::DevMemoryReadI64:
+        case Op::DevMemoryReadF32:
+        case Op::DevMemoryReadPtr:
+        case Op::DevMemoryWriteBytes:
+        case Op::DevMemoryScanAob:
+        case Op::DevSymbolsList:
+        case Op::DevSymbolsStatus:
+        case Op::DevModuleInfo:
+            return throwJsError(ctx, "Unavailable",
+                "dev.* bindings are only available on the Windows game target");
+#endif
     }
     return JS_UNDEFINED;
 }

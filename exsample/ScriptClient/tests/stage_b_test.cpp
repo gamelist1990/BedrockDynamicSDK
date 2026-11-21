@@ -1201,6 +1201,63 @@ export default class FileMod extends Mod {
           "same file readable after PluginHost reload (new JS context)");
 }
 
+// ---------------------------------------------------------------------------
+// 5. Dev bindings (guarded memory, symbols, module introspection)
+// ---------------------------------------------------------------------------
+void testDevBindings() {
+    // Host test realm with a real SdkBindings; dev ops return Unavailable on
+    // non-Windows builds and are guarded on Windows. We verify the JS-level
+    // error contract without requiring a game process.
+    FilesRealm realm(tempDir("dev-bindings"), "DevTestMod");
+    CHECK(realm.ok(), "dev realm install: " + realm.error);
+
+    std::string devErr;
+
+    // dev.memory.readBytes at address 0 -> JS Error {code:'Unavailable'}
+    CHECK(realm.runtime.eval(R"JS(
+(function () {
+  try { __sdkModule.dev.memory.readBytes(0, 32); globalThis.out = { dev1: "ok" }; }
+  catch (e) { globalThis.out = { dev1: String(e.code || "no-code") }; }
+})();
+)JS", "dev-readbytes.js", devErr), "dev readBytes eval");
+    const auto dev1 = filesOut(realm.runtime, "dev1");
+    CHECK(dev1 == "Unavailable",
+          "readBytes(0) throws Unavailable, got: " + dev1);
+
+    // dev.memory.scanAob with empty pattern -> Unavailable (host only)
+    CHECK(realm.runtime.eval(R"JS(
+(function () {
+  try { __sdkModule.dev.memory.scanAob(""); globalThis.out = { dev2: "ok" }; }
+  catch (e) { globalThis.out = { dev2: String(e.code || "no-code") }; }
+})();
+)JS", "dev-scanaob.js", devErr), "dev scanAob eval");
+    const auto dev2 = filesOut(realm.runtime, "dev2");
+    CHECK(dev2 == "Unavailable",
+          "scanAob('') throws Unavailable, got: " + dev2);
+
+    // dev.symbols.list with empty profile -> Unavailable (host only)
+    CHECK(realm.runtime.eval(R"JS(
+(function () {
+  try { const l = __sdkModule.dev.symbols.list(); globalThis.out = { dev3: JSON.stringify(l) }; }
+  catch (e) { globalThis.out = { dev3: String(e.code || "no-code") }; }
+})();
+)JS", "dev-symbols-list.js", devErr), "dev symbols.list eval");
+    const auto dev3 = filesOut(realm.runtime, "dev3");
+    CHECK(dev3 == "Unavailable",
+          "symbols.list throws Unavailable, got: " + dev3);
+
+    // dev.module.info returns Unavailable (host only)
+    CHECK(realm.runtime.eval(R"JS(
+(function () {
+  try { const m = __sdkModule.dev.module.info(); globalThis.out = { dev4: "ok" }; }
+  catch (e) { globalThis.out = { dev4: String(e.code || "no-code") }; }
+})();
+)JS", "dev-module-info.js", devErr), "dev module.info eval");
+    const auto dev4 = filesOut(realm.runtime, "dev4");
+    CHECK(dev4 == "Unavailable",
+          "module.info throws Unavailable, got: " + dev4);
+}
+
 } // namespace
 
 int main() {
@@ -1216,6 +1273,8 @@ int main() {
     testContentLogBridge();
     testFilesApi();
     testFilesApiPluginHost();
+    // 5. Dev bindings (guarded memory, symbols, module introspection)
+    testDevBindings();
     std::cout << "checks=" << checks << " failures=" << failures << "\n";
     return failures == 0 ? 0 : 1;
 }
