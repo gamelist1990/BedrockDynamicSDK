@@ -21,7 +21,34 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     resource_bindings = {
         row["symbol"] for row in resource_layout["functions"].values()
     } - {"ClientInstance::getLocalPlayer", "ResourcePackManager::applyPendingStack"}
-    assert len(profile["symbols"]) == 42 + len(resource_bindings)
+    # Symbols intentionally held at candidate status: static RE evidence only,
+    # runtime validation still pending. The verified-set assertions below stay
+    # strict — a candidate promoted without evidence, a verified symbol losing
+    # its status, or any unlisted non-verified symbol all fail this test.
+    candidate_symbols = {
+        "ContainerCloseDispatcher::handle",
+        "ContainerClosePacket::getId",
+        "ContainerClosePacket::write",
+        "ContainerOpenDispatcher::handle",
+        "GameMode::attack",
+        "GameMode::attackAlternate",
+        "GameMode::continueDestroyBlock",
+        "GameMode::releaseUsingItem",
+        "GameMode::startDestroyBlock",
+        "GameMode::startDestroyBlockAlternate",
+        "GameMode::stopDestroyBlock",
+        "GameMode::tick",
+        "GameMode::useItem",
+        "GameMode::useItemAlternate",
+        "InteractPacket::getId",
+        "InteractPacket::write",
+        "Level::getPlayerList",
+        "MoveInputComponent::directionConsumer",
+        "ResourcePackManager::applyPendingStack",
+    }
+    for name in candidate_symbols:
+        assert profile["symbols"][name]["status"] == "candidate"
+    assert len(profile["symbols"]) == 40 + len(resource_bindings) + len(candidate_symbols)
     assert resource_layout["status"] == "verified"
     assert resource_layout["runtime_verified"] is True
     assert resource_layout["load_completion"]["runtime_verified"] is False
@@ -38,7 +65,7 @@ def test_126605_entry_verified_symbols_keep_scoped_runtime_evidence():
     assert report["authority"] == "user-reported" and report["limitations"]
     verified = {name for name, row in profile["symbols"].items() if row["status"] == "verified"}
     assert len(verified) == 40 + len(resource_bindings)
-    assert verified == set(profile["symbols"]) - {"Level::getPlayerList", "ResourcePackManager::applyPendingStack"}
+    assert verified == set(profile["symbols"]) - candidate_symbols
     for name in verified - resource_bindings:
         row = profile["symbols"][name]
         assert row["abi_verified"] is (name in runtime_symbols)
