@@ -154,7 +154,7 @@ bool WorldRender::install(std::string_view selectedProfileJson,
         bedrock::ProfileManager manager;
         if(!manager.prepareEmbeddedJson(std::string(json), [&](const bedrock::RuntimeProfile& profile,std::string& inner){
             return impl_->outline.load(profile,inner);
-        },error)) return false;
+        },error,bedrock::CandidatePolicy::AllowCandidates)) return false;
         auto* target=impl_->outline.renderTarget();
         if(!target) { error="world render target unavailable"; return false; }
         if(!BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL,target,&worldRenderHookPost,impl_.get(),&impl_->token)) {

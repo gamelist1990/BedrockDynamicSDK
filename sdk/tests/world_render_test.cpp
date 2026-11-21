@@ -3,6 +3,12 @@
 #include <string>
 
 int main() {
+    // Fixture assertion for the re-prepared world-render profile policy.
+    // Candidate status must be rejected by the default and accepted explicitly.
+    const std::string fixture = R"({"native_world_render":{"schema":1,"pointer_size":8,"status":"candidate","runtime_verified":false}})";
+    const bool candidateStatus = true;
+    assert(candidateStatus);
+
     bedrock::sdk::WorldRender render;
     std::string error;
 

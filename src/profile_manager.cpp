@@ -124,7 +124,8 @@ bool RuntimeProfile::supports(const ProfileRequirements& requirements,std::strin
         error.clear();return true;
     }catch(const std::exception& e){error=std::string("invalid capability metadata: ")+e.what();return false;}
 }
-bool ProfileManager::prepareEmbeddedJson(const std::string& json,const Adapter& adapter,std::string& error){
+bool ProfileManager::prepareEmbeddedJson(const std::string& json,const Adapter& adapter,std::string& error,
+                                         CandidatePolicy candidates){
 #ifdef _WIN32
     if(!adapter){error="profile adapter is empty";return false;}
     try{
@@ -133,7 +134,7 @@ bool ProfileManager::prepareEmbeddedJson(const std::string& json,const Adapter& 
         GameIdentity identity;
         if(!resolver.loadJson(json,error)||!resolver.attachWindowsMainModule(identity,error)||!resolver.exactBuild())return false;
         ProfileChoice choice;choice.version=root.at("target").at("version").get<std::string>();choice.source=ProfileSource::Embedded;choice.path="embedded";choice.identity=identity;
-        auto candidate=std::shared_ptr<const RuntimeProfile>(new RuntimeProfile(json,std::move(choice),std::move(resolver),CandidatePolicy::VerifiedOnly));
+        auto candidate=std::shared_ptr<const RuntimeProfile>(new RuntimeProfile(json,std::move(choice),std::move(resolver),candidates));
         if(!adapter(*candidate,error))return false;
         {std::lock_guard lock(mutex_);current_=std::move(candidate);}
         error.clear();return true;

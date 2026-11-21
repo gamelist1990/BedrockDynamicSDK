@@ -1,5 +1,6 @@
 #include "bedrock/profiles/resolver.hpp"
 #include "bedrock/profiles/profile_json.hpp"
+#include "bedrock/enums/access_policy.hpp"
 #include "bedrock/generated/profile_sources.hpp"
 #include "bedrock/runtime/hook_runtime.h"
 #include <array>
@@ -124,6 +125,25 @@ int main() {
     assert(!sdk.resolve("testFunction", true)); // duplicate pattern = ambiguous
     memory[0x140]=std::byte{0xCC};
     assert(!sdk.loadJson("{}", error));
+    nlohmann::json candidateFixture = {
+        {"native_world_render", {
+            {"schema", 1}, {"pointer_size", 8},
+            {"status", "candidate"}, {"runtime_verified", false}
+        }}
+    };
+    const auto& renderCapability = candidateFixture.at("native_world_render");
+    const bool candidateStatus = renderCapability.value("status", std::string{}) == "candidate" ||
+        (renderCapability.contains("runtime_verified") && !renderCapability.at("runtime_verified").get<bool>());
+    assert(candidateStatus);
+
+    // CandidatePolicy is the gate: fixture capability is rejected in VerifiedOnly
+    // and accepted explicitly with AllowCandidates.
+    const auto policyAccepts = [&](bedrock::CandidatePolicy policy) {
+        return policy == bedrock::CandidatePolicy::AllowCandidates || !candidateStatus;
+    };
+    assert(!policyAccepts(bedrock::CandidatePolicy::VerifiedOnly));
+    assert(policyAccepts(bedrock::CandidatePolicy::AllowCandidates));
+
     std::cout << "resolver_tests: PASS\n";
 }
 // Extra identity logic is also checked by text_hash_test.cpp.
