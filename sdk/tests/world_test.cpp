@@ -1,7 +1,7 @@
 #include <bedrock/sdk.hpp>
 #include "../src/game_frame.hpp"
 #include "../src/item_packet_decode.hpp"
-#include "../../include/bedrock/enums/actors.hpp"
+#include <bedrock/enums/actors.hpp>
 
 #include <cassert>
 #include <limits>

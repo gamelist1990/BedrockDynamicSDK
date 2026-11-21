@@ -64,9 +64,9 @@
   "scope": "source-declared profile dependencies plus exact-build runtime follow-up; not a certificate of Mod compatibility",
   "sources": [
     "src/profile_manager.cpp",
-    "include/bedrock/detail/native_world_access.hpp",
-    "include/bedrock/native/client_commands.hpp",
-    "include/bedrock/native/world_render.hpp",
+    "internal/include/bedrock/detail/native_world_access.hpp",
+    "internal/include/bedrock/native/client_commands.hpp",
+    "internal/include/bedrock/native/world_render.hpp",
     "exsample/*/src"
   ],
   "groups": [

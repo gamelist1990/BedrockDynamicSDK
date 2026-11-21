@@ -22,7 +22,7 @@ target_include_directories(bedrock_gui PUBLIC
 # When the SDK is fetched into a client project, PROJECT_SOURCE_DIR is the
 # consumer, so use this CMakeLists' parent, NOT the top-level project's source.
 get_filename_component(BEDROCK_GUI_SDK_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-target_include_directories(bedrock_gui PUBLIC "${BEDROCK_GUI_SDK_ROOT}/include")
+target_include_directories(bedrock_gui PUBLIC "${BEDROCK_GUI_SDK_ROOT}/internal/include")
 target_compile_features(bedrock_gui PUBLIC cxx_std_20)
 if(MSVC)
     set_property(TARGET bedrock_gui PROPERTY MSVC_RUNTIME_LIBRARY
@@ -37,7 +37,7 @@ if(WIN32)
     )
     add_library(bedrock::gui_host ALIAS bedrock_gui_host)
     target_include_directories(bedrock_gui_host PUBLIC
-        "${BEDROCK_GUI_SDK_ROOT}/include")
+        "${BEDROCK_GUI_SDK_ROOT}/internal/include")
     target_include_directories(bedrock_gui_host PRIVATE
         "${bedrock_imgui_SOURCE_DIR}/backends")
     target_link_libraries(bedrock_gui_host PUBLIC
@@ -76,7 +76,7 @@ if(WIN32)
         bedrock_gui bedrock_overlay_hook bedrock::symbols
         d3d11 d3d12 d3dcompiler dxgi dwmapi user32)
     target_include_directories(bedrock_gui_overlay PUBLIC
-        "${BEDROCK_GUI_SDK_ROOT}/include")
+        "${BEDROCK_GUI_SDK_ROOT}/internal/include")
     target_include_directories(bedrock_gui_overlay PRIVATE
         "${bedrock_imgui_SOURCE_DIR}/backends")
     if(MSVC)

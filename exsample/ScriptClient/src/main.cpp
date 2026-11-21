@@ -5,7 +5,7 @@
 #include "command_service.hpp"
 #include "script_mod.hpp"
 
-#include <bedrock/logging/file_log_sink.hpp>
+#include <bedrock/logging/logger.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
 #include <bedrock/sdk.hpp>
 

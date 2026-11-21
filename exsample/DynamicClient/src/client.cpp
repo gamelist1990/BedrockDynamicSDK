@@ -3,7 +3,7 @@
 #include <windows.h>
 #include "client.hpp"
 #include <bedrock/sdk.hpp>
-#include <bedrock/logging/file_log_sink.hpp>
+#include <bedrock/logging/logger.hpp>
 
 namespace {
 bedrock::Logger logger{"DynamicClient"};

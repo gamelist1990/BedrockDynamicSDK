@@ -3,7 +3,7 @@
 #include <windows.h>
 
 #include <bedrock/detail/oreui_settings_backend.hpp>
-#include <bedrock/logging/file_log_sink.hpp>
+#include <bedrock/logging/logger.hpp>
 #include <filesystem>
 #include <string>
 #include "mod_settings_demo_preview.hpp"
