@@ -11,6 +11,8 @@ on:
       - 'src/profile_manager.cpp'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+  release:
+    types: [published]
 permissions:
   contents: read
 concurrency:
@@ -32,18 +34,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Package static documentation
+      - name: Generate documentation site
         run: |
-          mkdir -p _site
-          cp -R site/. _site/
-          mkdir -p _site/api
-          cp -R docs/site/. _site/api/
+          python3 tools/sitegen/sitegen.py --out _site
+          cp -R data _site/data
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || github.event_name == 'release'
     needs: [build, cpp-examples]
     runs-on: ubuntu-latest
     permissions:

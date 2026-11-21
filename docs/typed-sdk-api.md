@@ -1,6 +1,6 @@
 # 型付きネイティブアダプター（内部）
 
-第一者 Mod 向けの説明と使用例は [内部アダプターガイド](site/index.html) を参照してください。
+第一者 Mod 向けの説明と使用例は [内部アダプターガイド](../api/) を参照してください。
 外部 Mod の公開 API は [Stage A SDK](stage-a-sdk-design.md) です。
 
 ## コマンドBuilder

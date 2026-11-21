@@ -6,7 +6,7 @@ EnTTやWorld APIへの依存はありません。Windows x64 / MSVC Release向�
 
 ## 新しい型付き入口
 
-第一者 Mod では [内部アダプターガイド](site/index.html#commands) のCommandBuilderと
+第一者 Mod では [内部アダプターガイド](../api/) のCommandBuilderと
 ProfileManagerを使用してください。以下の文字列/boolを使う入口は移行用です。
 
 ## 互換APIの使用例
