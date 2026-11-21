@@ -246,6 +246,8 @@ bool ActorFacade::refreshTrackedPoses(void* local,
                                  {handles[i].bounds.maximum.x,handles[i].bounds.maximum.y,handles[i].bounds.maximum.z}};
         nativeHandles[i].isPlayer=handles[i].isPlayer;
         nativeHandles[i].entityId=handles[i].entityId;
+        nativeHandles[i].actorKey=handles[i].actorKey;
+        nativeHandles[i].uniqueId=handles[i].uniqueId;
     }
     std::vector<bedrock::ActorRegistrySample> nativeCopies(handles.size());
     std::size_t count=handles.size();
