@@ -2,6 +2,7 @@ name: Build DLLs and releases
 on:
   push:
     branches: [main]
+    tags: ['minecraft-*']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -32,12 +33,18 @@ jobs:
     steps:
       - id: plan
         env:
-          GAME_VERSION: ${{ inputs.version || '1.26.65.1' }}
+          GAME_VERSION: ${{ inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
           MODS: ${{ inputs.mods || 'all' }}
         run: |
           python3 - <<'PYCODE'
           import os, json
-          version = os.environ['GAME_VERSION']
+          version = os.environ.get('GAME_VERSION') or ''
+          if not version and os.environ.get('REF_TYPE') == 'tag':
+              ref = os.environ.get('REF_NAME', '')
+              version = ref[len('minecraft-'):] if ref.startswith('minecraft-') else ''
+          version = version or '1.26.65.1'
           if version not in ('1.26.60.5', '1.26.65.1'): raise SystemExit('Unsupported version')
           clients = ['HitBox', 'SpeedBuilder']
           tools = ['CheckSig', 'Top']
@@ -220,6 +227,10 @@ jobs:
           @{ mod = $env:MOD; game_version = $env:GAME_VERSION; source_sha = "${{ github.sha }}"; architecture = "windows-x64" } | ConvertTo-Json | Set-Content -Encoding utf8 build-mod/Release/build-info.json
           $files = Get-ChildItem build-mod/Release -File | Where-Object { $_.Extension -in '.dll', '.exe', '.md', '.ps1', '.json', '.txt' }
           Compress-Archive -Path ($files.FullName + @((Join-Path $PWD "build-mod/Release/profile"))) -DestinationPath "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
+          $zip = Get-Item "release/$env:MOD-$env:GAME_VERSION-windows-x64.zip"
+          $hash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          "### $env:MOD" >> $env:GITHUB_STEP_SUMMARY
+          "$($zip.Name) — $([math]::Round($zip.Length / 1MB, 2)) MB — sha256 $hash" >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.mod }}-${{ needs.plan.outputs.version }}
@@ -229,19 +240,47 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.release
+    # Runs when a release is requested manually, or automatically when a
+    # minecraft-<version> tag is pushed.
+    if: (github.event_name == 'workflow_dispatch' && inputs.release) || github.ref_type == 'tag'
     needs: [plan, mods, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*-${{ needs.plan.outputs.version }}
           path: release
           merge-multiple: true
-      - name: Update version release
+      - name: Generate release notes and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME_VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          tag="minecraft-$GAME_VERSION"
+          prev=""
+          if gh release view "$tag" >/dev/null 2>&1; then
+            body=$(gh release view "$tag" --json body --jq .body)
+            prev=$(printf '%s' "$body" | grep -oE 'build-commit: [0-9a-f]{40}' | grep -oE '[0-9a-f]{40}' || true)
+            if [ -z "$prev" ]; then
+              prev=$(printf '%s' "$body" | grep -oE 'Build commit: [0-9a-f]{40}' | grep -oE '[0-9a-f]{40}' || true)
+            fi
+          fi
+          if [ -n "$prev" ] && git cat-file -e "$prev^{commit}" 2>/dev/null; then
+            git log --oneline "$prev..$SOURCE_SHA" > changes.txt
+          else
+            git log --oneline -20 "$SOURCE_SHA" > changes.txt
+          fi
+          prerelease_flag=""
+          if [ "$GAME_VERSION" = "1.26.60.5" ]; then prerelease_flag="--prerelease"; fi
+          python3 tools/release_notes.py --dir release --version "$GAME_VERSION" --sha "$SOURCE_SHA" --repo "${{ github.repository }}" --changes changes.txt --out release-notes.md --sums release/SHA256SUMS.txt $prerelease_flag
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Create or update version release
         env:
           GH_TOKEN: ${{ github.token }}
           GAME_VERSION: ${{ needs.plan.outputs.version }}
@@ -251,6 +290,8 @@ jobs:
           flags=()
           if [ "$GAME_VERSION" = "1.26.60.5" ]; then flags+=(--prerelease); fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$SOURCE_SHA" --title "Minecraft $GAME_VERSION" --notes "Windows x64 DLLs. See README for feature verification scope. Native ABI and layouts may remain candidates. Build commit: $SOURCE_SHA" "${flags[@]}"
+            gh release create "$tag" --target "$SOURCE_SHA" --title "Minecraft $GAME_VERSION" --notes-file release-notes.md "${flags[@]}"
+          else
+            gh release edit "$tag" --title "Minecraft $GAME_VERSION" --notes-file release-notes.md "${flags[@]}"
           fi
           gh release upload "$tag" release/* --clobber
