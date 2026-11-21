@@ -13,6 +13,10 @@ int main() {
 
     bedrock::sdk::ActorFacade actors;
     bedrock::sdk::Hooks hooks;
+    auto nameSubscription=hooks.onActorNameTag([](const bedrock::sdk::Hooks::ActorNameTagEventValue& event) {
+        (void)event.actor; (void)event.nameTag;
+    });
+    (void)nameSubscription;
     (void)actors;
     (void)hooks;
     return 0;

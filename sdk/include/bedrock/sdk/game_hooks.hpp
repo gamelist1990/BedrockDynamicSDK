@@ -21,6 +21,8 @@ class Hooks { public:
   HookSubscription onGameplay(std::function<void(const GameplayEventValue&)>);
   HookSubscription onWorldChange(std::function<void(const WorldChangeEventValue&)>);
   HookSubscription onKey(std::function<void(const KeyEventValue&)>);
+  struct ActorNameTagEventValue { void* actor{}; std::string nameTag; };
+  HookSubscription onActorNameTag(std::function<void(const ActorNameTagEventValue&)>);
   bool install(const SymbolResolver& resolver, std::string_view profileJson, std::string& error);
   bool install(std::string_view selectedProfileJson, std::string_view embeddedProfileJson, std::string& error);
   private: struct Impl; std::unique_ptr<Impl> impl_

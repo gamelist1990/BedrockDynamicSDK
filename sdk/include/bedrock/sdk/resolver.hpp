@@ -28,6 +28,7 @@ public:
 
     [[nodiscard]] bool exactBuild() const noexcept;
     [[nodiscard]] std::optional<SymbolResolution> resolve(std::string_view name) const;
+    [[nodiscard]] std::optional<SymbolResolution> resolveCandidate(std::string_view name) const;
 
 private:
     struct Impl;

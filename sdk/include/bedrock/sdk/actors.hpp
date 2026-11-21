@@ -39,6 +39,7 @@ public:
     std::optional<ActorBoundsValue> bounds(void* actor) const noexcept;
     std::optional<Vec3Value> position(void* actor) const noexcept;
     std::uint64_t runtimeId(void* actor) const noexcept;
+    std::optional<std::uint32_t> entityId(void* actor) const noexcept;
 
     bool capture(void* local,
                  bool playersOnly,

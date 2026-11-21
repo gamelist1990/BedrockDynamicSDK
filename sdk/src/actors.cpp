@@ -81,6 +81,17 @@ std::uint64_t ActorFacade::runtimeId(void* actor) const noexcept {
 #endif
 }
 
+std::optional<std::uint32_t> ActorFacade::entityId(void* actor) const noexcept {
+#ifdef _WIN32
+    std::uint32_t id{};
+    return impl_->registry.readEntityId(actor,id) ? std::optional<std::uint32_t>{id} : std::nullopt;
+#else
+    (void)actor;
+    return std::nullopt;
+#endif
+}
+
+
 bool ActorFacade::capture(void* local, bool playersOnly,
                           std::size_t& cursor,
                           std::vector<ActorSample>& samples,

@@ -35,6 +35,13 @@ bool SymbolResolver::openFixture(std::string_view profileJson, std::string& erro
 
 bool SymbolResolver::exactBuild() const noexcept { return impl_->resolver.exactBuild(); }
 
+std::optional<SymbolResolution> SymbolResolver::resolveCandidate(std::string_view name) const {
+    const auto resolution = impl_->resolver.resolve(name, true);
+    if (!resolution) return std::nullopt;
+    return SymbolResolution{0, resolution->address,
+                            resolution->exact_build, resolution->verified};
+}
+
 std::optional<SymbolResolution> SymbolResolver::resolve(std::string_view name) const {
     const auto resolution = impl_->resolver.resolve(name);
     if (!resolution) return std::nullopt;
