@@ -24,6 +24,11 @@ target_include_directories(bedrock_internal_headers INTERFACE "${BEDROCK_GENERAT
 target_compile_features(bedrock_internal_headers INTERFACE cxx_std_20)
 add_library(bedrock::internal_headers ALIAS bedrock_internal_headers)
 
+# Vendored JSON header used only by implementation targets.
+add_library(bedrock_nlohmann_headers INTERFACE)
+target_include_directories(bedrock_nlohmann_headers INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+
 # Independent opt-in console/logger API: header only; nothing is initialized
 # until a mod explicitly logs or opens a console.
 add_library(bedrock_logging INTERFACE)
@@ -237,6 +242,12 @@ if(BEDROCK_SDK_BUILD_TOOLS)
 endif()
 # Public Stage A entry point: link bedrock::sdk and include <bedrock/sdk.hpp>.
 # The OreUI, resolver and native adapters are implementation dependencies.
+if(WIN32)
+    include(FetchContent)
+    FetchContent_Declare(entt GIT_REPOSITORY https://github.com/skypjack/entt.git
+        GIT_TAG fe8d7d78c4823e8a66a050bf86f5c6318cf76ce7 GIT_SHALLOW FALSE)
+    FetchContent_MakeAvailable(entt)
+endif()
 add_subdirectory(sdk)
 if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
     add_executable(mod_settings_test tests/mod_settings_test.cpp)

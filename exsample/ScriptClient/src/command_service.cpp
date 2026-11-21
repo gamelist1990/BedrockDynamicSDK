@@ -8,17 +8,17 @@ namespace {
 
 constexpr std::size_t kMaxQueuedLines = 64; // §12: bounded command queue
 
-bedrock::InjectedType toType(const WireParam& param) {
+bedrock::sdk::CommandParameterType toType(const WireParam& param) {
     switch (param.kind) {
         case WireParamKind::PacketEnum:
-            return bedrock::InjectedType::packetEnum(param.enumName);
+            return bedrock::sdk::CommandParameterType::PacketEnum;
         case WireParamKind::Integer:
-            return bedrock::InjectedType::integer();
+            return bedrock::sdk::CommandParameterType::Integer;
         case WireParamKind::Message:
-            return bedrock::InjectedType::message();
+            return bedrock::sdk::CommandParameterType::Message;
         case WireParamKind::CustomEnum:
         default:
-            return bedrock::InjectedType::customEnum(param.enumName);
+            return bedrock::sdk::CommandParameterType::CustomEnum;
     }
 }
 
@@ -41,7 +41,7 @@ CommandService::DefinitionSet CommandService::makeDefinitions(
     std::unordered_set<std::string> validEnums;
     for (const auto& e : definitions.enums) {
         if (!validEnumName(e.name) || (!e.merged && e.values.empty())) continue;
-        bedrock::NativeInjectedCommands::EnumEntry entry;
+        bedrock::sdk::CommandEnum entry;
         entry.name = e.name;
         entry.values = e.values;
         entry.mergedFrom = e.mergedFrom;
@@ -57,12 +57,12 @@ CommandService::DefinitionSet CommandService::makeDefinitions(
                 break;
             }
         if (unresolved) continue;
-        bedrock::NativeInjectedCommands::CommandEntry entry;
+        bedrock::sdk::CommandDefinition entry;
         entry.name = c.name;
         entry.description = c.description;
-        std::vector<bedrock::InjectedParam> params;
+        std::vector<bedrock::sdk::CommandParameter> params;
         for (const auto& p : c.params)
-            params.push_back({p.name, toType(p), p.optional, 0});
+            params.push_back({p.name, toType(p), p.enumName, p.optional});
         entry.overloads.push_back(std::move(params));
         if (owner) {
             const auto name = c.name;
@@ -80,66 +80,54 @@ void CommandService::enqueue(const std::string& line) {
     queue_.push_back(line);
 }
 
-bool CommandService::load(const bedrock::RuntimeProfile& profile,
+bool CommandService::load(const bedrock::sdk::Profile& profile,
                           const WireDefinitions& definitions, std::string& error) {
     auto set = makeDefinitions(definitions, this);
 
     // §6.5: /mods is handled by C++ directly and is always present.
-    bedrock::NativeInjectedCommands::EnumEntry actions;
+    bedrock::sdk::CommandEnum actions;
     actions.name = "ModsAction";
     actions.values = {"list", "reload", "path"};
     set.enums.push_back(std::move(actions));
-    bedrock::NativeInjectedCommands::EnumEntry names;
+    bedrock::sdk::CommandEnum names;
     names.name = "ModsModName";
     names.values = modNames_.empty() ? std::vector<std::string>{"none"} : modNames_;
     set.enums.push_back(std::move(names));
 
-    bedrock::NativeInjectedCommands::CommandEntry mods;
+    bedrock::sdk::CommandDefinition mods;
     mods.name = "mods";
     mods.description = "Manage JS/TS mods";
-    bedrock::InjectedParam action{"action", bedrock::InjectedType::customEnum("ModsAction"),
-                                  false, 0};
-    bedrock::InjectedParam modName{"name", bedrock::InjectedType::customEnum("ModsModName"),
-                                   true, 0};
+    bedrock::sdk::CommandParameter action{"action", bedrock::sdk::CommandParameterType::CustomEnum, "ModsAction", false};
+    bedrock::sdk::CommandParameter modName{"name", bedrock::sdk::CommandParameterType::CustomEnum, "ModsModName", true};
     mods.overloads.push_back({action, modName});
     mods.handler = [this](const std::string& line) { enqueue(line); };
     set.commands.push_back(std::move(mods));
 
-    // Skip individual bad definitions instead of failing the entire service;
-    // the bad mod's command simply never becomes injectable.
-    for (const auto& e : set.enums) {
-        std::string enumError;
-        if (!commands_.addEnum(e.name, e.values, enumError)) continue;
-    }
-    for (const auto& c : set.commands) {
-        std::string commandError;
-        if (!commands_.add(c.name, c.description, c.overloads, c.handler, commandError)) continue;
-    }
     error.clear();
-    return commands_.load(profile, error);
+    return commands_.load(profile.json(), set.enums, set.commands, error);
 }
 
 bool CommandService::replaceDefinitions(const WireDefinitions& definitions,
                                         std::string& error) {
     auto set = makeDefinitions(definitions, this);
-    bedrock::NativeInjectedCommands::EnumEntry actions;
+    bedrock::sdk::CommandEnum actions;
     actions.name = "ModsAction";
     actions.values = {"list", "reload", "path"};
     set.enums.push_back(std::move(actions));
 
-    bedrock::NativeInjectedCommands::EnumEntry names;
+    bedrock::sdk::CommandEnum names;
     names.name = "ModsModName";
     names.values = modNames_; // refreshed by setModNames() after every scan (§6.5)
     set.enums.push_back(std::move(names));
 
-    bedrock::NativeInjectedCommands::CommandEntry mods;
+    bedrock::sdk::CommandDefinition mods;
     mods.name = "mods";
     mods.description = "Manage JS/TS mods";
-    mods.overloads.push_back({{"action", bedrock::InjectedType::customEnum("ModsAction"), false, 0},
-                              {"name", bedrock::InjectedType::customEnum("ModsModName"), true, 0}});
+    mods.overloads.push_back({{"action", bedrock::sdk::CommandParameterType::CustomEnum, "ModsAction", false},
+                              {"name", bedrock::sdk::CommandParameterType::CustomEnum, "ModsModName", true}});
     mods.handler = [this](const std::string& line) { enqueue(line); };
     set.commands.push_back(std::move(mods));
-    return commands_.replaceDefinitions(std::move(set.enums), std::move(set.commands), error);
+    return commands_.replace(set.enums, set.commands, error);
 }
 
 void CommandService::drain(PluginHost& host) {

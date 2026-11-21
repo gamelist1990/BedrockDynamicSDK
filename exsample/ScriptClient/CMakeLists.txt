@@ -41,7 +41,7 @@ target_include_directories(script_client_core PUBLIC
     "${BEDROCK_SDK_ROOT}/third_party"
     "${BEDROCK_SDK_ROOT}/third_party/quickjs-ng"
 )
-target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk bedrock::logging)
+target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk)
 
 if(WIN32)
     add_library(ScriptClient SHARED
@@ -50,7 +50,7 @@ if(WIN32)
     )
     target_include_directories(ScriptClient PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(ScriptClient PRIVATE
-        script_client_core bedrock::sdk bedrock::client bedrock::game_hooks bedrock::logging)
+        script_client_core bedrock::sdk)
     target_compile_options(ScriptClient PRIVATE /utf-8)
     set_target_properties(ScriptClient PROPERTIES PREFIX ""
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -62,6 +62,8 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(stage_b_test tests/stage_b_test.cpp)
     target_link_libraries(stage_b_test PRIVATE script_client_core)
+    target_include_directories(stage_b_test PRIVATE
+        "${BEDROCK_SDK_ROOT}/internal/include")
     target_compile_definitions(stage_b_test PRIVATE
         STAGEB_GOLDEN_DIR="${STAGEB_GOLDEN_DIR}"
         STAGEB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <bedrock/detail/block_types.hpp>
+#include <bedrock/sdk/block_types.hpp>
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -24,16 +24,16 @@ namespace speed_builder {
 
 using Tick = std::uint64_t;
 using WorldId = std::uint64_t;
-using bedrock::BlockPos;
-using bedrock::CellKind;
-using bedrock::Face;
-using bedrock::Hand;
-using bedrock::StateValue;
-using bedrock::BlockProperties;
-using bedrock::PlacementRecipe;
-using bedrock::Cell;
-using bedrock::HotbarSlot;
-using bedrock::Hotbar;
+using bedrock::sdk::BlockPos;
+using bedrock::sdk::CellKind;
+using bedrock::sdk::Face;
+using bedrock::sdk::Hand;
+using bedrock::sdk::StateValue;
+using bedrock::sdk::BlockProperties;
+using bedrock::sdk::PlacementRecipe;
+using bedrock::sdk::Cell;
+using bedrock::sdk::HotbarSlot;
+using bedrock::sdk::Hotbar;
 struct SessionToken {
     WorldId world{};
     std::uint64_t generation{};

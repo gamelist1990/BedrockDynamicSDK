@@ -1,20 +1,20 @@
 #pragma once
 
 #include "common.hpp"
-#include <bedrock/logging/content_log.hpp>
+#include <bedrock/sdk/logging.hpp>
 #include <fstream>
 #include <mutex>
 
 namespace stageb {
 
 // TS console.log/info/warn/error levels as produced by ModuleLoader.
-inline bedrock::LogLevel contentLogLevel(const char* level) noexcept {
+inline bedrock::sdk::LogLevel contentLogLevel(const char* level) noexcept {
     if (level && *level) {
-        if (level[0] == 'e' || level[0] == 'E') return bedrock::LogLevel::Error;
-        if (level[0] == 'w' || level[0] == 'W') return bedrock::LogLevel::Warn;
-        if (level[0] == 'd' || level[0] == 'D') return bedrock::LogLevel::Debug;
+        if (level[0] == 'e' || level[0] == 'E') return bedrock::sdk::LogLevel::Error;
+        if (level[0] == 'w' || level[0] == 'W') return bedrock::sdk::LogLevel::Warn;
+        if (level[0] == 'd' || level[0] == 'D') return bedrock::sdk::LogLevel::Debug;
     }
-    return bedrock::LogLevel::Info;
+    return bedrock::sdk::LogLevel::Info;
 }
 
 // Per-Mod log (§1.2 LogSink): Documents/PEXData/<mod>/<mod>.log on the game
@@ -38,7 +38,7 @@ public:
         // Primary surface: the mod's own console output goes to the vanilla
         // in-game Content Log too, with the mod name as the area/prefix. The
         // bridge is a no-op until the native core resolves the game function.
-        bedrock::emitContentLog(contentLogLevel(level), modName_, message);
+        bedrock::sdk::emitContentLog(contentLogLevel(level), modName_, message);
     }
     const std::vector<std::string>& lines() const { return lines_; }
 

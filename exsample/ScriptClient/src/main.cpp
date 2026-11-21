@@ -5,8 +5,8 @@
 #include "command_service.hpp"
 #include "script_mod.hpp"
 
-#include <bedrock/logging/logger.hpp>
-#include <bedrock/profiles/profile_manager.hpp>
+#include <bedrock/sdk/logging.hpp>
+#include <bedrock/sdk/profiles.hpp>
 #include <bedrock/sdk.hpp>
 
 #include <algorithm>
@@ -21,8 +21,8 @@
 #include <vector>
 
 namespace {
-bedrock::Logger logger{"ScriptClient"};
-bedrock::FileLogSink fileLog;
+bedrock::sdk::Logger logger{"ScriptClient"};
+bedrock::sdk::FileLogSink fileLog;
 
 // §5.1: TS "seconds" -> C++ ticks. Infinity stays positive infinity.
 double secondsToTicks(double seconds) {
@@ -688,15 +688,14 @@ DWORD WINAPI start(LPVOID parameter) {
         const auto directory = std::filesystem::path(path).parent_path();
         if (fileLog.open(directory / L"ScriptClient.log")) fileLog.attach(logger);
 
-        bedrock::ProfileManager profiles;
+        bedrock::sdk::Profiles profiles;
         std::string error;
-        if (!profiles.open({}, {bedrock::UpdatePolicy::EmbeddedOnly,
-                                bedrock::CandidatePolicy::AllowCandidates}, error)) {
-            logger.error("Game profile unavailable: ", error);
+        if (!profiles.open(bedrock::sdk::ProfileUpdatePolicy::EmbeddedOnly, error)) {
+            logger.error("Game profile unavailable: " + error);
             return 4;
         }
         const auto profile = profiles.snapshot();
-        const auto version = profile->choice().version;
+        const auto version = profile.version();
 
         auto& state = runtime();
         state.commands = std::make_unique<stageb::CommandService>();
@@ -745,7 +744,8 @@ DWORD WINAPI start(LPVOID parameter) {
             logger.info("mod ", view.name, " [", stageb::statusName(view.status), "] api ",
                         view.apiVersion, view.error.empty() ? "" : " - " + view.error);
 
-        if (!state.commands->load(*profile, state.host->definitions(), error)) {
+        const auto profileSnapshot = profile;
+        if (!state.commands->load(profileSnapshot, state.host->definitions(), error)) {
             logger.error("CommandService load failed: ", error);
             return 6;
         }

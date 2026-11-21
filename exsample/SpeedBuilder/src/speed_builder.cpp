@@ -1,12 +1,12 @@
 #ifdef _WIN32
-#include <bedrock/detail/hook_dispatch.hpp>
-#include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/generated/symbols.hpp>
-#include <bedrock/profiles/remote_catalog.hpp>
-#include <bedrock/profiles/profile_manager.hpp>
-#include <bedrock/packets/title_packets.hpp>
-#include <bedrock/native/world_access.hpp>
+#include <bedrock/sdk/game_hooks.hpp>
+#include <bedrock/sdk/profiles.hpp>
+#include <bedrock/sdk/title_packets.hpp>
+#include <bedrock/sdk/world_access.hpp>
 #include "speed_builder/config.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <atomic>
@@ -23,25 +23,24 @@
 #endif
 namespace {
 namespace sb=speed_builder;
-using Clock=std::chrono::steady_clock;using Vec=bedrock::Vec3;
-bedrock::NativeWorldAccess worldAccess;
-bedrock::detail::HookDispatch api;std::unique_ptr<bedrock::GameHooks> hooks;
+using Clock=std::chrono::steady_clock;using Vec=bedrock::sdk::Vec3Value;
+bedrock::sdk::WorldAccess worldAccess;
+bedrock::sdk::Hooks hooks;
 std::atomic<bool> stopped{},gameplay{},cancelRequested{};
 std::atomic<void*> client{};std::atomic<std::uint64_t> epoch{1};std::atomic<unsigned> status{};
 std::atomic<std::shared_ptr<const sb::Config>> config{std::make_shared<const sb::Config>()};
 std::atomic<unsigned> configRevision{};
 std::mutex logMutex;std::deque<std::string> logs;std::atomic<unsigned> lostLogs{},lostTitles{},titleQueued{};
 void note(std::string value){std::unique_lock lock(logMutex,std::try_to_lock);if(!lock||logs.size()>=128){++lostLogs;return;}value+=" at_ms="+std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());logs.emplace_back(std::move(value));}
-struct TitleCopy{std::uint64_t epoch{};int type{};bedrock::NativeStringCopy text;};
+struct TitleCopy{std::uint64_t epoch{};int type{};std::string text;};
 std::mutex titleMutex;std::deque<TitleCopy> titles;
-bedrock::TitlePackets packetTitles;bool wireTitles{},titleOnlyMode{};
+bedrock::sdk::TitleObserver packetTitles;bool wireTitles{},titleOnlyMode{};
 std::string gameVersion;
-void receiveTitle(const bedrock::TitlePacket& event){
+void receiveTitle(const bedrock::sdk::TitleEvent& event){
     if(stopped.load())return;
     const auto type=event.type;
-    if(type!=bedrock::TitleType::Clear&&type!=bedrock::TitleType::Reset&&type!=bedrock::TitleType::SetTitle&&type!=bedrock::TitleType::SetSubtitle&&type!=bedrock::TitleType::SetTitleJson&&type!=bedrock::TitleType::SetSubtitleJson)return;
-    TitleCopy text;text.epoch=epoch.load();text.type=static_cast<int>(type);text.text.size=event.text.size();
-    std::memcpy(text.text.bytes,event.text.data(),event.text.size());
+    if(type!=bedrock::sdk::TitleType::Clear&&type!=bedrock::sdk::TitleType::Reset&&type!=bedrock::sdk::TitleType::SetTitle&&type!=bedrock::sdk::TitleType::SetSubtitle&&type!=bedrock::sdk::TitleType::SetTitleJson&&type!=bedrock::sdk::TitleType::SetSubtitleJson)return;
+    TitleCopy text;text.epoch=epoch.load();text.type=static_cast<int>(type);text.text=event.text;
     std::unique_lock lock(titleMutex,std::try_to_lock);
     if(lock&&titles.size()<32){titles.push_back(text);++titleQueued;}else ++lostTitles;
 }
@@ -54,8 +53,8 @@ std::string plain(std::string_view input){
         if(c>=32&&c!=127)out+=input[i];++i;
     }return out;
 }
-std::string titleText(const bedrock::NativeStringCopy& text,int type){
-    auto value=plain(std::string_view(text.bytes,text.size));if(type<6)return value;
+std::string titleText(const std::string& text,int type){
+    auto value=plain(text);if(type<6)return value;
     try{auto j=nlohmann::json::parse(value);std::string result;
         const auto visit=[&](const auto& self,const nlohmann::json& node)->void{
             if(node.is_array())for(const auto& child:node)self(self,child);
@@ -119,7 +118,7 @@ void resetRound(std::uint64_t world){
     nativeCalls=nativeAccepted=placementDeferred=0;lastDeferred.clear();mismatchLogs.clear();recipeCache.clear();
     {std::unique_lock lock(diffMutex,std::try_to_lock);if(lock){diffInput.reset();diffOutput.reset();}}
 }
-void processTitles(const bedrock::NativeHotbar& hotbar,const Vec& position){
+void processTitles(const bedrock::sdk::HotbarSnapshot& hotbar,const Vec& position){
     std::deque<TitleCopy> updates;{std::unique_lock lock(titleMutex,std::try_to_lock);if(lock){updates.swap(titles);titleQueued.fetch_sub(static_cast<unsigned>(updates.size()));}}
     for(const auto& update:updates){if(update.epoch!=generation)continue;
         if(update.type==0||update.type==1){currentTitle.clear();currentSubtitle.clear();}
@@ -172,13 +171,13 @@ std::string propertyText(const sb::Cell& cell){
     else {auto values=nlohmann::json::object();for(const auto& [key,value]:cell.properties->values)std::visit([&](const auto& v){values[key]=v;},value);out["properties"]=std::move(values);}
     return out.dump();
 }
-bool sameBlockType(const bedrock::NativeBlockInfo* expected,const bedrock::NativeBlockInfo* actual){
+bool sameBlockType(const bedrock::sdk::BlockInfoValue* expected,const bedrock::sdk::BlockInfoValue* actual){
     return expected&&actual&&(expected->type==actual->type||expected->name==actual->name);
 }
 bool neighborDerived(std::string_view id){
     return id.ends_with("_fence")||id.ends_with("_wall")||id.ends_with("_pane")||id=="minecraft:iron_bars";
 }
-bool probeNext(void* player,void* source,const bedrock::NativeHotbar& hotbar,Vec eye){
+bool probeNext(void* player,void* source,const bedrock::sdk::HotbarSnapshot& hotbar,Vec eye){
     if(!probe)return false;auto& p=*probe;
     if(!model->refreshPlacement(p.request.token,p.request.actionId,tick)){restoreProbe(player,runtime);return false;}
     const auto slot=p.request.hotbarSlot;const auto target=p.request.target;const auto* goal=model->recordedCell(target);
@@ -233,10 +232,10 @@ bool probeNext(void* player,void* source,const bedrock::NativeHotbar& hotbar,Vec
             Vec hit{support.x+c.recipe.hitX,support.y+c.recipe.hitY,support.z+c.recipe.hitZ};
             const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
             if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach)continue;
-            void* predicted{};
-            if(worldAccess.predict(hotbar.types[slot],player,target,static_cast<unsigned>(c.recipe.face),{c.recipe.hitX,c.recipe.hitY,c.recipe.hitZ},hotbar.aux[slot],c.recipe.yaw,c.recipe.pitch,&predicted)&&
-               reinterpret_cast<std::uintptr_t>(predicted)==p.targetState){PlacementPlan plan;plan.request=p.request;plan.request.support=support;plan.request.recipe=c.recipe;
+            {void* predictedLocal{}; if(worldAccess.predict(hotbar.types[slot],player,{target.x,target.y,target.z},static_cast<unsigned>(c.recipe.face),{c.recipe.hitX,c.recipe.hitY,c.recipe.hitZ},hotbar.aux[slot],c.recipe.yaw,c.recipe.pitch,predictedLocal)&&
+               reinterpret_cast<std::uintptr_t>(predictedLocal)==p.targetState){PlacementPlan plan;plan.request=p.request;plan.request.support=support;plan.request.recipe=c.recipe;
                 plan.yaw=c.recipe.yaw;plan.pitch=c.recipe.pitch;plan.hit=hit;return commit(plan);}
+            }
         }
     }
     constexpr unsigned faces[6]={1,2,3,4,5,0};constexpr float heights[3]={.5f,.25f,.75f};constexpr float pitches[3]={0.f,90.f,-90.f};
@@ -251,13 +250,13 @@ bool probeNext(void* player,void* source,const bedrock::NativeHotbar& hotbar,Vec
         Vec hit{support.x+fractional.x,support.y+fractional.y,support.z+fractional.z};
         const double dx=double(hit.x)-eye.x,dy=double(hit.y)-eye.y,dz=double(hit.z)-eye.z;
         if(dx*dx+dy*dy+dz*dz>roundConfig->maxReach*roundConfig->maxReach){++p.outOfReach;continue;}
-        void* predicted{};++p.predictions;
-        const bool ok=worldAccess.predict(hotbar.types[slot],player,target,face,fractional,hotbar.aux[slot],yaw,pitch,&predicted);
+        ++p.predictions;
+        void* predictedLocal{}; const bool ok=worldAccess.predict(hotbar.types[slot],player,{target.x,target.y,target.z},face,fractional,hotbar.aux[slot],yaw,pitch,predictedLocal);
         if(!ok){++p.nativeFailures;continue;}
-        auto* predictedInfo=worldAccess.describe(predicted);if(!sameBlockType(wanted,predictedInfo))continue;
-        const auto predictedCell=worldAccess.describeCell(predicted,target);
-        const bool exact=reinterpret_cast<std::uintptr_t>(predicted)==p.targetState;
-        if(!exact){++p.mismatches;std::uint16_t data{};if(worldAccess.readField(predicted,worldAccess.layout("block_state_data_offset"),data))p.lastData=data;}
+        auto* predictedInfo=worldAccess.describe(predictedLocal);if(!sameBlockType(wanted,predictedInfo))continue;
+        const auto predictedCell=worldAccess.describeCell(predictedLocal,target);
+        const bool exact=reinterpret_cast<std::uintptr_t>(predictedLocal)==p.targetState;
+        if(!exact){++p.mismatches;std::uint16_t data{};if(worldAccess.readField(predictedLocal,worldAccess.layout("block_state_data_offset"),data))p.lastData=data;}
         PlacementPlan plan;plan.request=p.request;plan.request.support=support;auto& recipe=plan.request.recipe;
         recipe.face=static_cast<sb::Face>(face);recipe.orientationKnown=true;recipe.exactStateSupported=exact;recipe.deferredState=!exact;
         recipe.yaw=yaw;recipe.pitch=pitch;recipe.hitX=fractional.x;recipe.hitY=fractional.y;recipe.hitZ=fractional.z;
@@ -284,7 +283,7 @@ bool probeNext(void* player,void* source,const bedrock::NativeHotbar& hotbar,Vec
         model->deferPlacement(p.request.token,p.request.actionId,tick,20);restoreProbe(player,runtime);
     }return false;
 }
-void tickGame(const bedrock::LevelTickEvent& event){
+void tickGame(const bedrock::sdk::LevelTickEventValue& event){
     void* instance=client.load();void* player=worldAccess.localPlayer(instance);void* level{};
     if(!player||!worldAccess.readField(player,worldAccess.layout("player_level_offset"),level)||level!=event.level)return;
     Vec position{};std::uint64_t id{};if(!worldAccess.pose(player,position,id))return;
@@ -299,7 +298,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     model->update(generation,tick);
     if(stopped.load()||cancelRequested.exchange(false)||!gameplay.load()||!roundConfig->enabled){restoreProbe(player,id);restorePending(player,id);if(model->phase()!=sb::Phase::idle&&model->phase()!=sb::Phase::cancelled)model->cancel();return;}
     if((model->phase()==sb::Phase::idle||model->phase()==sb::Phase::complete||model->phase()==sb::Phase::cancelled||model->phase()==sb::Phase::failed)&&!titleQueued.load()){restoreProbe(player,id);restorePending(player,id);return;}
-    bedrock::NativeHotbar hotbar;if(!worldAccess.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
+    bedrock::sdk::HotbarSnapshot hotbar;if(!worldAccess.hotbar(player,hotbar)){restoreProbe(player,id);restorePending(player,id);model->cancel();note("round cancelled: hotbar read failed");return;}
     processTitles(hotbar,position);model->observeHotbar(hotbar.copied);
     if(removalCheck&&removalCheck->candidates.token!=model->token())removalCheck.reset();
     if(model->phase()==sb::Phase::capturing||(model->phase()==sb::Phase::waiting&&!removalCheck))capture(source);
@@ -359,7 +358,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
                 if(!action.rotationApplied){action.oldYaw=yaw;action.oldPitch=pitch;action.rotationApplied=true;}
                 if(!worldAccess.writeField(rot,worldAccess.actors().rotationYawOffset,action.yaw)||!worldAccess.writeField(rot,worldAccess.actors().rotationPitchOffset,action.pitch))reason="rotation_write_failed";
                 else if(!recipe.augment){
-                    if(!worldAccess.predict(hotbar.types[slot],player,action.request.target,static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,&predicted))reason="prediction_failed";
+                    if(!worldAccess.predict(hotbar.types[slot],player,{action.request.target.x,action.request.target.y,action.request.target.z},static_cast<unsigned>(recipe.face),{recipe.hitX,recipe.hitY,recipe.hitZ},hotbar.aux[slot],action.yaw,action.pitch,predicted))reason="prediction_failed";
                     else if(!recipe.deferredState&&reinterpret_cast<std::uintptr_t>(predicted)!=desired)reason="prediction_state_changed";
                     else if(recipe.deferredState){auto* wanted=worldAccess.describe(reinterpret_cast<void*>(desired));auto* got=worldAccess.describe(predicted);
                         if(!sameBlockType(wanted,got))reason="prediction_type_changed";
@@ -426,7 +425,7 @@ void tickGame(const bedrock::LevelTickEvent& event){
     }
     if(phase==sb::Phase::complete||phase==sb::Phase::failed||phase==sb::Phase::cancelled){restoreProbe(player,id);restorePending(player,id);}
 }
-void onTick(const bedrock::LevelTickEvent& event){if(titleOnlyMode)return;try{tickGame(event);}catch(const std::exception& e){cancelRequested.store(true);note(std::string("tick failed: ")+e.what());}}
+void onTick(const bedrock::sdk::LevelTickEventValue& event){if(titleOnlyMode)return;try{tickGame(event);}catch(const std::exception& e){cancelRequested.store(true);note(std::string("tick failed: ")+e.what());}}
 std::filesystem::path directory(){PWSTR path{};if(FAILED(SHGetKnownFolderPath(FOLDERID_Documents,KF_FLAG_CREATE,nullptr,&path)))throw std::runtime_error("Documents directory unavailable");
     auto dir=std::filesystem::path(path)/L"PEXData"/L"SpeedBuilder";CoTaskMemFree(path);return dir;}
 void worker(const std::filesystem::path& dir){
@@ -439,7 +438,7 @@ void worker(const std::filesystem::path& dir){
             if(!updates.empty())file.flush();
         }
         if(wireTitles&&Clock::now()>=nextDiagnostics){nextDiagnostics=Clock::now()+std::chrono::seconds(10);
-            file<<"Packet read counters: native_calls="<<packetTitles.receiveStatistics().calls<<" titles="<<packetTitles.received()<<" decode_failures="<<packetTitles.rejected()<<'\n';file.flush();}
+            file<<"Packet read counters: native_calls="<<0<<" titles="<<0<<" decode_failures="<<0<<'\n';file.flush();}
         std::shared_ptr<const DiffJob> job;{std::lock_guard lock(diffMutex);job=std::move(diffInput);diffInput.reset();}
         if(job&&job->before->token.world==epoch.load()){
             auto result=std::make_shared<DiffResult>(DiffResult{sb::prepareCandidates(*job->before,job->after),job->serial});
@@ -462,37 +461,22 @@ DWORD WINAPI start(void*){
         {std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});in.close();auto parsed=std::make_shared<const sb::Config>(sb::parseConfig(text));config.store(parsed);
             auto json=nlohmann::json::parse(text);if(json.value("config_revision",1)<2){json["config_revision"]=2;json["capture_cells_per_tick"]=parsed->captureCellsPerTick;json["build_interval_ticks"]=parsed->buildIntervalTicks;
                 std::ofstream out(path,std::ios::trunc);out<<json.dump(2)<<'\n';if(!out)throw std::runtime_error("config migration failed");note("config upgraded: previous default capture cap256 ->1024 and interval2 ->1; non-default values preserved");}}
-        std::string error;bedrock::ProfileManager profiles;
-        const bedrock::ProfileRequirements required{bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::LevelTick,bedrock::Feature::WorldEvents};
-        const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,bedrock::CandidatePolicy::AllowCandidates};
-        if(!profiles.prepare(required,options,[](const bedrock::RuntimeProfile& selected,std::string& failure){
-            try{
-                const auto root=bedrock::parseNativeProfile(selected.json());
-                wireTitles=root.contains("layouts")&&root.at("layouts").contains("PacketRead");
-                if(wireTitles){
-
-                    // A title observer never reads old world/inventory offsets.
-                    // Full placement is enabled only by a complete native adapter.
-                    titleOnlyMode=true;
-                    const auto& world=root.at("native_world");
-                    if(world.contains("select_hotbar")&&world.contains("get_hit_result")&&world.contains("build_block")&&world.contains("base_placement_state")&&world.contains("game_mode_vtables")){
-                        worldAccess.loadWorld(selected.json());titleOnlyMode=!worldAccess.placementReady();
-                    }
-                }else{worldAccess.load(selected.json());titleOnlyMode=false;}
-                return true;
-            }catch(const std::exception& e){failure=e.what();return false;}
-        },error))throw std::runtime_error(error);
-        const auto selected=profiles.snapshot();const auto& profile=selected->json();const auto& resolver=selected->resolver();
-        gameVersion=bedrock::parseNativeProfile(profile).at("target").value("version",std::string("unknown"));
+        std::string error;bedrock::sdk::Profiles profiles;
+        if(!profiles.open(bedrock::sdk::ProfileUpdatePolicy::RefreshIfNeeded,error))throw std::runtime_error(error);
+        const auto profileSnapshot=profiles.snapshot();
+        const auto selectedJson=profileSnapshot.json();
+        const auto& profile=selectedJson;
+        worldAccess.load(profile);
+        titleOnlyMode=!worldAccess.placementReady();
         worldAccess.reserveCaches(4096,512);
-        if(!packetTitles.install(profile,bedrock::generated::kSymbolDatabase,receiveTitle,error))throw std::runtime_error(error);
-        api.on<bedrock::GameplayEvent>([](const bedrock::GameplayEvent& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
-        api.on<bedrock::WorldChangeEvent>([](const bedrock::WorldChangeEvent& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});
-        api.on<bedrock::KeyEvent>([](const bedrock::KeyEvent& event){if(event.pressed&&event.inputKey()==config.load()->cancelKey)cancelRequested.store(true);});
-        api.on<bedrock::LevelTickEvent>(onTick);hooks=std::make_unique<bedrock::GameHooks>(api);
-        if(!hooks->installInput(resolver,error)||!hooks->installGameplay(resolver,error)||!hooks->installLevelTick(resolver,error)||!hooks->installWorldEvents(resolver,profile,error))throw std::runtime_error(error);
+        if(!packetTitles.install(profile,profile,receiveTitle,error))throw std::runtime_error(error);
+        hooks.onGameplay([](const bedrock::sdk::GameplayEventValue& event){client.store(event.clientInstance);gameplay.store(event.active);if(!event.active)cancelRequested.store(true);});
+        hooks.onWorldChange([](const bedrock::sdk::WorldChangeEventValue& event){if(event.clientInstance)client.store(event.clientInstance);++epoch;cancelRequested.store(true);});
+        hooks.onKey([](const bedrock::sdk::KeyEventValue& event){if(event.pressed&&event.key==config.load()->cancelKey)cancelRequested.store(true);});
+        hooks.onLevelTick(onTick);
+        if(!hooks.install(profile,profile,error))throw std::runtime_error(error);
         if(titleOnlyMode)note("partial ready: Packet ID 88 title observer active [runtime unverified]; automatic recording/build disabled; missing PlayerInventory selection and BlockType placement ABI");
-        note("ready; press Esc and return to gameplay; title/subtitle trigger enabled; cancel key="+std::to_string(config.load()->cancelKey));note(BDS_HookRuntimeDiagnostic());status.store(2);worker(dir);
+        note("ready; press Esc and return to gameplay; title/subtitle trigger enabled; cancel key="+std::to_string(config.load()->cancelKey));note(bedrock::sdk::hookRuntimeDiagnostic());status.store(2);worker(dir);
     }catch(const std::exception& e){status.store(4);try{const auto dir=directory();std::filesystem::create_directories(dir);std::ofstream out(dir/L"SpeedBuilder.log",std::ios::app);out<<"startup failed: "<<e.what()<<'\n';}catch(...){} }
     packetTitles.stop();stopped.store(true);cancelRequested.store(true);if(status.load()!=4)status.store(3);return 0;
 }

@@ -17,6 +17,7 @@
 #include <string_view>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include <bedrock/logging/content_log.hpp>
 
 #ifndef STAGEB_GOLDEN_DIR
 #define STAGEB_GOLDEN_DIR "/home/pexserver/WorkSpace/ts-mods/EffectFake"

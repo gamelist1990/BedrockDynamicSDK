@@ -3,7 +3,7 @@
 #include "command_model.hpp"
 #include "plugin_host.hpp"
 
-#include <bedrock/native/injected_commands.hpp>
+#include <bedrock/sdk.hpp>
 
 #include <deque>
 #include <functional>
@@ -20,25 +20,25 @@ public:
 
     CommandService();
 
-    bool load(const bedrock::RuntimeProfile& profile,
+    bool load(const bedrock::sdk::Profile& profile,
               const WireDefinitions& definitions, std::string& error);
     bool replaceDefinitions(const WireDefinitions& definitions, std::string& error);
     void drain(PluginHost& host);
 
     void setRespond(Respond respond) { respond_ = std::move(respond); }
     void setModNames(std::vector<std::string> names) { modNames_ = std::move(names); }
-    bedrock::NativeInjectedCommands& native() noexcept { return commands_; }
+    bedrock::sdk::Commands& native() noexcept { return commands_; }
 
 private:
     struct DefinitionSet {
-        std::vector<bedrock::NativeInjectedCommands::EnumEntry> enums;
-        std::vector<bedrock::NativeInjectedCommands::CommandEntry> commands;
+        std::vector<bedrock::sdk::CommandEnum> enums;
+        std::vector<bedrock::sdk::CommandDefinition> commands;
     };
     static DefinitionSet makeDefinitions(const WireDefinitions& definitions,
                                          CommandService* owner);
     void enqueue(const std::string& line);
 
-    bedrock::NativeInjectedCommands commands_;
+    bedrock::sdk::Commands commands_; 
     std::deque<std::string> queue_;
     Respond respond_;
     std::vector<std::string> modNames_;
