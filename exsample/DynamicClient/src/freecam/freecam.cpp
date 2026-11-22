@@ -139,9 +139,12 @@ void keyEvent(const bedrock::KeyEvent &e) {
     if (k < keys.size())
         keys[k].store(e.pressed);
     if (k == boundKey("freecam", bedrock::sdk::Key::M)) {
-        // Toggle is handled through the SDK keybind so Mod KeyBind owns the binding.
-        if (gameplay.load() && c->enabled)
-            e.cancel();
+        // Toggle is owned by the SDK keybind (DynamicClientMod::onKeybind).
+        // Do NOT cancel here: cancelling the keyboard feed skips its original
+        // handler, which is what drives the downstream native keyboard event
+        // that the SDK keybind dispatcher depends on. Cancelling therefore
+        // starved onKeybind("freecam") and made M dead (P4C-R3 regression).
+        // M is unbound in vanilla, so letting the feed through is harmless.
         return;
     }
     if (desired.load() && isMovement(k, *c))
