@@ -10,6 +10,10 @@ def test_freecam_camera_visual_uses_sdk_adapter():
                       "spectatorCullerVtable",
                       "0x9a8", "0x9b8", "0x970", "0x654", "0x7c"):
         assert forbidden not in source, forbidden
-    for api in ("NativeCameraVisual", "NativeOutlineRenderer", "camera_visual.hpp", "noteNativeModeContext",
-                "takeStatistics"):
+    # Final state (plugin-system completion): freecam consumes only the
+    # public CameraControl facade; the native visual adapter it used
+    # mid-migration must stay gone.
+    for api in ("CameraControl", "takeStatistics", "takeEffectStatistics"):
         assert api in source, api
+    for gone in ("NativeCameraVisual", "NativeOutlineRenderer", "camera_visual.hpp"):
+        assert gone not in source, gone

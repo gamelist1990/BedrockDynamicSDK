@@ -9,8 +9,13 @@ def test_tablist_uses_sdk_entry_points_without_native_abi():
                       "NativeActorLayout", "resolveSharedHook", "fetchSupportedProfile",
                       "parseNativeProfile", "EnTT::", "entt::"):
         assert forbidden not in source, forbidden
-    for api in ("NativeGameAccess", "RuntimeProfile", "GameHooks", "equipmentSnapshot"):
+    # Final state (plugin-system completion): the tablist consumes only
+    # public SDK facades; the native bridge types it used mid-migration
+    # must stay gone.
+    for api in ("RosterAccess", "PacketRoster", "Overlay", "equipmentSnapshot"):
         assert api in source
+    for gone in ("NativeGameAccess", "RuntimeProfile", "GameHooks"):
+        assert gone not in source, gone
     cmake = (base / "CMakeLists.txt").read_text()
     assert "BEDROCK_SDK_ENABLE_NATIVE_CLIENT" in cmake
     assert "skypjack/entt" not in cmake
