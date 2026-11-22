@@ -1,5 +1,7 @@
 #include <bedrock/profiles/profile_json.hpp>
+#include <bedrock/sdk.hpp>
 #include <bedrock/sdk/keybinds.hpp>
+#include <bedrock/sdk/game_hooks.hpp>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -11,8 +13,6 @@
 #include <bedrock/packets/wire_packet_events.hpp>
 #include <bedrock/packets/movement_packets.hpp>
 #include <bedrock/detail/native_profile_functions.hpp>
-#include "client.hpp"
-#include "worker.hpp"
 #include <bedrock/native/outline_renderer.hpp>
 #include <bedrock/native/inside_block_effect.hpp>
 #include <bedrock/native/camera.hpp>
@@ -27,6 +27,8 @@
 #include <bedrock/native/world_render.hpp>
 #include <bedrock/profiles/remote_catalog.hpp>
 #include <bedrock/profiles/profile_manager.hpp>
+#include "client.hpp"
+#include "worker.hpp"
 #include "freecam/config.hpp"
 #include <array>
 #include <atomic>
@@ -52,20 +54,20 @@ std::atomic<std::uint64_t> epoch{1};
 std::array<std::atomic<bool>, 256> keys{};
 std::atomic<std::shared_ptr<const freecam::Config>> config{
     std::make_shared<const freecam::Config>()};
+bedrock::sdk::Hooks hooks;
 bedrock::detail::HookDispatch api;
-std::unique_ptr<bedrock::GameHooks> hooks;
-bedrock::NativeActorLayout actors;
-bedrock::NativeActorComponents actorComponents;
-bedrock::NativePlayerBoundsTracker playerBounds;
-bedrock::WorldRenderProfile render;
-bedrock::NativeOutlineRenderer outline;
-std::size_t hurtOffset{};
-std::uint32_t hurtHash{};
-BDS_HookToken renderToken{};
+std::unique_ptr<bedrock::GameHooks> gameHooks;
 bedrock::NativeCamera nativeCamera;
 bedrock::NativeCameraVisual cameraVisual;
 bedrock::NativeGameType gameTypes;
 bedrock::NativeInsideBlockEffect insideBlockEffect;
+bedrock::NativeOutlineRenderer outline;
+bedrock::NativeActorLayout actors;
+bedrock::NativeActorComponents actorComponents;
+bedrock::NativePlayerBoundsTracker playerBounds;
+bedrock::WorldRenderProfile render;
+std::size_t hurtOffset{};
+std::uint32_t hurtHash{};
 std::atomic<std::uint64_t> flightSerial{};
 
 
@@ -123,8 +125,7 @@ thread_local bool releasing = false;
 void releaseMovement(const freecam::Config &c) {
     releasing = true;
     for (unsigned key : {c.forward, c.back, c.left, c.right, c.up, c.down, c.fast}) {
-        BDS_KeyboardArgs args{static_cast<int>(key), 0, 0};
-        BDS_HookCallOriginal(BDS_HOOK_KEYBOARD_FEED, &args);
+        hooks.sendKeyboardFeed(key, false);
     }
     (void)api.sendMouseInput(1, false);
     (void)api.sendMouseInput(2, false);
@@ -169,6 +170,7 @@ struct BorionState {
     float oldFall{};
 };
 BorionState borion;
+BDS_HookToken renderToken{};
 bedrock::native_motion::Layout motionLayout;
 bedrock::CameraRig cameraRig;
 std::mutex borionMutex;
@@ -584,6 +586,8 @@ void borionTick(const bedrock::LevelTickEvent &) {
     }
 }
 
+// NOTE: the native outline renderer / camera visual are still used directly
+// here; routing them through sdk::CameraControl is a follow-up (P4C-R3).
 void BDS_HOOK_CALL renderSubscriber(void *, void *raw, BDS_HookNext next, void *frame) {
     auto &args = *static_cast<BDS_RenderLevelArgs *>(raw);
     if (auto* camera = outline.renderPlayer(args.renderer)) cameraVisual.notePrimaryCamera(camera);
@@ -777,10 +781,10 @@ void runFreecam(const bedrock::RuntimeProfile& selected, const std::filesystem::
             capturedSendEpoch.store(0);
         });
         api.on<bedrock::LevelTickEvent>(borionTick);
-        hooks = std::make_unique<bedrock::GameHooks>(api);
-        if (!hooks->installInput(resolver, error) || !hooks->installGameplay(resolver, error) ||
-            !hooks->installLevelTick(resolver, error) ||
-            !hooks->installWorldEvents(resolver, profile, error))
+        gameHooks = std::make_unique<bedrock::GameHooks>(api);
+        if (!gameHooks->installInput(resolver, error) || !gameHooks->installGameplay(resolver, error) ||
+            !gameHooks->installLevelTick(resolver, error) ||
+            !gameHooks->installWorldEvents(resolver, profile, error))
             throw std::runtime_error(error);
         if (renderReady && !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL, outline.renderTarget(), renderSubscriber,
                                               nullptr, &renderToken))

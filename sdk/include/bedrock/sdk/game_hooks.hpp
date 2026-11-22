@@ -65,6 +65,7 @@ public:
 
     HookSubscription onActorNameTag(std::function<void(const ActorNameTagEventValue&)>);
 
+
     bool install(const SymbolResolver& resolver, std::string_view profileJson, std::string& error);
     bool install(std::string_view selectedProfileJson, std::string_view embeddedProfileJson, std::string& error);
 
@@ -76,6 +77,7 @@ public:
     bool installLevelTick(const SymbolResolver& resolver, std::string& error);
 
     bool sendNativeKey(unsigned key, bool pressed);
+    bool sendKeyboardFeed(unsigned key, bool pressed);
 
     // Uninstall all native hooks while preserving subscriptions/impl state.
     void stop() noexcept;

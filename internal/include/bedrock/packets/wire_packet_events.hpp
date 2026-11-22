@@ -35,6 +35,9 @@ public:
         if(!BDS_HookRuntimeSupports(BDS_HOOK_PACKET_WIRE_SEND))
             throw std::runtime_error("Packet wire Hook requires runtime 4.6 or newer; replace DLLs and restart Minecraft");
     }
+    // Exact-profile send-to-server entry this bridge is bound to. Empty until
+    // load() succeeds.
+    void* target() const noexcept{return target_;}
     bool subscribe(BDS_HookCallback callback,void* user,BDS_HookToken* token) const {
         return target_&&BDS_HookRuntimeSupports(BDS_HOOK_PACKET_WIRE_SEND)&&BDS_HookSubscribe(BDS_HOOK_PACKET_WIRE_SEND,target_,callback,user,token);
     }

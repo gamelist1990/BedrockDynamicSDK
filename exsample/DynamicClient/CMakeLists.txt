@@ -33,7 +33,9 @@ if(WIN32)
     # Use the public SDK alongside the first-party native adapters.
     # bedrock::gui_overlay stays: tablist/overlay.cpp draws with ImGui directly,
     # and the imgui include path arrives through this link (no gui::Overlay
-    # calls remain — the overlay itself is sdk::Overlay now).
+    # calls remain — the overlay itself is sdk::Overlay now). Do NOT remove
+    # this link on the claim that TabList uses sdk::Overlay — the draw code
+    # still includes <imgui.h> (proven by the R2 build break).
     target_link_libraries(DynamicClient PRIVATE EnTT::EnTT bedrock::sdk dynamic_client_features
         bedrock::client bedrock::game_hooks bedrock::gui_overlay)
     target_compile_options(DynamicClient PRIVATE /utf-8)

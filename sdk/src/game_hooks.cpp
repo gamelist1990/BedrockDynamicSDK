@@ -74,6 +74,7 @@ HookSubscription Hooks::onActorNameTag(std::function<void(const ActorNameTagEven
     return {};
 }
 
+
 bool Hooks::install(std::string_view, std::string_view, std::string& error) {
     impl_->native = std::make_unique<bedrock::GameHooks>(impl_->dispatch);
     return true;
@@ -136,6 +137,20 @@ bool Hooks::installLevelTick(const SymbolResolver& resolver, std::string& error)
 
 bool Hooks::sendNativeKey(unsigned key, bool pressed) {
     return impl_->dispatch.sendNativeKey(key, pressed);
+}
+
+bool Hooks::sendKeyboardFeed(unsigned key, bool pressed) {
+    // Wraps BDS_HookCallOriginal(BDS_HOOK_KEYBOARD_FEED, &args) for the
+    // specific capability freecam needs when releasing movement keys on toggle.
+    // This is the narrowest possible surface for the keyboard feed hook; it
+    // preserves the exact semantics of calling the original keyboard feed
+    // handler rather than going through the event bus.
+#ifdef _WIN32
+    BDS_KeyboardArgs args{static_cast<int>(key), pressed ? 1 : 0, 0};
+    return BDS_HookCallOriginal(BDS_HOOK_KEYBOARD_FEED, &args) != 0;
+#else
+    (void)key; (void)pressed; return false;
+#endif
 }
 
 std::string hookRuntimeDiagnostic() {
