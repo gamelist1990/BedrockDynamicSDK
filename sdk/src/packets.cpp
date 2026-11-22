@@ -93,6 +93,34 @@ std::shared_ptr<const std::vector<RosterPlayerEntry>> PacketRoster::snapshotShar
 #endif
 }
 
+RosterStatistics PacketRoster::statistics() const noexcept {
+    RosterStatistics out;
+#ifdef _WIN32
+    if (!impl_->installed) return out;
+    try {
+        const auto s = impl_->rosterService.statistics();
+        out.packets = s.packets;
+        out.added = s.added;
+        out.removed = s.removed;
+        out.skinUpdates = s.skinUpdates;
+        out.rejected = s.rejected;
+        out.generation = s.generation;
+        out.players = s.players;
+        out.error = s.error;
+        out.dropped = impl_->rosterService.dropped();
+        const auto r = impl_->packetAPI.receiveStatistics();
+        out.receiveCalls = r.calls;
+        out.receiveFiltered = r.filtered;
+        out.receiveCopied = r.copied;
+        out.receiveStreamFailures = r.streamFailures;
+        out.receiveDecodeFailures = r.decodeFailures;
+        out.receivePublished = r.published;
+        out.receiveNested = r.nested;
+    } catch (...) {}
+#endif
+    return out;
+}
+
 void PacketRoster::stop() noexcept {
 #ifdef _WIN32
     if (impl_->installed) {

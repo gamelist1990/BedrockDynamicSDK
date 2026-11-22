@@ -35,6 +35,27 @@ struct RosterPlayerEntry {
 // Impl, exposing only value-type entries.  No internal packet/wire/native
 // types leak into this header.
 // ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// RosterStatistics — value-type diagnostic counters for PacketRoster.
+//   packets/added/removed/skinUpdates/rejected/generation/players/error:
+//     the PlayerListPackets observer state (rejected > 0 means PlayerList
+//     or PlayerSkin payloads arrived but failed to decode; error holds
+//     the last decode failure message).
+//   dropped: roster worker queue overflows (each overflow also resets
+//     the pending queue).
+//   receive*: the PacketReadEvents receive-path counters (calls == 0
+//     means the packet receive hook never fired at all).
+// ------------------------------------------------------------------------
+struct RosterStatistics {
+    std::uint64_t packets{}, added{}, removed{}, skinUpdates{}, rejected{}, generation{};
+    std::size_t players{};
+    std::uint64_t dropped{};
+    std::string error;
+    std::uint64_t receiveCalls{}, receiveFiltered{}, receiveCopied{},
+        receiveStreamFailures{}, receiveDecodeFailures{}, receivePublished{},
+        receiveNested{};
+};
+
 class PacketRoster final {
 public:
     PacketRoster();
@@ -58,6 +79,10 @@ public:
     // to a vector of RosterPlayerEntry, so the caller can cheaply hold a
     // reference without copying.
     [[nodiscard]] std::shared_ptr<const std::vector<RosterPlayerEntry>> snapshotShared() const noexcept;
+
+    // Diagnostic counters (see RosterStatistics). Zero-filled when not
+    // installed or on non-Windows hosts.
+    [[nodiscard]] RosterStatistics statistics() const noexcept;
 
     // Explicit stop — mirrors PacketAPI::stop + PlayerRosterService::stop.
     void stop() noexcept;

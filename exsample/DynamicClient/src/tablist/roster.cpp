@@ -810,6 +810,18 @@ void buildTabRowsInBackground(const std::shared_ptr<TabRowsBuild>& build) noexce
             std::chrono::steady_clock::now() - buildStarted).count();
         diagnostic("TabList roster build: ", buildDurationMs, " ms thread=", std::this_thread::get_id(),
                    " rows=", publishedCount);
+        if (packetRosterMode) {
+            const auto st = packetPlayers.statistics();
+            diagnostic("TabList packet stats: packets=", st.packets, " added=", st.added,
+                       " removed=", st.removed, " skin=", st.skinUpdates,
+                       " rejected=", st.rejected, " players=", st.players,
+                       " dropped=", st.dropped, " recvCalls=", st.receiveCalls,
+                       " recvFiltered=", st.receiveFiltered, " recvCopied=", st.receiveCopied,
+                       " recvStreamFail=", st.receiveStreamFailures,
+                       " recvDecodeFail=", st.receiveDecodeFailures,
+                       " recvPublished=", st.receivePublished,
+                       " error=", st.error.empty() ? std::string("-") : st.error);
+        }
         cachedTabRows.store(std::make_shared<const std::vector<PlayerRow>>(std::move(build->rows)),
             std::memory_order_release);
         if (!loggedTabRowsReady.exchange(true, std::memory_order_acq_rel))

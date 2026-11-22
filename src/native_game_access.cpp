@@ -502,11 +502,20 @@ std::size_t NativeGameAccess::localInventorySize(void* player) const { return im
 std::optional<ItemStack> NativeGameAccess::localInventoryItem(void* player,std::size_t slot) const { return impl_->localInventoryItem(player,slot); }
 std::optional<std::size_t> NativeGameAccess::selectedHotbarSlot(void* player) const { return impl_->selectedHotbarSlot(player); }
 std::vector<PacketPlayer> NativeGameAccess::rosterSnapshot(void* world) const {
-    if(!impl_->onTick() || !world || world!=impl_->levelInstance.load()) return {};
     if(impl_->wireRoster) {
+        // Wire mode: the roster comes from the packet provider, a
+        // thread-safe snapshot of already-decoded packets. No game memory
+        // is read, so the tick-thread scope (onTick/level) that guards the
+        // native reads below does not apply. Gating the wire branch on it
+        // made the packet roster unreachable: the RosterAccess instance's
+        // tick scope is never opened (no dispatch drives its
+        // beginWorldTick), so the snapshot always came back empty while
+        // the packet service held the players (BOL 2026-11-22: service
+        // players=1, rows=0).
         const auto players=impl_->rosterProvider?impl_->rosterProvider():nullptr;
         return players?*players:std::vector<PacketPlayer>{};
     }
+    if(!impl_->onTick() || !world || world!=impl_->levelInstance.load()) return {};
     auto source=impl_->playerRoster.snapshot(world);
     std::vector<PacketPlayer> rows;
     if(!source) return rows;
@@ -524,12 +533,13 @@ std::vector<std::string> NativeGameAccess::playerListNames(void* world) const {
 }
 bool NativeGameAccess::face(void* world,const std::array<std::byte,16>& uuid,
                            std::array<std::uint32_t,64>& output) const {
-    if(!impl_->onTick() || world!=impl_->levelInstance.load()) return false;
     if(impl_->wireRoster) {
+        // Wire mode reads the packet provider only (see rosterSnapshot).
         const auto rows=impl_->rosterProvider?impl_->rosterProvider():nullptr;
         if(rows) for(const auto& row:*rows) if(row.uuid==uuid) {output=row.face;return row.hasFace;}
         return false;
     }
+    if(!impl_->onTick() || world!=impl_->levelInstance.load()) return false;
     PlayerUuid id; std::memcpy(&id,uuid.data(),16);
     return impl_->playerRoster.face(world,id,output);
 }
