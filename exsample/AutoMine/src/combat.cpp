@@ -428,9 +428,16 @@ bool AutoMineMod::loadActors(const bedrock::sdk::Profile &profile,
     try {
         const auto root = nlohmann::json::parse(profile.json());
         const auto &at = root.at("layouts").at("Actor").at("actor_type");
+        // Profile data stores offsets as hex strings ("0x0") or numbers;
+        // the native layout parsers accepted both, so do the same here.
+        auto layoutNumber = [](const nlohmann::json &value) -> std::uint64_t {
+            if (value.is_string())
+                return std::stoull(value.get<std::string>(), nullptr, 0);
+            return value.get<std::uint64_t>();
+        };
         return actors_.configure(profile.json(),
-                                 static_cast<std::size_t>(at.at("value_offset").get<std::uint64_t>()),
-                                 static_cast<std::uint32_t>(at.at("player_type_id").get<std::uint64_t>()),
+                                 static_cast<std::size_t>(layoutNumber(at.at("value_offset"))),
+                                 static_cast<std::uint32_t>(layoutNumber(at.at("player_type_id"))),
                                  resolver, failure);
     } catch (const std::exception &e) {
         failure = e.what();
@@ -446,7 +453,13 @@ std::optional<std::vector<bedrock::sdk::ActorSample>> AutoMineMod::actorSamples(
     std::vector<bedrock::sdk::ActorSample> samples;
     std::size_t cursor = 0;
     std::string error;
-    if (!actors_.capture(level_.load(), false, cursor, samples, error))
+    // ActorFacade::capture takes the LOCAL PLAYER actor (its registry
+    // context anchors the population read), not the level pointer the
+    // old native snapshot API used.
+    void *local = world_.localPlayer(client_.load());
+    if (!local)
+        return std::nullopt;
+    if (!actors_.capture(local, false, cursor, samples, error))
         return std::nullopt;
     return samples;
 }
