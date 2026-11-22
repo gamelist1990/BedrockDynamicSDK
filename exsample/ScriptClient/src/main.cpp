@@ -620,6 +620,11 @@ struct Runtime {
     std::unique_ptr<bedrock::sdk::ClientHost> clientHost;
     std::vector<std::unique_ptr<stageb::ScriptMod>> scriptMods;
     std::unique_ptr<stageb::HostAnchorMod> anchor;
+    // World-change feed for the CommandService local-registry fallback.
+    bedrock::sdk::SymbolResolver worldResolver;
+    bedrock::sdk::Hooks worldHooks;
+    bedrock::sdk::HookSubscription worldSubscription;
+    bedrock::sdk::HookSubscription gameplaySubscription;
 
     void syncScriptMods(bool allowCallback = false) {
         if (!host || !clientHost) return;
@@ -707,6 +712,9 @@ DWORD WINAPI start(LPVOID parameter) {
         state.commands->setRespond([](const std::string& text) {
             logger.info(text);
         });
+        state.commands->setDiagnostic([](const std::string& text) {
+            logger.info(text);
+        });
         state.host = std::make_unique<stageb::PluginHost>(
             stageb::resolveModsDir(directory), version, state.world);
         state.host->setProfileJson(profile.json());
@@ -756,6 +764,46 @@ DWORD WINAPI start(LPVOID parameter) {
         if (!state.commands->load(profileSnapshot, defs, error)) {
             logger.error("CommandService load failed: ", error);
             return 6;
+        }
+
+        // Singleplayer command support: session signals feed the
+        // CommandService's local-registry fallback (the packet path
+        // never engages for the integrated server's command list).
+        // The gameplay event is the join signal on this build — the
+        // profile's world-events layout resolves exit/dimension only,
+        // so onWorldChange's Joined never fires; it is still wired for
+        // the exit side and for future profiles.
+        {
+            std::string hooksError;
+            if (!state.worldResolver.open(profileSnapshot, hooksError)) {
+                logger.error("World hooks resolver failed: ", hooksError);
+            } else if (!state.worldHooks.installGameplay(state.worldResolver, hooksError)) {
+                logger.error("Gameplay hooks install failed: ", hooksError);
+            } else if (!state.worldHooks.installWorldEvents(
+                           state.worldResolver, profileSnapshot.json(), hooksError)) {
+                logger.error("World hooks install failed: ", hooksError);
+            } else {
+                // The gameplay event is cursor grab/release: active
+                // marks a possible session start (idempotent in the
+                // CommandService), while release fires for every
+                // screen open (chat, pause) and must NOT end the
+                // session — the world-change exit events do that.
+                state.gameplaySubscription = state.worldHooks.onGameplay(
+                    [&state](const bedrock::sdk::GameplayEventValue& event) {
+                        if (!state.commands) return;
+                        if (event.active)
+                            state.commands->noteWorldJoined(event.clientInstance);
+                    });
+                state.worldSubscription = state.worldHooks.onWorldChange(
+                    [&state](const bedrock::sdk::WorldChangeEventValue& event) {
+                        if (!state.commands) return;
+                        if (event.reason == bedrock::sdk::WorldChangeReasonValue::Joined)
+                            state.commands->noteWorldJoined(event.clientInstance);
+                        else if (event.reason == bedrock::sdk::WorldChangeReasonValue::Left ||
+                                 event.reason == bedrock::sdk::WorldChangeReasonValue::JoinCancelled)
+                            state.commands->noteWorldLeft();
+                    });
+            }
         }
 
         state.syncScriptMods();

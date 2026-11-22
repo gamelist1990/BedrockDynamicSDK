@@ -26,8 +26,17 @@ public:
     void drain(PluginHost& host);
 
     void setRespond(Respond respond) { respond_ = std::move(respond); }
+    void setDiagnostic(std::function<void(const std::string&)> diagnostic) {
+        diagnostic_ = std::move(diagnostic);
+    }
     void setModNames(std::vector<std::string> names) { modNames_ = std::move(names); }
     bedrock::sdk::Commands& native() noexcept { return commands_; }
+
+    // World-session plumbing for the local-registry (singleplayer)
+    // fallback: main feeds world-change events in, drain() drives the
+    // registration while a client instance is present.
+    void noteWorldJoined(void* clientInstance);
+    void noteWorldLeft();
 
 private:
     struct DefinitionSet {
@@ -38,10 +47,15 @@ private:
                                          CommandService* owner);
     void enqueue(const std::string& line);
 
-    bedrock::sdk::Commands commands_; 
+    bedrock::sdk::Commands commands_;
     std::deque<std::string> queue_;
     Respond respond_;
+    std::function<void(const std::string&)> diagnostic_;
     std::vector<std::string> modNames_;
+    void* clientInstance_{};
+    bool localActive_{};
+    std::string localError_;
+    std::string localState_;
 };
 
 } // namespace stageb

@@ -118,6 +118,10 @@ inline constexpr auto factoryFunctions=factories(std::make_index_sequence<32>{})
 class NativeMessageCommands {
 public:
     enum class State { WaitingClient, WaitingRegistry, WaitingTemplate, Registered, Collision, Failed };
+    // Routes are process-lifetime slots; clearing ours on destruction
+    // keeps a stale handler from firing after the owner is gone (the
+    // Command objects the game still holds check the route first).
+    ~NativeMessageCommands() { for (auto& entry:entries_) message_command_native::routes[entry.slot]=nullptr; }
     // parameterName is only the label autocomplete shows for the message
     // argument (defaults to "message", as in /me); the parser type is the
     // CommandMessage type regardless of the label.
@@ -133,6 +137,28 @@ public:
         const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
+        message_command_native::routes[slot]=route;
+        entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
+    }
+    // add() after load(): the route is wired with the function pointers
+    // and text range load() resolved, and the entry registers on the
+    // next update(). This exists so a definition set that grows after
+    // startup (a plugin reload that adds a command) can still join the
+    // local registry; slots are process-lifetime, as with add().
+    bool addLoaded(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler,
+             std::string parameterName = "message", bool parameterOptional = false) {
+        if (!loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
+            description.find('\0')!=std::string::npos ||
+            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
+        if (parameterName.empty() || parameterName.size()>15 ||
+            parameterName.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos) return false;
+        for (const auto& entry:entries_) if (entry.name==name) return false;
+        if (message_command_native::nextSlot>=32) return false;
+        const auto slot=message_command_native::nextSlot++;
+        auto route=std::make_shared<message_command_native::Route>();
+        route->name=name; route->handler=std::move(handler);
+        route->resolve=resolve_; route->destroy=destroy_; route->free=free_;
+        route->textBegin=textBegin_; route->textEnd=textEnd_;
         message_command_native::routes[slot]=route;
         entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
     }
@@ -169,10 +195,12 @@ public:
             if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
                 reinterpret_cast<LPCWSTR>(message_command_native::factoryFunctions[0]),&pinned))
                 throw std::runtime_error("command provider pin failed");
+            textBegin_=base_+native_profile::number(root.at("target").at("text_rva"));
+            textEnd_=textBegin_+native_profile::number(root.at("target").at("text_size"));
             for (auto& entry:entries_) {
                 entry.route->resolve=resolve_; entry.route->destroy=destroy_; entry.route->free=free_;
-                entry.route->textBegin=base_+native_profile::number(root.at("target").at("text_rva"));
-                entry.route->textEnd=entry.route->textBegin+native_profile::number(root.at("target").at("text_size"));
+                entry.route->textBegin=textBegin_;
+                entry.route->textEnd=textEnd_;
             }
             factoryTable_=reinterpret_cast<void*>(base_+native_profile::number(layout.at("factory_vtable_rva")));
             const auto& functions=layout.at("factory_functions");
@@ -264,6 +292,7 @@ private:
     std::vector<Entry> entries_;
     std::atomic<DWORD> owner_{};
     std::uintptr_t base_{};
+    std::uintptr_t textBegin_{},textEnd_{};
     std::uint32_t clientMinecraft_{},minecraftCommands_{},commandsRegistry_{};
     void *register_{},*find_{},*overload_{},*factoryTable_{},*resolve_{},*destroy_{},*free_{},*type_{},*rule_{};
     bool loaded_{};

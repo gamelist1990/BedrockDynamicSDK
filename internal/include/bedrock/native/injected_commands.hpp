@@ -18,6 +18,8 @@
 // Threading: handlers run on the packet send path. Keep them
 // trivial (copy the line into a queue); do the work on your own
 // tick thread.
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -104,6 +106,23 @@ public:
     };
 
     void setDiagnostic(Diagnostic diagnostic) { diagnostic_ = std::move(diagnostic); }
+
+    // How many AvailableCommands packets this service has rewritten so
+    // far. A session in which the count never moves has no server
+    // command list on the wire path at all (singleplayer: the integrated
+    // server hands the list to the client internally), which is the
+    // signal the local-registry fallback in the Commands facade keys on.
+    [[nodiscard]] std::uint64_t rewriteCount() const noexcept {
+        return rewriteCount_.load(std::memory_order_acquire);
+    }
+    // When the most recent rewrite happened (steady clock). Session
+    // signals (gameplay active / player loaded) fire AFTER a remote
+    // login's rewrite, so the fallback compares this against the
+    // session start instead of only counting from it.
+    [[nodiscard]] std::chrono::steady_clock::time_point lastRewriteTime() const noexcept {
+        return std::chrono::steady_clock::time_point{
+            std::chrono::milliseconds{lastRewriteMs_.load(std::memory_order_acquire)}};
+    }
 
     // True once load() has frozen the initial definition set (§6.3).
     [[nodiscard]] bool isLoaded() const noexcept { return loaded_; }
@@ -378,6 +397,10 @@ private:
             diag("injected commands: stream rewrite failed");
             return;
         }
+        rewriteCount_.fetch_add(1, std::memory_order_acq_rel);
+        lastRewriteMs_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(),
+            std::memory_order_release);
         diag("injected commands: AvailableCommands rewritten (" +
              std::to_string(body.size()) + " -> " + std::to_string(tls.size()) + " bytes)");
     }
@@ -449,6 +472,8 @@ private:
     mutable std::mutex definitionsMutex_; // enums_ / commands_ (Stage B D-1)
     mutable std::mutex activeMutex_;
     mutable std::unordered_set<std::string> active_; // names injected by the latest rewrite
+    std::atomic<std::uint64_t> rewriteCount_{0};
+    std::atomic<std::int64_t> lastRewriteMs_{0};
 };
 
 } // namespace bedrock

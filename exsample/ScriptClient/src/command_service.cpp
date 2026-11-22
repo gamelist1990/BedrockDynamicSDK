@@ -107,6 +107,12 @@ bool CommandService::load(const bedrock::sdk::Profile& profile,
     set.commands.push_back(std::move(mods));
     error.clear();
     (void)profileJson;
+    // ScriptClient commands are client-side by design. Packet
+    // injection makes them server commands whose requests the local
+    // (integrated-server) path never intercepts — suggestible but
+    // un-executable in singleplayer — so use the local-only mode:
+    // native registry registration, driven from drain() in a world.
+    commands_.preferLocalRegistry(true);
     return commands_.load(profile, set.enums, set.commands, error);
 }
 
@@ -133,7 +139,44 @@ bool CommandService::replaceDefinitions(const WireDefinitions& definitions,
     return commands_.replace(set.enums, set.commands, error);
 }
 
+void CommandService::noteWorldJoined(void* clientInstance) {
+    // Several signals can announce the same session (gameplay active,
+    // player loaded); only the first one starts the session clock.
+    if (!clientInstance || clientInstance_ == clientInstance) return;
+    clientInstance_ = clientInstance;
+    localActive_ = false;
+    if (diagnostic_) diagnostic_("commands: world session noted");
+    commands_.noteLocalSessionStart();
+}
+
+void CommandService::noteWorldLeft() {
+    clientInstance_ = nullptr;
+    localActive_ = false;
+    commands_.noteLocalSessionEnd();
+}
+
 void CommandService::drain(PluginHost& host) {
+    if (clientInstance_) {
+        commands_.driveLocalRegistry(clientInstance_);
+        const bool active = commands_.localRegistryActive();
+        if (active != localActive_) {
+            localActive_ = active;
+            if (active && diagnostic_)
+                diagnostic_("commands: local registry fallback active (no server command list)");
+        }
+        const auto localState = commands_.localRegistryState();
+        if (localState != localState_) {
+            localState_ = localState;
+            if (diagnostic_)
+                diagnostic_("commands: local registry state: " + localState_);
+        }
+        const auto localError = commands_.localRegistryError();
+        if (localError != localError_) {
+            localError_ = localError;
+            if (!localError_.empty() && diagnostic_)
+                diagnostic_("commands: local registry fallback: " + localError_);
+        }
+    }
     while (!queue_.empty()) {
         const auto line = queue_.front();
         queue_.pop_front();
