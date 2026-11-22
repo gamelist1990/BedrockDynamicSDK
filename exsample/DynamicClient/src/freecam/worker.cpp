@@ -22,9 +22,9 @@ void worker(const std::filesystem::path &directory) {
                                                              {3, 7}}};
     while (!stop.load()) {
         const auto now = Clock::now();
-        bedrock::CameraVisibilitySample sample;
+        bedrock::sdk::CameraVisibilitySample sample;
         bool observed = false;
-        if (const auto taken = cameraVisual.takeSample()) {
+        if (const auto taken = cameraControl.takeSample()) {
             sample = *taken;
             observed = true;
         }
@@ -32,7 +32,7 @@ void worker(const std::filesystem::path &directory) {
             if (!observations.is_open())
                 observations.open(directory / L"DynamicClient-Freecam-visibility.jsonl", std::ios::app);
             if (observations) {
-                auto vector = [](Vec v) { return nlohmann::json::array({v.x, v.y, v.z}); };
+                auto vector = [](float x, float y, float z) { return nlohmann::json::array({x, y, z}); };
                 observations << nlohmann::json{{"schema", 1},
                                                {"build", profileGameVersion},
                                                {"visual_revision", visualRevision},
@@ -42,8 +42,8 @@ void worker(const std::filesystem::path &directory) {
                                                {"freecam", sample.flying},
                                                {"actor_game_type", sample.gameType},
                                                {"valid_camera_read", sample.valid},
-                                               {"candidate_camera_654", vector(sample.cameraPosition)},
-                                               {"render_origin", vector(sample.origin)},
+                                               {"candidate_camera_654", vector(sample.cameraPosition_x, sample.cameraPosition_y, sample.cameraPosition_z)},
+                                               {"render_origin", vector(sample.origin_x, sample.origin_y, sample.origin_z)},
                                                {"raw_camera_970_976", sample.rawFlags},
                                                {"culler_type", sample.cullerType},
                                                {"culler_vtable_rva", sample.cullerVtable},
@@ -80,7 +80,7 @@ void worker(const std::filesystem::path &directory) {
             const auto c = config.load();
             auto result = std::make_shared<Mesh>();
             result->epoch = generation;
-            result->made = batch.made;
+            result->made = Clock::time_point{std::chrono::nanoseconds{batch.madeNanoseconds}};
             unsigned boxes = 0;
             for (unsigned i = 0; i < batch.count && boxes < c->maxPlayers; ++i) {
                 const auto &box = batch.boxes[i];
@@ -109,13 +109,13 @@ void worker(const std::filesystem::path &directory) {
         }
         if (!active.load())
             mesh.store(nullptr);
-        const auto visualPeek = cameraVisual.statistics();
+        const auto visualPeek = cameraControl.statistics();
         if ((active.load() || interactionPackets.load() || blockedPackets.load() ||
              visualPeek.terrainPending || visualPeek.terrainRestores || visualPeek.terrainFaults) &&
             now >= nextPacketLog) {
             nextPacketLog = now + std::chrono::seconds(5);
-            const auto visualStats = cameraVisual.takeStatistics();
-            log("Freecam spectator culler: ready=" + std::to_string(cameraVisual.terrainReady()) +
+            const auto visualStats = cameraControl.takeStatistics();
+            log("Freecam spectator culler: ready=" + std::to_string(cameraControl.terrainReady()) +
                 " mode=" + std::to_string(visualStats.terrainObservedMode) +
                 " pending=" + std::to_string(visualStats.terrainPending) +
                 " calls=" + std::to_string(visualStats.terrainCalls) +
@@ -127,15 +127,15 @@ void worker(const std::filesystem::path &directory) {
                 " caller_rva=" + std::to_string(visualStats.selectorCaller) +
                 " churn_guard=" + std::to_string(visualStats.terrainRejected) +
                 " [native selector mode5; underground view needs live confirmation]");
-            log("Freecam view factory: ready=" + std::to_string(cameraVisual.createViewReady()) +
+            log("Freecam view factory: ready=" + std::to_string(cameraControl.createViewReady()) +
                 " created=" + std::to_string(visualStats.viewCreated) +
                 " changed=" + std::to_string(visualStats.viewChanged) +
                 " failed=" + std::to_string(visualStats.viewWriteFailed) +
                 " camera_calls=" + std::to_string(visualStats.cameraRenderCalls) +
                 " [fresh output only; 5s; visual_revision=" + std::to_string(visualRevision) + "]");
-            const auto effectStats = insideBlockEffect.takeStatistics();
+            const auto effectStats = cameraControl.takeEffectStatistics();
             log("Freecam RenderDragon inside effect: ready=" +
-                std::to_string(insideBlockEffect.ready()) +
+                std::to_string(effectStats.ready) +
                 " calls=" + std::to_string(effectStats.calls) +
                 " eligible=" + std::to_string(effectStats.eligible) +
                 " skipped=" + std::to_string(effectStats.skipped) +
@@ -153,7 +153,7 @@ void worker(const std::filesystem::path &directory) {
                 "interactions forwarded; Player boxes: every tick + 50ms interpolation]");
             const auto c = config.load();
             log(std::string("Freecam view: spectator_mode=") + (c->spectatorMode ? "on" : "off") +
-                " spectator_culler=" + (cameraVisual.terrainReady() ? "mode5 ready" : "unavailable") +
+                " spectator_culler=" + (cameraControl.terrainReady() ? "mode5 ready" : "unavailable") +
                 " visual_revision=" + std::to_string(visualRevision));
         }
         if (bits & Waiting && now >= nextWaitingLog) {

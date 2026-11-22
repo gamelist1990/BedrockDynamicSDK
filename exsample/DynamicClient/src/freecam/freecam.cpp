@@ -1,35 +1,18 @@
-#include <bedrock/profiles/profile_json.hpp>
 #include <bedrock/sdk.hpp>
 #include <bedrock/sdk/keybinds.hpp>
 #include <bedrock/sdk/game_hooks.hpp>
+#include <bedrock/sdk/camera_control.hpp>
+#include <bedrock/sdk/movement_packets.hpp>
+#include <bedrock/sdk/packet_wire.hpp>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <intrin.h>
-#include <bedrock/detail/hook_dispatch.hpp>
-#include <bedrock/native/motion.hpp>
-#include <bedrock/native/packet_sender.hpp>
-#include <bedrock/packets/wire_packet_events.hpp>
-#include <bedrock/packets/movement_packets.hpp>
-#include <bedrock/detail/native_profile_functions.hpp>
-#include <bedrock/native/outline_renderer.hpp>
-#include <bedrock/native/inside_block_effect.hpp>
-#include <bedrock/native/camera.hpp>
-#include <bedrock/native/camera_visual.hpp>
-#include <bedrock/native/game_type.hpp>
-#include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/generated/symbols.hpp>
-#include <bedrock/native/actors.hpp>
-#include <bedrock/native/actor_components.hpp>
-#include <bedrock/native/player_bounds_tracker.hpp>
-#include <bedrock/native/items.hpp>
-#include <bedrock/native/world_render.hpp>
-#include <bedrock/profiles/remote_catalog.hpp>
-#include <bedrock/profiles/profile_manager.hpp>
 #include "client.hpp"
 #include "worker.hpp"
 #include "freecam/config.hpp"
+#include <nlohmann/json.hpp>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -55,19 +38,9 @@ std::array<std::atomic<bool>, 256> keys{};
 std::atomic<std::shared_ptr<const freecam::Config>> config{
     std::make_shared<const freecam::Config>()};
 bedrock::sdk::Hooks hooks;
-bedrock::detail::HookDispatch api;
-std::unique_ptr<bedrock::GameHooks> gameHooks;
-bedrock::NativeCamera nativeCamera;
-bedrock::NativeCameraVisual cameraVisual;
-bedrock::NativeGameType gameTypes;
-bedrock::NativeInsideBlockEffect insideBlockEffect;
-bedrock::NativeOutlineRenderer outline;
-bedrock::NativeActorLayout actors;
-bedrock::NativeActorComponents actorComponents;
-bedrock::NativePlayerBoundsTracker playerBounds;
-bedrock::WorldRenderProfile render;
-std::size_t hurtOffset{};
-std::uint32_t hurtHash{};
+bedrock::sdk::CameraControl cameraControl;
+bedrock::sdk::PacketWire packetWire;
+bedrock::sdk::MovementPackets movementPackets;
 std::atomic<std::uint64_t> flightSerial{};
 
 
@@ -91,10 +64,9 @@ bool finite(Vec v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) &&
            std::abs(v.x) < 40000000 && std::abs(v.y) < 40000000 && std::abs(v.z) < 40000000;
 }
-using bedrock::native_profile::read;
 bool insideBlockEffectPolicy() noexcept {
     return active.load() && !stop.load() && gameplay.load() &&
-           cameraVisual.primaryCameraEpoch() == epoch.load() && config.load()->spectatorMode;
+           cameraControl.primaryCameraEpoch() == epoch.load() && config.load()->spectatorMode;
 }
 void disable(unsigned reason = Disabled) {
     restoreRequested.store(true);
@@ -105,16 +77,17 @@ void disable(unsigned reason = Disabled) {
 }
 void reset() {
     disable(World);
-    nativeCamera.reset();
-    gameTypes.reset();
+    cameraControl.reset();
     epoch.fetch_add(1);
     local.store(nullptr);
     for (auto &key : keys)
         key.store(false);
 }
-void *component(void *actor,std::uint32_t hash) noexcept {return actorComponents.component(actor,hash);}
 bool hurtTime(void *actor, int &value) noexcept {
-    return read(component(actor, hurtHash), hurtOffset, value) && value >= 0 && value < 10000;
+    return cameraControl.hurtTime(actor, value);
+}
+std::uint64_t actorRuntime(void *actor) noexcept {
+    return cameraControl.actorRuntimeId(actor).value_or(0);
 }
 void observePacketSender(void *) noexcept;
 bool isMovement(unsigned key, const freecam::Config &c) {
@@ -127,15 +100,15 @@ void releaseMovement(const freecam::Config &c) {
     for (unsigned key : {c.forward, c.back, c.left, c.right, c.up, c.down, c.fast}) {
         hooks.sendKeyboardFeed(key, false);
     }
-    (void)api.sendMouseInput(1, false);
-    (void)api.sendMouseInput(2, false);
+    (void)hooks.sendMouseInput(1, false);
+    (void)hooks.sendMouseInput(2, false);
     releasing = false;
 }
-void keyEvent(const bedrock::KeyEvent &e) {
+void keyEvent(bedrock::sdk::KeyEventValue &e) {
     if (releasing || stop.load())
         return;
     const auto c = config.load();
-    const unsigned k = e.inputKey();
+    const unsigned k = static_cast<unsigned>(e.key);
     if (k < keys.size())
         keys[k].store(e.pressed);
     if (k == boundKey("freecam", bedrock::sdk::Key::M)) {
@@ -148,9 +121,9 @@ void keyEvent(const bedrock::KeyEvent &e) {
         return;
     }
     if (desired.load() && isMovement(k, *c))
-        e.cancel();
+        e.cancelled = true;
 }
-void mouseEvent(const bedrock::MouseEvent &e) {
+void mouseEvent(bedrock::sdk::MouseEventValue &e) {
     if (releasing || stop.load() || !desired.load())
         return;
     const auto c = config.load();
@@ -158,7 +131,7 @@ void mouseEvent(const bedrock::MouseEvent &e) {
         return;
     else if (!c->allowInteraction &&
              (e.action == 1 || e.action == 2 || e.action == 3 || e.action == 4))
-        e.cancel();
+        e.cancelled = true;
 }
 // Borion-style local Player proxy. All mutable native access is confined to
 // LevelTick/world teardown callbacks; the network middleware reads atomics only.
@@ -166,37 +139,21 @@ struct BorionState {
     bool saved{};
     void *actor{};
     std::uint64_t epoch{}, runtime{};
-    void *registry{};
+    std::uintptr_t registry{};
     std::uint32_t entity{};
     Vec oldPosition{}, oldPrevious{}, oldVelocity{}, position{};
-    bedrock::ActorBounds oldBounds{};
+    bedrock::sdk::ActorBoundsValue oldBounds{};
     float oldFall{};
 };
 BorionState borion;
-BDS_HookToken renderToken{};
-bedrock::native_motion::Layout motionLayout;
-bedrock::CameraRig cameraRig;
 std::mutex borionMutex;
 std::atomic<bool> suppressMovement{}, packetReady{};
 std::atomic<void *> observedSender{};
 std::atomic<unsigned> movementPacketsSeen{}, blockedPackets{};
-BDS_HookToken packetToken{}, wireToken{};
-void *subscribedPacketTarget{};
 std::atomic<void *> capturedSender{}, capturedSendTarget{};
 std::atomic<std::uint64_t> capturedSendEpoch{};
-std::size_t statePositionOffset{}, statePreviousOffset{}, stateVelocityOffset{}, fallOffset{};
-bedrock::NativePacketSender senderLayout;
-bool renderReady{};
-std::uint32_t fallHash{};
-std::uintptr_t moduleTextBegin{}, moduleTextEnd{};
+void *installedPacketTarget{};
 
-bool inText(void *pointer) noexcept {
-    const auto p = reinterpret_cast<std::uintptr_t>(pointer);
-    return p >= moduleTextBegin && p + 16 >= p && p + 16 < moduleTextEnd;
-}
-
-bedrock::PacketWireEvents packetEvents;
-bedrock::MovementPackets movementPackets;
 struct PacketPose {
     Vec position{};
     Clock::time_point seen{};
@@ -215,13 +172,14 @@ std::atomic<std::shared_ptr<const MovementAnchor>> movementAnchor;
 std::atomic<unsigned> anchoredPackets{}, interactionPackets{};
 std::atomic<unsigned> wirePacketsSeen{}, wireMovementRejected{}, wireWithoutSender{};
 
-void observeMotionPose(const bedrock::WirePacket &packet, bool auth) noexcept {
-    bedrock::MovementPacketPose value;
-    if (!movementPackets.pose(packet, value)) {
+void observeMotionPose(const std::string &bytes, int packetId, bool auth) noexcept {
+    const auto value = movementPackets.pose(bytes, packetId);
+    if (!value) {
         wireMovementRejected.fetch_add(1);
         return;
     }
-    PacketPose pose{value.position, Clock::now(), value.runtimeId, value.onGround};
+    PacketPose pose{{value->position_x, value->position_y, value->position_z},
+                    Clock::now(), value->runtimeId, value->onGround};
     const auto e = epoch.load();
     std::unique_lock lock(packetPoseMutex, std::try_to_lock);
     if (!lock)
@@ -262,70 +220,72 @@ bool prepareMovementAnchor(std::uint64_t runtime, Vec position) {
     movementAnchor.store(std::make_shared<const MovementAnchor>(anchor));
     return true;
 }
-void packetEvent(bedrock::PacketWireSendEvent &event,
+void packetEvent(bedrock::sdk::PacketWireEvent &event,
                  const std::shared_ptr<const MovementAnchor> &enteringAnchor) noexcept {
-    auto &packet = event.packet();
-    if (!bedrock::MovementPackets::handles(event.id()))
+    if (!movementPackets.handles(event.packetId))
         return;
-    const bool auth = event.id() == bedrock::PacketId::PlayerAuthInput;
+    const bool auth = movementPackets.isAuthInput(event.packetId);
     std::unique_lock phase(packetMotionMutex);
     const auto anchor = enteringAnchor ? enteringAnchor : movementAnchor.load();
     if (!anchor) {
-        observeMotionPose(packet, auth);
+        observeMotionPose(event.bytes, event.packetId, auth);
         return;
     }
     const auto &saved = anchor->poses[auth ? 0 : 1];
     if (anchor->epoch != epoch.load() || saved.seen == Clock::time_point{}) {
         disable(ReadFailed);
         blockedPackets.fetch_add(1);
-        event.cancel();
+        event.cancelled = true;
         return;
     }
-    const auto result = movementPackets.anchor(
-        packet, {saved.position, saved.runtime, saved.onGround}, anchor->runtime);
+    bedrock::sdk::MovementPacketPose pose;
+    pose.runtimeId = saved.runtime;
+    pose.onGround = saved.onGround;
+    pose.position_x = saved.position.x;
+    pose.position_y = saved.position.y;
+    pose.position_z = saved.position.z;
+    const auto result = movementPackets.anchor(event.bytes, event.packetId, pose, anchor->runtime);
     if (!result.applied) {
         disable(ReadFailed);
         blockedPackets.fetch_add(1);
-        event.cancel();
+        event.cancelled = true;
         return;
     }
     if (result.interaction)
         interactionPackets.fetch_add(1);
     anchoredPackets.fetch_add(1);
 }
-void BDS_HOOK_CALL packetSubscriber(void *, void *raw, BDS_HookNext next, void *frame) noexcept {
-    // Runtime 4.6 attributes synchronous wire events to this native sender.
-    next(frame, raw);
-}
-void BDS_HOOK_CALL wireSubscriber(void *, void *raw, BDS_HookNext next, void *frame) noexcept {
-    auto &args = *static_cast<BDS_PacketWireArgs *>(raw);
-    if (!args.sender) {
+void wirePacketHandler(bedrock::sdk::PacketWireEvent &event, void *) noexcept {
+    // The wire bridge fires for every sender; only the observed local
+    // sender's packets are freecam's business (the native subscriber
+    // returned before dispatch for any other sender).
+    if (!event.sender) {
         wireWithoutSender.fetch_add(1);
-        next(frame, raw);
         return;
     }
-    if (args.sender != observedSender.load()) {
-        next(frame, raw);
+    if (event.sender != observedSender.load())
+        return;
+    if (!event.readable) {
+        // The frame could not be copied safely. Mirror the native policy:
+        // while movement is suppressed an unparsable movement frame must
+        // not leak through; otherwise forward it untouched.
+        if (suppressMovement.load()) {
+            disable(ReadFailed);
+            blockedPackets.fetch_add(1);
+            event.cancelled = true;
+        }
         return;
     }
     wirePacketsSeen.fetch_add(1);
     const auto enteringAnchor = movementAnchor.load();
-    if (!packetEvents.dispatch(
-            args, [&](bedrock::PacketWireSendEvent &event) { packetEvent(event, enteringAnchor); },
-            next, frame)) {
-        if (suppressMovement.load()) {
-            disable(ReadFailed);
-            blockedPackets.fetch_add(1);
-        } else
-            next(frame, raw);
-    }
+    packetEvent(event, enteringAnchor);
 }
 void observePacketSender(void *instance) noexcept {
     if (stop.load())
         return;
     void *sender{};
     void *target{};
-    if (!senderLayout.resolve(instance, sender, target) || !inText(target))
+    if (!cameraControl.resolveSender(instance, sender, target) || !packetWire.accepts(target))
         return;
     if (packetReady.load() && sender != observedSender.load()) {
         disable();
@@ -342,29 +302,20 @@ bool installPacketSource() {
     const auto capturedEpoch = capturedSendEpoch.load();
     void *sender = capturedSender.load();
     void *target = capturedSendTarget.load();
-    if (capturedEpoch != epoch.load() || !sender || !inText(target))
+    if (capturedEpoch != epoch.load() || !sender || !packetWire.accepts(target))
         return false;
-    if (!BDS_HookOwnsTarget(BDS_HOOK_PACKET_SEND_TO_SERVER, target)) {
-        DWORD64 image{};
-        const auto *entry =
-            RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(target), &image, nullptr);
-        if (!entry || image + entry->BeginAddress != reinterpret_cast<DWORD64>(target))
-            return false;
-    }
-    if (!wireToken && !packetEvents.subscribe(wireSubscriber, nullptr, &wireToken))
-        return false;
-    if (packetToken) {
-        if (target != subscribedPacketTarget)
+    if (packetWire.installed()) {
+        if (target != installedPacketTarget)
             return false;
         observedSender.store(sender);
         packetReady.store(capturedEpoch == epoch.load());
         return packetReady.load();
     }
     observedSender.store(sender);
-    if (!BDS_HookSubscribe(BDS_HOOK_PACKET_SEND_TO_SERVER, target, packetSubscriber, nullptr,
-                           &packetToken))
+    std::string error;
+    if (!packetWire.install(target, &wirePacketHandler, nullptr, error))
         return false;
-    subscribedPacketTarget = target;
+    installedPacketTarget = target;
     packetReady.store(capturedEpoch == epoch.load());
     log("Freecam wire PacketHook ready [Packet ID, pre-batch read/write]; sender RVA=" +
         std::to_string(reinterpret_cast<std::uintptr_t>(target) -
@@ -372,45 +323,31 @@ bool installPacketSource() {
         " [runtime-derived vtable slot; candidate]");
     return true;
 }
-std::uint64_t actorRuntime(void *actor) noexcept {
-    std::uint64_t id{};
-    read(component(actor, actors.runtimeIdComponentHash), actors.runtimeIdValueOffset, id);
-    return id;
-}
 bool restoreBorionLocked() noexcept {
     std::lock_guard phase(packetMotionMutex);
     if (!borion.saved)
         return true;
-    void *registry{};
+    std::uintptr_t registry{};
     std::uint32_t entity{};
     if (borion.epoch != epoch.load() || borion.actor != local.load() ||
         actorRuntime(borion.actor) != borion.runtime ||
-        !read(borion.actor, actors.actorEntityContextOffset + actors.contextRegistryOffset,
-              registry) ||
+        !cameraControl.actorIdentity(borion.actor, registry, entity) ||
         registry != borion.registry ||
-        !read(borion.actor, actors.actorEntityContextOffset + actors.contextEntityIdOffset,
-              entity) ||
         entity != borion.entity) {
-        cameraRig.reset();
+        cameraControl.resetCamera();
         borion.saved = false;
         suppressMovement.store(false);
         movementAnchor.store(nullptr);
         active.store(false);
         return true;
     }
-    auto *state = component(borion.actor, actors.stateVectorComponentHash);
-    auto *shape = component(borion.actor, actors.aabbShapeComponentHash);
-    auto *fall = component(borion.actor, fallHash);
-    if (!state || !shape || !fall)
-        return false;
     // Position restore is a teleport, not a frame-long interpolation across
-    // the flight path. Borion also clears motion/fall distance when returning.
-    const bedrock::native_motion::Snapshot restored{borion.oldPosition, borion.oldPosition, Vec{},
-                                                    borion.oldBounds, 0.f};
+    // the flight path. Borion also clears motion/fall distance when returning
+    // (restoreActorMotion applies exactly that snapshot natively).
     const bool ok =
-        bedrock::native_motion::apply(borion.actor, actors, motionLayout, component, restored);
+        cameraControl.restoreActorMotion(borion.actor, borion.oldPosition, borion.oldBounds);
     if (ok) {
-        cameraRig.reset();
+        cameraControl.resetCamera();
         borion.saved = false;
         suppressMovement.store(false);
         movementAnchor.store(nullptr);
@@ -423,7 +360,7 @@ void restoreBorionBeforeBoundary() noexcept {
     if (guard.owns_lock())
         restoreBorionLocked();
 }
-void borionTick(const bedrock::LevelTickEvent &) {
+void borionTick(const bedrock::sdk::LevelTickEventValue &) {
     std::unique_lock guard(borionMutex, std::try_to_lock);
     if (!guard.owns_lock())
         return;
@@ -433,14 +370,14 @@ void borionTick(const bedrock::LevelTickEvent &) {
         return;
     }
     observePacketSender(client.load());
-    auto cameraScope = nativeCamera.tick(client.load(), bedrock::WorldEpoch{epoch.load()});
-    void *player = cameraScope ? nativeCamera.localActor() : nullptr;
+    const bool cameraTick = cameraControl.tick(client.load(), epoch.load());
+    void *player = cameraTick ? cameraControl.localActor() : nullptr;
     local.store(player);
-    auto typeScope = gameTypes.tick(client.load(), bedrock::WorldEpoch{epoch.load()});
-    if ((c->spectatorMode || cameraVisual.leaseActive()) && gameplay.load() && player) {
-        if (const auto type = gameTypes.gameType())
-            cameraVisual.noteNativeModeContext(
-                (epoch.load() << 8) | static_cast<std::uint64_t>(static_cast<int>(*type) + 1));
+    const auto gameType = cameraControl.gameType();
+    if ((c->spectatorMode || cameraControl.leaseActive()) && gameplay.load() && player) {
+        if (gameType.available)
+            cameraControl.noteNativeModeContext(
+                (epoch.load() << 8) | static_cast<std::uint64_t>(gameType.value + 1));
     }
     if (c->visibilityDiagnostics && !stop.load()) {
         static Clock::time_point next{};
@@ -448,11 +385,10 @@ void borionTick(const bedrock::LevelTickEvent &) {
         if (now >= next) {
             next = now + std::chrono::milliseconds(500);
             int type = -1;
-            if (gameplay.load() && player) {
-                if (const auto current = gameTypes.gameType())
-                    type = static_cast<int>(*current);
+            if (gameplay.load() && player && gameType.available) {
+                type = gameType.value;
             }
-            cameraVisual.setDiagnosticGameType(
+            cameraControl.setDiagnosticGameType(
                 type, epoch.load(),
                 static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
@@ -474,7 +410,7 @@ void borionTick(const bedrock::LevelTickEvent &) {
         static Clock::time_point next{};
         if (Clock::now() >= next) {
             next = Clock::now() + std::chrono::seconds(5);
-            const auto sample = nativeCamera.readPlayerProxy();
+            const auto sample = cameraControl.readPlayerProxy();
             if (sample)
                 log(nlohmann::json(
                         {{"event", "freecam-player-pose"},
@@ -500,16 +436,16 @@ void borionTick(const bedrock::LevelTickEvent &) {
         note(Waiting);
         return;
     }
-    const auto pose = nativeCamera.readPlayerProxy();
+    const auto pose = cameraControl.readPlayerProxy();
     int hurt{};
-    if (!cameraScope || !pose || (c->disableOnDamage && !hurtTime(player, hurt))) {
+    if (!cameraTick || !pose || (c->disableOnDamage && !hurtTime(player, hurt))) {
         disable(ReadFailed);
         restoreBorionLocked();
         return;
     }
     const auto position = pose->position, previous = pose->previous, velocity = pose->velocity;
     const auto bounds = pose->bounds;
-    const float fallDistance = pose->fallDistance, yaw = pose->rotation.yaw;
+    const float fallDistance = pose->fallDistance, yaw = pose->rotation_yaw;
     if (c->disableOnDamage && hurt > 0) {
         disable(Damage);
         restoreBorionLocked();
@@ -517,15 +453,13 @@ void borionTick(const bedrock::LevelTickEvent &) {
     }
     if (!borion.saved) {
         const auto runtime = actorRuntime(player);
-        if (!runtime || !bounds.valid()) {
+        if (!runtime || !bounds.valid) {
             disable(ReadFailed);
             return;
         }
-        void *registry{};
+        std::uintptr_t registry{};
         std::uint32_t entity{};
-        if (!read(player, actors.actorEntityContextOffset + actors.contextRegistryOffset,
-                  registry) ||
-            !read(player, actors.actorEntityContextOffset + actors.contextEntityIdOffset, entity)) {
+        if (!cameraControl.actorIdentity(player, registry, entity)) {
             disable(ReadFailed);
             return;
         }
@@ -536,7 +470,7 @@ void borionTick(const bedrock::LevelTickEvent &) {
         }
         borion = {true,     player,   epoch.load(), runtime,  registry, entity,
                   position, previous, velocity,     position, bounds,   fallDistance};
-        if (!cameraRig.begin(position, bounds, runtime, borion.epoch)) {
+        if (!cameraControl.beginCamera(position, bounds, runtime, borion.epoch)) {
             disable(ReadFailed);
             restoreBorionLocked();
             return;
@@ -554,9 +488,9 @@ void borionTick(const bedrock::LevelTickEvent &) {
     const auto down = [](unsigned key) { return keys[key].load() ? 1.f : 0.f; };
     const float forward = down(c->forward) - down(c->back), side = down(c->right) - down(c->left);
     const float speed = c->speed / 20.f * (keys[c->fast].load() ? c->fastMultiplier : 1.f);
-    const auto cameraFrame = cameraRig.advance(
-        bedrock::Yaw{yaw}, {forward, side, down(c->up) - down(c->down)}, {speed * 20.f, 10.f},
-        std::chrono::duration<float>{.05f}, borion.runtime, epoch.load());
+    const auto cameraFrame = cameraControl.advanceCamera(
+        yaw, {forward, side, down(c->up) - down(c->down)}, {speed * 20.f, 10.f},
+        .05f, borion.runtime, epoch.load());
     if (!cameraFrame) {
         disable(ReadFailed);
         restoreBorionLocked();
@@ -568,18 +502,16 @@ void borionTick(const bedrock::LevelTickEvent &) {
         restoreBorionLocked();
         return;
     }
-    if (nativeCamera.applyPlayerProxy(*cameraFrame, borion.runtime,
-                                      bedrock::WorldEpoch{epoch.load()}) !=
-        bedrock::CameraChange::Applied) {
+    if (cameraControl.applyPlayerProxy(*cameraFrame, borion.runtime, epoch.load()) !=
+        bedrock::sdk::CameraChange::Applied) {
         disable(ReadFailed);
         restoreBorionLocked();
         return;
     }
-    if (renderReady && c->playerHitboxes) {
+    if (cameraControl.renderReady() && c->playerHitboxes) {
         Capture batch;
-        batch.epoch = epoch.load();
         batch.origin = borion.position;
-        if (playerBounds.capture(player, &batch, c->captureRows)) {
+        if (cameraControl.capturePlayerBounds(player, epoch.load(), c->captureRows, batch)) {
             std::unique_lock lock(mailboxMutex, std::try_to_lock);
             if (lock.owns_lock()) {
                 mailbox = batch;
@@ -589,15 +521,10 @@ void borionTick(const bedrock::LevelTickEvent &) {
     }
 }
 
-// NOTE: the native outline renderer / camera visual are still used directly
-// here; routing them through sdk::CameraControl is a follow-up (P4C-R3).
-void BDS_HOOK_CALL renderSubscriber(void *, void *raw, BDS_HookNext next, void *frame) {
-    auto &args = *static_cast<BDS_RenderLevelArgs *>(raw);
-    if (auto* camera = outline.renderPlayer(args.renderer)) cameraVisual.notePrimaryCamera(camera);
-    cameraVisual.updateTerrain(args.renderer);
-    if (!cameraVisual.observeReady())
-        cameraVisual.captureFromRenderer(args.renderer);
-    next(frame, raw);
+// Render-thread drawing of the worker-built player box lines. The facade's
+// own render subscription runs the camera-visual bookkeeping (primary
+// camera, terrain, view capture) before this handler is invoked.
+void drawPlayerBoxes(bedrock::sdk::CameraRenderFrame &frame, void *) {
     if (!active.load() || stop.load() || !config.load()->playerHitboxes)
         return;
     static thread_local bool drawing = false;
@@ -609,63 +536,27 @@ void BDS_HOOK_CALL renderSubscriber(void *, void *raw, BDS_HookNext next, void *
         return;
     drawing = true;
     try {
-        static thread_local bedrock::WorldOutlineGeometry frameGeometry;
-        if (frameGeometry.lines.empty()) frameGeometry.lines.emplace_back();
-        auto& lines = frameGeometry.lines.front();
-        lines.color = {.3f, .95f, .5f, 1.f};
-        lines.vertices.resize(geometry->count);
         const float alpha = std::clamp(
             std::chrono::duration<float>(Clock::now() - geometry->made).count() / .05f, 0.f, 1.f);
-        for (unsigned i = 0; i < geometry->count; ++i) {
-            const auto a = geometry->fromVertices[i], b = geometry->vertices[i];
-            lines.vertices[i] = {a.x + (b.x - a.x) * alpha, a.y + (b.y - a.y) * alpha,
-                                 a.z + (b.z - a.z) * alpha};
+        std::array<bedrock::sdk::CameraLineSegment, 128 * 12> segments{};
+        std::size_t segmentCount = 0;
+        for (unsigned i = 0; i + 1 < geometry->count; i += 2) {
+            const auto a0 = geometry->fromVertices[i], b0 = geometry->vertices[i];
+            const auto a1 = geometry->fromVertices[i + 1], b1 = geometry->vertices[i + 1];
+            segments[segmentCount++] = {
+                {a0.x + (b0.x - a0.x) * alpha, a0.y + (b0.y - a0.y) * alpha,
+                 a0.z + (b0.z - a0.z) * alpha},
+                {a1.x + (b1.x - a1.x) * alpha, a1.y + (b1.y - a1.y) * alpha,
+                 a1.z + (b1.z - a1.z) * alpha}};
         }
-        if (outline.draw(args.renderer, args.screen, frameGeometry) == bedrock::OutlineDraw::Fault)
+        if (cameraControl.drawLines(frame.renderer, frame.screen, Vec{0.f, 0.f, 0.f},
+                                    segments.data(), segmentCount,
+                                    {.3f, .95f, .5f, 1.f}) == bedrock::sdk::CameraDrawResult::Fault)
             disable(RenderFault);
     } catch (...) {
         disable(RenderFault);
     }
     drawing = false;
-}
-using bedrock::native_profile::number;
-void prepareProfile(const std::string &profile) {
-    const auto j = bedrock::parseNativeProfile(profile);
-    const auto &f = j.at("native_camera");
-    if (f.at("schema") != 1 || f.at("pointer_size") != 8)
-        throw std::runtime_error("unsupported Freecam layout");
-    hurtHash = number(f.at("hurt_time_component_hash"));
-    hurtOffset = number(f.at("hurt_time_value_offset"));
-    if (hurtOffset > 4096 || f.at("hurt_time_value_size") != 4)
-        throw std::runtime_error("invalid camera/hurt layout");
-    const auto &visual = f.at("visual");
-    if (visual.value("revision", 0) < f.value("minimum_visual_revision", 0))
-        throw std::runtime_error("Freecam visual definition predates InsideBlockEffect port; exact "
-                                 "embedded profile required");
-    if (visual.at("schema") != 1)
-        throw std::runtime_error("unsupported camera visual schema");
-    motionLayout = bedrock::native_motion::Layout::fromProfile(profile);
-    statePositionOffset =
-        number(j.at("native_motion").at("state_vector").at("state_position_offset"));
-    statePreviousOffset = motionLayout.previous;
-    stateVelocityOffset = motionLayout.velocity;
-    fallHash = motionLayout.fallHash;
-    fallOffset = motionLayout.fall;
-    senderLayout.load(j);
-    packetEvents.load(j);
-    if (statePositionOffset != 0 || statePreviousOffset != 12 || stateVelocityOffset != 24 ||
-        fallOffset != 0)
-        throw std::runtime_error("unsupported Borion native actor layout");
-
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    moduleTextBegin = base + number(j.at("target").at("text_rva"));
-    moduleTextEnd = moduleTextBegin + number(j.at("target").at("text_size"));
-    std::string error;
-    if (!bedrock::parseNativeActorLayout(profile, actors, error))
-        throw std::runtime_error(error);
-    actorComponents.configure(actors,j);
-    renderReady = bedrock::parseWorldRenderProfile(profile, render, error);
-    if(renderReady)playerBounds.configure(actors,render);
 }
 } // namespace freecam_detail
 
@@ -687,82 +578,43 @@ void setFreecamConfig(const freecam::Config& next) {
     freecam_detail::config.store(std::make_shared<const freecam::Config>(next));
 }
 
-void runFreecam(const bedrock::RuntimeProfile& selected, const std::filesystem::path& directory) {
+void runFreecam(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver,
+                const std::filesystem::path& directory) {
     using namespace freecam_detail;
     try {
         logFile.open(directory / L"DynamicClient-Freecam.log", std::ios::trunc);
         std::string error;
-        const bedrock::ProfileRequirements required{
-            bedrock::Feature::Input,      bedrock::Feature::Gameplay,
-            bedrock::Feature::LevelTick,  bedrock::Feature::Camera,
-            bedrock::Feature::Motion,     bedrock::Feature::PacketSender,
-            bedrock::Feature::PacketWire, bedrock::Feature::WorldEvents};
-        if (!selected.supports(required, error)) throw std::runtime_error(error);
-        const auto &profile = selected.json();
-        const auto &resolver = selected.resolver();
-        prepareProfile(profile);
-        if (!nativeCamera.load(selected, error)) throw std::runtime_error(error);
-        if (!gameTypes.load(selected, error))
-            log("Freecam native game type observation unavailable: " + error);
-        const auto j = bedrock::parseNativeProfile(profile);
-        const auto &f = j.at("native_camera");
-        visualRevision = f.at("visual").value("revision", 9);
+        const auto j = nlohmann::json::parse(std::string(profile.json()));
         profileGameVersion = j.at("target").at("version").get<std::string>();
         profileExeSha = j.at("target").at("sha256").get<std::string>();
-        log("Freecam profile source=" +
-            std::string(bedrock::profileSourceName(selected.choice().source)) +
-            " version=" + selected.choice().version + " path=" + selected.choice().path +
-            " exe_sha256=" + profileExeSha + " visual_revision=" + std::to_string(visualRevision));
-        // Include selection/load errors even when an old owner's capabilities
-        // stop startup before the normal ready message.
-        log(BDS_HookRuntimeDiagnostic());
-        if (!BDS_HookRuntimeSupports(BDS_HOOK_PACKET_SEND_TO_SERVER))
-            throw std::runtime_error(
-                "active runtime lacks packet send capability; restart with Runtime 4.2 DLL");
-        if (renderReady && !outline.load(selected, error)) {
-            renderReady = false;
-            log("Freecam native drawing unavailable: " + error);
-        }
-        const bedrock::NativeCameraVisual::Policy visualPolicy{
+        const bedrock::sdk::CameraVisualPolicy visualPolicy{
             []() noexcept { return active.load(); },
             []() noexcept { return stop.load(); },
             []() noexcept { return config.load()->spectatorMode; },
             []() noexcept { return config.load()->visibilityDiagnostics; },
             []() noexcept { return epoch.load(); },
             []() noexcept { return flightSerial.load(); }};
-        std::string visualError;
-        if (!cameraVisual.load(j, render.player, render.origin, visualPolicy, visualError))
-            log("Freecam camera visual unavailable: " + visualError);
-        std::string terrainError;
-        if (cameraVisual.installTerrain(renderReady, terrainError))
-            log("Freecam spectator culler ready [native selector hook; profile-defined vtable; game "
-                "mode unchanged; visual revision9]");
-        else
-            log("Freecam terrain culling unavailable: " + terrainError);
-        std::string observeError;
-        if (cameraVisual.installRenderObserve(renderReady, observeError))
-            log("Freecam native ViewRenderData observer ready [read only; no overlay "
-                "suppression]");
-        else
-            log("Freecam ViewRenderData observer unavailable: " + observeError);
-        std::string createViewError;
-        if (cameraVisual.installCreateView(createViewError))
-            log("Freecam view factory ready [new output draw_inside_cubes=false; no "
-                "game-mode/ability writes; visual revision9]");
-        else
-            log("Freecam view factory unavailable: " + createViewError);
-        if (insideBlockEffect.install(selected, bedrock::generated::kSymbolDatabase,
-                                      &insideBlockEffectPolicy, error))
-            log("Freecam RenderDragon InsideBlockEffect filter ready [SDK tag + paired extraction "
-                "caller; versioned visual profile]");
-        else
-            log("Freecam RenderDragon InsideBlockEffect filter unavailable: " + error);
+        // The effect filter copies the policy pointer at install time, so it
+        // must be set before configure().
+        cameraControl.setEffectPolicy(&insideBlockEffectPolicy);
+        std::vector<std::string> warnings;
+        if (!cameraControl.configure(profile, visualPolicy, error, warnings))
+            throw std::runtime_error(error);
+        visualRevision = cameraControl.visualRevision();
+        for (const auto& warning : warnings) log("Freecam " + warning);
+        log("Freecam profile version=" + profileGameVersion +
+            " exe_sha256=" + profileExeSha + " visual_revision=" + std::to_string(visualRevision));
+        // Include selection/load errors even when an old owner's capabilities
+        // stop startup before the normal ready message.
+        log(bedrock::sdk::hookRuntimeDiagnostic());
+        if (!packetWire.load(profile, error))
+            throw std::runtime_error("packet wire bridge unavailable: " + error);
         log("Freecam legacy inside-cube bypass retired [revision7 did not resolve underground "
             "display]");
-        api.on<bedrock::KeyEvent>(keyEvent);
-        api.on<bedrock::MouseEvent>(mouseEvent);
-        api.on<bedrock::GameplayEvent>([](const bedrock::GameplayEvent &e) {
-            api.setWorldEventClient(e.clientInstance);
+        hooks.onKey(keyEvent);
+        hooks.onMouse(mouseEvent);
+        hooks.onGameplay([](const bedrock::sdk::GameplayEventValue &e) {
+            hooks.pinWorldEventClient(e.clientInstance);
             client.store(e.clientInstance);
             gameplay.store(e.active);
             if (!e.active) {
@@ -771,9 +623,9 @@ void runFreecam(const bedrock::RuntimeProfile& selected, const std::filesystem::
                     key.store(false);
             }
         });
-        api.on<bedrock::WorldChangeEvent>([](const bedrock::WorldChangeEvent &event) {
-            if (event.reason == bedrock::WorldChangeReason::Left ||
-                event.reason == bedrock::WorldChangeReason::JoinCancelled)
+        hooks.onWorldChange([](const bedrock::sdk::WorldChangeEventValue &event) {
+            if (event.reason == bedrock::sdk::WorldChangeReasonValue::Left ||
+                event.reason == bedrock::sdk::WorldChangeReasonValue::JoinCancelled)
                 restoreBorionBeforeBoundary();
             // Post-transition notifications must never restore old coordinates
             // into the new world. The next tick discards the expired epoch.
@@ -783,23 +635,17 @@ void runFreecam(const bedrock::RuntimeProfile& selected, const std::filesystem::
             movementPacketsSeen.store(0);
             capturedSendEpoch.store(0);
         });
-        api.on<bedrock::LevelTickEvent>(borionTick);
-        gameHooks = std::make_unique<bedrock::GameHooks>(api);
-        if (!gameHooks->installInput(resolver, error) || !gameHooks->installGameplay(resolver, error) ||
-            !gameHooks->installLevelTick(resolver, error) ||
-            !gameHooks->installWorldEvents(resolver, profile, error))
+        hooks.onLevelTick(borionTick);
+        if (!hooks.install(resolver, profile.json(), error))
             throw std::runtime_error(error);
-        if (renderReady && !BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL, outline.renderTarget(), renderSubscriber,
-                                              nullptr, &renderToken))
-            throw std::runtime_error("render hook conflict/install failure; restart Minecraft with "
-                                     "matching runtime DLLs");
-        if (!renderReady)
-            log("Freecam player hitboxes unavailable: exact-build native drawing definitions are "
-                "pending; flight core remains enabled");
-        log("ready " + j.at("target").at("version").get<std::string>() +
+        if (!hooks.installInput(resolver, error))
+            throw std::runtime_error(error);
+        std::string renderError;
+        if (!cameraControl.installRenderHook(&drawPlayerBoxes, nullptr, renderError))
+            log("Freecam player hitboxes unavailable: " + renderError);
+        log("ready " + profileGameVersion +
             "; Borion Freecam candidate; press Esc and return to gameplay, then configured toggle "
             "key (default M); compatible runtime");
-        log(std::string("active runtime owner: ") + BDS_HookRuntimeVersion());
         worker(directory);
     } catch (const std::exception &e) {
         log(std::string("startup failed: ") + e.what());

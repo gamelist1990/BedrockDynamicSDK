@@ -84,6 +84,7 @@ struct CameraControl::Impl {
     bedrock::CameraRig cameraRig;
     bedrock::NativePacketSender senderLayout;
     std::optional<bedrock::NativeCamera::Scope> cameraScope;
+    std::optional<bedrock::NativeGameType::Scope> gameTypeScope;
 
     bool renderReady{};
     unsigned visualRevision{};
@@ -256,6 +257,8 @@ unsigned CameraControl::visualRevision() const noexcept {
 
 void CameraControl::reset() noexcept {
 #ifdef _WIN32
+    impl_->cameraScope.reset();
+    impl_->gameTypeScope.reset();
     impl_->nativeCamera.reset();
     impl_->gameTypes.reset();
 #endif
@@ -264,9 +267,14 @@ void CameraControl::reset() noexcept {
 bool CameraControl::tick(void* clientInstance, std::uint64_t worldEpoch) noexcept {
 #ifdef _WIN32
     impl_->cameraScope.reset();
+    impl_->gameTypeScope.reset();
     auto scope = impl_->nativeCamera.tick(clientInstance, bedrock::WorldEpoch{worldEpoch});
     const bool ok = static_cast<bool>(scope);
     if (ok) impl_->cameraScope.emplace(std::move(scope));
+    // The game-type context has its own tick scope; freecam reads gameType()
+    // inside the same LevelTick window, so tick it alongside the camera.
+    impl_->gameTypeScope.emplace(
+        impl_->gameTypes.tick(clientInstance, bedrock::WorldEpoch{worldEpoch}));
     return ok;
 #else
     (void)clientInstance;
@@ -444,6 +452,14 @@ bool CameraControl::installCreateView(std::string& error) {
     return impl_->cameraVisual.installCreateView(error);
 #else
     error = "unavailable";
+    return false;
+#endif
+}
+
+bool CameraControl::renderReady() const noexcept {
+#ifdef _WIN32
+    return impl_->renderReady;
+#else
     return false;
 #endif
 }
@@ -657,6 +673,20 @@ bool CameraControl::hurtTime(void* actor, int& value) const noexcept {
 #endif
 }
 
+std::optional<std::uint64_t> CameraControl::actorRuntimeId(void* actor) const noexcept {
+#ifdef _WIN32
+    std::uint64_t id{};
+    if (!bedrock::native_profile::read(
+            impl_->actorComponents.component(actor, impl_->actors.runtimeIdComponentHash),
+            impl_->actors.runtimeIdValueOffset, id))
+        return std::nullopt;
+    return id;
+#else
+    (void)actor;
+    return std::nullopt;
+#endif
+}
+
 bool CameraControl::actorIdentity(void* actor, std::uintptr_t& registry,
                                   std::uint32_t& entity) const noexcept {
 #ifdef _WIN32
@@ -788,11 +818,11 @@ void* CameraControl::renderTarget() const noexcept {
 #endif
 }
 
-bool CameraControl::drawLines(void* renderer, void* screen, Vec3Value origin,
-                              const CameraLineSegment* segments, std::size_t count,
-                              std::array<float, 4> rgba) noexcept {
+CameraDrawResult CameraControl::drawLines(void* renderer, void* screen, Vec3Value origin,
+                                          const CameraLineSegment* segments, std::size_t count,
+                                          std::array<float, 4> rgba) noexcept {
 #ifdef _WIN32
-    if (!renderer || !screen || !segments || !count) return false;
+    if (!renderer || !screen || !segments || !count) return CameraDrawResult::Skipped;
     try {
         bedrock::WorldOutlineGeometry geometry;
         geometry.origin = toNative(origin);
@@ -804,10 +834,14 @@ bool CameraControl::drawLines(void* renderer, void* screen, Vec3Value origin,
             batch.vertices.push_back(toNative(segments[i].to));
         }
         geometry.lines.push_back(std::move(batch));
-        return impl_->outlineRenderer.draw(renderer, screen, geometry) ==
-               bedrock::OutlineDraw::Drawn;
+        switch (impl_->outlineRenderer.draw(renderer, screen, geometry)) {
+        case bedrock::OutlineDraw::Drawn: return CameraDrawResult::Drawn;
+        case bedrock::OutlineDraw::Fault: return CameraDrawResult::Fault;
+        case bedrock::OutlineDraw::Skipped: return CameraDrawResult::Skipped;
+        }
+        return CameraDrawResult::Skipped;
     } catch (...) {
-        return false;
+        return CameraDrawResult::Fault;
     }
 #else
     (void)renderer;
@@ -816,7 +850,7 @@ bool CameraControl::drawLines(void* renderer, void* screen, Vec3Value origin,
     (void)segments;
     (void)count;
     (void)rgba;
-    return false;
+    return CameraDrawResult::Skipped;
 #endif
 }
 

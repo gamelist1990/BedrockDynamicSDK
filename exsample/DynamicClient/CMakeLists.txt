@@ -36,8 +36,11 @@ if(WIN32)
     # calls remain — the overlay itself is sdk::Overlay now). Do NOT remove
     # this link on the claim that TabList uses sdk::Overlay — the draw code
     # still includes <imgui.h> (proven by the R2 build break).
-    target_link_libraries(DynamicClient PRIVATE EnTT::EnTT bedrock::sdk dynamic_client_features
-        bedrock::client bedrock::game_hooks bedrock::gui_overlay)
+    # All features (Zoom/Sprint/TabList/Freecam) now consume only the public
+    # SDK (bedrock::sdk). bedrock::gui_overlay stays: tablist/overlay.cpp
+    # draws with ImGui directly (see the note above).
+    target_link_libraries(DynamicClient PRIVATE bedrock::sdk dynamic_client_features
+        bedrock::gui_overlay)
     target_compile_options(DynamicClient PRIVATE /utf-8)
     set_target_properties(DynamicClient PROPERTIES PREFIX ""
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

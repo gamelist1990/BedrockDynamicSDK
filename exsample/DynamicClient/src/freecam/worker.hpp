@@ -1,8 +1,6 @@
 #pragma once
 #include "freecam/config.hpp"
-#include <bedrock/native/camera_visual.hpp>
-#include <bedrock/native/inside_block_effect.hpp>
-#include <bedrock/native/player_bounds_tracker.hpp>
+#include <bedrock/sdk/camera_control.hpp>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -12,9 +10,9 @@
 #include <string>
 
 namespace dynamic_client::freecam_detail {
-using Vec = bedrock::Vec3;
+using Vec = bedrock::sdk::Vec3Value;
 using Clock = std::chrono::steady_clock;
-using Capture=bedrock::ActorBoundsFrame;
+using Capture = bedrock::sdk::PlayerBoundsFrame;
 struct Mesh {
     std::uint64_t epoch{};
     Clock::time_point made{};
@@ -38,8 +36,7 @@ extern std::atomic<std::shared_ptr<const Mesh>> mesh;
 extern std::mutex mailboxMutex;
 extern Capture mailbox;
 extern bool mailboxReady;
-extern bedrock::NativeCameraVisual cameraVisual;
-extern bedrock::NativeInsideBlockEffect insideBlockEffect;
+extern bedrock::sdk::CameraControl cameraControl;
 extern std::string profileGameVersion, profileExeSha;
 extern unsigned visualRevision;
 void log(std::string_view text);

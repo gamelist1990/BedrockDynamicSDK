@@ -42,6 +42,10 @@ public:
     // True when packetId is a movement packet (MovePlayer / PlayerAuthInput).
     bool handles(int packetId) const noexcept;
 
+    // True when packetId is PlayerAuthInput (the auth-input movement kind;
+    // freecam slots observed poses per kind).
+    bool isAuthInput(int packetId) const noexcept;
+
     // Extract the pose from a complete wire frame (header + payload). Returns
     // nullopt when the frame is malformed, is not a movement packet, or does
     // not match the imported movement schema.

@@ -97,16 +97,11 @@ DWORD WINAPI start(void* parameter) {
         logger.info("Exact bundled profile ready: ", profile.version());
         bedrock::sdk::SymbolResolver symbolResolver;
         symbolResolver.open(profile, error);
-        const auto runtimeProfile = bedrock::sdk::ProfileRuntimeAccess::runtime(profile);
-        if (!runtimeProfile) {
-            logger.error("Failed to get runtime profile");
-            return 5;
-        }
         startFeature("Zoom", [&] { startZoom(profile, symbolResolver, logger); });
         startFeature("AutoSprint", [&] { startSprint(profile, symbolResolver, logger); });
         startFeature("Fullbright", [&] { startBrightness(clientHost(), logger); });
         startFeature("TabList", [&] { startTabList(profile, symbolResolver, logger, directory); });
-        startFeature("Freecam", [&] { runFreecam(*runtimeProfile, directory); });
+        startFeature("Freecam", [&] { runFreecam(profile, symbolResolver, directory); });
         return 0;
     } catch (...) {
         OutputDebugStringA("[DynamicClient] Startup failed\n");

@@ -21,7 +21,7 @@ void setBrightness(float gamma, bool enabled);
 void startTabList(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver, bedrock::sdk::Logger& logger, const std::filesystem::path& directory);
 void setTabListConfig(const tablist::Config& config);
 void onTabListKeybind(bool pressed);
-void runFreecam(const bedrock::RuntimeProfile& selected, const std::filesystem::path& directory);
+void runFreecam(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver, const std::filesystem::path& directory);
 void setFreecamConfig(const freecam::Config& config);
 void onFreecamKeybind(bool pressed);
 void onZoomKeybind(bool pressed);

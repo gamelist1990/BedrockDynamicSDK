@@ -10,7 +10,8 @@ namespace bedrock::sdk {
 
 struct LevelTickEventValue { void* level{}; std::uint64_t sequence{}; };
 struct GameplayEventValue { void* clientInstance{}; bool active{}; };
-struct WorldChangeEventValue { void* clientInstance{}; void* level{}; void* player{}; };
+enum class WorldChangeReasonValue : std::uint8_t { Joined, Left, JoinCancelled, DimensionChanged };
+struct WorldChangeEventValue { WorldChangeReasonValue reason{}; void* clientInstance{}; void* level{}; void* player{}; };
 struct KeyEventValue { int key{}; bool pressed{}; bool cancelled{}; };
 
 // Mirror of internal MouseEvent: action, state, synthetic, cancellation
@@ -58,7 +59,11 @@ public:
     HookSubscription onLevelTick(std::function<void(const LevelTickEventValue&)>);
     HookSubscription onGameplay(std::function<void(const GameplayEventValue&)>);
     HookSubscription onWorldChange(std::function<void(const WorldChangeEventValue&)>);
-    HookSubscription onKey(std::function<void(const KeyEventValue&)>);
+    // The handler receives the keyboard-feed event by mutable reference:
+    // setting `cancelled` on the value cancels the feed for the game,
+    // mirroring onMouse/onFov write-back. Handlers that only read may
+    // still take the value by const reference.
+    HookSubscription onKey(std::function<void(KeyEventValue&)>);
     HookSubscription onMouse(std::function<void(MouseEventValue&)>);
     HookSubscription onFov(std::function<void(FovEventValue&)>);
     HookSubscription onNativeKey(std::function<void(const NativeKeyEventValue&)>);
@@ -78,6 +83,12 @@ public:
 
     bool sendNativeKey(unsigned key, bool pressed);
     bool sendKeyboardFeed(unsigned key, bool pressed);
+    // Synthesize a mouse button event through the native input path
+    // (freecam releases the buttons it swallowed when it toggles off).
+    bool sendMouseInput(unsigned action, bool pressed);
+    // Pin the client instance the world-change events bind to
+    // (split-screen disambiguation; freecam pins from its gameplay event).
+    void pinWorldEventClient(void* client);
 
     // Uninstall all native hooks while preserving subscriptions/impl state.
     void stop() noexcept;

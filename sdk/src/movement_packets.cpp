@@ -22,6 +22,10 @@ bool MovementPackets::handles(int packetId) const noexcept {
     return bedrock::MovementPackets::handles(static_cast<bedrock::PacketId>(packetId));
 }
 
+bool MovementPackets::isAuthInput(int packetId) const noexcept {
+    return packetId == static_cast<int>(bedrock::PacketId::PlayerAuthInput);
+}
+
 std::optional<MovementPacketPose> MovementPackets::pose(const std::string& packetBytes,
                                                         int packetId) const noexcept {
     try {

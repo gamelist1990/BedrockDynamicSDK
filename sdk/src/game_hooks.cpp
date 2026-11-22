@@ -38,11 +38,24 @@ HookSubscription Hooks::onGameplay(std::function<void(const GameplayEventValue&)
     return {};
 }
 HookSubscription Hooks::onWorldChange(std::function<void(const WorldChangeEventValue&)> h) {
-    impl_->dispatch.on<bedrock::WorldChangeEvent>([h=std::move(h)](const bedrock::WorldChangeEvent& e) { h({e.clientInstance,e.level,e.player}); });
+    impl_->dispatch.on<bedrock::WorldChangeEvent>([h=std::move(h)](const bedrock::WorldChangeEvent& e) {
+        WorldChangeReasonValue reason{};
+        switch (e.reason) {
+        case bedrock::WorldChangeReason::Joined: reason = WorldChangeReasonValue::Joined; break;
+        case bedrock::WorldChangeReason::Left: reason = WorldChangeReasonValue::Left; break;
+        case bedrock::WorldChangeReason::JoinCancelled: reason = WorldChangeReasonValue::JoinCancelled; break;
+        case bedrock::WorldChangeReason::DimensionChanged: reason = WorldChangeReasonValue::DimensionChanged; break;
+        }
+        h({reason, e.clientInstance, e.level, e.player});
+    });
     return {};
 }
-HookSubscription Hooks::onKey(std::function<void(const KeyEventValue&)> h) {
-    impl_->dispatch.on<bedrock::KeyEvent>([h=std::move(h)](const bedrock::KeyEvent& e) { h({static_cast<int>(e.inputKey()),e.pressed,e.cancelled()}); });
+HookSubscription Hooks::onKey(std::function<void(KeyEventValue&)> h) {
+    impl_->dispatch.on<bedrock::KeyEvent>([h=std::move(h)](const bedrock::KeyEvent& e) {
+        KeyEventValue v{static_cast<int>(e.inputKey()), e.pressed, e.cancelled()};
+        h(v);
+        if (v.cancelled) e.cancel();
+    });
     return {};
 }
 HookSubscription Hooks::onMouse(std::function<void(MouseEventValue&)> h) {
@@ -139,6 +152,14 @@ bool Hooks::sendNativeKey(unsigned key, bool pressed) {
     return impl_->dispatch.sendNativeKey(key, pressed);
 }
 
+bool Hooks::sendMouseInput(unsigned action, bool pressed) {
+    return impl_->dispatch.sendMouseInput(action, pressed);
+}
+
+void Hooks::pinWorldEventClient(void* client) {
+    impl_->dispatch.setWorldEventClient(client);
+}
+
 bool Hooks::sendKeyboardFeed(unsigned key, bool pressed) {
     // Wraps BDS_HookCallOriginal(BDS_HOOK_KEYBOARD_FEED, &args) for the
     // specific capability freecam needs when releasing movement keys on toggle.
@@ -161,7 +182,7 @@ std::string hookRuntimeDiagnostic() {
 HookSubscription Hooks::onLevelTick(std::function<void(const LevelTickEventValue&)>) { return {}; }
 HookSubscription Hooks::onGameplay(std::function<void(const GameplayEventValue&)>) { return {}; }
 HookSubscription Hooks::onWorldChange(std::function<void(const WorldChangeEventValue&)>) { return {}; }
-HookSubscription Hooks::onKey(std::function<void(const KeyEventValue&)>) { return {}; }
+HookSubscription Hooks::onKey(std::function<void(KeyEventValue&)>) { return {}; }
 HookSubscription Hooks::onMouse(std::function<void(MouseEventValue&)>) { return {}; }
 HookSubscription Hooks::onFov(std::function<void(FovEventValue&)>) { return {}; }
 HookSubscription Hooks::onNativeKey(std::function<void(const NativeKeyEventValue&)>) { return {}; }
@@ -174,6 +195,8 @@ bool Hooks::installNativeKeyboard(const SymbolResolver&, std::string_view, std::
 bool Hooks::installGameplay(const SymbolResolver&, std::string& error) { error = "native hooks unavailable"; return false; }
 bool Hooks::installLevelTick(const SymbolResolver&, std::string& error) { error = "native hooks unavailable"; return false; }
 bool Hooks::sendNativeKey(unsigned, bool) { return false; }
+bool Hooks::sendMouseInput(unsigned, bool) { return false; }
+void Hooks::pinWorldEventClient(void*) {}
 void Hooks::stop() noexcept {}
 std::string hookRuntimeDiagnostic() { return {}; }
 #endif

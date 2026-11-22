@@ -56,6 +56,12 @@ struct CameraFrame {
     ActorBoundsValue bounds{};
 };
 
+enum class CameraDrawResult {
+    Skipped,
+    Drawn,
+    Fault
+};
+
 enum class CameraChange {
     Applied,
     NoPlayer,
@@ -190,6 +196,9 @@ public:
     bool installTerrain(bool rendererReady, std::string& error);
     bool installRenderObserve(bool rendererReady, std::string& error);
     bool installCreateView(std::string& error);
+    // True when the world-render layout parsed and the outline renderer
+    // loaded: player-hitbox capture and line drawing are available.
+    bool renderReady() const noexcept;
     bool terrainReady() const noexcept;
     bool observeReady() const noexcept;
     bool createViewReady() const noexcept;
@@ -218,6 +227,9 @@ public:
 
     // ---- actor component access (game thread) -----------------------------
     bool hurtTime(void* actor, int& value) const noexcept;
+    // Runtime entity id of any actor (the local-player proxy guard in
+    // freecam re-reads it on the borrowed actor before restoring).
+    std::optional<std::uint64_t> actorRuntimeId(void* actor) const noexcept;
     bool actorIdentity(void* actor, std::uintptr_t& registry, std::uint32_t& entity) const noexcept;
     bool restoreActorMotion(void* actor, Vec3Value position, ActorBoundsValue bounds) noexcept;
     // `out.origin` must hold the render origin to subtract and `out.epoch` the
@@ -234,9 +246,12 @@ public:
     bool installRenderHook(CameraRenderHandler handler, void* user, std::string& error);
     void stopRenderHook() noexcept;
     void* renderTarget() const noexcept;
-    bool drawLines(void* renderer, void* screen, Vec3Value origin,
-                   const CameraLineSegment* segments, std::size_t count,
-                   std::array<float, 4> rgba) noexcept;
+    // Draw outcome, mirroring the native renderer's tri-state: Skipped is
+    // a benign per-frame condition (renderer busy/not ready), Fault is a
+    // real failure. Callers must not treat Skipped as an error.
+    CameraDrawResult drawLines(void* renderer, void* screen, Vec3Value origin,
+                               const CameraLineSegment* segments, std::size_t count,
+                               std::array<float, 4> rgba) noexcept;
 
 private:
     struct Impl;
