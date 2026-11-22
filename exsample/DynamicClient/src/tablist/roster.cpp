@@ -48,6 +48,10 @@ namespace {
 
 bedrock::sdk::RosterAccess tabListGameAccess;
 bedrock::sdk::PacketRoster packetPlayers;
+// MUST outlive any Overlay installation: the native overlay keeps this
+// object's `this` as the per-frame trampoline userdata. A function-local
+// Overlay dangles once startTabList returns (BOL crash 2026-11-22).
+bedrock::sdk::Overlay tabListOverlay;
 bool packetRosterMode{};
 constexpr int tabInputKey = 0x09;
 constexpr int tabInputKeyGlfw = 258;
@@ -1260,6 +1264,7 @@ void drawTabList(void*) {
 }
 
 void stopSdkSession() noexcept {
+    tabListOverlay.uninstall();
     hooks.stop();
     packetPlayers.stop();
     stopTabRowsWorker(); stopMurderWorker();
@@ -1351,8 +1356,7 @@ void startTabList(const bedrock::sdk::Profile& profile, const bedrock::sdk::Symb
     options.captureInput = false;
     options.nativeCursor = false;
     diagnostic("overlay install");
-    bedrock::sdk::Overlay overlay;
-    if (!overlay.install(&drawTabList, nullptr, options, error)) {
+    if (!tabListOverlay.install(&drawTabList, nullptr, options, error)) {
         throw std::runtime_error(error);
     }
 

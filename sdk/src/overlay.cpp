@@ -12,6 +12,7 @@ struct Overlay::Impl {
 #ifdef _WIN32
     void (*drawCallback)(void* userdata) = nullptr;
     void* userdata = nullptr;
+    bool installed = false;
 #endif
 };
 
@@ -46,6 +47,7 @@ bool Overlay::install(void (*drawCallback)(void* userdata),
         if (!bedrock::gui::Overlay::install(trampoline, this, error, nativeOptions)) {
             return false;
         }
+        impl_->installed = true;
         return true;
     } catch (...) {
         error = "exception in Overlay::install";
@@ -60,7 +62,9 @@ bool Overlay::install(void (*drawCallback)(void* userdata),
 
 void Overlay::uninstall() noexcept {
 #ifdef _WIN32
+    if (!impl_->installed) return;
     bedrock::gui::Overlay::shutdown();
+    impl_->installed = false;
     impl_->drawCallback = nullptr;
     impl_->userdata = nullptr;
 #else

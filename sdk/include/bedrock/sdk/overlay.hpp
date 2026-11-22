@@ -43,6 +43,13 @@ public:
     // Install a draw callback. The callback is invoked ON THE GAME PRESENT
     // THREAD, once per presented frame.  The `userdata` pointer is passed
     // to the callback as its first argument.
+    //
+    // LIFETIME: the native overlay keeps this object's `this` as the
+    // trampoline userdata for as long as it is installed, so the Overlay
+    // MUST outlive the installation — keep it at namespace scope (or
+    // otherwise owned for the process lifetime) and call uninstall() on
+    // shutdown. Destroying it while installed leaves a dangling userdata
+    // pointer and crashes on the next present (seen 2026-11-22).
     bool install(void (*drawCallback)(void* userdata),
                  void* userdata,
                  const OverlayOptions& options,
