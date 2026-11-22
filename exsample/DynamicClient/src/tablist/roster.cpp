@@ -1,17 +1,13 @@
-#include <bedrock/packets/packet_api.hpp>
 #include <bedrock/sdk/keybinds.hpp>
-#include <bedrock/packets/player_roster_service.hpp>
+#include <bedrock/sdk/logging.hpp>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 
-#include <bedrock/render/gui_overlay.hpp>
-#include <bedrock/logging/logger.hpp>
-#include <bedrock/detail/hook_dispatch.hpp>
-#include <bedrock/native/game_access.hpp>
-#include <bedrock/profiles/profile_manager.hpp>
-#include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/enums/game_type.hpp>
+#include <bedrock/sdk/roster.hpp>
+#include <bedrock/sdk/packets.hpp>
+#include <bedrock/sdk/overlay.hpp>
+#include <bedrock/sdk/game_hooks.hpp>
 #include "client.hpp"
 #include "overlay.hpp"
 #include "tablist/config.hpp"
@@ -50,11 +46,8 @@
 namespace dynamic_client {
 namespace {
 
-bedrock::NativeGameAccess tabListGameAccess;
-bedrock::PacketAPI packets;
-// Workers and callback targets are process-resident. Joining threads from
-// CRT/DllMain teardown can deadlock on the Windows loader lock.
-bedrock::PlayerRosterService& packetPlayers = *new bedrock::PlayerRosterService;
+bedrock::sdk::RosterAccess tabListGameAccess;
+bedrock::sdk::PacketRoster packetPlayers;
 bool packetRosterMode{};
 constexpr int tabInputKey = 0x09;
 constexpr int tabInputKeyGlfw = 258;
@@ -207,8 +200,7 @@ std::atomic<std::uint64_t> actorNameTagSequence{0};
 std::optional<std::uint64_t> readActorRuntimeId(void* actor) noexcept {
     return tabListGameAccess.actorRuntimeId(actor);
 }
-std::unique_ptr<bedrock::detail::HookDispatch> eventDispatch;
-std::unique_ptr<bedrock::GameHooks> gameHooks;
+bedrock::sdk::Hooks hooks;
 std::atomic<std::shared_ptr<const tablist::Config>> liveConfig{
     std::make_shared<const tablist::Config>()};
 // Callbacks enqueue text; only this writer thread opens/writes/flushes the file.
@@ -481,7 +473,7 @@ void recordLevel(void* level, bool lobbyReturn = false) noexcept {
         murderWorldEpoch.fetch_add(1, std::memory_order_acq_rel);
         murderRoundHasRole = false;
         tabListGameAccess.clearWorldCaches();
-        if (eventDispatch) eventDispatch->clearObservedActors();
+        hooks.clearObservedActors();
         tabRowsLastStartedMs = 0;
         {
             std::lock_guard rowsLock(tabRowsWorkerMutex);
@@ -660,7 +652,7 @@ bool collectRowsUnsafe(std::vector<PlayerRow>& rows,
 
 bool copyPlayerNamesUnsafe(std::vector<std::string>& names) {
     void* level = levelInstance.load(std::memory_order_acquire);
-    if (!level || !eventDispatch) return false;
+    if (!level) return false;
     const auto players = tabListGameAccess.rosterSnapshot(level);
     names.clear(); playerFaceIds.clear();
     for (const auto& player : players) {
@@ -791,7 +783,7 @@ void buildTabRowsInBackground(const std::shared_ptr<TabRowsBuild>& build) noexce
         }
         if(packetRosterMode&&config->showFaces){
             const auto players=packetPlayers.snapshotShared();
-            std::unordered_map<std::string,const bedrock::PacketPlayer*> faces;
+            std::unordered_map<std::string,const bedrock::sdk::RosterPlayerEntry*> faces;
             faces.reserve(players->size());
             for(const auto& player:*players)faces.try_emplace(tablist::stripMinecraftFormatting(player.name),&player);
             for(auto& row:build->rows){const auto found=faces.find(row.name);if(found!=faces.end()){row.face=found->second->face;row.hasFace=found->second->hasFace;}}
@@ -880,7 +872,10 @@ bool fillOneFaceUnsafe(void* level, PlayerRow* row) {
         if(tablist::stripMinecraftFormatting(player.name)==row->name){row->face=player.face;row->hasFace=player.hasFace;return row->hasFace;}
         return false;}
     const auto uuid=playerFaceIds.find(row->name);if(uuid==playerFaceIds.end())return false;
-    row->hasFace=tabListGameAccess.face(level,uuid->second,row->face);return row->hasFace;
+    const auto face = tabListGameAccess.face(level, uuid->second);
+    row->face = face.pixels;
+    row->hasFace = face.found;
+    return row->hasFace;
 }
 
 bool captureOneFace(void* level, PlayerRow* row) noexcept {
@@ -950,14 +945,16 @@ void refreshTabRowsCache(const std::shared_ptr<const tablist::Config>& config) n
     } catch (...) {}
 }
 
-void onGameplay(const bedrock::GameplayEvent& event) {
+void onGameplay(const bedrock::sdk::GameplayEventValue& event) {
     gameplayActive.store(event.active,std::memory_order_release);
     if(!event.active) tabHeld.store(false,std::memory_order_release);
 }
 struct ActorMurderSnapshot {
     bool isPlayer = false;
     std::string name;
-    std::optional<bedrock::ItemStack> item;
+    std::string itemIdentifier;
+    std::string itemDisplayName;
+    unsigned itemCount = 0;
     bool handEmpty = false;
     bool hasGameType = false;
     bool spectator = false;
@@ -972,14 +969,18 @@ void readActorMurderSnapshot(void* actor,
     snapshot.name.assign(playerName);
     snapshot.isPlayer = true;
     if (readItem) {
-        auto hand=tabListGameAccess.equipmentSnapshot(actor,bedrock::EquipmentSlot::MainHand);
-        snapshot.handEmpty=hand.available && !hand.item;
-        snapshot.item=std::move(hand.item);
+        auto hand = tabListGameAccess.equipmentSnapshot(actor, bedrock::sdk::EquipmentSlot::MainHand);
+        snapshot.handEmpty = hand.available && !hand.hasItem;
+        if (hand.available) {
+            snapshot.itemIdentifier = hand.identifier;
+            snapshot.itemDisplayName = hand.displayName;
+            snapshot.itemCount = hand.count;
+        }
     }
     if (readGameMode) {
         const auto gameType=tabListGameAccess.gameType(actor);
         snapshot.hasGameType=gameType.has_value();
-        snapshot.spectator=gameType==bedrock::GameType::Spectator;
+        snapshot.spectator=gameType==bedrock::sdk::GameType::Spectator;
     }
 }
 
@@ -1002,7 +1003,6 @@ void updateMurderDetection(bool readItems, bool readGameMode) noexcept {
     // Keep native Actor/inventory reads thread-affine, but sample a small
     // bounded batch each tick so a brief held-item change is less likely to
     // fall between two samples. Opening the TabList never triggers a scan burst.
-    if (!eventDispatch) return;
     try {
         void* level = levelInstance.load(std::memory_order_acquire);
         if (!level) return;
@@ -1034,9 +1034,9 @@ void updateMurderDetection(bool readItems, bool readGameMode) noexcept {
                     diagnostic("MurderDetect skipped an Actor whose native read raised an exception");
                 continue;
             }
-            const auto& item = snapshot.item;
+            const auto& itemId = snapshot.itemIdentifier;
             if ((!snapshot.isPlayer || snapshot.name.empty() || snapshot.name.size() > 128) &&
-                !item) continue;
+                itemId.empty()) continue;
             MurderSample copied;
             copied.worldEpoch = murderWorldEpoch.load(std::memory_order_acquire);
             if (!snapshot.name.empty()) {
@@ -1046,14 +1046,16 @@ void updateMurderDetection(bool readItems, bool readGameMode) noexcept {
                 actorLabel << "runtimeId=" << std::dec << runtimeId;
                 copied.name = actorLabel.str();
             }
-            copied.hasItem = item.has_value();
+            copied.hasItem = !itemId.empty();
             copied.handEmpty = readItems && snapshot.handEmpty;
+            if (!itemId.empty()) {
+                copied.identifier = itemId;
+                copied.displayName = snapshot.itemDisplayName;
+                copied.count = snapshot.itemCount;
+            }
             copied.hasGameType = snapshot.hasGameType;
             copied.spectator = snapshot.spectator;
-            if (item) {
-                copied.identifier = item->identifier;
-                copied.displayName = item->displayName;
-                copied.count = item->count;
+            if (itemId.empty()) {
             }
             // Hive can return to its lobby inside the same Level and player.
             // Reset once on that boundary, retaining roles during ordinary swaps.
@@ -1177,7 +1179,7 @@ void refreshTrackedMurderActors(void* level) noexcept {
     }
 }
 
-void onLevelTick(const bedrock::LevelTickEvent& event) {
+void onLevelTick(const bedrock::sdk::LevelTickEventValue& event) {
     recordLevel(event.level);
     const auto config = liveConfig.load(std::memory_order_acquire);
     if (!config->enabled) return;
@@ -1258,9 +1260,8 @@ void drawTabList(void*) {
 }
 
 void stopSdkSession() noexcept {
-    if(gameHooks) gameHooks->stop();
-    packets.stop();
-    packetPlayers.stop(packets);
+    hooks.stop();
+    packetPlayers.stop();
     stopTabRowsWorker(); stopMurderWorker();
     // Retain typed API/callback owners until process exit, including in-flight calls.
     gameplayActive=false; tabHeld=false; levelInstance=nullptr; levelHeartbeatMs=0;
@@ -1277,7 +1278,8 @@ void setTabListConfig(const tablist::Config& config) {
     liveConfig.store(std::make_shared<const tablist::Config>(config), std::memory_order_release);
 }
 
-void startTabList(const bedrock::RuntimeProfile& profile, const std::filesystem::path& directory) {
+void startTabList(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver,
+                  bedrock::sdk::Logger& logger, const std::filesystem::path& directory) {
     std::string error;
     if (!diagnosticWriter.start(directory / L"DynamicClient-TabList.log"))
         throw std::runtime_error("could not start TabList diagnostics");
@@ -1285,64 +1287,76 @@ void startTabList(const bedrock::RuntimeProfile& profile, const std::filesystem:
         bool committed{};
         ~OnFailure() { if (!committed) { stopSdkSession(); diagnosticWriter.stop(); } }
     } startup;
-    diagnostic("TabList roster revision=6 [SDK NativeGameAccess / typed GameHooks]");
-    const bedrock::ProfileRequirements requirements{
-        bedrock::Feature::Input,bedrock::Feature::Gameplay,bedrock::Feature::Fov,
-        bedrock::Feature::LevelTick,bedrock::Feature::Actors,bedrock::Feature::Items};
-    if(!profile.supports(requirements,error) || !tabListGameAccess.load(profile,error)) {
+    diagnostic("TabList roster revision=6 [SDK RosterAccess / PacketRoster / SDK Hooks]");
+    if(!tabListGameAccess.configure(profile, resolver, error)) {
         throw std::runtime_error(error);
     }
-    const auto& version=profile.choice();
-    diagnostic("SDK profile ready version=",version.version," source=",bedrock::profileSourceName(version.source),
-        " exe_sha256=",version.identity.fileSha256);
+    const auto& version=profile.version();
+    diagnostic("SDK profile ready version=",version,
+        " source=embedded");
     packetRosterMode=tabListGameAccess.packetRosterSupported();
     diagnostic("SDK item display names=",tabListGameAccess.displayNamesAvailable()," [owned value copy / game allocator]");
-    tabListGameAccess.setRosterProvider([] { return packetPlayers.snapshotShared(); });
+    tabListGameAccess.setRosterProvider([] {
+        auto players = packetPlayers.snapshotShared();
+        auto result = std::make_shared<std::vector<bedrock::sdk::RosterEntry>>();
+        if (players) {
+            result->reserve(players->size());
+            for (const auto& p : *players) {
+                bedrock::sdk::RosterEntry e;
+                e.name = p.name;
+                e.uuid = p.uuid;
+                e.uniqueId = p.uniqueId;
+                e.face = p.face;
+                e.hasFace = p.hasFace;
+                result->push_back(std::move(e));
+            }
+        }
+        return std::shared_ptr<const std::vector<bedrock::sdk::RosterEntry>>(std::move(result));
+    });
     tabListGameAccess.setNameProvider([](void* actor)->std::optional<std::string> {
         std::unique_lock lock(actorNameTagMutex,std::try_to_lock);
         if(!lock) return std::nullopt;
         const auto found=actorNameTags.find(actor);
         return found==actorNameTags.end()?std::nullopt:std::optional<std::string>{found->second.nameTag};
     });
-    eventDispatch=std::make_unique<bedrock::detail::HookDispatch>(tabListGameAccess);
-    gameHooks=std::make_unique<bedrock::GameHooks>(*eventDispatch);
-    eventDispatch->on<bedrock::GameplayEvent>(&onGameplay);
-    eventDispatch->on<bedrock::FovEvent>([](const bedrock::FovEvent&) { gameplayActive=true; });
-    eventDispatch->on<bedrock::LevelTickEvent>(&onLevelTick);
-    eventDispatch->on<bedrock::ActorNameTagEvent>([](const bedrock::ActorNameTagEvent& event) {
-        captureQueriedActorNameTag(event.actor,std::string(event.nameTag));
+    if (!hooks.install(resolver, profile.json(), error)) {
+        throw std::runtime_error("SDK Hooks install failed: " + error);
+    }
+    hooks.onGameplay(&onGameplay);
+    hooks.onFov([](const bedrock::sdk::FovEventValue&) { gameplayActive = true; });
+    hooks.onLevelTick(&onLevelTick);
+    hooks.onActorNameTag([](const bedrock::sdk::Hooks::ActorNameTagEventValue& event) {
+        captureQueriedActorNameTag(event.actor, std::string(event.nameTag));
     });
     if(!startTabRowsWorker() || !startMurderWorker()) {
         throw std::runtime_error("SDK snapshot workers unavailable");
     }
     if(packetRosterMode) {
-        packetPlayers.start(packets);
-        if(!packets.installReceive(profile.json(),error)) {
+        if(!packetPlayers.install(resolver, profile.json(), error)) {
             throw std::runtime_error(error);
         }
         diagnostic("SDK packet roster ready; rejoin after loading");
     }
-    if(!gameHooks->installInput(profile.resolver(),error) ||
-       !gameHooks->installGameplay(profile.resolver(),error) ||
-       !gameHooks->installFov(profile.resolver(),error) ||
-       !gameHooks->installLevelTick(profile.resolver(),error)) {
+    if(!hooks.installInput(resolver,error) ||
+       !hooks.installGameplay(resolver,error) ||
+       !hooks.installFov(resolver,error) ||
+       !hooks.installLevelTick(resolver,error)) {
         throw std::runtime_error(error);
     }
-    if(!gameHooks->installActorNameTag(profile.resolver(),error))
-        diagnostic("SDK name-tag source unavailable: ",error);
-    else diagnostic("SDK typed name-tag source ready");
+    // hooks.installActorNameTag was removed; actor name tags are enabled via hooks.install()
 
-    bedrock::gui::OverlayOptions options;
+    bedrock::sdk::OverlayOptions options;
     options.toggleVirtualKey = 0;
     options.initiallyVisible = true;
     options.captureInput = false;
     options.nativeCursor = false;
     diagnostic("overlay install");
-    if (!bedrock::gui::Overlay::install(&drawTabList, nullptr, error, options)) {
+    bedrock::sdk::Overlay overlay;
+    if (!overlay.install(&drawTabList, nullptr, options, error)) {
         throw std::runtime_error(error);
     }
 
-    diagnostic("ready ", version.version, " ", bedrock::profileSourceName(version.source));
+    diagnostic("ready ", version, " source=embedded");
     startup.committed = true;
 }
 } // namespace dynamic_client

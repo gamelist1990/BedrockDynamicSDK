@@ -80,6 +80,13 @@ public:
     // Uninstall all native hooks while preserving subscriptions/impl state.
     void stop() noexcept;
 
+    // Clear any cached actor name-tag state maintained by the hook
+    // dispatcher. TabList uses this when the world identity changes so
+    // actors are re-queried for their name tags. Lives in Hooks (not
+    // RosterAccess) because it clears HookDispatch's own observed-actor
+    // cache, which is shared by the Hooks ActorNameTagEvent subscribers.
+    void clearObservedActors() noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

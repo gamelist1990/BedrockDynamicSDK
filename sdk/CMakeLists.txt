@@ -1,7 +1,8 @@
 add_library(bedrock_stage_a STATIC
     src/settings.cpp src/system.cpp src/mod.cpp src/keybinds.cpp
     src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
-    src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp)
+    src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
+    src/roster.cpp src/packets.cpp src/overlay.cpp)
 if(WIN32)
     target_sources(bedrock_stage_a PRIVATE
         src/commands.cpp src/title_packets.cpp src/game_hooks.cpp)

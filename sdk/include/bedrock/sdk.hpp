@@ -16,4 +16,7 @@
 #include "bedrock/sdk/game_hooks.hpp"
 #include "bedrock/sdk/resolver.hpp"
 #include "bedrock/sdk/actors.hpp"
+#include "bedrock/sdk/roster.hpp"
+#include "bedrock/sdk/packets.hpp"
+#include "bedrock/sdk/overlay.hpp"
 #include "bedrock/sdk/world_render.hpp"

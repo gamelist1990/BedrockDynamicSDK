@@ -31,6 +31,9 @@ if(WIN32)
         src/freecam/freecam.cpp src/freecam/worker.cpp)
     target_include_directories(DynamicClient PRIVATE src)
     # Use the public SDK alongside the first-party native adapters.
+    # bedrock::gui_overlay stays: tablist/overlay.cpp draws with ImGui directly,
+    # and the imgui include path arrives through this link (no gui::Overlay
+    # calls remain — the overlay itself is sdk::Overlay now).
     target_link_libraries(DynamicClient PRIVATE EnTT::EnTT bedrock::sdk dynamic_client_features
         bedrock::client bedrock::game_hooks bedrock::gui_overlay)
     target_compile_options(DynamicClient PRIVATE /utf-8)

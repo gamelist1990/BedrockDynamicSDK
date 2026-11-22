@@ -100,6 +100,10 @@ void Hooks::stop() noexcept {
     if (impl_->native) impl_->native->stop();
 }
 
+void Hooks::clearObservedActors() noexcept {
+    impl_->dispatch.clearObservedActors();
+}
+
 bool Hooks::installInput(const SymbolResolver& resolver, std::string& error) {
     ensureNative();
     const auto& nativeResolver = SymbolResolverRuntimeAccess::resolver(resolver);

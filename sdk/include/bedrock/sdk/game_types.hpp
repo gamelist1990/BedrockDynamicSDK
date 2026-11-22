@@ -29,6 +29,16 @@ private:
 
 enum class EquipmentSlot { MainHand, Offhand, Head, Chest, Legs, Feet };
 
+// Mirror of internal bedrock::GameType. Values match the Bedrock protocol
+// GameMode numeric IDs; do not renumber.
+enum class GameType : std::int32_t {
+    Survival = 0,
+    Creative = 1,
+    Adventure = 2,
+    Default = 5,
+    Spectator = 6
+};
+
 class InventoryComponent {
 public:
     explicit InventoryComponent(std::vector<std::optional<ItemStack>> slots)

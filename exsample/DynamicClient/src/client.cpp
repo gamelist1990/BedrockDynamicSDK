@@ -105,7 +105,7 @@ DWORD WINAPI start(void* parameter) {
         startFeature("Zoom", [&] { startZoom(profile, symbolResolver, logger); });
         startFeature("AutoSprint", [&] { startSprint(profile, symbolResolver, logger); });
         startFeature("Fullbright", [&] { startBrightness(clientHost(), logger); });
-        startFeature("TabList", [&] { startTabList(*runtimeProfile, directory); });
+        startFeature("TabList", [&] { startTabList(profile, symbolResolver, logger, directory); });
         startFeature("Freecam", [&] { runFreecam(*runtimeProfile, directory); });
         return 0;
     } catch (...) {
