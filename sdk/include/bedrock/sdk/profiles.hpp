@@ -1,9 +1,10 @@
 #pragma once
 #include <memory>
 #include <string>
+namespace bedrock { class RuntimeProfile; }
 namespace bedrock::sdk {
-struct ProfileRuntimeAccess;
 enum class ProfileUpdatePolicy { EmbeddedOnly, RefreshIfNeeded, ForceRemote };
+enum class ProfileCandidatePolicy { VerifiedOnly, AllowCandidates };
 class Profile { public:
  const std::string& json() const noexcept; std::string version() const noexcept;
  private:
@@ -17,7 +18,11 @@ class Profile { public:
 };
 class Profiles { public:
  Profiles(); ~Profiles(); Profiles(const Profiles&) = delete; Profiles& operator=(const Profiles&) = delete;
+ bool open(ProfileUpdatePolicy updatePolicy, ProfileCandidatePolicy candidatePolicy, std::string& error);
  bool open(ProfileUpdatePolicy updatePolicy, std::string& error); Profile snapshot() const;
  private: struct Impl; std::unique_ptr<Impl> impl_; 
 };
-}
+struct ProfileRuntimeAccess {
+    static std::shared_ptr<const bedrock::RuntimeProfile> runtime(const Profile& profile) noexcept;
+};
+} // namespace bedrock::sdk

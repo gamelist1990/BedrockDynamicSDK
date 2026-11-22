@@ -3,11 +3,11 @@
 #include <windows.h>
 #include "client.hpp"
 #include <bedrock/sdk.hpp>
-#include <bedrock/logging/logger.hpp>
+#include <bedrock/sdk/logging.hpp>
 
 namespace {
-bedrock::Logger logger{"DynamicClient"};
-bedrock::FileLogSink fileLog;
+bedrock::sdk::Logger logger{"DynamicClient"};
+bedrock::sdk::FileLogSink fileLog;
 
 template<class Start>
 void startFeature(const char* name, Start start) {
@@ -22,9 +22,6 @@ public:
 
 private:
     void onEnable() override {
-        // Content Log smoke line: identifiable in Settings -> Creator ->
-        // Content Log on BOL. The same SDK logger automatically routes every
-        // DynamicClient line there once the native core installs the bridge.
         logger.info("[ContentLogSmoke] DynamicClient onEnable: SDK logger -> vanilla Content Log");
         dynamic_client::registerSettings(*this, logger);
         dynamic_client::registerKeybinds(*this);
@@ -63,8 +60,6 @@ DynamicClientMod& clientMod() {
 }
 
 bedrock::sdk::ClientHost& clientHost() {
-    // The client module is pinned; the broker/loader cannot be called from
-    // process detach. An explicit loader stop can perform orderly shutdown.
     static auto* host = new bedrock::sdk::ClientHost;
     return *host;
 }
@@ -82,10 +77,10 @@ DWORD WINAPI start(void* parameter) {
         using namespace dynamic_client;
         // Validate pristine mapped .text before OreUI or gameplay installs a
         // detour. BOL/GDK can legitimately have a different on-disk hash.
-        bedrock::ProfileManager profiles;
+        bedrock::sdk::Profiles profiles;
         std::string error;
-        const bool supported = profiles.open({}, {bedrock::UpdatePolicy::EmbeddedOnly,
-            bedrock::CandidatePolicy::AllowCandidates}, error);
+        const bool supported = profiles.open(bedrock::sdk::ProfileUpdatePolicy::EmbeddedOnly,
+            bedrock::sdk::ProfileCandidatePolicy::AllowCandidates, error);
         if (!supported) {
             logger.error("Game profile unavailable: ", error);
             return 4;
@@ -99,12 +94,19 @@ DWORD WINAPI start(void* parameter) {
             if (const auto fallback = clientMod().enable(); !fallback)
                 logger.error("Cannot enable DynamicClient: ", fallback.error().message);
         }
-        logger.info("Exact bundled profile ready: ", profile->choice().version);
-        startFeature("Zoom", [&] { startZoom(*profile, logger); });
-        startFeature("AutoSprint", [&] { startSprint(*profile, logger); });
+        logger.info("Exact bundled profile ready: ", profile.version());
+        bedrock::sdk::SymbolResolver symbolResolver;
+        symbolResolver.open(profile, error);
+        const auto runtimeProfile = bedrock::sdk::ProfileRuntimeAccess::runtime(profile);
+        if (!runtimeProfile) {
+            logger.error("Failed to get runtime profile");
+            return 5;
+        }
+        startFeature("Zoom", [&] { startZoom(profile, symbolResolver, logger); });
+        startFeature("AutoSprint", [&] { startSprint(profile, symbolResolver, logger); });
         startFeature("Fullbright", [&] { startBrightness(clientHost(), logger); });
-        startFeature("TabList", [&] { startTabList(*profile, directory); });
-        startFeature("Freecam", [&] { runFreecam(*profile, directory); });
+        startFeature("TabList", [&] { startTabList(*runtimeProfile, directory); });
+        startFeature("Freecam", [&] { runFreecam(*runtimeProfile, directory); });
         return 0;
     } catch (...) {
         OutputDebugStringA("[DynamicClient] Startup failed\n");

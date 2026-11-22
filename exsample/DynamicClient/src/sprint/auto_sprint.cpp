@@ -1,16 +1,16 @@
 #include "auto_sprint_feature.hpp"
-#include <utility>
 
-AutoSprintFeature::AutoSprintFeature(AutoSprintEvents& events, SendSprint send)
-    : events_(events), send_(std::move(send)) {
-    frameId_ = events_.on<InputFrameEvent>(
-        [this](const InputFrameEvent& frame) { onInputFrame(frame); });
+AutoSprintFeature::AutoSprintFeature(bedrock::sdk::Events<InputFrameEvent>& events, SendSprint send)
+    : events_{events}, send_{std::move(send)} {
+    subscription_ = events_.subscribe([this](const InputFrameEvent& frame) { onInputFrame(frame); });
 }
 
 AutoSprintFeature::~AutoSprintFeature() {
-    events_.off<InputFrameEvent>(frameId_);
+    subscription_.reset();
     release();
 }
+
+[[nodiscard]] bool AutoSprintFeature::ownsSprint() const noexcept { return ownSprint_; }
 
 void AutoSprintFeature::onInputFrame(const InputFrameEvent& frame) {
     // Input snapshots are emitted only when Minecraft's own key or cursor

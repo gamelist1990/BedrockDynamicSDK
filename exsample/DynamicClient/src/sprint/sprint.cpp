@@ -1,15 +1,20 @@
 #include "client.hpp"
 #include "auto_sprint_feature.hpp"
-#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/sdk/game_hooks.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <mutex>
 
 namespace dynamic_client {
 namespace {
-bedrock::detail::HookDispatch api;
-bedrock::GameHooks hooks{api};
+using bedrock::sdk::Hooks;
+using bedrock::sdk::GameplayEventValue;
+using bedrock::sdk::LevelTickEventValue;
+using bedrock::sdk::NativeKeyEventValue;
+
+Hooks hooks;
 AutoSprintEvents events;
 constexpr unsigned ctrl = 0x11;
 constexpr std::array<unsigned, 5> shiftKeys{0x10, 0xA0, 0xA1, 340, 344};
@@ -18,51 +23,60 @@ std::atomic<bool> enabled{true};
 std::recursive_mutex mutex;
 std::array<bool, shiftKeys.size()> shiftHeld{}, ctrlHeld{};
 bool forward{}, gameplay{};
-AutoSprintFeature feature{events, [](bool down) { return api.sendNativeKey(ctrl, down); }};
+
+bool sendSprint(bool down) { return hooks.sendNativeKey(ctrl, down); }
+
+AutoSprintFeature feature{events, sendSprint};
 
 void dispatch() {
-    events.emit(InputFrameEvent{gameplay, gameplay && enabled.load(), forward,
-                                std::ranges::any_of(shiftHeld, std::identity{}),
-                                std::ranges::any_of(ctrlHeld, std::identity{})});
+    events.publish(InputFrameEvent{gameplay, gameplay && enabled.load(), forward,
+                                   std::ranges::any_of(shiftHeld, std::identity{}),
+                                   std::ranges::any_of(ctrlHeld, std::identity{})});
 }
+
+void onNativeKeyHandler(const NativeKeyEventValue& ev) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (ev.inputKey == 'W') forward = ev.pressed;
+    for (std::size_t i = 0; i < shiftKeys.size(); ++i)
+        if (ev.inputKey == shiftKeys[i]) shiftHeld[i] = ev.pressed;
+    for (std::size_t i = 0; i < ctrlKeys.size(); ++i)
+        if (ev.inputKey == ctrlKeys[i]) ctrlHeld[i] = ev.pressed;
+    dispatch();
 }
+
+void onGameplayHandler(const GameplayEventValue& ev) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    gameplay = ev.active;
+    dispatch();
+    if (!gameplay) {
+        forward = false;
+        shiftHeld.fill(false);
+        ctrlHeld.fill(false);
+    }
+}
+
+void onLevelTickHandler(const LevelTickEventValue&) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (feature.ownsSprint() && !enabled.load()) dispatch();
+}
+} // namespace
 
 void setSprintEnabled(bool value) noexcept { enabled.store(value); }
 
-void startSprint(const bedrock::RuntimeProfile& profile, bedrock::Logger& logger) {
+void startSprint(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver,
+                 bedrock::sdk::Logger& logger) {
     std::string error;
-    if (!profile.supports({bedrock::Feature::Keyboard, bedrock::Feature::Gameplay,
-                          bedrock::Feature::LevelTick}, error))
-        throw std::runtime_error(error);
-    api.on<bedrock::NativeKeyEvent>([](const auto& event) {
-        std::lock_guard lock(mutex);
-        if (event.inputKey == 'W') forward = event.pressed;
-        for (std::size_t i = 0; i < shiftKeys.size(); ++i)
-            if (event.inputKey == shiftKeys[i]) shiftHeld[i] = event.pressed;
-        for (std::size_t i = 0; i < ctrlKeys.size(); ++i)
-            if (event.inputKey == ctrlKeys[i]) ctrlHeld[i] = event.pressed;
-        dispatch();
-    });
-    api.on<bedrock::GameplayEvent>([](const auto& event) {
-        std::lock_guard lock(mutex);
-        gameplay = event.active;
-        dispatch();
-        if (!gameplay) {
-            forward = false;
-            shiftHeld.fill(false);
-            ctrlHeld.fill(false);
-        }
-    });
-    api.on<bedrock::LevelTickEvent>([](const auto&) {
-        std::lock_guard lock(mutex);
-        if (feature.ownsSprint() && !enabled.load()) dispatch();
-    });
-    if (!hooks.installNativeKeyboard(profile.resolver(), profile.json(), error) ||
-        !hooks.installGameplay(profile.resolver(), error) ||
-        !hooks.installLevelTick(profile.resolver(), error)) {
+    
+    hooks.onNativeKey([](const bedrock::sdk::NativeKeyEventValue& ev) { onNativeKeyHandler(ev); });
+    hooks.onGameplay([](const bedrock::sdk::GameplayEventValue& ev) { onGameplayHandler(ev); });
+    hooks.onLevelTick([](const bedrock::sdk::LevelTickEventValue& ev) { onLevelTickHandler(ev); });
+    
+    if (!hooks.installNativeKeyboard(resolver, profile.json(), error) ||
+        !hooks.installGameplay(resolver, error) ||
+        !hooks.installLevelTick(resolver, error)) {
         hooks.stop();
         throw std::runtime_error(error);
     }
     logger.info("AutoSprint ready");
 }
-}
+} // namespace dynamic_client

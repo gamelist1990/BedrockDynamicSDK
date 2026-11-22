@@ -33,11 +33,25 @@ std::string Profile::version() const noexcept {
 
 Profiles::Profiles() : impl_(std::make_unique<Impl>()) {}
 Profiles::~Profiles() = default;
+bool Profiles::open(ProfileUpdatePolicy updatePolicy, ProfileCandidatePolicy candidatePolicy, std::string& error) {
+    bedrock::ProfileOptions options;
+    if (updatePolicy == ProfileUpdatePolicy::EmbeddedOnly) options.updates = bedrock::UpdatePolicy::EmbeddedOnly;
+    else if (updatePolicy == ProfileUpdatePolicy::ForceRemote) options.updates = bedrock::UpdatePolicy::ForceRemote;
+    else options.updates = bedrock::UpdatePolicy::RefreshIfNeeded;
+    options.candidates = candidatePolicy == ProfileCandidatePolicy::AllowCandidates
+        ? bedrock::CandidatePolicy::AllowCandidates
+        : bedrock::CandidatePolicy::VerifiedOnly;
+    const bool managerOpened = impl_->manager.open({}, options, error);
+    if (!managerOpened) return false;
+    impl_->snapshot = impl_->manager.snapshot();
+    return static_cast<bool>(impl_->snapshot);
+}
 bool Profiles::open(ProfileUpdatePolicy updatePolicy, std::string& error) {
     bedrock::ProfileOptions options;
     if (updatePolicy == ProfileUpdatePolicy::EmbeddedOnly) options.updates = bedrock::UpdatePolicy::EmbeddedOnly;
     else if (updatePolicy == ProfileUpdatePolicy::ForceRemote) options.updates = bedrock::UpdatePolicy::ForceRemote;
     else options.updates = bedrock::UpdatePolicy::RefreshIfNeeded;
+    // Default candidate policy is VerifiedOnly
     const bool managerOpened = impl_->manager.open({}, options, error);
     if (!managerOpened) return false;
     impl_->snapshot = impl_->manager.snapshot();

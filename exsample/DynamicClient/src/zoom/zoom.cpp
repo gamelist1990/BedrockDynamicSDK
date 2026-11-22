@@ -1,23 +1,29 @@
 #include "client.hpp"
 #include "zoom/controller.hpp"
 #include <bedrock/sdk/keybinds.hpp>
-#include <bedrock/runtime/game_hooks.hpp>
+#include <bedrock/sdk/game_hooks.hpp>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 
 namespace dynamic_client {
 namespace {
-bedrock::detail::HookDispatch api;
-bedrock::GameHooks hooks{api};
+using bedrock::sdk::Hooks;
+using bedrock::sdk::GameplayEventValue;
+using bedrock::sdk::FovEventValue;
+using bedrock::sdk::MouseEventValue;
+
+Hooks hooks;
 zoom::Controller controller;
-std::mutex mutex;
 zoom::Config config;
 float configuredMultiplier = config.zoomMultiplier;
-}
+std::mutex mutex;
+
+} // namespace
 
 void setZoomConfig(const zoom::Config& next) {
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     if (config.mode != next.mode || config.enabled != next.enabled) controller.resetInput();
     const float multiplier = configuredMultiplier == next.zoomMultiplier
         ? config.zoomMultiplier : next.zoomMultiplier;
@@ -27,43 +33,45 @@ void setZoomConfig(const zoom::Config& next) {
 }
 
 void onZoomKeybind(bool pressed) {
-    std::lock_guard lock(mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     if (config.enabled) controller.onMinecraftKey(config.key, pressed, config);
 }
 
-void startZoom(const bedrock::RuntimeProfile& profile, bedrock::Logger& logger) {
+void startZoom(const bedrock::sdk::Profile& profile, const bedrock::sdk::SymbolResolver& resolver,
+               bedrock::sdk::Logger& logger) {
     std::string error;
-    if (!profile.supports({bedrock::Feature::Input, bedrock::Feature::Fov, bedrock::Feature::Gameplay},
-                          error)) throw std::runtime_error(error);
-    api.on<bedrock::GameplayEvent>([](const auto& event) {
-        std::lock_guard lock(mutex);
-        controller.setGameplayActive(event.active);
+    
+    hooks.onGameplay([&](const bedrock::sdk::GameplayEventValue& ev) {
+        std::lock_guard<std::mutex> lock(mutex);
+        controller.setGameplayActive(ev.active);
     });
-    api.on<bedrock::MouseEvent>([](const auto& event) {
+    hooks.onMouse([&](bedrock::sdk::MouseEventValue& ev) {
         constexpr int wheel = 4;
-        if (event.synthetic || event.action != wheel || event.state == 0) return;
-        std::lock_guard lock(mutex);
+        if (ev.synthetic || ev.action != wheel || ev.state == 0) return;
+        std::lock_guard<std::mutex> lock(mutex);
         if (!config.scrollAdjustment || !controller.isZoomActive(config)) return;
-        const auto step = event.state > 0 ? config.scrollStep : -config.scrollStep;
+        const auto step = ev.state > 0 ? config.scrollStep : -config.scrollStep;
         config.zoomMultiplier = std::clamp(config.zoomMultiplier + step, 1.f, 50.f);
-        event.cancel();
+        ev.cancelled = true;  // read back by Hooks::onMouse impl -> e.cancel()
     });
-    api.on<bedrock::FovEvent>([](const auto& event) {
-        std::lock_guard lock(mutex);
+    hooks.onFov([&](bedrock::sdk::FovEventValue& ev) {
+        std::lock_guard<std::mutex> lock(mutex);
         static auto last = std::chrono::steady_clock::now();
         const auto now = std::chrono::steady_clock::now();
         const float delta = std::chrono::duration<float>(now - last).count();
         last = now;
         if (config.enabled) {
-            event.setResultFov(zoom::zoomFovDegrees(event.resultFov, controller.tick(config, delta)));
+            ev.resultFov = zoom::zoomFovDegrees(ev.resultFov, controller.tick(config, delta));
         } else {
             // Do not override another subscriber's FOV when disabled.
             (void)controller.tick(config, .25f);
         }
     });
-    if (!hooks.installInput(profile.resolver(), error) ||
-        !hooks.installGameplay(profile.resolver(), error) ||
-        !hooks.installFov(profile.resolver(), error)) {
+
+    // Granular public installs — each composes with the monolithic install()
+    if (!hooks.installInput(resolver, error) ||
+        !hooks.installFov(resolver, error) ||
+        !hooks.installGameplay(resolver, error)) {
         hooks.stop();
         throw std::runtime_error(error);
     }

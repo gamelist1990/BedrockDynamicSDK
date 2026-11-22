@@ -90,7 +90,7 @@ void apply(std::string_view id, const SettingValue& value) {
 }
 }
 
-void registerSettings(const bedrock::sdk::Mod& mod, bedrock::Logger& logger) {
+void registerSettings(const bedrock::sdk::Mod& mod, bedrock::sdk::Logger& logger) {
     using namespace bedrock::sdk;
     auto page = mod.settings("title")
         .modName("mod.name")

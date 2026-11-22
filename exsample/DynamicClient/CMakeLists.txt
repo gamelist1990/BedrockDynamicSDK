@@ -19,7 +19,7 @@ add_library(dynamic_client_features STATIC
     src/sprint/auto_sprint.cpp
     src/tablist/model.cpp src/tablist/config.cpp)
 target_include_directories(dynamic_client_features PUBLIC include)
-target_link_libraries(dynamic_client_features PUBLIC bedrock::symbols)
+target_link_libraries(dynamic_client_features PUBLIC bedrock::sdk bedrock_nlohmann_headers)
 target_compile_features(dynamic_client_features PUBLIC cxx_std_20)
 set_property(TARGET dynamic_client_features PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -31,8 +31,8 @@ if(WIN32)
         src/freecam/freecam.cpp src/freecam/worker.cpp)
     target_include_directories(DynamicClient PRIVATE src)
     # Use the public SDK alongside the first-party native adapters.
-    target_link_libraries(DynamicClient PRIVATE bedrock::sdk dynamic_client_features
-        bedrock::client bedrock::game_hooks bedrock::gui_overlay bedrock::logging EnTT::EnTT)
+    target_link_libraries(DynamicClient PRIVATE EnTT::EnTT bedrock::sdk dynamic_client_features
+        bedrock::client bedrock::game_hooks bedrock::gui_overlay)
     target_compile_options(DynamicClient PRIVATE /utf-8)
     set_target_properties(DynamicClient PROPERTIES PREFIX ""
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

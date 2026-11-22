@@ -1,5 +1,5 @@
 #pragma once
-#include <bedrock/detail/client_events.hpp>
+#include <bedrock/sdk/events.hpp>
 #include <functional>
 
 // Sample-owned input snapshot event. Not a BedrockDynamicSDK core dependency.
@@ -15,7 +15,11 @@ struct InputFrameEvent {
         return minecraftFocused && gameplayCursorHidden && forwardHeld && !shiftHeld;
     }
 };
-using AutoSprintEvents = bedrock::EventBus<InputFrameEvent>;
+
+// Public SDK event signal (EventSignal<const InputFrameEvent&>), replacing the
+// former bedrock::EventBus/EventChannel dependency. Has subscribe()/publish()
+// but NO listeners() query.
+using AutoSprintEvents = bedrock::sdk::Events<InputFrameEvent>;
 
 class AutoSprintFeature {
 public:
@@ -26,12 +30,12 @@ public:
     AutoSprintFeature(const AutoSprintFeature&) = delete;
     AutoSprintFeature& operator=(const AutoSprintFeature&) = delete;
 
-    [[nodiscard]] bool ownsSprint() const noexcept { return ownSprint_; }
+    [[nodiscard]] bool ownsSprint() const noexcept;
 private:
     void onInputFrame(const InputFrameEvent& frame);
     void release();
     AutoSprintEvents& events_;
+    bedrock::sdk::Subscription subscription_;
     SendSprint send_;
     bool ownSprint_{};
-    bedrock::EventChannel<InputFrameEvent>::ListenerId frameId_{};
 };
