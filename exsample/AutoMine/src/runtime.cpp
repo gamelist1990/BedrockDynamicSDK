@@ -197,7 +197,7 @@ void AutoMineMod::initialize() {
             craftProfile_ = profile;
         // Path display is cosmetic: never fail startup over it.
         std::string outlineError;
-        outlineReady_ = outline_.install(resolver_, profile.json(), outlineError);
+        outlineReady_ = outline_.install(profile, outlineError);
         if (!outlineReady_)
             note("path renderer unavailable: " + outlineError);
         // Actor access (combat) is optional too.

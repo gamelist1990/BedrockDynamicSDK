@@ -132,8 +132,14 @@ bool ProfileManager::prepareEmbeddedJson(const std::string& json,const Adapter& 
         const auto root=bedrock::parseNativeProfile(json);
         Resolver resolver;
         GameIdentity identity;
+        ProfileChoice choice;choice.version=root.at("target").at("version").get<std::string>();choice.source=ProfileSource::Embedded;choice.path="embedded";
+        // The identity must be inspected from the live module and the
+        // profile validated against it before attaching, exactly as
+        // prepare() does; attaching with a default (empty) identity
+        // could never pass the module-identity check.
+        if(!inspectLoadedGame(identity,error)||!validateDownloadedProfile(json,choice,identity,error))return false;
+        choice.identity=identity;
         if(!resolver.loadJson(json,error)||!resolver.attachWindowsMainModule(identity,error)||!resolver.exactBuild())return false;
-        ProfileChoice choice;choice.version=root.at("target").at("version").get<std::string>();choice.source=ProfileSource::Embedded;choice.path="embedded";choice.identity=identity;
         auto candidate=std::shared_ptr<const RuntimeProfile>(new RuntimeProfile(json,std::move(choice),std::move(resolver),candidates));
         if(!adapter(*candidate,error))return false;
         {std::lock_guard lock(mutex_);current_=std::move(candidate);}
