@@ -35,7 +35,7 @@ void AutoMineMod::enterPathDigCell(BlockPos3 cell, const std::string &id) {
     note("path dig: " + targetId_);
 }
 
-bool AutoMineMod::tickBridge(bedrock::Vec3 feet) {
+bool AutoMineMod::tickBridge(bedrock::sdk::Vec3Value feet) {
     std::vector<BlockPos3> run;
     for (std::size_t i = pathIdx_; i < path_.size() && pathBridge_[i] && !pathParkour_[i] &&
                                    !pathPillar_[i] && path_[i].y == path_[pathIdx_].y;
@@ -77,7 +77,7 @@ bool AutoMineMod::tickBridge(bedrock::Vec3 feet) {
         fail("no usable spare blocks");
         return true;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return true;
     if (bridgeTicks_ % 3 == 1)
@@ -102,7 +102,7 @@ bool AutoMineMod::tickBridge(bedrock::Vec3 feet) {
     return true;
 }
 
-void AutoMineMod::tickPillarWaypoint(bedrock::Vec3 feet) {
+void AutoMineMod::tickPillarWaypoint(bedrock::sdk::Vec3Value feet) {
     const auto wp = path_[pathIdx_];
     const auto terrain = [this](automine::PlanCell c) { return planTerrain(c); };
     const BlockPos3 floor{wp.x, wp.y - 1, wp.z};
@@ -158,7 +158,7 @@ void AutoMineMod::tickPillarWaypoint(bedrock::Vec3 feet) {
         fail("no usable blocks");
         return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     if (std::hypot(feet.x - wp.x - .5, feet.z - wp.z - .5) > .15 &&
@@ -186,7 +186,7 @@ bool AutoMineMod::wallLandingAnchor(BlockPos3 floor) {
     return false;
 }
 
-bool AutoMineMod::placeLandingPad(BlockPos3 floor, bedrock::Vec3 eye, std::string *placedId) {
+bool AutoMineMod::placeLandingPad(BlockPos3 floor, bedrock::sdk::Vec3Value eye, std::string *placedId) {
     if (anyScreenUp())
         return false; // placement on an interactive support can push a screen
     const auto existing = blockAt(floor);
@@ -225,7 +225,7 @@ bool AutoMineMod::placeLandingPad(BlockPos3 floor, bedrock::Vec3 eye, std::strin
     return false;
 }
 
-bool AutoMineMod::tickParkourWaypoint(bedrock::Vec3 feet) {
+bool AutoMineMod::tickParkourWaypoint(bedrock::sdk::Vec3Value feet) {
     const auto wp = path_[pathIdx_];
     setAttack(false);
     setUse(false);
@@ -295,7 +295,7 @@ bool AutoMineMod::tickParkourWaypoint(bedrock::Vec3 feet) {
         return true;
     }
     parkourLandingTicks_ = 0;
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye)) {
         pressKey(kKeyW, false);
         pressKey(kKeySprint, false);
@@ -327,7 +327,7 @@ bool AutoMineMod::tickParkourWaypoint(bedrock::Vec3 feet) {
     if (parkourStage_ == 0) {
         parkourSprintInput_ = false;
         pressKey(kKeySprint, false);
-        const bedrock::Vec3 back{static_cast<float>(parkourFrom_.x + .5 - ux * runup), eye.y,
+        const bedrock::sdk::Vec3Value back{static_cast<float>(parkourFrom_.x + .5 - ux * runup), eye.y,
                                  static_cast<float>(parkourFrom_.z + .5 - uz * runup)};
         if (std::hypot(back.x - feet.x, back.z - feet.z) > .23) {
             if (!automine::walkClear({feet.x, feet.y, feet.z},
@@ -407,7 +407,7 @@ bool AutoMineMod::isScaffoldBlock(const std::string &local) {
     return isSpareBlock(local);
 }
 
-bool AutoMineMod::scaffoldWanted(bedrock::Vec3 feet) {
+bool AutoMineMod::scaffoldWanted(bedrock::sdk::Vec3Value feet) {
     // Once committed, keep the climb until it reaches a mining stance or
     // explicitly fails. Don't recommit after a failed mining handoff.
     if (navReturn_ || scaffoldFor_ == target_ || inWaterNow(feet))
@@ -438,7 +438,7 @@ bool AutoMineMod::scaffoldWanted(bedrock::Vec3 feet) {
     return true;
 }
 
-bool AutoMineMod::scaffoldStanceOk(bedrock::Vec3 feet) {
+bool AutoMineMod::scaffoldStanceOk(bedrock::sdk::Vec3Value feet) {
     if (navReturn_ || inWaterNow(feet))
         return false;
     const int fy = static_cast<int>(std::floor(feet.y));
@@ -457,7 +457,7 @@ bool AutoMineMod::scaffoldStanceOk(bedrock::Vec3 feet) {
     return stance && scaffoldCount() >= 3;
 }
 
-void AutoMineMod::engageScaffold(bedrock::Vec3 feet) {
+void AutoMineMod::engageScaffold(bedrock::sdk::Vec3Value feet) {
     scaffoldActive_ = true;
     scaffoldFor_ = target_;
     scaffoldId_ = targetId_;
@@ -496,7 +496,7 @@ void AutoMineMod::scaffoldFail(const std::string &why) {
     bestDist2_ = 1e18;
 }
 
-bool AutoMineMod::tickScaffold(bedrock::Vec3 feet) {
+bool AutoMineMod::tickScaffold(bedrock::sdk::Vec3Value feet) {
     if (!hasTarget_ || !(target_ == scaffoldFor_)) {
         endScaffold();
         return false;
@@ -514,10 +514,10 @@ bool AutoMineMod::tickScaffold(bedrock::Vec3 feet) {
         scaffoldFail("no rise");
         return true;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return true;
-    const bedrock::Vec3 center{scaffoldFor_.x + .5f, scaffoldFor_.y + .5f, scaffoldFor_.z + .5f};
+    const bedrock::sdk::Vec3Value center{scaffoldFor_.x + .5f, scaffoldFor_.y + .5f, scaffoldFor_.z + .5f};
     const int fy = static_cast<int>(std::floor(feet.y));
     const BlockPos3 stance{static_cast<int>(std::floor(feet.x)), fy,
                            static_cast<int>(std::floor(feet.z))};
@@ -642,7 +642,7 @@ bool AutoMineMod::tickScaffold(bedrock::Vec3 feet) {
     }
     const int pfx = static_cast<int>(std::floor(feet.x));
     const int pfz = static_cast<int>(std::floor(feet.z));
-    const bedrock::Vec3 aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
+    const bedrock::sdk::Vec3Value aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
     faceToward(eye, aim, 3.f);
     pressKey(kKeySneak, true);
     pressKey(kKeySpace, true);

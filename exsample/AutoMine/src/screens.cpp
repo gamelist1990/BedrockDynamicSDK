@@ -3,13 +3,25 @@
 
 namespace automine::client {
 
-void AutoMineMod::loadScreen(const bedrock::RuntimeProfile &profile) {
+void AutoMineMod::loadScreen(const bedrock::sdk::Profile &profile,
+                             const bedrock::sdk::SymbolResolver &resolver) {
+    (void)profile;
     try {
-        const auto root = bedrock::parseNativeProfile(profile.json());
-        topScreenFn_ = reinterpret_cast<GetTopScreenName>(bedrock::native_profile::checked(
-            root, nlohmann::json{{"symbol", "ClientInstance::getTopScreenName"}}));
-        memDeallocate_ = bedrock::native_profile::checked(
-            root, nlohmann::json{{"symbol", "Bedrock::Memory::deallocate"}});
+        auto resolve = [&resolver](const char *name) -> std::uintptr_t {
+            if (const auto hit = resolver.resolve(name))
+                return hit->address;
+            if (const auto hit = resolver.resolveCandidate(name))
+                return hit->address;
+            return 0;
+        };
+        const auto fn = resolve("ClientInstance::getTopScreenName");
+        const auto dealloc = resolve("Bedrock::Memory::deallocate");
+        if (!fn || !dealloc) {
+            screenReady_ = false;
+            return;
+        }
+        topScreenFn_ = reinterpret_cast<GetTopScreenName>(fn);
+        memDeallocate_ = reinterpret_cast<void *>(dealloc);
         screenReady_ = true;
     } catch (...) {
         screenReady_ = false;

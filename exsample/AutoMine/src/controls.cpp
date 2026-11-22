@@ -4,82 +4,26 @@
 namespace automine::client {
 
 bool AutoMineMod::releaseNativeKey(unsigned key) {
-    return game_.sendNativeKey(key, false) || access_.sendKey(key, false);
+    // The native access' sendKey fallback was dead (ClientAccess::sendKey
+    // is never overridden by the game access and always returned false),
+    // so the hook dispatch send is the only live path, as before.
+    return game_.sendNativeKey(key, false);
 }
 
-bool AutoMineMod::setNativeMouseDown(bedrock::MouseButton button, bool down) {
-    return game_.sendMouseInput(static_cast<unsigned>(button), down);
-}
-
-void AutoMineMod::installMouseCapture(const bedrock::Resolver &resolver) {
-    auto res = resolver.resolveRvaForSharedHook("MouseDevice::feed");
-    if (!res) {
-        note("mouse capture: MouseDevice::feed unresolved");
-        return;
-    }
-    auto *target = reinterpret_cast<void *>(res->address);
-    if (!BDS_HookSubscribe(BDS_HOOK_MOUSE_FEED, target, &onMouseCapture, this, &mouseToken_)) {
-        note("mouse capture: subscribe failed");
-        return;
-    }
-    note("mouse capture: subscribed");
-}
-
-void BDS_HOOK_CALL AutoMineMod::onMouseCapture(void *user, void *raw, BDS_HookNext next,
-                                               void *frame) noexcept {
-    auto &self = *static_cast<AutoMineMod *>(user);
-    try {
-        std::lock_guard lock(self.mouseMutex_);
-        self.lastMouse_ = *static_cast<BDS_MouseArgs *>(raw);
-        self.haveMouse_ = true;
-    } catch (...) {
-    }
-    next(frame, raw);
-}
-
-uintptr_t AutoMineMod::dispatchMouseSeh(void *args) {
-    __try {
-        return BDS_HookDispatch(BDS_HOOK_MOUSE_FEED, args);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
-}
-
-bool AutoMineMod::feedMouse(int action, int state, int dx, int dy) {
-    crashrec::Section section("feedMouse");
-    BDS_MouseArgs args;
-    {
-        std::lock_guard lock(mouseMutex_);
-        if (!haveMouse_)
-            return false;
-        args = lastMouse_;
-    }
-    args.action = static_cast<std::int8_t>(action);
-    args.state = static_cast<std::int8_t>(state);
-    args.dx = static_cast<std::int16_t>(std::clamp(dx, -32768, 32767));
-    args.dy = static_cast<std::int16_t>(std::clamp(dy, -32768, 32767));
-    args.x = static_cast<std::int16_t>(std::clamp(static_cast<int>(args.x) + dx, -32768, 32767));
-    args.y = static_cast<std::int16_t>(std::clamp(static_cast<int>(args.y) + dy, -32768, 32767));
-    args.force_motionless_pointer &= BDS_MOUSE_FLAG_FORCE_MOTIONLESS;
-    dispatchMouseSeh(&args);
-    {
-        std::lock_guard lock(mouseMutex_);
-        lastMouse_.x = args.x;
-        lastMouse_.y = args.y;
-    }
-    return true;
+bool AutoMineMod::setNativeMouseDown(unsigned button, bool down) {
+    return game_.sendMouseInput(button, down);
 }
 
 bool AutoMineMod::feedMove(int dx, int dy) {
-    return feedMouse(0, 0, dx, dy);
+    return game_.sendMouseMotion(dx, dy);
 }
 
 bool AutoMineMod::feedButton(bool down) {
-    return feedMouse(1, down ? 1 : 0, 0, 0);
+    return game_.sendMouseInput(1, down);
 }
 
 bool AutoMineMod::feedUseButton(bool down) {
-    return feedMouse(2, down ? 1 : 0, 0, 0);
+    return game_.sendMouseInput(2, down);
 }
 
 void AutoMineMod::setUse(bool down) {
@@ -91,7 +35,7 @@ void AutoMineMod::setUse(bool down) {
     }
     if (useHeld_ == down)
         return;
-    if (feedUseButton(down) || setNativeMouseDown(bedrock::MouseButton::Right, down))
+    if (feedUseButton(down) || setNativeMouseDown(2, down))
         useHeld_ = down;
 }
 
@@ -108,8 +52,7 @@ void AutoMineMod::pressKey(unsigned key, bool down) {
         }
     }
     if (down) {
-        if (!heldKeys_.count(key) &&
-            (game_.sendNativeKey(key, true) || access_.sendKey(key, true)))
+        if (!heldKeys_.count(key) && game_.sendNativeKey(key, true))
             heldKeys_.insert(key);
     } else if (heldKeys_.erase(key))
         (void)releaseNativeKey(key);
@@ -122,7 +65,7 @@ void AutoMineMod::setAttack(bool down) {
     }
     if (attackHeld_ == down)
         return;
-    if (feedButton(down) || setNativeMouseDown(bedrock::MouseButton::Left, down))
+    if (feedButton(down) || setNativeMouseDown(1, down))
         attackHeld_ = down;
 }
 
@@ -160,7 +103,7 @@ void AutoMineMod::releaseInputs() {
     if (attackHeld_) {
         try {
             feedButton(false);
-            setNativeMouseDown(bedrock::MouseButton::Left, false);
+            setNativeMouseDown(1, false);
         } catch (...) {
         }
         attackHeld_ = false;
@@ -168,26 +111,26 @@ void AutoMineMod::releaseInputs() {
     if (useHeld_) {
         try {
             feedUseButton(false);
-            setNativeMouseDown(bedrock::MouseButton::Right, false);
+            setNativeMouseDown(2, false);
         } catch (...) {
         }
         useHeld_ = false;
     }
 }
 
-bool AutoMineMod::independentHit(bedrock::Vec3 eye, BlockPos3 &cell, unsigned &face,
-                                 bedrock::Vec3 &hit) {
+bool AutoMineMod::independentHit(bedrock::sdk::Vec3Value eye, BlockPos3 &cell, unsigned &face,
+                                 bedrock::sdk::Vec3Value &hit) {
     if (!independentAim_)
         return false;
     constexpr double rad = 3.141592653589793 / 180.0;
     const double yaw = independentYaw_ * rad, pitch = independentPitch_ * rad;
-    const bedrock::Vec3 dir{static_cast<float>(-std::sin(yaw) * std::cos(pitch)),
+    const bedrock::sdk::Vec3Value dir{static_cast<float>(-std::sin(yaw) * std::cos(pitch)),
                             static_cast<float>(-std::sin(pitch)),
                             static_cast<float>(std::cos(yaw) * std::cos(pitch))};
     BlockPos3 previous{static_cast<int>(std::floor(eye.x)), static_cast<int>(std::floor(eye.y)),
                        static_cast<int>(std::floor(eye.z))};
     for (double distance = .02; distance <= automine::miningReach + .1; distance += .02) {
-        const bedrock::Vec3 point{eye.x + dir.x * static_cast<float>(distance),
+        const bedrock::sdk::Vec3Value point{eye.x + dir.x * static_cast<float>(distance),
                                   eye.y + dir.y * static_cast<float>(distance),
                                   eye.z + dir.z * static_cast<float>(distance)};
         cell = {static_cast<int>(std::floor(point.x)), static_cast<int>(std::floor(point.y)),
@@ -224,7 +167,7 @@ void AutoMineMod::flushIndependent() {
         return;
     const bool active =
         independentReady_ && !stopped_.load() && !controls_.manualActive() && !automationScreenUp();
-    bedrock::AutomationIntent intent;
+    bedrock::sdk::AutomationIntentValue intent;
     intent.active = active && (phase_ != Phase::Idle || !heldKeys_.empty());
     intent.forward =
         static_cast<float>(heldKeys_.count(kKeyW)) - static_cast<float>(heldKeys_.count(kKeyS));
@@ -259,17 +202,17 @@ void AutoMineMod::flushIndependent() {
              " sprint_calls=" + std::to_string(observed.sprintCalls));
     }
     parkourInputLog_ = inputLog;
-    controls_.update(client_.load(), epoch_.load(), intent, snap_ ? snap_->rotation.yaw : 0.f);
+    controls_.update(client_.load(), epoch_.load(), intent, snap_ ? snap_->rotation_yaw : 0.f);
     void *p = player();
     if (!p) {
         nativeMining_ = false;
         nativeUsing_ = false;
         return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     BlockPos3 cell{};
     unsigned face{};
-    bedrock::Vec3 hit{};
+    bedrock::sdk::Vec3Value hit{};
     const bool targetMine = phase_ == Phase::Mine;
     const bool ray = active && (!targetMine || mineAimTick_ == tickCount_) &&
                      eyePos(eye) && independentHit(eye, cell, face, hit);
@@ -301,11 +244,11 @@ void AutoMineMod::flushIndependent() {
     if (active && attackHeld_ && entityAttack && tickCount_ - lastNativeAttack_ >= 6) {
         const auto eid = phase_ == Phase::Combat ? combatEid_ : forageEid_;
         if (eid && actorsReady_)
-            if (const auto actors = runtimeActors_.snapshot(level_.load()))
-                for (void *actor : *actors) {
-                    std::uint32_t candidate{};
-                    if (actorRegistry_.readEntityId(actor, candidate) && candidate == eid) {
-                        (void)blockActions_.attackActor(p, actor);
+            if (const auto samples = actorSamples())
+                for (const auto &sample : *samples) {
+                    if (sample.entityId == eid) {
+                        (void)blockActions_.attackActor(
+                            p, reinterpret_cast<void *>(sample.actorKey));
                         lastNativeAttack_ = tickCount_;
                         break;
                     }
@@ -324,13 +267,13 @@ void AutoMineMod::flushIndependent() {
             return;
         }
         bool destroyed{};
-        bedrock::BlockActionReport report;
+        bedrock::sdk::BlockActionReportValue report;
         const bool beginCall = !nativeMining_;
         const bool ok = blockActions_.mine(p, {cell.x, cell.y, cell.z}, face, eye, hit, beginCall,
                                            destroyed, &report);
         if (ok) {
             float prog = 0;
-            bedrock::BlockPos tgt{-1, -1, -1};
+            bedrock::sdk::BlockPos tgt{-1, -1, -1};
             if (blockActions_.destroyState(p, prog, tgt)) {
                 destroyProgress_ = prog;
                 destroyTarget_ = tgt;
@@ -376,8 +319,8 @@ void AutoMineMod::flushIndependent() {
                 if (!craft_.backgroundActive()) {
                     const auto kind =
                         contains(id, "crafting_table")
-                            ? bedrock::NativeItemStackRequests::BackgroundKind::Table
-                            : bedrock::NativeItemStackRequests::BackgroundKind::Furnace;
+                            ? bedrock::sdk::BackgroundKindValue::Table
+                            : bedrock::sdk::BackgroundKindValue::Furnace;
                     (void)craft_.backgroundUse(kind, {cell.x, cell.y, cell.z}, face, eye, hit);
                 }
                 lastNativeUse_ = tickCount_;
@@ -401,7 +344,7 @@ void *AutoMineMod::region() {
     return world_.region(client_.load());
 }
 
-bool AutoMineMod::feetPos(bedrock::Vec3 &out) {
+bool AutoMineMod::feetPos(bedrock::sdk::Vec3Value &out) {
     void *p = player();
     if (!p)
         return false;
@@ -410,7 +353,7 @@ bool AutoMineMod::feetPos(bedrock::Vec3 &out) {
     if (!shape && actors.aabbShapeComponentHashAlternate)
         shape = world_.component(p, actors.aabbShapeComponentHashAlternate);
     if (shape) {
-        bedrock::Vec3 mn{}, mx{};
+        bedrock::sdk::Vec3Value mn{}, mx{};
         if (world_.readField(shape, actors.aabbMinimumOffset, mn) &&
             world_.readField(shape, actors.aabbMaximumOffset, mx) && mx.y > mn.y &&
             mx.y - mn.y < 4.f) {
@@ -425,7 +368,7 @@ bool AutoMineMod::feetPos(bedrock::Vec3 &out) {
     return true;
 }
 
-bool AutoMineMod::eyePos(bedrock::Vec3 &out) {
+bool AutoMineMod::eyePos(bedrock::sdk::Vec3Value &out) {
     if (!feetPos(out))
         return false;
     out.y += 1.62f;
@@ -436,7 +379,7 @@ std::string AutoMineMod::blockAt(BlockPos3 pos) {
     void *src = region();
     if (!src)
         return {};
-    bedrock::BlockPos bp;
+    bedrock::sdk::BlockPos bp;
     bp.x = pos.x;
     bp.y = pos.y;
     bp.z = pos.z;
@@ -444,10 +387,10 @@ std::string AutoMineMod::blockAt(BlockPos3 pos) {
     return cell.identifier;
 }
 
-bool AutoMineMod::lineOfSight(bedrock::Vec3 eye, BlockPos3 targetCell, BlockPos3 &hit) {
+bool AutoMineMod::lineOfSight(bedrock::sdk::Vec3Value eye, BlockPos3 targetCell, BlockPos3 &hit) {
     const auto miningHit =
         automine::miningPoint({eye.x, eye.y, eye.z}, {targetCell.x, targetCell.y, targetCell.z});
-    const bedrock::Vec3 goal{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
+    const bedrock::sdk::Vec3Value goal{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
                              static_cast<float>(miningHit.z)};
     double dx = goal.x - eye.x, dy = goal.y - eye.y, dz = goal.z - eye.z;
     const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -500,8 +443,8 @@ bool AutoMineMod::lineOfSight(bedrock::Vec3 eye, BlockPos3 targetCell, BlockPos3
 bool AutoMineMod::rotation(float &yaw, float &pitch) {
     if (!snap_)
         return false;
-    yaw = independent_ && independentAim_ ? independentYaw_ : snap_->rotation.yaw;
-    pitch = independent_ && independentAim_ ? independentPitch_ : snap_->rotation.pitch;
+    yaw = independent_ && independentAim_ ? independentYaw_ : snap_->rotation_yaw;
+    pitch = independent_ && independentAim_ ? independentPitch_ : snap_->rotation_pitch;
     return true;
 }
 
@@ -513,7 +456,7 @@ float AutoMineMod::wrapDeg(float deg) {
     return deg;
 }
 
-bool AutoMineMod::faceToward(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance) {
+bool AutoMineMod::faceToward(bedrock::sdk::Vec3Value eye, bedrock::sdk::Vec3Value target, float tolerance) {
     const double dx = target.x - eye.x, dy = target.y - eye.y, dz = target.z - eye.z;
     const double horiz = std::hypot(dx, dz);
     const float wantYaw = static_cast<float>(std::atan2(-dx, dz) * 180.0 / 3.141592653589793);
@@ -569,7 +512,7 @@ bool AutoMineMod::faceToward(bedrock::Vec3 eye, bedrock::Vec3 target, float tole
     return within;
 }
 
-bool AutoMineMod::faceAim(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance,
+bool AutoMineMod::faceAim(bedrock::sdk::Vec3Value eye, bedrock::sdk::Vec3Value target, float tolerance,
                           float smoothing) {
     if (!aimSmoothInit_) {
         aimSmooth_ = target;

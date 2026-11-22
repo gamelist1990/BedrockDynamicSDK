@@ -8,6 +8,8 @@
 
 namespace bedrock::sdk {
 
+class RosterAccess;
+
 struct LevelTickEventValue { void* level{}; std::uint64_t sequence{}; };
 struct GameplayEventValue { void* clientInstance{}; bool active{}; };
 enum class WorldChangeReasonValue : std::uint8_t { Joined, Left, JoinCancelled, DimensionChanged };
@@ -79,6 +81,7 @@ public:
     bool installFov(const SymbolResolver& resolver, std::string& error);
     bool installNativeKeyboard(const SymbolResolver& resolver, std::string_view profileJson, std::string& error);
     bool installGameplay(const SymbolResolver& resolver, std::string& error);
+    bool installWorldEvents(const SymbolResolver& resolver, std::string_view profileJson, std::string& error);
     bool installLevelTick(const SymbolResolver& resolver, std::string& error);
 
     bool sendNativeKey(unsigned key, bool pressed);
@@ -86,9 +89,26 @@ public:
     // Synthesize a mouse button event through the native input path
     // (freecam releases the buttons it swallowed when it toggles off).
     bool sendMouseInput(unsigned action, bool pressed);
+    // Synthetic relative pointer motion through the mouse feed (the
+    // motion counterpart of sendMouseInput).
+    bool sendMouseMotion(int dx, int dy);
+    // Whether the gameplay scope is currently active, as tracked by the
+    // hook dispatcher (the native gameplayActive signal).
+    [[nodiscard]] bool gameplayActive() const noexcept;
     // Pin the client instance the world-change events bind to
     // (split-screen disambiguation; freecam pins from its gameplay event).
     void pinWorldEventClient(void* client);
+
+    // Bind this Hooks' event dispatch to a RosterAccess' native game
+    // access, so the access' LevelTick scope opens inside this Hooks'
+    // LevelTick handlers and its reads (equipmentItem, localInventoryItem,
+    // actorIdentity, ...) see the world — the native pattern of a
+    // HookDispatch constructed with the access. Must be called before any
+    // subscription or install on this Hooks; returns false otherwise. The
+    // RosterAccess must outlive this Hooks.
+    bool useGameAccess(RosterAccess& access, std::string& error);
+    // The access bound by useGameAccess, or nullptr.
+    RosterAccess* gameAccess() noexcept { return gameAccess_; }
 
     // Uninstall all native hooks while preserving subscriptions/impl state.
     void stop() noexcept;
@@ -101,8 +121,16 @@ public:
     void clearObservedActors() noexcept;
 
 private:
+    // Binding step used by useGameAccess (defined in roster.cpp, where the
+    // native game access type is complete): recreates the dispatch around
+    // the given native ClientAccess. Kept free of any RosterAccess /
+    // NativeGameAccess reference so Hooks never drags the roster TU (and
+    // its native dependencies) into SDK-only links.
+    bool bindGameAccess(void* nativeAccess, std::string& error);
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    RosterAccess* gameAccess_{};
+    void* boundAccess_{};
     void ensureNative() noexcept;  // Lazily creates the native hook broker before any install touches it.
 };
 

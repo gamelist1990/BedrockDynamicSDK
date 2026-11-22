@@ -298,16 +298,16 @@ void AutoMineMod::craftUpdateGuarded(void *level) {
     craftReady_ = false;
 }
 
-void AutoMineMod::drawPathInner(void *raw) {
+void AutoMineMod::drawPathInner(bedrock::sdk::WorldRenderer &renderer) {
     try {
-        drawPath(raw);
+        drawPath(renderer);
     } catch (...) {
     }
 }
 
-void AutoMineMod::drawPathGuarded(void *raw) {
+void AutoMineMod::drawPathGuarded(bedrock::sdk::WorldRenderer &renderer) {
     __try {
-        drawPathInner(raw);
+        drawPathInner(renderer);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         InterlockedIncrement(&crashrec::g_sehFaults);
         outlineReady_ = false;
@@ -409,14 +409,14 @@ void AutoMineMod::tick() {
     }
     if (probePending_) {
         probePending_ = false;
-        bedrock::Vec3 pf;
+        bedrock::sdk::Vec3Value pf;
         if (feetPos(pf))
             probeActors(pf);
         else
             note("probe: no feet");
     }
     if (phase_ == Phase::Idle && (descendDone_ || huntLegDone_ || smeltDone_ || smeltFailed_)) {
-        bedrock::Vec3 pf;
+        bedrock::sdk::Vec3Value pf;
         if (feetPos(pf)) {
             if (cobbleDescend_ && descendDone_) {
                 cobbleDescend_ = false;
@@ -454,7 +454,7 @@ void AutoMineMod::tick() {
         }
     }
     if (phase_ == Phase::Idle) {
-        bedrock::Vec3 pf;
+        bedrock::sdk::Vec3Value pf;
         if (feetPos(pf) && tickIdleGuards(pf))
             return;
         clearPath();
@@ -470,7 +470,7 @@ void AutoMineMod::tick() {
         miningProgress_.pause(tickCount_);
         releaseInputs();
         progressGoal_ = {INT_MIN, 0, 0};
-        bedrock::Vec3 pausedFeet;
+        bedrock::sdk::Vec3Value pausedFeet;
         if (feetPos(pausedFeet))
             updatePath(pausedFeet);
         return;
@@ -486,7 +486,7 @@ void AutoMineMod::tick() {
         // A user's screen is not ours to dismiss.
         return;
     }
-    bedrock::Vec3 feet;
+    bedrock::sdk::Vec3Value feet;
     if (!feetPos(feet)) {
         miningProgress_.pause(tickCount_);
         releaseInputs();
@@ -501,7 +501,7 @@ void AutoMineMod::tick() {
             floodDryTicks_ = 0;
             pressKey(kKeySpace, true);
             if (lastDryValid_ && ++floodWetTicks_ > 20 * 5) {
-                bedrock::Vec3 eye;
+                bedrock::sdk::Vec3Value eye;
                 if (eyePos(eye))
                     faceToward(eye, {lastDryPos_.x, eye.y, lastDryPos_.z}, 5.f);
                 pressKey(kKeyW, true);

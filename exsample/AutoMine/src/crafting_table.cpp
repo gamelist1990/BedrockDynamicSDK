@@ -2,7 +2,7 @@
 
 namespace automine::client {
 
-int AutoMineMod::digPocketTick(bedrock::Vec3 feet, BlockPos3 &pocket, int &badMask, int &stage) {
+int AutoMineMod::digPocketTick(bedrock::sdk::Vec3Value feet, BlockPos3 &pocket, int &badMask, int &stage) {
     static constexpr int kDX[4] = {1, -1, 0, 0};
     static constexpr int kDZ[4] = {0, 0, 1, -1};
     const int fx = static_cast<int>(std::floor(feet.x));
@@ -57,10 +57,10 @@ int AutoMineMod::digPocketTick(bedrock::Vec3 feet, BlockPos3 &pocket, int &badMa
     const bool intersects = pocket.x < feet.x + .31f && pocket.x + 1 > feet.x - .31f &&
                             pocket.z < feet.z + .31f && pocket.z + 1 > feet.z - .31f;
     if (intersects && stage < 60) {
-        bedrock::Vec3 eye;
+        bedrock::sdk::Vec3Value eye;
         bool aimed = false;
         if (eyePos(eye)) {
-            const bedrock::Vec3 c{pocket.x + .5f, pocket.y + .5f, pocket.z + .5f};
+            const bedrock::sdk::Vec3Value c{pocket.x + .5f, pocket.y + .5f, pocket.z + .5f};
             aimed = faceToward(eye, c, 0.15f);
         }
         pressKey(kKeyS, aimed);
@@ -89,7 +89,7 @@ int AutoMineMod::digPocketTick(bedrock::Vec3 feet, BlockPos3 &pocket, int &badMa
     return 0;
 }
 
-bool AutoMineMod::workstationCellReady(BlockPos3 cell, bedrock::Vec3 eye) {
+bool AutoMineMod::workstationCellReady(BlockPos3 cell, bedrock::sdk::Vec3Value eye) {
     const auto at = blockAt(cell);
     if (at.empty() ||
         (!isAir(at) && !isPassableCell(at) && !contains(localPart(at), "water")))
@@ -113,7 +113,7 @@ bool AutoMineMod::workstationCellReady(BlockPos3 cell, bedrock::Vec3 eye) {
     return !options.empty();
 }
 
-bool AutoMineMod::placeWorkstation(BlockPos3 cell, bedrock::Vec3 eye) {
+bool AutoMineMod::placeWorkstation(BlockPos3 cell, bedrock::sdk::Vec3Value eye) {
     setUse(false);
     if (controls_.manualActive() || anyScreenUp() || tickCount_ - lastNativeUse_ < 4 ||
         !workstationCellReady(cell, eye))
@@ -141,11 +141,11 @@ bool AutoMineMod::placeWorkstation(BlockPos3 cell, bedrock::Vec3 eye) {
            accepted;
 }
 
-void AutoMineMod::tickPlaceTable(bedrock::Vec3 feet) {
+void AutoMineMod::tickPlaceTable(bedrock::sdk::Vec3Value feet) {
     if (backgroundCraft_)
         setUse(false);
     {
-        bedrock::Vec3 eye0;
+        bedrock::sdk::Vec3Value eye0;
         if (eyePos(eye0)) {
             const int fx = static_cast<int>(std::floor(feet.x));
             const int fy = static_cast<int>(std::floor(feet.y));
@@ -197,7 +197,7 @@ void AutoMineMod::tickPlaceTable(bedrock::Vec3 feet) {
         } else
             return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     if (chainPlaceCell_.x == INT_MIN) {
@@ -206,7 +206,7 @@ void AutoMineMod::tickPlaceTable(bedrock::Vec3 feet) {
         const int fz = static_cast<int>(std::floor(feet.z));
         std::array<BlockPos3, 4> dirs{{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}}};
         if (hasTarget_) {
-            bedrock::Vec3 want{target_.x + .5f - feet.x, 0, target_.z + .5f - feet.z};
+            bedrock::sdk::Vec3Value want{target_.x + .5f - feet.x, 0, target_.z + .5f - feet.z};
             std::stable_sort(dirs.begin(), dirs.end(), [&](const BlockPos3 &a, const BlockPos3 &b) {
                 return (a.x * want.x + a.z * want.z) > (b.x * want.x + b.z * want.z);
             });
@@ -342,7 +342,7 @@ void AutoMineMod::tickPlaceTable(bedrock::Vec3 feet) {
     }
     slot = placeSlotTick("crafting_table", chainPlaceSlotIdx_, chainPlaceSlotTicks_, slot);
     selectSlot(slot);
-    const bedrock::Vec3 aim{chainPlaceCell_.x + .5f, static_cast<float>(chainPlaceCell_.y),
+    const bedrock::sdk::Vec3Value aim{chainPlaceCell_.x + .5f, static_cast<float>(chainPlaceCell_.y),
                             chainPlaceCell_.z + .5f};
     faceToward(eye, aim, 3.f);
     pressKey(kKeyS, chainPlaceCell_.x < feet.x + .31f && chainPlaceCell_.x + 1 > feet.x - .31f &&
@@ -382,9 +382,9 @@ bool AutoMineMod::tableBanned(const BlockPos3 &p) {
     return tickCount_ < chainTableBadUntil_ && p == chainTableBad_;
 }
 
-void AutoMineMod::tickOpenTable(bedrock::Vec3 feet) {
+void AutoMineMod::tickOpenTable(bedrock::sdk::Vec3Value feet) {
     if (backgroundCraft_ &&
-        craft_.backgroundOpen(bedrock::NativeItemStackRequests::BackgroundKind::Table)) {
+        craft_.backgroundOpen(bedrock::sdk::BackgroundKindValue::Table)) {
         setUse(false);
         note("craft chain: background table open (chat untouched)");
         chainAdvance();
@@ -404,12 +404,12 @@ void AutoMineMod::tickOpenTable(bedrock::Vec3 feet) {
         chainFail("作業台を開けなかった");
         return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     const auto tableHit = automine::miningPoint(
         {eye.x, eye.y, eye.z}, {chainTablePos_.x, chainTablePos_.y, chainTablePos_.z});
-    const bedrock::Vec3 center{static_cast<float>(tableHit.x), static_cast<float>(tableHit.y),
+    const bedrock::sdk::Vec3Value center{static_cast<float>(tableHit.x), static_cast<float>(tableHit.y),
                                static_cast<float>(tableHit.z)};
     BlockPos3 occ;
     if (!lineOfSight(eye, chainTablePos_, occ)) {
@@ -439,9 +439,9 @@ void AutoMineMod::tickOpenTable(bedrock::Vec3 feet) {
             faceToward(eye, center, 3.f);
             BlockPos3 cell;
             unsigned face{};
-            bedrock::Vec3 hit{};
+            bedrock::sdk::Vec3Value hit{};
             if (independentHit(eye, cell, face, hit) && cell == chainTablePos_)
-                (void)craft_.backgroundUse(bedrock::NativeItemStackRequests::BackgroundKind::Table,
+                (void)craft_.backgroundUse(bedrock::sdk::BackgroundKindValue::Table,
                                            {cell.x, cell.y, cell.z}, face, eye, hit);
         }
         if (craft_.backgroundFailed())
@@ -468,7 +468,7 @@ void AutoMineMod::tickOpenTable(bedrock::Vec3 feet) {
 
 void AutoMineMod::tickOpenInventory() {
     if (backgroundCraft_) {
-        if (craft_.backgroundOpen(bedrock::NativeItemStackRequests::BackgroundKind::Inventory)) {
+        if (craft_.backgroundOpen(bedrock::sdk::BackgroundKindValue::Inventory)) {
             note("craft chain: background inventory open (chat untouched)");
             chainAdvance();
             return;

@@ -10,14 +10,7 @@ void AutoMineMod::signalStop() {
 void AutoMineMod::stop() {
     signalStop();
     controls_.stop();
-    if (renderToken_) {
-        BDS_HookUnsubscribe(renderToken_);
-        renderToken_ = nullptr;
-    }
-    if (mouseToken_) {
-        BDS_HookUnsubscribe(mouseToken_);
-        mouseToken_ = nullptr;
-    }
+    renderSub_ = {};
     craft_.stop();
     gui_.stop();
     releaseInputs();
@@ -126,94 +119,118 @@ void AutoMineMod::loadConfig(const std::filesystem::path &dir) {
         discardItems_.insert(localPart(id));
 }
 
-void AutoMineMod::initialize() {
-    injected_.setDiagnostic([this](const std::string &text) { note("cmd: " + text); });
-    std::string defError;
-    if (!injected_.addMergedEnum("MineBlock", "Block", {"status", "stop", "path", "mobs", "food"},
-                                 defError) ||
-        !injected_.add(
-            "mine", "AutoMine: find and mine nearby blocks",
-            {{{"what", bedrock::InjectedType::customEnum("MineBlock"), false, 0},
-              {"count", bedrock::InjectedType::integer(), true, 0}},
-             {}},
-            [this](const std::string &line) {
-                std::lock_guard lock(nativeMutex_);
-                if (nativeLines_.size() < 16)
-                    nativeLines_.push_back(line);
-            },
-            defError))
-        throw std::runtime_error("/mine injected command definition rejected: " + defError);
-    craft_.onDiagnostic([this](const std::string &text) { note("craft: " + text); });
-    bedrock::ProfileManager profiles;
-    const bedrock::ProfileRequirements required{bedrock::Feature::Gameplay,
-                                                bedrock::Feature::LevelTick,
-                                                bedrock::Feature::World,
-                                                bedrock::Feature::Motion,
-                                                bedrock::Feature::Gui,
-                                                bedrock::Feature::WorldHeight,
-                                                bedrock::Feature::ClientCommands,
-                                                bedrock::Feature::WorldEvents,
-                                                bedrock::Feature::Actors,
-                                                bedrock::Feature::Camera};
-    const bedrock::ProfileOptions options{bedrock::UpdatePolicy::RefreshIfNeeded,
-                                          bedrock::CandidatePolicy::AllowCandidates};
-    std::string error;
-    if (!profiles.prepare(
-            required, options,
-            [this](const bedrock::RuntimeProfile &profile, std::string &failure) {
-                if (independent_) {
-                    const auto root = bedrock::parseNativeProfile(profile.json());
-                    if (!root.at("layouts").contains("AutomationControls") ||
-                        !root.at("layouts").contains("BlockActions") ||
-                        root.at("layouts").at("AutomationControls").value("revision", 0) < 2 ||
-                        root.at("layouts").at("BlockActions").value("revision", 0) < 2 ||
-                        (backgroundCraft_ &&
-                         !root.at("layouts").contains("BackgroundContainers"))) {
-                        failure = "profile predates independent automation controls";
-                        return false;
-                    }
-                }
-                if (!gui_.load(profile, failure) || !injected_.load(profile, failure) ||
-                    !camera_.load(profile, failure) || !loadWorld(profile, failure))
-                    return false;
-                // AutoCraft (real ItemStackRequest crafting) is
-                // optional: mining keeps working without it.
-                std::string craftError;
-                craftReady_ = craft_.load(profile, craftError);
-                if (!craftReady_)
-                    note("craft adapter unavailable: " + craftError);
-                else
-                    craftProfileJson_ = profile.json();
-                // Path display is cosmetic: never fail startup over it.
-                std::string outlineError;
-                outlineReady_ = outline_.load(profile, outlineError);
-                if (!outlineReady_)
-                    note("path renderer unavailable: " + outlineError);
-                // Actor access (combat) is optional too.
-                std::string actorError;
-                actorsReady_ = loadActors(profile, actorError);
-                if (!actorsReady_)
-                    note("actor access unavailable: " + actorError);
-                loadScreen(profile); // verified screen state for item moves
-                std::string accessError;
-                if (!access_.load(profile, accessError))
-                    note("game access unavailable: " + accessError);
-                return true;
-            },
-            error))
-        throw std::runtime_error(error);
+namespace {
+// Inert camera-visual policy for AutoMine: it reads the player proxy only
+// and never drives the camera visuals, so every visual feature stays off
+// (the same state freecam's policy reports while freecam is inactive).
+bool camPolicyInactive() noexcept { return false; }
+std::uint64_t camPolicyZero() noexcept { return 0; }
+} // namespace
 
-    game_.on<bedrock::GameplayEvent>([this](const bedrock::GameplayEvent &event) {
+void AutoMineMod::initialize() {
+    // /mine is registered through the public Commands facade: accumulate
+    // the enum + definition, then load them with the selected profile.
+    commandEnums_.push_back(bedrock::sdk::CommandEnum{
+        "MineBlock", {"status", "stop", "path", "mobs", "food"}, "Block", true});
+    bedrock::sdk::CommandDefinition mineDef;
+    mineDef.name = "mine";
+    mineDef.description = "AutoMine: find and mine nearby blocks";
+    mineDef.overloads = {
+        {bedrock::sdk::CommandParameter{"what", bedrock::sdk::CommandParameterType::CustomEnum,
+                                        "MineBlock", false},
+         bedrock::sdk::CommandParameter{"count", bedrock::sdk::CommandParameterType::Integer,
+                                        "", true}},
+        {}};
+    mineDef.handler = [this](const std::string &line) {
+        std::lock_guard lock(nativeMutex_);
+        if (nativeLines_.size() < 16)
+            nativeLines_.push_back(line);
+    };
+    commandDefs_.push_back(std::move(mineDef));
+    craft_.onDiagnostic([this](const std::string &text) { note("craft: " + text); });
+
+    bool accessReady = false;
+    bedrock::sdk::Profiles profiles;
+    std::string error;
+    if (!profiles.open(bedrock::sdk::ProfileUpdatePolicy::RefreshIfNeeded,
+                       bedrock::sdk::ProfileCandidatePolicy::AllowCandidates, error))
+        throw std::runtime_error(error);
+    const bedrock::sdk::Profile profile = profiles.snapshot();
+    if (!resolver_.open(profile, error))
+        throw std::runtime_error(error);
+    {
+        std::string failure;
+        if (independent_) {
+            const auto root = nlohmann::json::parse(profile.json());
+            const auto &layouts = root.at("layouts");
+            if (!layouts.contains("AutomationControls") || !layouts.contains("BlockActions") ||
+                layouts.at("AutomationControls").value("revision", 0) < 2 ||
+                layouts.at("BlockActions").value("revision", 0) < 2 ||
+                (backgroundCraft_ && !layouts.contains("BackgroundContainers")))
+                throw std::runtime_error("profile predates independent automation controls");
+        }
+        if (!gui_.load(profile, failure))
+            throw std::runtime_error(failure);
+        if (!injected_.load(profile, commandEnums_, commandDefs_, failure))
+            throw std::runtime_error("/mine injected command definition rejected: " + failure);
+        bedrock::sdk::CameraVisualPolicy camPolicy;
+        camPolicy.active = &camPolicyInactive;
+        camPolicy.stopped = &camPolicyInactive;
+        camPolicy.spectatorMode = &camPolicyInactive;
+        camPolicy.diagnosticsEnabled = &camPolicyInactive;
+        camPolicy.epoch = &camPolicyZero;
+        camPolicy.flightSerial = &camPolicyZero;
+        std::vector<std::string> camWarnings;
+        if (!camera_.configure(profile, camPolicy, failure, camWarnings))
+            throw std::runtime_error(failure);
+        for (const auto &warning : camWarnings)
+            note("camera: " + warning);
+        if (!loadWorld(profile, failure))
+            throw std::runtime_error(failure);
+        // AutoCraft (real ItemStackRequest crafting) is
+        // optional: mining keeps working without it.
+        std::string craftError;
+        craftReady_ = craft_.load(profile, craftError);
+        if (!craftReady_)
+            note("craft adapter unavailable: " + craftError);
+        else
+            craftProfile_ = profile;
+        // Path display is cosmetic: never fail startup over it.
+        std::string outlineError;
+        outlineReady_ = outline_.install(resolver_, profile.json(), outlineError);
+        if (!outlineReady_)
+            note("path renderer unavailable: " + outlineError);
+        // Actor access (combat) is optional too.
+        std::string actorError;
+        actorsReady_ = loadActors(profile, resolver_, actorError);
+        if (!actorsReady_)
+            note("actor access unavailable: " + actorError);
+        loadScreen(profile, resolver_); // verified screen state for item moves
+        std::string accessError;
+        accessReady = access_.configure(profile, resolver_, accessError);
+        if (!accessReady)
+            note("game access unavailable: " + accessError);
+    }
+    // Bind the hook dispatch to the game access BEFORE any subscription or
+    // install, so the access' LevelTick scope opens inside the handlers
+    // (the native pattern of a HookDispatch constructed with the access).
+    if (accessReady) {
+        std::string bindError;
+        if (!game_.useGameAccess(access_, bindError))
+            note("hook binding unavailable: " + bindError);
+    }
+
+    game_.onGameplay([this](const bedrock::sdk::GameplayEventValue &event) {
         if (event.clientInstance)
             client_.store(event.clientInstance);
     });
-    game_.on<bedrock::WorldChangeEvent>([this](const bedrock::WorldChangeEvent &event) {
+    game_.onWorldChange([this](const bedrock::sdk::WorldChangeEventValue &event) {
         if (event.clientInstance)
             client_.store(event.clientInstance);
         ++epoch_;
         pendingReset_ = true; // applied on the tick thread
     });
-    game_.on<bedrock::LevelTickEvent>([this](const bedrock::LevelTickEvent &event) {
+    game_.onLevelTick([this](const bedrock::sdk::LevelTickEventValue &event) {
         if (stopped_.load())
             return;
         try {
@@ -221,7 +238,7 @@ void AutoMineMod::initialize() {
             auto scope = gui_.tick(client_.load(), event.level, epoch_.load());
             if (!scope)
                 return;
-            auto camScope = camera_.tick(client_.load(), bedrock::WorldEpoch{epoch_.load()});
+            (void)camera_.tick(client_.load(), epoch_.load());
             snap_ = camera_.readPlayerProxy();
             if (craftReady_)
                 craftUpdateGuarded(event.level);
@@ -235,30 +252,28 @@ void AutoMineMod::initialize() {
     });
     if (craftReady_) {
         std::string packetError;
-        if (!craft_.installPackets(craftProfileJson_, packetError)) {
+        if (!craft_.installPackets(*craftProfile_, packetError)) {
             craftReady_ = false;
             note("craft packets unavailable: " + packetError);
         }
     }
-    const auto selected = profiles.snapshot();
-    hooks_ = std::make_unique<bedrock::GameHooks>(game_);
-    if (!hooks_->installGameplay(selected->resolver(), error) ||
-        !hooks_->installLevelTick(selected->resolver(), error) ||
-        !hooks_->installWorldEvents(selected->resolver(), selected->json(), error) ||
-        !hooks_->installNativeKeyboard(selected->resolver(), selected->json(), error) ||
-        !hooks_->installInput(selected->resolver(), error))
+    if (!game_.installGameplay(resolver_, error) ||
+        !game_.installLevelTick(resolver_, error) ||
+        !game_.installWorldEvents(resolver_, profile.json(), error) ||
+        !game_.installNativeKeyboard(resolver_, profile.json(), error) ||
+        !game_.installInput(resolver_, error))
         throw std::runtime_error(error);
     if (independent_) {
         std::string controlError;
-        independentReady_ = blockActions_.load(*selected, world_, controlError) &&
-                            controls_.load(*selected, controlError);
+        independentReady_ = blockActions_.load(profile, world_, controlError) &&
+                            controls_.load(profile, controlError);
         if (!independentReady_) {
             controls_.stop();
             note("independent control unavailable: " + controlError);
         } else
             note("independent control: scoped movement + targeted GameMode mining; camera "
                  "untouched [runtime unverified]");
-        game_.on<bedrock::NativeKeyEvent>([this](const bedrock::NativeKeyEvent &key) {
+        game_.onNativeKey([this](const bedrock::sdk::NativeKeyEventValue &key) {
             if (anyScreenUp()) {
                 controls_.clearManualInput();
                 return; // neither typing nor its key-up events are movement
@@ -278,7 +293,7 @@ void AutoMineMod::initialize() {
             if (controls_.manualActive())
                 blockActions_.cancelMiningOwnership();
         });
-        game_.on<bedrock::MouseEvent>([this](const bedrock::MouseEvent &event) {
+        game_.onMouse([this](const bedrock::sdk::MouseEventValue &event) {
             if (anyScreenUp()) {
                 controls_.clearManualInput();
                 return;
@@ -289,25 +304,20 @@ void AutoMineMod::initialize() {
                 blockActions_.cancelMiningOwnership();
             }
         });
-    } else
-        installMouseCapture(selected->resolver());
+    }
     if (outlineReady_) {
-        if (BDS_HookSubscribe(BDS_HOOK_RENDER_LEVEL, outline_.renderTarget(), &onRenderLevel, this,
-                              &renderToken_))
-            note("path renderer: subscribed");
-        else {
-            outlineReady_ = false;
-            note("path renderer: subscribe failed");
-        }
+        renderSub_ = outline_.onPostRender(
+            [this](bedrock::sdk::WorldRenderer &renderer) { drawPathGuarded(renderer); });
+        note("path renderer: subscribed");
     }
     note("AutoMine v2: /mine [block] registered in CommandRegistry (autocomplete)");
-    note(std::string("AutoMine build: ") + BEDROCK_SDK_BUILD_ID +
+    note("AutoMine build: profile " + profile.version() +
          (backgroundCraft_ ? "; background crafting enabled [runtime unverified]"
                            : "; foreground crafting"));
-    note(BDS_HookRuntimeDiagnostic());
+    note(bedrock::sdk::hookRuntimeDiagnostic());
 }
 
-bool AutoMineMod::loadWorld(const bedrock::RuntimeProfile &profile, std::string &failure) {
+bool AutoMineMod::loadWorld(const bedrock::sdk::Profile &profile, std::string &failure) {
     try {
         world_.load(profile.json());
     } catch (const std::exception &e) {

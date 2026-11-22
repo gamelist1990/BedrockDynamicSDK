@@ -149,7 +149,7 @@ void AutoMineMod::invalidateRoute() {
     releaseInputs();
 }
 
-bool AutoMineMod::planPath(bedrock::Vec3 feet) {
+bool AutoMineMod::planPath(bedrock::sdk::Vec3Value feet) {
     crashrec::Section section("planPath");
     ++pathRevision_;
     const bool pickup = phase_ == Phase::Collect;
@@ -233,7 +233,7 @@ bool AutoMineMod::planPath(bedrock::Vec3 feet) {
                         continue;
                     }
                     // Rejected mining stances are still walkable, but cannot be used as endpoints.
-                    const bedrock::Vec3 goalEye{g.x + .5f, g.y + 1.62f, g.z + .5f};
+                    const bedrock::sdk::Vec3Value goalEye{g.x + .5f, g.y + 1.62f, g.z + .5f};
                     if (mineRejectedStances_.count({g.x, g.y, g.z}) ||
                         !automine::inMiningReach({goalEye.x, goalEye.y, goalEye.z}, targetCell))
                         continue;

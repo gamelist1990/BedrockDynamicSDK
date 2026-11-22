@@ -168,6 +168,44 @@ public:
         return false;
 #endif
     }
+    // Synthetic pointer motion through the mouse feed (action 0), built on
+    // the last observed device args exactly like sendMouseInput. Used by
+    // consumers that steer the camera with relative motion (AutoMine's
+    // non-independent aiming).
+    [[nodiscard]] bool sendMouseMotion(std::int16_t dx, std::int16_t dy) noexcept {
+#ifdef _WIN32
+        BDS_MouseArgs args{};
+        {
+            std::lock_guard lock(inputMutex_);
+            if (!mouseDevice_) return false;
+            args = lastMouseArgs_;
+        }
+        args.action = 0;
+        args.state = 0;
+        args.dx = dx;
+        args.dy = dy;
+        args.x = static_cast<std::int16_t>(
+            std::clamp(static_cast<int>(args.x) + dx, -32768, 32767));
+        args.y = static_cast<std::int16_t>(
+            std::clamp(static_cast<int>(args.y) + dy, -32768, 32767));
+        args.force_motionless_pointer =
+            (args.force_motionless_pointer & BDS_MOUSE_FLAG_FORCE_MOTIONLESS) |
+            BDS_MOUSE_FLAG_SYNTHETIC;
+        const auto* previousDispatch = syntheticMouseDispatch_;
+        syntheticMouseDispatch_ = this;
+        BDS_HookDispatch(BDS_HOOK_MOUSE_FEED, &args);
+        syntheticMouseDispatch_ = previousDispatch;
+        {
+            std::lock_guard lock(inputMutex_);
+            lastMouseArgs_.x = args.x;
+            lastMouseArgs_.y = args.y;
+        }
+        return true;
+#else
+        (void)dx; (void)dy;
+        return false;
+#endif
+    }
     [[nodiscard]] bool isSyntheticMouseDispatch() const noexcept {
         return syntheticMouseDispatch_ == this;
     }

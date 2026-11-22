@@ -58,7 +58,7 @@ int AutoMineMod::forageRawTotal() {
            countAllItems("mutton");
 }
 
-void AutoMineMod::tickForage(const bedrock::Vec3 &feet) {
+void AutoMineMod::tickForage(const bedrock::sdk::Vec3Value &feet) {
     if (!forageActive_)
         return;
     ++forageTicks_;
@@ -66,7 +66,7 @@ void AutoMineMod::tickForage(const bedrock::Vec3 &feet) {
         forageFail("時間切れ");
         return;
     }
-    const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+    const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
     if (forageStage_ == ForageStage::Hunt) {
         if (attackPulse_ > 0 && --attackPulse_ == 0)
             setAttack(false);
@@ -180,7 +180,7 @@ void AutoMineMod::tickForage(const bedrock::Vec3 &feet) {
             huntDirX_ = ndx;
             huntDirZ_ = ndz;
         }
-        const bedrock::Vec3 ahead{feet.x + huntDirX_ * 8.f, feet.y, feet.z + huntDirZ_ * 8.f};
+        const bedrock::sdk::Vec3Value ahead{feet.x + huntDirX_ * 8.f, feet.y, feet.z + huntDirZ_ * 8.f};
         faceAim(eye, ahead, 5.f, .3f);
         pressKey(kKeyW, true);
         const BlockPos3 fwdCell{static_cast<int>(std::floor(feet.x)) + huntDirX_,
@@ -199,7 +199,7 @@ void AutoMineMod::tickForage(const bedrock::Vec3 &feet) {
                 huntDirX_ = ndx;
                 huntDirZ_ = ndz;
             }
-            const bedrock::Vec3 ahead{feet.x + huntDirX_ * 8.f, feet.y + 1.f,
+            const bedrock::sdk::Vec3Value ahead{feet.x + huntDirX_ * 8.f, feet.y + 1.f,
                                       feet.z + huntDirZ_ * 8.f};
             faceAim(eye, ahead, 5.f, .3f);
             pressKey(kKeyW, true);

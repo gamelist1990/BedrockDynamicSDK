@@ -243,7 +243,7 @@ bool AutoMineMod::ensureTool(const std::string &blockId) {
                              softBlock == "gravel" || softBlock == "clay")) {
             int altSlot = -1, altRank = -1;
             const auto native = craftReady_ ? craft_.memorySnapshot(true, 0, 36)
-                                           : std::vector<bedrock::CraftInventorySlot>{};
+                                           : std::vector<bedrock::sdk::CraftInventorySlotValue>{};
             for (const auto &it : native) {
                 if (!it.count || it.item.empty()) continue;
                 if (it.slot < 0 || it.slot >= 36) continue;
@@ -364,8 +364,8 @@ bool AutoMineMod::tickToolSync() {
         return true;
     }
 
-    if (craft_.status() == bedrock::CraftJobStatus::Running ||
-        craft_.transferStatus() == bedrock::CraftJobStatus::Running)
+    if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Running ||
+        craft_.transferStatus() == bedrock::sdk::CraftJobStatusValue::Running)
         return true;
 
     if (toolSyncStage_ == 0) {
@@ -380,7 +380,7 @@ bool AutoMineMod::tickToolSync() {
         }
     } else if (toolSyncStage_ == 1) {
         if (!craft_.backgroundActive() ||
-            craft_.backgroundOpen(bedrock::NativeItemStackRequests::BackgroundKind::Inventory) ||
+            craft_.backgroundOpen(bedrock::sdk::BackgroundKindValue::Inventory) ||
             craft_.backgroundFailed() || toolSyncTicks_ > 100) {
             if (craft_.backgroundClose()) {
                 toolSyncStage_ = 2;
@@ -506,7 +506,7 @@ void AutoMineMod::enterNeedTool() {
     }
 }
 
-void AutoMineMod::tickNeedTool(bedrock::Vec3 feet) {
+void AutoMineMod::tickNeedTool(bedrock::sdk::Vec3Value feet) {
     if (moveStage_ != MoveStage::None) {
         (void)ensureHotbarTick(moveItem_);
         return;

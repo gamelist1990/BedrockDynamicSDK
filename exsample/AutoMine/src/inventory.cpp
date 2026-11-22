@@ -170,7 +170,7 @@ bool AutoMineMod::prepareBuildingSupply() {
     if (wood.empty() || logs < 1)
         return false;
     const std::string planks = "minecraft:" + wood + "_planks";
-    bedrock::CraftRecipe recipe;
+    bedrock::sdk::CraftRecipeValue recipe;
     if (!craft_.copyRecipe(planks, recipe))
         return false;
     chainSteps_ = {{ChainStep::Kind::OpenInventory},
@@ -384,7 +384,7 @@ bool AutoMineMod::ensureHotbarTick(const std::string &rawId, int sourceSlot) {
                 }
                 return false;
             }
-            if (!craft_.backgroundOpen(bedrock::NativeItemStackRequests::BackgroundKind::Inventory))
+            if (!craft_.backgroundOpen(bedrock::sdk::BackgroundKindValue::Inventory))
                 return false;
         }
         if (!backgroundCraft_ && screenReady_) {
@@ -472,10 +472,10 @@ bool AutoMineMod::ensureHotbarTick(const std::string &rawId, int sourceSlot) {
     case MoveStage::Bring: {
         if (tickCount_ <= moveDeadline_) {
             const auto st = craft_.transferStatus();
-            if (st == bedrock::CraftJobStatus::Running)
+            if (st == bedrock::sdk::CraftJobStatusValue::Running)
                 return false;
             craft_.clearTransferStatus();
-            if (st != bedrock::CraftJobStatus::Failed) {
+            if (st != bedrock::sdk::CraftJobStatusValue::Failed) {
                 if (moveStage_ == MoveStage::Evict) {
                     moveEvictDone_ = true;
                     if (craft_.startTransfer(invContainer(moveSrc_), moveSrc_, moveSrcNet_,
@@ -548,7 +548,7 @@ bool AutoMineMod::ensureHotbarTick(const std::string &rawId, int sourceSlot) {
     return false;
 }
 
-bool AutoMineMod::tickInventoryMaintenance(bedrock::Vec3 feet) {
+bool AutoMineMod::tickInventoryMaintenance(bedrock::sdk::Vec3Value feet) {
     if (!craftReady_ || !craft_.ready())
         return false;
     if (maintenanceMove_) {
@@ -561,7 +561,7 @@ bool AutoMineMod::tickInventoryMaintenance(bedrock::Vec3 feet) {
         return true;
     }
     if (maintenanceDrop_) {
-        if (craft_.transferStatus() == bedrock::CraftJobStatus::Running)
+        if (craft_.transferStatus() == bedrock::sdk::CraftJobStatusValue::Running)
             return true;
         craft_.clearTransferStatus();
         if (!craft_.backgroundClose())
@@ -571,8 +571,8 @@ bool AutoMineMod::tickInventoryMaintenance(bedrock::Vec3 feet) {
         return true;
     }
     if ((phase_ != Phase::Scan && phase_ != Phase::Navigate) || chainActive_ ||
-        moveStage_ != MoveStage::None || craft_.status() == bedrock::CraftJobStatus::Running ||
-        craft_.transferStatus() == bedrock::CraftJobStatus::Running || inWaterNow(feet) ||
+        moveStage_ != MoveStage::None || craft_.status() == bedrock::sdk::CraftJobStatusValue::Running ||
+        craft_.transferStatus() == bedrock::sdk::CraftJobStatusValue::Running || inWaterNow(feet) ||
         tickCount_ < maintenanceNext_ || automationScreenUp())
         return false;
     maintenanceNext_ = tickCount_ + 40;
@@ -623,7 +623,7 @@ bool AutoMineMod::tickInventoryMaintenance(bedrock::Vec3 feet) {
                 if (!craft_.backgroundInventory())
                     return false;
                 if (!craft_.backgroundOpen(
-                        bedrock::NativeItemStackRequests::BackgroundKind::Inventory)) {
+                        bedrock::sdk::BackgroundKindValue::Inventory)) {
                     maintenanceNext_ = tickCount_ + 1;
                     return true;
                 }
@@ -649,14 +649,14 @@ int AutoMineMod::findHotbarSlot(const std::string &localId) {
     return -1;
 }
 
-std::optional<bedrock::CraftInventorySlot> AutoMineMod::findInvItem(const std::string &localId) {
+std::optional<bedrock::sdk::CraftInventorySlotValue> AutoMineMod::findInvItem(const std::string &localId) {
     for (const auto &s : craft_.snapshot())
         if (s.count > 0 && localPart(s.item) == localId)
             return s;
     return std::nullopt;
 }
 
-std::optional<bedrock::CraftInventorySlot>
+std::optional<bedrock::sdk::CraftInventorySlotValue>
 AutoMineMod::findInvItemPred(const std::function<bool(const std::string &)> &pred) {
     for (const auto &s : craft_.snapshot())
         if (s.count > 0 && pred(localPart(s.item)))

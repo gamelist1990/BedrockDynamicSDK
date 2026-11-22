@@ -4,7 +4,7 @@
 #include "collection_pickup_wiring.hpp"
 #endif
 #include "locomotion_geometry.hpp"
-#include <bedrock/enums/actors.hpp>
+#include <cstdint>
 #include <optional>
 #include <utility>
 
@@ -152,7 +152,7 @@ std::optional<PlanCell> pickupUndercut(PlanCell start, const Read &read, const O
 using PickupCandidateKey = std::pair<bool, double>;
 inline bool couldBePickupActor(std::optional<std::uint32_t> type) {
     // Unknown type may still be detected via the r20 explicit-match fallback.
-    return !type || *type == static_cast<std::uint32_t>(bedrock::ActorType::ItemEntity);
+    return !type || *type == 64; // ActorType::ItemEntity
 }
 inline std::optional<PickupCandidateKey>
 pickupCandidateKey(bool matchesDrop, std::optional<std::uint32_t> actorType, double distance) {

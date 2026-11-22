@@ -13,7 +13,12 @@
 #include <vector>
 #include <array>
 
+namespace bedrock { class NativeGameAccess; }
+
 namespace bedrock::sdk {
+
+class RosterAccess;
+namespace detail { bedrock::NativeGameAccess* nativeGameAccess(RosterAccess&) noexcept; }
 
 // ------------------------------------------------------------------------
 // RosterEntry — value-type snapshot of a single roster player.
@@ -44,6 +49,36 @@ struct EquipmentSnapshot {
     std::string identifier;
     std::string displayName;
     unsigned count{};
+};
+
+// ItemStackValue — owned value snapshot of one item stack, mirroring the
+// native ItemStack fields and its valid()/getName() semantics.
+struct ItemStackValue {
+    std::string identifier;
+    std::string displayName;
+    unsigned count{};
+    std::string customName;
+    std::string translationKey;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return !identifier.empty() || !displayName.empty() || !customName.empty() ||
+               !translationKey.empty();
+    }
+    [[nodiscard]] std::string getName() const {
+        if (!customName.empty())
+            return customName;
+        if (!displayName.empty())
+            return displayName;
+        return identifier;
+    }
+};
+
+// ActorIdentityValue — value-type actor identity, mirroring the native
+// detail::ActorIdentity read (name tag / name / player flag).
+struct ActorIdentityValue {
+    std::string nameTag;
+    std::string name;
+    bool isPlayer{};
 };
 
 // RosterAccess — opaque impl wraps NativeGameAccess; value-semantic API
@@ -82,6 +117,16 @@ public:
     // (MainHand by default for TabList); it is not ignored.
     [[nodiscard]] EquipmentSnapshot equipmentSnapshot(void* actor, EquipmentSlot slot) const noexcept;
 
+    // --- Item / identity reads (AutoMine-facing subset) ---------------------
+    // These read through the same NativeGameAccess and obey its LevelTick
+    // scope: the access must be driven by a tick (see Hooks::useGameAccess)
+    // for the reads to see the world.
+    [[nodiscard]] std::optional<ItemStackValue> equipmentItem(void* actor, EquipmentSlot slot) const;
+    [[nodiscard]] std::optional<ItemStackValue> localInventoryItem(void* player, std::size_t index) const;
+    [[nodiscard]] std::size_t localInventorySize(void* player) const;
+    [[nodiscard]] bool isActorValid(void* actor) const noexcept;
+    [[nodiscard]] ActorIdentityValue actorIdentity(void* actor) const;
+
     // --- Provider / flag callbacks -------------------------------------------
     bool packetRosterSupported() const noexcept;
     bool displayNamesAvailable() const noexcept;
@@ -94,6 +139,7 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    friend bedrock::NativeGameAccess* detail::nativeGameAccess(RosterAccess&) noexcept;
 };
 
 } // namespace bedrock::sdk

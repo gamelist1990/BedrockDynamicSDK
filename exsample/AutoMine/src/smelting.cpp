@@ -80,7 +80,7 @@ void AutoMineMod::smeltFail(const std::string &why) {
 bool AutoMineMod::tryStartFurnaceChain() {
     if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_)
         return false;
-    if (craft_.status() == bedrock::CraftJobStatus::Running)
+    if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Running)
         return false;
     craft_.clearStatus();
     const auto have = chainCounts();
@@ -142,7 +142,7 @@ bool AutoMineMod::tryStartFurnaceChain() {
 
 bool AutoMineMod::tickSmeltTransfer(std::uint32_t dstContainer, int dstSlot, bool isFuel) {
     if (!smeltTransferStarted_) {
-        std::optional<bedrock::CraftInventorySlot> src;
+        std::optional<bedrock::sdk::CraftInventorySlotValue> src;
         int want = 0;
         if (isFuel) {
             const int needTicks = smeltMoved_ * 200 - smeltFuelBurnTicks_;
@@ -197,9 +197,9 @@ bool AutoMineMod::tickSmeltTransfer(std::uint32_t dstContainer, int dstSlot, boo
         return false;
     }
     const auto st = craft_.transferStatus();
-    if (st == bedrock::CraftJobStatus::Running)
+    if (st == bedrock::sdk::CraftJobStatusValue::Running)
         return false;
-    if (st == bedrock::CraftJobStatus::Done) {
+    if (st == bedrock::sdk::CraftJobStatusValue::Done) {
         craft_.clearTransferStatus();
         if (isFuel) {
             smeltFuelBurnTicks_ += smeltFuelPendingBurn_;
@@ -233,7 +233,7 @@ bool AutoMineMod::tickSmeltTransfer(std::uint32_t dstContainer, int dstSlot, boo
     return true;
 }
 
-void AutoMineMod::tickSmelt(bedrock::Vec3 feet) {
+void AutoMineMod::tickSmelt(bedrock::sdk::Vec3Value feet) {
     if ((backgroundCraft_ && anyScreenUp()) || contains(topScreenName(), "chat")) {
         releaseInputs();
         return;
@@ -342,8 +342,8 @@ void AutoMineMod::tickSmelt(bedrock::Vec3 feet) {
             phase_ = Phase::Idle;
             return;
         }
-        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-        const bedrock::Vec3 center{smeltFurnacePos_.x + .5f, feet.y + .5f,
+        const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::sdk::Vec3Value center{smeltFurnacePos_.x + .5f, feet.y + .5f,
                                    smeltFurnacePos_.z + .5f};
         faceAim(eye, center, 12.f, 0.3f);
         pressKey(kKeyW, (smeltTicks_ % 40) < 25);
@@ -362,11 +362,11 @@ void AutoMineMod::tickSmelt(bedrock::Vec3 feet) {
     }
 }
 
-void AutoMineMod::tickPlaceFurnace(bedrock::Vec3 feet) {
+void AutoMineMod::tickPlaceFurnace(bedrock::sdk::Vec3Value feet) {
     if (backgroundCraft_)
         setUse(false);
     {
-        bedrock::Vec3 eye0;
+        bedrock::sdk::Vec3Value eye0;
         if (eyePos(eye0)) {
             const int fx = static_cast<int>(std::floor(feet.x));
             const int fy = static_cast<int>(std::floor(feet.y));
@@ -416,7 +416,7 @@ void AutoMineMod::tickPlaceFurnace(bedrock::Vec3 feet) {
         } else
             return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     if (smeltPlaceCell_.x == INT_MIN) {
@@ -532,7 +532,7 @@ void AutoMineMod::tickPlaceFurnace(bedrock::Vec3 feet) {
     // Same claimed-slot rotation as tickPlaceTable.
     slot = placeSlotTick("furnace", smeltPlaceSlotIdx_, smeltPlaceSlotTicks_, slot);
     selectSlot(slot);
-    const bedrock::Vec3 aim{smeltPlaceCell_.x + .5f, static_cast<float>(smeltPlaceCell_.y),
+    const bedrock::sdk::Vec3Value aim{smeltPlaceCell_.x + .5f, static_cast<float>(smeltPlaceCell_.y),
                             smeltPlaceCell_.z + .5f};
     faceToward(eye, aim, 3.f);
     pressKey(kKeyS, smeltPlaceCell_.x < feet.x + .31f && smeltPlaceCell_.x + 1 > feet.x - .31f &&
@@ -568,9 +568,9 @@ void AutoMineMod::tickPlaceFurnace(bedrock::Vec3 feet) {
     }
 }
 
-void AutoMineMod::tickOpenFurnace(bedrock::Vec3 feet) {
+void AutoMineMod::tickOpenFurnace(bedrock::sdk::Vec3Value feet) {
     if (backgroundCraft_ &&
-        craft_.backgroundOpen(bedrock::NativeItemStackRequests::BackgroundKind::Furnace)) {
+        craft_.backgroundOpen(bedrock::sdk::BackgroundKindValue::Furnace)) {
         setUse(false);
         note("smelt: background furnace open (chat untouched)");
         smeltAdvance();
@@ -584,12 +584,12 @@ void AutoMineMod::tickOpenFurnace(bedrock::Vec3 feet) {
         smeltFail("かまどを開けなかった");
         return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     const auto furnaceHit = automine::miningPoint(
         {eye.x, eye.y, eye.z}, {smeltFurnacePos_.x, smeltFurnacePos_.y, smeltFurnacePos_.z});
-    const bedrock::Vec3 center{static_cast<float>(furnaceHit.x), static_cast<float>(furnaceHit.y),
+    const bedrock::sdk::Vec3Value center{static_cast<float>(furnaceHit.x), static_cast<float>(furnaceHit.y),
                                static_cast<float>(furnaceHit.z)};
     BlockPos3 occ;
     if (!lineOfSight(eye, smeltFurnacePos_, occ)) {
@@ -617,10 +617,10 @@ void AutoMineMod::tickOpenFurnace(bedrock::Vec3 feet) {
             faceToward(eye, center, 3.f);
             BlockPos3 cell;
             unsigned face{};
-            bedrock::Vec3 hit{};
+            bedrock::sdk::Vec3Value hit{};
             if (independentHit(eye, cell, face, hit) && cell == smeltFurnacePos_)
                 (void)craft_.backgroundUse(
-                    bedrock::NativeItemStackRequests::BackgroundKind::Furnace,
+                    bedrock::sdk::BackgroundKindValue::Furnace,
                     {cell.x, cell.y, cell.z}, face, eye, hit);
         }
         if (craft_.backgroundFailed())

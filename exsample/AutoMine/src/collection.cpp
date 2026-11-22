@@ -70,18 +70,22 @@ void AutoMineMod::tickCollect(bedrock::Vec3 feet) {
     if (collectAttemptTicks_ >= collectNextScan_) {
         collectNextScan_ = collectAttemptTicks_ + pickupScanInterval;
         // Keep only copied values between scans, never a live Actor pointer.
-        if (const auto snap = actorsReady_ ? runtimeActors_.snapshot(level_.load()) : std::nullopt) {
+        if (const auto snap = actorsReady_ ? actorSamples() : std::nullopt) {
             collectEntityValid_ = false;
             std::optional<PickupCandidateKey> best;
             void *self = world_.localPlayer(client_.load());
             const std::string wanted = localPart(collectDropId_);
-            for (void *actor : *snap) {
+            for (const auto &sample : *snap) {
+                void *actor = reinterpret_cast<void *>(sample.actorKey);
                 if (actor == self) continue;
                 const auto type = actorTypeOf(actor);
                 if (!couldBePickupActor(type)) continue;
 
                 bedrock::Vec3 pos;
-                if (!actorRegistry_.readPosition(actor, pos)) continue;
+                if (const auto posOpt = actors_.position(actor))
+                    pos = *posOpt;
+                else
+                    continue;
                 const double dx = pos.x - feet.x, dy = pos.y - feet.y, dz = pos.z - feet.z;
                 const double horizontal2 = dx * dx + dz * dz;
                 if (horizontal2 > pickupScanRadius * pickupScanRadius ||

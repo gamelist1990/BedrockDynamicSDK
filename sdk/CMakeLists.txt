@@ -3,7 +3,9 @@ add_library(bedrock_stage_a STATIC
     src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
     src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
     src/roster.cpp src/packets.cpp src/overlay.cpp
-    src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp)
+    src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp
+    src/automation_controls.cpp src/block_actions.cpp
+    src/item_stack_requests.cpp src/safe_teleport.cpp)
 if(WIN32)
     target_sources(bedrock_stage_a PRIVATE
         src/commands.cpp src/title_packets.cpp src/game_hooks.cpp)

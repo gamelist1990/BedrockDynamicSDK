@@ -22,7 +22,7 @@ void AutoMineMod::planVein() {
     }
 }
 
-void AutoMineMod::finishCollection(bedrock::Vec3 feet) {
+void AutoMineMod::finishCollection(bedrock::sdk::Vec3Value feet) {
     resetCollectionSweep();
     collectDropId_.clear();
     collectEntityValid_ = false;
@@ -84,7 +84,7 @@ void AutoMineMod::finishCollection(bedrock::Vec3 feet) {
     bestDist2_ = 1e18;
 }
 
-void AutoMineMod::tickScan(bedrock::Vec3 feet) {
+void AutoMineMod::tickScan(bedrock::sdk::Vec3Value feet) {
     crashrec::Section section("scan");
     releaseInputs();
     if (scanWait_ > 0) {
@@ -112,7 +112,7 @@ void AutoMineMod::tickScan(bedrock::Vec3 feet) {
         if (chainTablePlaced_ && pos.x == chainTablePos_.x && pos.y == chainTablePos_.y - 1 &&
             pos.z == chainTablePos_.z)
             continue;
-        bedrock::BlockPos bp;
+        bedrock::sdk::BlockPos bp;
         bp.x = pos.x;
         bp.y = pos.y;
         bp.z = pos.z;
@@ -140,7 +140,7 @@ void AutoMineMod::tickScan(bedrock::Vec3 feet) {
         if (skipUnderwater_) {
             bool underWater = false;
             for (int wy = pos.y + 1; wy <= pos.y + 16; ++wy) {
-                bedrock::BlockPos above;
+                bedrock::sdk::BlockPos above;
                 above.x = pos.x;
                 above.y = wy;
                 above.z = pos.z;

@@ -1,7 +1,9 @@
 #include "bedrock/sdk/roster.hpp"
 #include "resolver_access.hpp"
+#include "roster_bridge.hpp"
 #ifdef _WIN32
 #include <bedrock/native/game_access.hpp>
+#include <bedrock/detail/actor_identity.hpp>
 #include <bedrock/enums/game_type.hpp>
 #endif
 #include <algorithm>
@@ -189,6 +191,99 @@ void RosterAccess::setNameProvider(std::function<std::optional<std::string>(void
     impl_->access.setNameProvider(std::move(provider));
 #else
     (void)provider;
+#endif
+}
+
+bool Hooks::useGameAccess(RosterAccess& access, std::string& error) {
+    if (!bindGameAccess(static_cast<void*>(detail::nativeGameAccess(access)), error))
+        return false;
+    gameAccess_ = &access;
+    return true;
+}
+
+namespace detail {
+bedrock::NativeGameAccess* nativeGameAccess(RosterAccess& access) noexcept {
+#ifdef _WIN32
+    return &access.impl_->access;
+#else
+    (void)access;
+    return nullptr;
+#endif
+}
+} // namespace detail
+
+#ifdef _WIN32
+namespace {
+bedrock::EquipmentSlot toNativeSlot(EquipmentSlot slot) noexcept {
+    switch (slot) {
+    case EquipmentSlot::Offhand: return bedrock::EquipmentSlot::Offhand;
+    case EquipmentSlot::Head: return bedrock::EquipmentSlot::Head;
+    case EquipmentSlot::Chest: return bedrock::EquipmentSlot::Chest;
+    case EquipmentSlot::Legs: return bedrock::EquipmentSlot::Legs;
+    case EquipmentSlot::Feet: return bedrock::EquipmentSlot::Feet;
+    case EquipmentSlot::MainHand: break;
+    }
+    return bedrock::EquipmentSlot::MainHand;
+}
+ItemStackValue fromNative(const bedrock::ItemStack& item) {
+    ItemStackValue result;
+    result.identifier = item.identifier;
+    result.displayName = item.displayName;
+    result.count = item.count;
+    result.customName = item.customName;
+    result.translationKey = item.translationKey;
+    return result;
+}
+} // namespace
+#endif
+
+std::optional<ItemStackValue> RosterAccess::equipmentItem(void* actor, EquipmentSlot slot) const {
+#ifdef _WIN32
+    auto item = impl_->access.equipmentItem(actor, toNativeSlot(slot));
+    if (!item) return std::nullopt;
+    return fromNative(*item);
+#else
+    (void)actor; (void)slot;
+    return std::nullopt;
+#endif
+}
+
+std::optional<ItemStackValue> RosterAccess::localInventoryItem(void* player, std::size_t index) const {
+#ifdef _WIN32
+    auto item = impl_->access.localInventoryItem(player, index);
+    if (!item) return std::nullopt;
+    return fromNative(*item);
+#else
+    (void)player; (void)index;
+    return std::nullopt;
+#endif
+}
+
+std::size_t RosterAccess::localInventorySize(void* player) const {
+#ifdef _WIN32
+    return impl_->access.localInventorySize(player);
+#else
+    (void)player;
+    return 0;
+#endif
+}
+
+bool RosterAccess::isActorValid(void* actor) const noexcept {
+#ifdef _WIN32
+    return impl_->access.isActorValid(actor);
+#else
+    (void)actor;
+    return false;
+#endif
+}
+
+ActorIdentityValue RosterAccess::actorIdentity(void* actor) const {
+#ifdef _WIN32
+    const auto identity = bedrock::detail::readActorIdentity(impl_->access, actor);
+    return {identity.nameTag, identity.name, identity.isPlayer};
+#else
+    (void)actor;
+    return {};
 #endif
 }
 

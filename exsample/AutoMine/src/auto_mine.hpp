@@ -5,22 +5,12 @@
 #include "locomotion_geometry.hpp"
 #include "mining_progress.hpp"
 #include "inventory_policy.hpp"
-#include <bedrock/runtime/game_hooks.hpp>
-#include <bedrock/detail/hook_dispatch.hpp>
-#include <bedrock/native/world_access.hpp>
-#include <bedrock/native/automation_controls.hpp>
-#include <bedrock/native/block_actions.hpp>
-#include <bedrock/native/camera.hpp>
-#include <bedrock/native/safe_teleport.hpp>
-#include <bedrock/native/injected_commands.hpp>
-#include <bedrock/native/outline_renderer.hpp>
-#include <bedrock/native/game_access.hpp>
-#include <bedrock/native/runtime_actors.hpp>
-#include <bedrock/native/actor_registry.hpp>
-#include <bedrock/native/actors.hpp>
-#include <bedrock/native/item_stack_requests.hpp>
-#include <bedrock/profiles/profile_json.hpp>
-#include <bedrock/runtime/hook_runtime.h>
+#include <bedrock/sdk.hpp>
+#include <nlohmann/json.hpp>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -40,6 +30,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #if !defined(_MSC_VER) || _ITERATOR_DEBUG_LEVEL != 0
 #error AutoMine requires MSVC Release STL ABI.
@@ -82,9 +73,9 @@ class AutoMineMod {
     struct MobInfo {
         std::uint32_t eid{};
         std::uint32_t type{};
-        bedrock::Vec3 center{};
-        bedrock::Vec3 bmin{};
-        bedrock::Vec3 bmax{};
+        bedrock::sdk::Vec3Value center{};
+        bedrock::sdk::Vec3Value bmin{};
+        bedrock::sdk::Vec3Value bmax{};
         bool hasBounds{};
         double dist{1e18};
     };
@@ -190,7 +181,7 @@ class AutoMineMod {
     static std::filesystem::path directory();
     void loadConfig(const std::filesystem::path &dir);
     void initialize();
-    bool loadWorld(const bedrock::RuntimeProfile &profile, std::string &failure);
+    bool loadWorld(const bedrock::sdk::Profile &profile, std::string &failure);
 
     // Commands and tick orchestration (controller.cpp).
     void resetRun();
@@ -207,19 +198,14 @@ class AutoMineMod {
     void craftUpdateInner(void *level);
     bool craftUpdateSeh(void *level);
     void craftUpdateGuarded(void *level);
-    void drawPathInner(void *raw);
-    void drawPathGuarded(void *raw);
+    void drawPathInner(bedrock::sdk::WorldRenderer &renderer);
+    void drawPathGuarded(bedrock::sdk::WorldRenderer &renderer);
     void markSection();
     void tick();
 
     // Movement input and world queries (controls.cpp).
     bool releaseNativeKey(unsigned key);
-    bool setNativeMouseDown(bedrock::MouseButton button, bool down);
-    void installMouseCapture(const bedrock::Resolver &resolver);
-    static void BDS_HOOK_CALL onMouseCapture(void *user, void *raw, BDS_HookNext next,
-                                             void *frame) noexcept;
-    static uintptr_t dispatchMouseSeh(void *args);
-    bool feedMouse(int action, int state, int dx, int dy);
+    bool setNativeMouseDown(unsigned button, bool down);
     bool feedMove(int dx, int dy);
     bool feedButton(bool down);
     bool feedUseButton(bool down);
@@ -227,21 +213,22 @@ class AutoMineMod {
     void pressKey(unsigned key, bool down);
     void setAttack(bool down);
     void releaseInputs();
-    bool independentHit(bedrock::Vec3 eye, BlockPos3 &cell, unsigned &face, bedrock::Vec3 &hit);
+    bool independentHit(bedrock::sdk::Vec3Value eye, BlockPos3 &cell, unsigned &face, bedrock::sdk::Vec3Value &hit);
     void flushIndependent();
     void *player();
     void *region();
-    bool feetPos(bedrock::Vec3 &out);
-    bool eyePos(bedrock::Vec3 &out);
+    bool feetPos(bedrock::sdk::Vec3Value &out);
+    bool eyePos(bedrock::sdk::Vec3Value &out);
     std::string blockAt(BlockPos3 pos);
-    bool lineOfSight(bedrock::Vec3 eye, BlockPos3 targetCell, BlockPos3 &hit);
+    bool lineOfSight(bedrock::sdk::Vec3Value eye, BlockPos3 targetCell, BlockPos3 &hit);
     bool rotation(float &yaw, float &pitch);
     static float wrapDeg(float deg);
-    bool faceToward(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance = 3.f);
-    bool faceAim(bedrock::Vec3 eye, bedrock::Vec3 target, float tolerance, float smoothing);
+    bool faceToward(bedrock::sdk::Vec3Value eye, bedrock::sdk::Vec3Value target, float tolerance = 3.f);
+    bool faceAim(bedrock::sdk::Vec3Value eye, bedrock::sdk::Vec3Value target, float tolerance, float smoothing);
 
     // Screen state (screens.cpp).
-    void loadScreen(const bedrock::RuntimeProfile &profile);
+    void loadScreen(const bedrock::sdk::Profile &profile,
+                    const bedrock::sdk::SymbolResolver &resolver);
     static bool callTopScreenNameSeh(GetTopScreenName fn, void *client, void *buf);
     std::string topScreenName();
     bool inventoryScreenUp();
@@ -273,10 +260,10 @@ class AutoMineMod {
     static std::uint32_t invContainer(int);
     static int preferredToolSlot(const std::string &id);
     bool ensureHotbarTick(const std::string &rawId, int sourceSlot = -1);
-    bool tickInventoryMaintenance(bedrock::Vec3 feet);
+    bool tickInventoryMaintenance(bedrock::sdk::Vec3Value feet);
     int findHotbarSlot(const std::string &localId);
-    std::optional<bedrock::CraftInventorySlot> findInvItem(const std::string &localId);
-    std::optional<bedrock::CraftInventorySlot>
+    std::optional<bedrock::sdk::CraftInventorySlotValue> findInvItem(const std::string &localId);
+    std::optional<bedrock::sdk::CraftInventorySlotValue>
     findInvItemPred(const std::function<bool(const std::string &)> &pred);
 
     // Tool selection and durability (tools.cpp).
@@ -290,66 +277,69 @@ class AutoMineMod {
     bool tickToolSync();
     std::unordered_map<std::string, int> visibleItems();
     void enterNeedTool();
-    void tickNeedTool(bedrock::Vec3 feet);
+    void tickNeedTool(bedrock::sdk::Vec3Value feet);
 
     // Actors and combat (combat.cpp).
     static bool isHostileType(std::uint32_t t);
     static bool isCreeperType(std::uint32_t t);
-    std::optional<MobInfo> scanHostile(const bedrock::Vec3 &feet, double maxDist,
+    std::optional<MobInfo> scanHostile(const bedrock::sdk::Vec3Value &feet, double maxDist,
                                        std::uint32_t onlyEid = 0);
     static bool isFoodAnimalType(std::uint32_t t);
     static const char *rawMeatOf(std::uint32_t t);
     static std::string cookedMeatOf(const std::string &raw);
-    std::optional<MobInfo> scanPassive(const bedrock::Vec3 &feet, double maxDist,
+    std::optional<MobInfo> scanPassive(const bedrock::sdk::Vec3Value &feet, double maxDist,
                                        std::uint32_t onlyEid = 0);
-    static double distToMob(const bedrock::Vec3 &p, const MobInfo &m);
+    static double distToMob(const bedrock::sdk::Vec3Value &p, const MobInfo &m);
     static int weaponTierOf(const std::string &lp);
     Weapon bestMelee();
     int bowSlot();
     bool hasArrows();
     void enterCombat(const MobInfo &mob);
     void exitCombat(bool won);
-    void tickCombat(const bedrock::Vec3 &feet);
-    bool loadActors(const bedrock::RuntimeProfile &profile, std::string &failure);
+    void tickCombat(const bedrock::sdk::Vec3Value &feet);
+    bool loadActors(const bedrock::sdk::Profile &profile,
+                    const bedrock::sdk::SymbolResolver &resolver, std::string &failure);
     std::optional<std::uint32_t> actorTypeOf(void *actor);
-    void probeActors(const bedrock::Vec3 &feet);
+    // One registry capture of the current level's actors (facade samples;
+    // sample.actorKey is the native actor pointer), or nullopt on failure.
+    std::optional<std::vector<bedrock::sdk::ActorSample>> actorSamples();
+    void probeActors(const bedrock::sdk::Vec3Value &feet);
 
     // Boat travel (boat.cpp).
     int boatSlot();
-    std::optional<MobInfo> findBoat(const bedrock::Vec3 &feet, double maxDist,
+    std::optional<MobInfo> findBoat(const bedrock::sdk::Vec3Value &feet, double maxDist,
                                     std::uint32_t onlyEid = 0, bool freshOnly = false);
     void enterBoat();
     void giveUpBoat();
-    void tickBoat(const bedrock::Vec3 &feet);
+    void tickBoat(const bedrock::sdk::Vec3Value &feet);
 
     // Recovery and water safety (recovery.cpp).
     void tickDeathWatch();
     void startRecovery();
     void recoverDone(bool arrived);
-    void tickRecover(const bedrock::Vec3 &feet);
-    bool tickJoinGuard(const bedrock::Vec3 &feet);
-    bool tickIdleGuards(const bedrock::Vec3 &feet);
-    bool headInWater(const bedrock::Vec3 &feet);
-    bool inWaterNow(const bedrock::Vec3 &feet);
+    void tickRecover(const bedrock::sdk::Vec3Value &feet);
+    bool tickJoinGuard(const bedrock::sdk::Vec3Value &feet);
+    bool tickIdleGuards(const bedrock::sdk::Vec3Value &feet);
+    bool headInWater(const bedrock::sdk::Vec3Value &feet);
+    bool inWaterNow(const bedrock::sdk::Vec3Value &feet);
     void startEscape();
-    void tickEscape(const bedrock::Vec3 &feet);
+    void tickEscape(const bedrock::sdk::Vec3Value &feet);
 
     // Action preview and rendering (path_render.cpp).
     void clearPath();
     automine::Terrain planTerrain(automine::PlanCell p);
-    automine::ActionPlan futureActions(const bedrock::Vec3 &feet);
-    automine::ActionPlan plannedActions(const bedrock::Vec3 &feet);
+    automine::ActionPlan futureActions(const bedrock::sdk::Vec3Value &feet);
+    automine::ActionPlan plannedActions(const bedrock::sdk::Vec3Value &feet);
     std::optional<BlockPos3> previewWorkCell();
-    void updatePath(const bedrock::Vec3 &feet);
-    static void BDS_HOOK_CALL onRenderLevel(void *user, void *raw, BDS_HookNext next, void *frame);
-    void drawPath(void *raw);
+    void updatePath(const bedrock::sdk::Vec3Value &feet);
+    void drawPath(bedrock::sdk::WorldRenderer &renderer);
 
     // Target selection (target_selection.cpp).
     void planVein();
-    void finishCollection(bedrock::Vec3 feet);
+    void finishCollection(bedrock::sdk::Vec3Value feet);
     void startCollection();
     void resetCollectionSweep();
-    void tickScan(bedrock::Vec3 feet);
+    void tickScan(bedrock::sdk::Vec3Value feet);
 
     // Terrain classification and route search (pathfinding.cpp).
     bool isPassableCell(const std::string &id);
@@ -362,43 +352,43 @@ class AutoMineMod {
     bool isGravityBlock(const std::string &local);
     void discardPathIfExhausted();
     void invalidateRoute();
-    bool planPath(bedrock::Vec3 feet);
-    bool workstationReachableFrom(bedrock::Vec3 feet, BlockPos3 table);
+    bool planPath(bedrock::sdk::Vec3Value feet);
+    bool workstationReachableFrom(bedrock::sdk::Vec3Value feet, BlockPos3 table);
 
     // Route execution (navigation.cpp).
-    void tickFollowPath(bedrock::Vec3 feet);
-    void tickNavigate(bedrock::Vec3 feet);
+    void tickFollowPath(bedrock::sdk::Vec3Value feet);
+    void tickNavigate(bedrock::sdk::Vec3Value feet);
 
     // Bridging, parkour and scaffolding (construction.cpp).
     void enterMineCell(BlockPos3 cell, const std::string &id);
     void enterPathDigCell(BlockPos3 cell, const std::string &id);
-    bool tickBridge(bedrock::Vec3 feet);
-    void tickPillarWaypoint(bedrock::Vec3 feet);
+    bool tickBridge(bedrock::sdk::Vec3Value feet);
+    void tickPillarWaypoint(bedrock::sdk::Vec3Value feet);
     bool wallLandingAnchor(BlockPos3 floor);
-    bool placeLandingPad(BlockPos3 floor, bedrock::Vec3 eye, std::string *placedId = nullptr);
-    bool tickParkourWaypoint(bedrock::Vec3 feet);
+    bool placeLandingPad(BlockPos3 floor, bedrock::sdk::Vec3Value eye, std::string *placedId = nullptr);
+    bool tickParkourWaypoint(bedrock::sdk::Vec3Value feet);
     bool isScaffoldBlock(const std::string &local);
-    bool scaffoldWanted(bedrock::Vec3 feet);
-    bool scaffoldStanceOk(bedrock::Vec3 feet);
-    void engageScaffold(bedrock::Vec3 feet);
+    bool scaffoldWanted(bedrock::sdk::Vec3Value feet);
+    bool scaffoldStanceOk(bedrock::sdk::Vec3Value feet);
+    void engageScaffold(bedrock::sdk::Vec3Value feet);
     void endScaffold();
     void scaffoldFail(const std::string &why);
-    bool tickScaffold(bedrock::Vec3 feet);
+    bool tickScaffold(bedrock::sdk::Vec3Value feet);
 
     // Mining and collection (mining.cpp).
-    bool tryMineThrough(bedrock::Vec3 feet);
-    void tickMine(bedrock::Vec3 feet);
+    bool tryMineThrough(bedrock::sdk::Vec3Value feet);
+    void tickMine(bedrock::sdk::Vec3Value feet);
     void blacklistCluster(const BlockPos3 &center, const std::string &id);
-    void tickCollect(bedrock::Vec3 feet);
+    void tickCollect(bedrock::sdk::Vec3Value feet);
     void restoreMineThroughGoal();
     void endScanOverride();
     void startGather(std::vector<std::string> blockIds, std::vector<std::string> countIds, int want,
                      bool hunt);
     bool lavaAdjacent(const BlockPos3 &cell);
-    int digCell(const BlockPos3 &cell, bedrock::Vec3 feet, bool toolOptional = false);
+    int digCell(const BlockPos3 &cell, bedrock::sdk::Vec3Value feet, bool toolOptional = false);
 
     // Crafting chains (crafting.cpp).
-    bool routeCrossesWater(const bedrock::Vec3 &feet, const bedrock::Vec3 &center);
+    bool routeCrossesWater(const bedrock::sdk::Vec3Value &feet, const bedrock::sdk::Vec3Value &center);
     bool placedTableExists();
     int findTableHotbarSlot();
     static std::string chainWood(const std::unordered_map<std::string, int> &items, int &logCount);
@@ -411,24 +401,24 @@ class AutoMineMod {
     void chainFinish();
     void chainFail(const std::string &why);
     void dispatchCraftStep(const ChainStep &step);
-    void tickCraft(bedrock::Vec3 feet);
+    void tickCraft(bedrock::sdk::Vec3Value feet);
 
     // Table placement and interaction (crafting_table.cpp).
-    int digPocketTick(bedrock::Vec3 feet, BlockPos3 &pocket, int &badMask, int &stage);
-    void tickPlaceTable(bedrock::Vec3 feet);
-    bool placeWorkstation(BlockPos3 cell, bedrock::Vec3 eye);
-    bool workstationCellReady(BlockPos3 cell, bedrock::Vec3 eye);
+    int digPocketTick(bedrock::sdk::Vec3Value feet, BlockPos3 &pocket, int &badMask, int &stage);
+    void tickPlaceTable(bedrock::sdk::Vec3Value feet);
+    bool placeWorkstation(BlockPos3 cell, bedrock::sdk::Vec3Value eye);
+    bool workstationCellReady(BlockPos3 cell, bedrock::sdk::Vec3Value eye);
     bool tableBanned(const BlockPos3 &p);
-    void tickOpenTable(bedrock::Vec3 feet);
+    void tickOpenTable(bedrock::sdk::Vec3Value feet);
     void tickOpenInventory();
     void tickCloseUi();
 
     // Ascending and descending (excavation.cpp).
     void enterAscend(int surfY, const std::string &replyText, const std::string &noteText);
     void rotateAscendDir();
-    void tickAscend(bedrock::Vec3 feet);
-    void tickDescend(bedrock::Vec3 feet);
-    void tickHunt(bedrock::Vec3 feet);
+    void tickAscend(bedrock::sdk::Vec3Value feet);
+    void tickDescend(bedrock::sdk::Vec3Value feet);
+    void tickHunt(bedrock::sdk::Vec3Value feet);
 
     // Smelting (smelting.cpp).
     static std::string smeltYieldOf(const std::string &item);
@@ -437,16 +427,16 @@ class AutoMineMod {
     void smeltFail(const std::string &why);
     bool tryStartFurnaceChain();
     bool tickSmeltTransfer(std::uint32_t dstContainer, int dstSlot, bool isFuel);
-    void tickSmelt(bedrock::Vec3 feet);
-    void tickPlaceFurnace(bedrock::Vec3 feet);
-    void tickOpenFurnace(bedrock::Vec3 feet);
+    void tickSmelt(bedrock::sdk::Vec3Value feet);
+    void tickPlaceFurnace(bedrock::sdk::Vec3Value feet);
+    void tickOpenFurnace(bedrock::sdk::Vec3Value feet);
 
     // Food gathering (forage.cpp).
     void startForage(int want);
     void forageFail(const std::string &why);
     void forageDone();
     int forageRawTotal();
-    void tickForage(const bedrock::Vec3 &feet);
+    void tickForage(const bedrock::sdk::Vec3Value &feet);
 
     // Expedition supervision (expedition.cpp).
     bool expeditionActive() const;
@@ -457,9 +447,9 @@ class AutoMineMod {
     void expFail(const std::string &why);
     void enterExpStage(ExpStage stage);
     void beginDescend(ExpStage stage);
-    bool descendCaveResume(ExpStage stage, bedrock::Vec3 feet);
+    bool descendCaveResume(ExpStage stage, bedrock::sdk::Vec3Value feet);
     bool descendResumeTick(ExpStage stage);
-    void tickExpedition(bedrock::Vec3 feet);
+    void tickExpedition(bedrock::sdk::Vec3Value feet);
 
     // Shared state.
 
@@ -540,24 +530,23 @@ class AutoMineMod {
     bool moveFailed_{};
     int moveRetryTick_{};
 
-    bedrock::NativeItemStackRequests craft_;
+    bedrock::sdk::ItemStackRequests craft_;
     bool craftReady_{};
-    std::string craftProfileJson_;
-    bedrock::NativeGameAccess access_;
-    bedrock::detail::HookDispatch game_{access_};
-    bedrock::NativeWorldAccess world_;
-    bedrock::NativeRuntimeActors runtimeActors_;
-    bedrock::NativeActorRegistry actorRegistry_;
+    std::optional<bedrock::sdk::Profile> craftProfile_;
+    bedrock::sdk::RosterAccess access_;
+    bedrock::sdk::Hooks game_;
+    bedrock::sdk::WorldAccess world_;
+    bedrock::sdk::ActorFacade actors_;
     bool actorsReady_{false};
-    bedrock::NativeCamera camera_;
-    bedrock::NativeAutomationControls controls_;
-    bedrock::NativeBlockActions blockActions_;
+    bedrock::sdk::CameraControl camera_;
+    bedrock::sdk::AutomationControls controls_;
+    bedrock::sdk::BlockActions blockActions_;
     bool independent_{true}, independentReady_{}, independentAim_{};
     BlockPos3 parkourWaypoint_{INT_MIN, 0, 0}, parkourFrom_{};
     unsigned long long pathRevision_{}, parkourRevision_{}, parkourLaunchTick_{};
     int parkourStage_{}, parkourTicks_{};
     bool parkourRose_{};
-    bedrock::Vec3 parkourLastFeet_{};
+    bedrock::sdk::Vec3Value parkourLastFeet_{};
     long long parkourLastTick_{-1};
     int parkourLandingTicks_{};
     bool parkourPadWait_{};
@@ -582,18 +571,20 @@ class AutoMineMod {
     BlockPos3 mineRejectedFor_{INT_MIN, 0, 0};
     std::set<BlockPos3> mineRejectedStances_;
     float destroyProgress_{};
-    bedrock::BlockPos destroyTarget_{-1, -1, -1};
+    bedrock::sdk::BlockPos destroyTarget_{-1, -1, -1};
     std::uint64_t lastNativeActionWarn_{};
     BlockPos3 nativeMiningCell_{};
     BlockPos3 mineOccluder_{INT_MIN, 0, 0};
     int mineOccluderStreak_{};
     int lastNativeUse_{-1000}, lastNativeAttack_{-1000};
-    std::optional<bedrock::CameraPlayerSnapshot> snap_;
-    bedrock::NativeSafeTeleport gui_;
-    bedrock::NativeInjectedCommands injected_;
+    std::optional<bedrock::sdk::CameraPlayerSnapshot> snap_;
+    bedrock::sdk::SafeTeleport gui_;
+    bedrock::sdk::Commands injected_;
+    std::vector<bedrock::sdk::CommandEnum> commandEnums_;
+    std::vector<bedrock::sdk::CommandDefinition> commandDefs_;
+    bedrock::sdk::SymbolResolver resolver_;
     std::mutex nativeMutex_;
     std::deque<std::string> nativeLines_;
-    std::unique_ptr<bedrock::GameHooks> hooks_;
     std::atomic<void *> client_{};
     std::atomic<void *> level_{};
     std::atomic<std::uint64_t> epoch_{1};
@@ -636,28 +627,24 @@ class AutoMineMod {
     std::vector<std::uint32_t> preBoatEids_;
     int boatGlueTicks_{};
     int boatProbeTicks_{};
-    bedrock::Vec3 boatProbeStart_{};
-    bedrock::Vec3 boatCenter_{};
+    bedrock::sdk::Vec3Value boatProbeStart_{};
+    bedrock::sdk::Vec3Value boatCenter_{};
     BlockPos3 boatTriedFor_{INT_MIN, 0, 0};
     bool pendingReset_{};
 
-    BDS_HookToken mouseToken_{};
-    std::mutex mouseMutex_;
-    BDS_MouseArgs lastMouse_{};
-    bool haveMouse_{};
     float gainYaw_{0.15f}, gainPitch_{0.15f};
     float resX_{}, resY_{};
     int lastPx_{}, lastPy_{};
     float lastYaw_{}, lastPitch_{};
-    bedrock::Vec3 aimSmooth_{};
+    bedrock::sdk::Vec3Value aimSmooth_{};
     bool aimSmoothInit_{};
-    bedrock::NativeOutlineRenderer outline_;
+    bedrock::sdk::WorldRender outline_;
     bool outlineReady_{};
-    BDS_HookToken renderToken_{};
+    bedrock::sdk::WorldRenderSubscription renderSub_;
     std::mutex pathMutex_;
-    std::vector<bedrock::Vec3> pathMarkers_;
+    std::vector<bedrock::sdk::Vec3Value> pathMarkers_;
     float pathBreakProgress_{-1.f};
-    std::vector<bedrock::Vec3> pathWalk_, pathDigLine_, pathBridgeLine_;
+    std::vector<bedrock::sdk::Vec3Value> pathWalk_, pathDigLine_, pathBridgeLine_;
     bool pathBox_{};
     BlockPos3 pathBoxPos_{};
     bool showPath_{true};
@@ -665,7 +652,7 @@ class AutoMineMod {
     bool skipUnderwater_{true};
     int submergedTicks_{0};
 
-    bedrock::Vec3 lastDryPos_{};
+    bedrock::sdk::Vec3Value lastDryPos_{};
     bool lastDryValid_{};
     bool floodHold_{};
     int floodWetTicks_{};
@@ -675,14 +662,14 @@ class AutoMineMod {
     bool joinArmPending_{true};
     bool joinSurfaced_{};
     std::string lastIdleScreen_;
-    bedrock::Vec3 lastAlivePos_{};
+    bedrock::sdk::Vec3Value lastAlivePos_{};
     bool hasLastAlivePos_{};
     int deathSigTicks_{};
     bool deathPending_{}, hasDeathPos_{};
-    bedrock::Vec3 deathPos_{};
+    bedrock::sdk::Vec3Value deathPos_{};
     bool recoverActive_{};
     int recoverTicks_{}, recoverSweepTicks_{}, recoverStuckTicks_{};
-    bedrock::Vec3 recoverLastPos_{};
+    bedrock::sdk::Vec3Value recoverLastPos_{};
     int escapeTicks_{0};
     int dryTicks_{0};
 
@@ -699,7 +686,7 @@ class AutoMineMod {
     std::string collectDropId_;
     int collectBase_{};
     BlockPos3 collectTarget_{INT_MIN, 0, 0};
-    bedrock::Vec3 collectEntityPos_{};
+    bedrock::sdk::Vec3Value collectEntityPos_{};
     bool collectEntityValid_{};
     int collectStableTicks_{};
     int collectLandingTicks_{};
@@ -875,7 +862,7 @@ class AutoMineMod {
     int forageWant_{3};
     ForageStage forageStage_{ForageStage::Hunt};
     std::uint32_t forageEid_{}, forageType_{};
-    bedrock::Vec3 forageCentre_{};
+    bedrock::sdk::Vec3Value forageCentre_{};
     bool forageEngaged_{};
     int forageTicks_{}, forageKills_{}, forageCollectTicks_{}, forageNoAnimalTicks_{};
     int forageLastHitTick_{};

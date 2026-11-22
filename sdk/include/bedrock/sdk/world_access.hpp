@@ -7,6 +7,8 @@
 #include "block_types.hpp"
 
 namespace bedrock::sdk {
+class WorldAccess;
+namespace detail { void* nativeWorldAccessHandle(WorldAccess&) noexcept; }
 struct Vec3Value { float x{}; float y{}; float z{}; };
 struct BlockPositionValue { int x{}; int y{}; int z{}; };
 struct HotbarSnapshot {
@@ -15,7 +17,7 @@ struct HotbarSnapshot {
     std::array<int, 9> aux{};
 };
 struct BlockInfoValue { std::string name; void* type{}; void* nativeState{}; };
-struct ActorLayoutValue { std::uint32_t actorRotationComponentHash{}; std::size_t rotationPitchOffset{}; std::size_t rotationYawOffset{}; };
+struct ActorLayoutValue { std::uint32_t actorRotationComponentHash{}; std::size_t rotationPitchOffset{}; std::size_t rotationYawOffset{}; std::uint32_t aabbShapeComponentHash{}; std::uint32_t aabbShapeComponentHashAlternate{}; std::size_t aabbMinimumOffset{}; std::size_t aabbMaximumOffset{}; };
 class WorldAccess { public:
     WorldAccess(); ~WorldAccess(); WorldAccess(const WorldAccess&) = delete; WorldAccess& operator=(const WorldAccess&) = delete;
     void load(const std::string& profileJson); void loadWorld(const std::string& profileJson);
@@ -27,6 +29,7 @@ class WorldAccess { public:
     bool readField(void* object, std::size_t offset, std::uint16_t& value) const noexcept;
     bool readField(void* object, std::size_t offset, std::uint64_t& value) const noexcept;
     bool readField(void* object, std::size_t offset, void*& value) const noexcept;
+    bool readField(void* object, std::size_t offset, Vec3Value& value) const noexcept;
     bool writeField(void* object, std::size_t offset, float value) noexcept;
     bool build(void* player, void* gameMode, BlockPos support, unsigned face, Vec3Value eye, Vec3Value hit, bool* accepted) const noexcept;
     bool readField(void* object, std::string_view layout, float& value) const noexcept;
@@ -42,5 +45,6 @@ class WorldAccess { public:
     Cell describeCell(void* state, BlockPos pos = {}) const;
     bool predict(void* type, void* player, BlockPositionValue target, unsigned face, Vec3Value fractional,
                  int aux, float yaw, float pitch, void*& result) const noexcept;
-private: struct Impl; std::unique_ptr<Impl> impl_; };
+private: struct Impl; std::unique_ptr<Impl> impl_;
+    friend void* detail::nativeWorldAccessHandle(WorldAccess&) noexcept; };
 } // namespace bedrock::sdk

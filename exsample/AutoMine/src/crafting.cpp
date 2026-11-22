@@ -2,7 +2,7 @@
 
 namespace automine::client {
 
-bool AutoMineMod::routeCrossesWater(const bedrock::Vec3 &feet, const bedrock::Vec3 &center) {
+bool AutoMineMod::routeCrossesWater(const bedrock::sdk::Vec3Value &feet, const bedrock::sdk::Vec3Value &center) {
     const double dx = center.x - feet.x, dz = center.z - feet.z;
     const double len = std::hypot(dx, dz);
     if (len < 6.0)
@@ -21,7 +21,7 @@ bool AutoMineMod::routeCrossesWater(const bedrock::Vec3 &feet, const bedrock::Ve
 bool AutoMineMod::placedTableExists() {
     if (chainTablePlaced_ && contains(localPart(blockAt(chainTablePos_)), "crafting_table") &&
         !tableBanned(chainTablePos_)) {
-        bedrock::Vec3 eye;
+        bedrock::sdk::Vec3Value eye;
         BlockPos3 obstruction;
         if (eyePos(eye) &&
             automine::inMiningReach({eye.x, eye.y, eye.z},
@@ -29,14 +29,14 @@ bool AutoMineMod::placedTableExists() {
             lineOfSight(eye, chainTablePos_, obstruction))
             return true;
     }
-    bedrock::Vec3 feet;
+    bedrock::sdk::Vec3Value feet;
     if (!feetPos(feet))
         return false;
     const int fx = static_cast<int>(std::floor(feet.x));
     const int fy = static_cast<int>(std::floor(feet.y));
     const int fz = static_cast<int>(std::floor(feet.z));
     BlockPos3 best{INT_MIN, 0, 0};
-    bedrock::Vec3 tableEye;
+    bedrock::sdk::Vec3Value tableEye;
     if (!eyePos(tableEye))
         return false;
     double bestD2 = 36.0;
@@ -159,7 +159,7 @@ bool AutoMineMod::tryStartUtilityChain() {
                                    : tool == 2 ? "pickaxe"
                                                : "shovel";
         const std::string item = "minecraft:" + std::string(stone ? "stone_" : "wooden_") + suffix;
-        bedrock::CraftRecipe recipe;
+        bedrock::sdk::CraftRecipeValue recipe;
         if (!craft_.copyRecipe(item, recipe))
             return false;
         steps.push_back({ChainStep::Kind::OpenTable});
@@ -200,7 +200,7 @@ bool AutoMineMod::tryStartUtilityChain() {
 bool AutoMineMod::tryStartPickaxeChain(bool force) {
     if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_)
         return false;
-    if (craft_.status() == bedrock::CraftJobStatus::Running)
+    if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Running)
         return false; // retry later
     craft_.clearStatus();
     const auto have = chainCounts();
@@ -305,7 +305,7 @@ bool AutoMineMod::tryStartPickaxeChain(bool force) {
 bool AutoMineMod::tryStartSwordChain() {
     if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_)
         return false;
-    if (craft_.status() == bedrock::CraftJobStatus::Running)
+    if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Running)
         return false;
     craft_.clearStatus();
     const auto have = chainCounts();
@@ -392,7 +392,7 @@ void AutoMineMod::ensureSwordPrep() {
 bool AutoMineMod::tryStartBoatChain() {
     if (!craftReady_ || !craft_.recipesReady() || !craft_.ready() || chainActive_)
         return false;
-    if (craft_.status() == bedrock::CraftJobStatus::Running)
+    if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Running)
         return false;
     craft_.clearStatus();
     boatChainTriedFor_ = target_; // one attempt per target from here on
@@ -578,7 +578,7 @@ void AutoMineMod::dispatchCraftStep(const ChainStep &step) {
         chainAdvance();
         return;
     }
-    bedrock::CraftRecipe recipe;
+    bedrock::sdk::CraftRecipeValue recipe;
     if (!craft_.copyRecipe(step.recipeId, recipe)) {
         chainFail("レシピ未取得: " + step.recipeId);
         return;
@@ -587,7 +587,7 @@ void AutoMineMod::dispatchCraftStep(const ChainStep &step) {
     const int width = step.tableGrid ? 3 : 2;
     if (!craft_.startCraft(recipe, step.outputName, step.times, base, width)) {
         std::string why = "クラフト開始失敗";
-        if (craft_.status() == bedrock::CraftJobStatus::Failed) {
+        if (craft_.status() == bedrock::sdk::CraftJobStatusValue::Failed) {
             why = craft_.statusDetail();
             craft_.clearStatus();
         }
@@ -598,7 +598,7 @@ void AutoMineMod::dispatchCraftStep(const ChainStep &step) {
     chainStepTicks_ = 0;
 }
 
-void AutoMineMod::tickCraft(bedrock::Vec3 feet) {
+void AutoMineMod::tickCraft(bedrock::sdk::Vec3Value feet) {
     if ((backgroundCraft_ && anyScreenUp()) || contains(topScreenName(), "chat")) {
         releaseInputs();
         return;
@@ -660,13 +660,13 @@ void AutoMineMod::tickCraft(bedrock::Vec3 feet) {
     ++chainStepTicks_;
     if (chainJobStarted_) {
         const auto st = craft_.status();
-        if (st == bedrock::CraftJobStatus::Running) {
+        if (st == bedrock::sdk::CraftJobStatusValue::Running) {
             if (chainStepTicks_ > 20 * 240)
                 chainFail("クラフト応答なし");
             return;
         }
         chainJobStarted_ = false;
-        if (st == bedrock::CraftJobStatus::Failed) {
+        if (st == bedrock::sdk::CraftJobStatusValue::Failed) {
             // Route through the clean-state recovery above; the
             // rewind-or-fail decision runs when it completes.
             chainPendingFail_ = craft_.statusDetail();

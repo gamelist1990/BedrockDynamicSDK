@@ -182,7 +182,7 @@ void AutoMineMod::beginDescend(ExpStage stage) {
     reply(stage == ExpStage::ToIronLevel ? "鉄を探しに降りるね" : "ダイヤ層まで降りるね");
 }
 
-bool AutoMineMod::descendCaveResume(ExpStage stage, bedrock::Vec3 feet) {
+bool AutoMineMod::descendCaveResume(ExpStage stage, bedrock::sdk::Vec3Value feet) {
     if (!descendCave_)
         return false;
     const int fy = static_cast<int>(std::floor(feet.y));
@@ -223,7 +223,7 @@ bool AutoMineMod::descendResumeTick(ExpStage stage) {
     return true;
 }
 
-void AutoMineMod::tickExpedition(bedrock::Vec3 feet) {
+void AutoMineMod::tickExpedition(bedrock::sdk::Vec3Value feet) {
     if (!expeditionActive())
         return;
     // Gather outcomes are stage transitions wherever they land.

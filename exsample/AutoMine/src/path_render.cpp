@@ -56,7 +56,7 @@ std::optional<BlockPos3> AutoMineMod::previewWorkCell() {
     return {};
 }
 
-automine::ActionPlan AutoMineMod::futureActions(const bedrock::Vec3 &feet) {
+automine::ActionPlan AutoMineMod::futureActions(const bedrock::sdk::Vec3Value &feet) {
     auto plan = plannedActions(feet);
     if (attackHeld_ && phase_ != Phase::Combat && phase_ != Phase::Forage)
         if (const auto active = previewWorkCell(); active && isDiggableCell(blockAt(*active)))
@@ -65,7 +65,7 @@ automine::ActionPlan AutoMineMod::futureActions(const bedrock::Vec3 &feet) {
     return plan;
 }
 
-automine::ActionPlan AutoMineMod::plannedActions(const bedrock::Vec3 &feet) {
+automine::ActionPlan AutoMineMod::plannedActions(const bedrock::sdk::Vec3Value &feet) {
     using A = automine::Action;
     const automine::PlanCell here{static_cast<int>(std::floor(feet.x)),
                                   static_cast<int>(std::floor(feet.y)),
@@ -217,12 +217,12 @@ automine::ActionPlan AutoMineMod::plannedActions(const bedrock::Vec3 &feet) {
         } else if (plan.complete &&
                    (!path_.empty() || automine::inMiningReach({feet.x, feet.y + 1.62, feet.z},
                                                               {goal.x, goal.y, goal.z}))) {
-            bedrock::Vec3 stance = feet;
+            bedrock::sdk::Vec3Value stance = feet;
             if (!path_.empty() && pathGoal_ == goal) {
                 const auto p = path_.back();
                 stance = {p.x + .5f, static_cast<float>(p.y), p.z + .5f};
             }
-            const bedrock::Vec3 from{stance.x, stance.y + 1.62f, stance.z};
+            const bedrock::sdk::Vec3Value from{stance.x, stance.y + 1.62f, stance.z};
             const double dx = goal.x + .5 - from.x, dy = goal.y + .5 - from.y,
                          dz = goal.z + .5 - from.z;
             const int steps =
@@ -244,15 +244,15 @@ automine::ActionPlan AutoMineMod::plannedActions(const bedrock::Vec3 &feet) {
     return plan;
 }
 
-void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
+void AutoMineMod::updatePath(const bedrock::sdk::Vec3Value &feet) {
     using A = automine::Action;
-    std::vector<bedrock::Vec3> walk, dig, bridge, markers;
+    std::vector<bedrock::sdk::Vec3Value> walk, dig, bridge, markers;
     bool box = false;
     BlockPos3 boxPos{};
     if (showPath_) {
         const auto plan = futureActions(feet);
-        bedrock::Vec3 stance{feet.x, feet.y + .08f, feet.z};
-        auto edge = [](auto &dst, bedrock::Vec3 from, bedrock::Vec3 to) {
+        bedrock::sdk::Vec3Value stance{feet.x, feet.y + .08f, feet.z};
+        auto edge = [](auto &dst, bedrock::sdk::Vec3Value from, bedrock::sdk::Vec3Value to) {
             const int n =
                 std::max(1, static_cast<int>(std::ceil(
                                 std::hypot(to.x - from.x, to.y - from.y, to.z - from.z) / .2)));
@@ -273,10 +273,10 @@ void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
         };
         for (const auto &action : plan.actions) {
             const auto p = action.cell;
-            const bedrock::Vec3 point{p.x + .5f, p.y + .08f, p.z + .5f};
+            const bedrock::sdk::Vec3Value point{p.x + .5f, p.y + .08f, p.z + .5f};
             if (action.kind == A::Dig || action.kind == A::Place) {
                 auto &dst = action.kind == A::Dig ? dig : bridge;
-                const bedrock::Vec3 hit{point.x, p.y + .5f, point.z};
+                const bedrock::sdk::Vec3Value hit{point.x, p.y + .5f, point.z};
                 edge(dst, stance, hit);
                 // Every future work cell has a marker, even when the
                 // shaft line lies behind the block currently being mined.
@@ -308,7 +308,7 @@ void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
                         if (activeJump && ((q.x - stance.x) * (p.x - launch.x) +
                                            (q.z - stance.z) * (p.z - launch.z)) < -.05)
                             continue;
-                        const bedrock::Vec3 next{static_cast<float>(q.x),
+                        const bedrock::sdk::Vec3Value next{static_cast<float>(q.x),
                                                  static_cast<float>(q.y + .08),
                                                  static_cast<float>(q.z)};
                         if (!automine::bodyClear(q, terrain))
@@ -326,7 +326,7 @@ void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
                     for (const auto &q : samples) {
                         if (!automine::bodyClear(q, terrain))
                             break;
-                        const bedrock::Vec3 next{static_cast<float>(q.x),
+                        const bedrock::sdk::Vec3Value next{static_cast<float>(q.x),
                                                  static_cast<float>(q.y + .08),
                                                  static_cast<float>(q.z)};
                         edge(walk, last, next);
@@ -347,13 +347,13 @@ void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
                              dz = point.z - stance.z;
                 const double len = std::hypot(dx, dy, dz);
                 if (len > .2) {
-                    const bedrock::Vec3 base{point.x - static_cast<float>(dx / len) * .22f,
+                    const bedrock::sdk::Vec3Value base{point.x - static_cast<float>(dx / len) * .22f,
                                              point.y - static_cast<float>(dy / len) * .22f,
                                              point.z - static_cast<float>(dz / len) * .22f};
-                    const bedrock::Vec3 side =
+                    const bedrock::sdk::Vec3Value side =
                         std::abs(dy / len) > .9
-                            ? bedrock::Vec3{.1f, 0, 0}
-                            : bedrock::Vec3{static_cast<float>(dz / len) * .1f, 0,
+                            ? bedrock::sdk::Vec3Value{.1f, 0, 0}
+                            : bedrock::sdk::Vec3Value{static_cast<float>(dz / len) * .1f, 0,
                                             -static_cast<float>(dx / len) * .1f};
                     edge(walk, point, {base.x + side.x, base.y + side.y, base.z + side.z});
                     edge(walk, point, {base.x - side.x, base.y - side.y, base.z - side.z});
@@ -379,21 +379,11 @@ void AutoMineMod::updatePath(const bedrock::Vec3 &feet) {
                              : -1.f;
 }
 
-void BDS_HOOK_CALL AutoMineMod::onRenderLevel(void *user, void *raw, BDS_HookNext next,
-                                              void *frame) {
-    auto &self = *static_cast<AutoMineMod *>(user);
-    next(frame, raw);
-    self.drawPathGuarded(raw);
-}
-
-void AutoMineMod::drawPath(void *raw) {
+void AutoMineMod::drawPath(bedrock::sdk::WorldRenderer &renderer) {
     crashrec::Section section("drawPath");
     if (!outlineReady_ || !showPath_)
         return;
-    const auto &args = *static_cast<BDS_RenderLevelArgs *>(raw);
-    if (!args.renderer || !args.screen)
-        return;
-    std::vector<bedrock::Vec3> walk, dig, bridge, markers;
+    std::vector<bedrock::sdk::Vec3Value> walk, dig, bridge, markers;
     bool box{};
     BlockPos3 boxPos{};
     float breakProgress{};
@@ -409,63 +399,50 @@ void AutoMineMod::drawPath(void *raw) {
     }
     if (walk.size() < 2 && dig.size() < 2 && bridge.size() < 2 && !box)
         return;
-    const auto origin = outline_.renderOrigin(args.renderer);
-    if (!origin)
-        return;
-    auto rel = [&](const bedrock::Vec3 &p) {
-        return bedrock::Vec3{p.x - origin->x, p.y - origin->y, p.z - origin->z};
+    const auto origin = renderer.origin();
+    auto rel = [&](const bedrock::sdk::Vec3Value &pt) {
+        return bedrock::sdk::Vector3{pt.x - origin.x, pt.y - origin.y, pt.z - origin.z};
     };
-    bedrock::WorldOutlineGeometry geometry;
-    geometry.origin = *origin;
-    auto addLine = [&](const std::vector<bedrock::Vec3> &pts, const std::array<float, 4> &color) {
+    auto addLine = [&](const std::vector<bedrock::sdk::Vec3Value> &pts,
+                       const std::array<float, 4> &color) {
         if (pts.size() < 2)
             return;
-        bedrock::WorldGeometryBatch batch;
-        batch.color = color;
-        for (std::size_t i = 0; i + 1 < pts.size(); i += 2) {
-            batch.vertices.push_back(rel(pts[i]));
-            batch.vertices.push_back(rel(pts[i + 1]));
-        }
-        geometry.lines.push_back(std::move(batch));
+        std::vector<bedrock::sdk::WorldLineSegment> segments;
+        for (std::size_t i = 0; i + 1 < pts.size(); i += 2)
+            segments.push_back({rel(pts[i]), rel(pts[i + 1])});
+        renderer.drawLines(segments, color);
     };
     addLine(walk, {0.3f, 1.f, 0.35f, 1.f});  // route: bright green
     addLine(dig, {1.f, 0.8f, 0.15f, 1.f});   // dig-through: yellow
     addLine(bridge, {0.3f, 0.9f, 1.f, 1.f}); // bridge cells: cyan
     addLine(markers, {1.f, .55f, .2f, 1.f});
     if (box) {
-        bedrock::WorldGeometryBatch batch;
-        batch.color = {1.f, 0.45f, 0.1f, 1.f};
+        std::vector<bedrock::sdk::WorldLineSegment> segments;
         const float x0 = static_cast<float>(boxPos.x), y0 = static_cast<float>(boxPos.y),
                     z0 = static_cast<float>(boxPos.z);
         const float x1 = x0 + 1.f, y1 = y0 + 1.f, z1 = z0 + 1.f;
-        const bedrock::Vec3 c[8]{{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1},
-                                 {x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}};
+        const bedrock::sdk::Vec3Value c[8]{{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1},
+                                           {x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}};
         constexpr int edges[12][2]{{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
                                    {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-        for (const auto &e : edges) {
-            batch.vertices.push_back(rel(c[e[0]]));
-            batch.vertices.push_back(rel(c[e[1]]));
-        }
+        for (const auto &e : edges)
+            segments.push_back({rel(c[e[0]]), rel(c[e[1]])});
+        renderer.drawLines(segments, {1.f, 0.45f, 0.1f, 1.f});
         if (breakProgress >= 0.f) {
-            const float p = std::clamp(breakProgress, 0.f, 1.f);
-            const float half = 0.04f + p * .46f;
+            const float pr = std::clamp(breakProgress, 0.f, 1.f);
+            const float half = 0.04f + pr * .46f;
             const float cx = x0 + .5f, cy = y0 + .5f, cz = z0 + .5f;
-            const bedrock::Vec3 inner[8]{
+            const bedrock::sdk::Vec3Value inner[8]{
                 {cx - half, cy - half, cz - half}, {cx + half, cy - half, cz - half},
                 {cx + half, cy - half, cz + half}, {cx - half, cy - half, cz + half},
                 {cx - half, cy + half, cz - half}, {cx + half, cy + half, cz - half},
                 {cx + half, cy + half, cz + half}, {cx - half, cy + half, cz + half}};
-            bedrock::WorldGeometryBatch innerBatch;
-            innerBatch.color = {1.f, .78f, .2f, 1.f};
-            for (const auto &e : edges) {
-                innerBatch.vertices.push_back(rel(inner[e[0]]));
-                innerBatch.vertices.push_back(rel(inner[e[1]]));
-            }
-            geometry.lines.push_back(std::move(innerBatch));
+            std::vector<bedrock::sdk::WorldLineSegment> innerSegments;
+            for (const auto &e : edges)
+                innerSegments.push_back({rel(inner[e[0]]), rel(inner[e[1]])});
+            renderer.drawLines(innerSegments, {1.f, .78f, .2f, 1.f});
         }
-        geometry.lines.push_back(std::move(batch));
     }
-    outline_.draw(args.renderer, args.screen, geometry);
 }
 
 } // namespace automine::client

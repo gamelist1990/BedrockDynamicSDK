@@ -13,6 +13,7 @@ FetchContent_Declare(bedrock_sdk GIT_REPOSITORY https://github.com/gamelist1990/
 if(WIN32)
     set(BEDROCK_SDK_ENABLE_NATIVE_WORLD ON CACHE BOOL "Use SDK native world adapter" FORCE)
     set(BEDROCK_SDK_ENABLE_NATIVE_CLIENT ON CACHE BOOL "Use SDK native client adapter" FORCE)
+    set(BEDROCK_SDK_ENABLE_NATIVE_ACTOR_REGISTRY ON CACHE BOOL "Use SDK native actor registry" FORCE)
 endif()
 FetchContent_MakeAvailable(bedrock_sdk)
 if(WIN32)
@@ -46,9 +47,9 @@ if(WIN32)
     set_source_files_properties(src/collection.cpp PROPERTIES
         COMPILE_DEFINITIONS AUTOMINE_COLLECTION_PICKUP_WIRING)
     target_include_directories(BedrockAutoMine PRIVATE include)
-    # First-party Mod: native world access and shared hook dispatch.
-    target_link_libraries(BedrockAutoMine PRIVATE bedrock::world bedrock::symbols bedrock::logging bedrock::hook_runtime EnTT::EnTT shell32 ole32)
-    bedrock_enable_hook_runtime(BedrockAutoMine)
+    # Public SDK only (plugin-system completion program): every game
+    # capability goes through bedrock::sdk facades.
+    target_link_libraries(BedrockAutoMine PRIVATE bedrock::sdk bedrock_nlohmann_headers shell32 ole32)
     target_compile_options(BedrockAutoMine PRIVATE /utf-8)
     set_property(TARGET BedrockAutoMine PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()

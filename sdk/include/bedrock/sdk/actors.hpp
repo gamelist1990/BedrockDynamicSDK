@@ -50,6 +50,9 @@ public:
     std::optional<Vec3Value> position(void* actor) const noexcept;
     std::uint64_t runtimeId(void* actor) const noexcept;
     std::optional<std::uint32_t> entityId(void* actor) const noexcept;
+    // The actor's type value (the ActorType component read the native
+    // registry performs), or nullopt when unreadable.
+    std::optional<std::uint32_t> actorType(void* actor) const noexcept;
 
     bool capture(void* local,
                  bool playersOnly,

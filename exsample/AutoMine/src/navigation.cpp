@@ -3,7 +3,7 @@
 
 namespace automine::client {
 
-void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
+void AutoMineMod::tickFollowPath(bedrock::sdk::Vec3Value feet) {
     const bool pickup = phase_ == Phase::Collect;
     const bool workstation = phase_ == Phase::Navigate && navReturn_;
     const bool walkOnly = pickup || workstation;
@@ -71,7 +71,7 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
     }
     if (inWaterNow(feet)) {
         const BlockPos3 wp0 = path_[pathIdx_];
-        const bedrock::Vec3 eye0{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::sdk::Vec3Value eye0{feet.x, feet.y + 1.62f, feet.z};
         faceAim(eye0, {wp0.x + .5f, eye0.y, wp0.z + .5f}, 10.f, 0.25f);
         if (headInWater(feet)) {
             pressKey(kKeyW, false);
@@ -243,9 +243,9 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
                 break;
         }
     }
-    const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+    const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
     const auto aimCell = path_[aimIdx];
-    bedrock::Vec3 aim{aimCell.x + .5f, eye.y, aimCell.z + .5f};
+    bedrock::sdk::Vec3Value aim{aimCell.x + .5f, eye.y, aimCell.z + .5f};
     if (pickup && aimIdx == pathIdx_ && preciseEnd(aimIdx) &&
         std::floor(feet.x) == aimCell.x && feetCellY == aimCell.y &&
         std::floor(feet.z) == aimCell.z) {
@@ -381,7 +381,7 @@ void AutoMineMod::tickFollowPath(bedrock::Vec3 feet) {
     }
 }
 
-bool AutoMineMod::workstationReachableFrom(bedrock::Vec3 feet, BlockPos3 table) {
+bool AutoMineMod::workstationReachableFrom(bedrock::sdk::Vec3Value feet, BlockPos3 table) {
     return automine::workstationReachable({feet.x, feet.y, feet.z}, {table.x, table.y, table.z},
         [&](automine::NavPoint eye) {
             BlockPos3 obstruction;
@@ -390,7 +390,7 @@ bool AutoMineMod::workstationReachableFrom(bedrock::Vec3 feet, BlockPos3 table) 
         });
 }
 
-void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
+void AutoMineMod::tickNavigate(bedrock::sdk::Vec3Value feet) {
     if (!hasTarget_) {
         phase_ = Phase::Scan;
         scanCursor_ = 0;
@@ -452,8 +452,8 @@ void AutoMineMod::tickNavigate(bedrock::Vec3 feet) {
     }
     if (scaffoldActive_ && !(target_ == scaffoldFor_))
         endScaffold();
-    const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-    const bedrock::Vec3 center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
+    const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
+    const bedrock::sdk::Vec3Value center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
     const double dx = center.x - eye.x, dy = center.y - eye.y, dz = center.z - eye.z;
     const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
     const bool rejectedStance = mineRejectedFor_ == target_ &&

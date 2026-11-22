@@ -38,7 +38,7 @@ void AutoMineMod::rotateAscendDir() {
     ascendDirZ_ = ndz;
 }
 
-void AutoMineMod::tickAscend(bedrock::Vec3 feet) {
+void AutoMineMod::tickAscend(bedrock::sdk::Vec3Value feet) {
     ++ascendTicks_;
     const int fy = static_cast<int>(std::floor(feet.y));
     bool arrived = fy >= ascendTargetY_;
@@ -139,7 +139,7 @@ void AutoMineMod::tickAscend(bedrock::Vec3 feet) {
     const int fx = static_cast<int>(std::floor(feet.x));
     const int fz = static_cast<int>(std::floor(feet.z));
     void *p = player();
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     // Shift walk (from the no-rise budget): step sideways to
@@ -187,7 +187,7 @@ void AutoMineMod::tickAscend(bedrock::Vec3 feet) {
             }
             if (!path_.empty() && pathIdx_ < path_.size() && pathDig_[pathIdx_]) {
                 const BlockPos3 &wp = path_[pathIdx_];
-                const bedrock::Vec3 c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
+                const bedrock::sdk::Vec3Value c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
                 const double ddx = c.x - eye.x, ddy = c.y - eye.y, ddz = c.z - eye.z;
                 if (ddx * ddx + ddy * ddy + ddz * ddz > 3.2 * 3.2) {
                     faceAim(eye, c, 12.f, 0.3f);
@@ -406,7 +406,7 @@ void AutoMineMod::tickAscend(bedrock::Vec3 feet) {
         world_.select(p, static_cast<unsigned>(slot));
     const int pfx = static_cast<int>(std::floor(feet.x));
     const int pfz = static_cast<int>(std::floor(feet.z));
-    const bedrock::Vec3 aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
+    const bedrock::sdk::Vec3Value aim{pfx + .5f, static_cast<float>(fy), pfz + .5f};
     faceToward(eye, aim, 3.f);
     pressKey(kKeySneak, true);
     pressKey(kKeySpace, true);
@@ -417,7 +417,7 @@ void AutoMineMod::tickAscend(bedrock::Vec3 feet) {
              " slot=" + std::to_string(p ? world_.selected(p) : -1));
 }
 
-void AutoMineMod::tickDescend(bedrock::Vec3 feet) {
+void AutoMineMod::tickDescend(bedrock::sdk::Vec3Value feet) {
     if (feet.y <= descendTargetY_) {
         setAttack(false);
         descendDone_ = true;
@@ -504,7 +504,7 @@ void AutoMineMod::tickDescend(bedrock::Vec3 feet) {
         const double tx = cx + 0.5, tz = cz + 0.5;
         const double dx = tx - feet.x, dz = tz - feet.z;
         if (dx * dx + dz * dz > 0.15 * 0.15) {
-            bedrock::Vec3 eye;
+            bedrock::sdk::Vec3Value eye;
             if (eyePos(eye))
                 faceToward(eye, {static_cast<float>(tx), feet.y, static_cast<float>(tz)}, 0.05f);
             pressKey(kKeyW, true);
@@ -621,7 +621,7 @@ void AutoMineMod::tickDescend(bedrock::Vec3 feet) {
     }
 }
 
-void AutoMineMod::tickHunt(bedrock::Vec3 feet) {
+void AutoMineMod::tickHunt(bedrock::sdk::Vec3Value feet) {
     const int fx = static_cast<int>(std::floor(feet.x));
     const int fy = static_cast<int>(std::floor(feet.y));
     const int fz = static_cast<int>(std::floor(feet.z));
@@ -667,10 +667,10 @@ void AutoMineMod::tickHunt(bedrock::Vec3 feet) {
         return;
     }
     // Advance one cell into the cleared space.
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
-    const bedrock::Vec3 want{ahead.x + .5f, feet.y + 1.0f, ahead.z + .5f};
+    const bedrock::sdk::Vec3Value want{ahead.x + .5f, feet.y + 1.0f, ahead.z + .5f};
     faceToward(eye, want, 0.05f);
     pressKey(kKeyW, true);
     const int nx = static_cast<int>(std::floor(feet.x));

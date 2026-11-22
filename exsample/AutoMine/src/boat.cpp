@@ -12,30 +12,32 @@ int AutoMineMod::boatSlot() {
     return -1;
 }
 
-std::optional<AutoMineMod::MobInfo> AutoMineMod::findBoat(const bedrock::Vec3 &feet, double maxDist,
+std::optional<AutoMineMod::MobInfo> AutoMineMod::findBoat(const bedrock::sdk::Vec3Value &feet, double maxDist,
                                                           std::uint32_t onlyEid, bool freshOnly) {
     if (!actorsReady_)
         return std::nullopt;
-    const auto snap = runtimeActors_.snapshot(level_.load());
+    const auto snap = actorSamples();
     if (!snap)
         return std::nullopt;
     void *self = world_.localPlayer(client_.load());
     std::optional<MobInfo> best, bestTyped;
-    for (void *a : *snap) {
+    for (const auto &sample : *snap) {
+        void *a = reinterpret_cast<void *>(sample.actorKey);
         if (a == self)
             continue;
         const auto type = actorTypeOf(a);
         if (!type || *type == 64 || isHostileType(*type))
             continue;
-        std::uint32_t eid = 0;
-        actorRegistry_.readEntityId(a, eid);
+        const std::uint32_t eid = sample.entityId;
         if (onlyEid && eid != onlyEid)
             continue;
         if (freshOnly && eid &&
             std::find(preBoatEids_.begin(), preBoatEids_.end(), eid) != preBoatEids_.end())
             continue;
-        bedrock::ActorBounds b{};
-        if (!actorRegistry_.readBounds(a, b))
+        bedrock::sdk::ActorBoundsValue b{};
+        if (const auto bounds = actors_.bounds(a))
+            b = *bounds;
+        else
             continue;
         const float w = b.maximum.x - b.minimum.x, h = b.maximum.y - b.minimum.y;
         if (*type != 90 && (w < 1.2f || w > 1.7f || h > 1.0f))
@@ -75,16 +77,16 @@ void AutoMineMod::enterBoat() {
     boatGlueTicks_ = 0;
     boatProbeTicks_ = 0;
     if (actorsReady_) {
-        if (auto snap = runtimeActors_.snapshot(level_.load())) {
+        if (auto snap = actorSamples()) {
             void *self = world_.localPlayer(client_.load());
-            for (void *a : *snap) {
+            for (const auto &sample : *snap) {
+                void *a = reinterpret_cast<void *>(sample.actorKey);
                 if (a == self)
                     continue;
                 const auto type = actorTypeOf(a);
                 if (!type || *type != 90)
                     continue;
-                std::uint32_t eid = 0;
-                actorRegistry_.readEntityId(a, eid);
+                const std::uint32_t eid = sample.entityId;
                 if (eid)
                     preBoatEids_.push_back(eid);
             }
@@ -101,11 +103,11 @@ void AutoMineMod::giveUpBoat() {
     navTicks_ = 0;
 }
 
-void AutoMineMod::tickBoat(const bedrock::Vec3 &feet) {
+void AutoMineMod::tickBoat(const bedrock::sdk::Vec3Value &feet) {
     ++boatTicks_;
     ++boatStepTicks_;
-    const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-    const bedrock::Vec3 center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
+    const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
+    const bedrock::sdk::Vec3Value center{target_.x + .5f, target_.y + .5f, target_.z + .5f};
     const double distT = std::hypot(center.x - feet.x, center.z - feet.z);
     if (!hasTarget_ || localPart(blockAt(target_)) != targetId_) {
         if (boatStep_ == BoatStep::Ride) {
@@ -128,7 +130,7 @@ void AutoMineMod::tickBoat(const bedrock::Vec3 &feet) {
     case BoatStep::Deploy: {
         selectSlot(boatSlot());
         const double hl = std::max(0.001, distT);
-        const bedrock::Vec3 aim{feet.x + static_cast<float>((center.x - feet.x) / hl * 2.5),
+        const bedrock::sdk::Vec3Value aim{feet.x + static_cast<float>((center.x - feet.x) / hl * 2.5),
                                 feet.y + .4f,
                                 feet.z + static_cast<float>((center.z - feet.z) / hl * 2.5)};
         faceToward(eye, aim, 4.f);

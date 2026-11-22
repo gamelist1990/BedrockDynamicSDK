@@ -23,3 +23,7 @@
 #include "bedrock/sdk/camera_control.hpp"
 #include "bedrock/sdk/movement_packets.hpp"
 #include "bedrock/sdk/packet_wire.hpp"
+#include "bedrock/sdk/automation_controls.hpp"
+#include "bedrock/sdk/block_actions.hpp"
+#include "bedrock/sdk/item_stack_requests.hpp"
+#include "bedrock/sdk/safe_teleport.hpp"

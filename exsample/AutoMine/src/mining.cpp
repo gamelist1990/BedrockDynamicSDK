@@ -2,7 +2,7 @@
 
 namespace automine::client {
 
-bool AutoMineMod::tryMineThrough(bedrock::Vec3 feet) {
+bool AutoMineMod::tryMineThrough(bedrock::sdk::Vec3Value feet) {
     float yaw{}, pitch{};
     if (!rotation(yaw, pitch))
         return false;
@@ -29,7 +29,7 @@ bool AutoMineMod::tryMineThrough(bedrock::Vec3 feet) {
     return false;
 }
 
-void AutoMineMod::tickMine(bedrock::Vec3 feet) {
+void AutoMineMod::tickMine(bedrock::sdk::Vec3Value feet) {
     for (auto key : {kKeyW, kKeyA, kKeyS, kKeyD, kKeySneak, kKeySprint})
         pressKey(key, false);
     setUse(false);
@@ -160,7 +160,7 @@ void AutoMineMod::tickMine(bedrock::Vec3 feet) {
             setAttack(false);
         return; // no native action until the block is readable again
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye)) {
         if (!independent_)
             setAttack(false);
@@ -168,7 +168,7 @@ void AutoMineMod::tickMine(bedrock::Vec3 feet) {
     }
     const auto miningHit =
         automine::miningPoint({eye.x, eye.y, eye.z}, {target_.x, target_.y, target_.z});
-    const bedrock::Vec3 center{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
+    const bedrock::sdk::Vec3Value center{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
                                static_cast<float>(miningHit.z)};
     if (!automine::inMiningReach({eye.x, eye.y, eye.z}, {target_.x, target_.y, target_.z})) {
         // A momentary loss of reach does not start another build route.
@@ -376,7 +376,7 @@ bool AutoMineMod::lavaAdjacent(const BlockPos3 &cell) {
     return false;
 }
 
-int AutoMineMod::digCell(const BlockPos3 &cell, bedrock::Vec3 feet, bool toolOptional) {
+int AutoMineMod::digCell(const BlockPos3 &cell, bedrock::sdk::Vec3Value feet, bool toolOptional) {
     const auto id = blockAt(cell);
     if (!(digPos_ == cell) || digBlockId_ != id) {
         digPos_ = cell;
@@ -415,11 +415,11 @@ int AutoMineMod::digCell(const BlockPos3 &cell, bedrock::Vec3 feet, bool toolOpt
     }
     if (!toolReady && digTicks_ == 0)
         note("dig: no usable tool; clearing placement pocket by hand (no drop required)");
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return 0;
     const auto miningHit = automine::miningPoint({eye.x, eye.y, eye.z}, {cell.x, cell.y, cell.z});
-    const bedrock::Vec3 center{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
+    const bedrock::sdk::Vec3Value center{static_cast<float>(miningHit.x), static_cast<float>(miningHit.y),
                                static_cast<float>(miningHit.z)};
     if (!automine::inMiningReach({eye.x, eye.y, eye.z}, {cell.x, cell.y, cell.z})) {
         setAttack(false);

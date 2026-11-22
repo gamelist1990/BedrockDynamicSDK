@@ -1,5 +1,5 @@
 #include "auto_mine.hpp"
-#include <bedrock/detail/actor_identity.hpp>
+#include <nlohmann/json.hpp>
 
 namespace automine::client {
 
@@ -22,32 +22,34 @@ bool AutoMineMod::isCreeperType(std::uint32_t t) {
 }
 
 std::optional<AutoMineMod::MobInfo>
-AutoMineMod::scanHostile(const bedrock::Vec3 &feet, double maxDist, std::uint32_t onlyEid) {
+AutoMineMod::scanHostile(const bedrock::sdk::Vec3Value &feet, double maxDist, std::uint32_t onlyEid) {
     if (!actorsReady_)
         return std::nullopt;
-    const auto snap = runtimeActors_.snapshot(level_.load());
+    const auto snap = actorSamples();
     if (!snap)
         return std::nullopt;
     void *self = world_.localPlayer(client_.load());
     std::optional<MobInfo> best;
-    for (void *a : *snap) {
+    for (const auto &sample : *snap) {
+        void *a = reinterpret_cast<void *>(sample.actorKey);
         if (a == self)
             continue;
         const auto type = actorTypeOf(a);
         if (!type || !isHostileType(*type))
             continue;
-        std::uint32_t eid = 0;
-        actorRegistry_.readEntityId(a, eid);
+        const std::uint32_t eid = sample.entityId;
         if (onlyEid && eid != onlyEid)
             continue;
-        bedrock::Vec3 pos;
-        if (!actorRegistry_.readPosition(a, pos))
+        const auto posOpt = actors_.position(a);
+        if (!posOpt)
             continue;
+        const bedrock::sdk::Vec3Value pos = *posOpt;
         MobInfo m;
         m.eid = eid;
         m.type = *type;
-        bedrock::ActorBounds b{};
-        if (actorRegistry_.readBounds(a, b)) {
+        bedrock::sdk::ActorBoundsValue b{};
+        if (const auto bounds = actors_.bounds(a)) {
+            b = *bounds;
             m.hasBounds = true;
             m.bmin = b.minimum;
             m.bmax = b.maximum;
@@ -107,32 +109,34 @@ std::string AutoMineMod::cookedMeatOf(const std::string &raw) {
 }
 
 std::optional<AutoMineMod::MobInfo>
-AutoMineMod::scanPassive(const bedrock::Vec3 &feet, double maxDist, std::uint32_t onlyEid) {
+AutoMineMod::scanPassive(const bedrock::sdk::Vec3Value &feet, double maxDist, std::uint32_t onlyEid) {
     if (!actorsReady_)
         return std::nullopt;
-    const auto snap = runtimeActors_.snapshot(level_.load());
+    const auto snap = actorSamples();
     if (!snap)
         return std::nullopt;
     void *self = world_.localPlayer(client_.load());
     std::optional<MobInfo> best;
-    for (void *a : *snap) {
+    for (const auto &sample : *snap) {
+        void *a = reinterpret_cast<void *>(sample.actorKey);
         if (a == self)
             continue;
         const auto type = actorTypeOf(a);
         if (!type || !isFoodAnimalType(*type))
             continue;
-        std::uint32_t eid = 0;
-        actorRegistry_.readEntityId(a, eid);
+        const std::uint32_t eid = sample.entityId;
         if (onlyEid && eid != onlyEid)
             continue;
-        bedrock::Vec3 pos;
-        if (!actorRegistry_.readPosition(a, pos))
+        const auto posOpt = actors_.position(a);
+        if (!posOpt)
             continue;
+        const bedrock::sdk::Vec3Value pos = *posOpt;
         MobInfo m;
         m.eid = eid;
         m.type = *type;
-        bedrock::ActorBounds b{};
-        if (actorRegistry_.readBounds(a, b)) {
+        bedrock::sdk::ActorBoundsValue b{};
+        if (const auto bounds = actors_.bounds(a)) {
+            b = *bounds;
             m.hasBounds = true;
             m.bmin = b.minimum;
             m.bmax = b.maximum;
@@ -150,7 +154,7 @@ AutoMineMod::scanPassive(const bedrock::Vec3 &feet, double maxDist, std::uint32_
     return best;
 }
 
-double AutoMineMod::distToMob(const bedrock::Vec3 &p, const MobInfo &m) {
+double AutoMineMod::distToMob(const bedrock::sdk::Vec3Value &p, const MobInfo &m) {
     if (!m.hasBounds) {
         return std::sqrt((m.center.x - p.x) * (m.center.x - p.x) +
                          (m.center.y - p.y) * (m.center.y - p.y) +
@@ -285,7 +289,7 @@ void AutoMineMod::exitCombat(bool won) {
     resumePhase_ = Phase::Scan;
 }
 
-void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
+void AutoMineMod::tickCombat(const bedrock::sdk::Vec3Value &feet) {
     ++combatTicks_;
     if (combatTicks_ > 20 * 90) {
         exitCombat(false);
@@ -309,7 +313,7 @@ void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
             return;
         }
     }
-    const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
+    const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
     BlockPos3 hitCell{};
     const BlockPos3 mobCell{static_cast<int>(std::floor(mob->center.x)),
                             static_cast<int>(std::floor(mob->center.y)),
@@ -329,7 +333,7 @@ void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
     if (combatMode_ == CombatMode::Flee) {
         // Run directly away from the mob until it is far enough.
         lastEngageTick_ = combatTicks_; // fleeing is the engagement
-        bedrock::Vec3 away{feet.x * 2 - mob->center.x, mob->center.y, feet.z * 2 - mob->center.z};
+        bedrock::sdk::Vec3Value away{feet.x * 2 - mob->center.x, mob->center.y, feet.z * 2 - mob->center.z};
         faceAim(eye, away, 6.f, .4f);
         pressKey(kKeyW, true);
         if (wet)
@@ -348,7 +352,7 @@ void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
             pressKey(kKeyS, false);
             if (wet)
                 pressKey(kKeySpace, true);
-            bedrock::Vec3 aim = mob->center;
+            bedrock::sdk::Vec3Value aim = mob->center;
             aim.y += static_cast<float>(d * 0.02);
             faceToward(eye, aim, 2.5f);
             if (!los) {
@@ -418,38 +422,41 @@ void AutoMineMod::tickCombat(const bedrock::Vec3 &feet) {
     }
 }
 
-bool AutoMineMod::loadActors(const bedrock::RuntimeProfile &profile, std::string &failure) {
-    bedrock::NativeActorLayout layout{};
-    if (!bedrock::parseNativeActorLayout(profile.json(), layout, failure))
-        return false;
-    if (!runtimeActors_.load(profile.json(), failure))
-        return false;
+bool AutoMineMod::loadActors(const bedrock::sdk::Profile &profile,
+                             const bedrock::sdk::SymbolResolver &resolver,
+                             std::string &failure) {
     try {
-        const auto root = bedrock::parseNativeProfile(profile.json());
+        const auto root = nlohmann::json::parse(profile.json());
         const auto &at = root.at("layouts").at("Actor").at("actor_type");
-        actorRegistry_.configure(
-            layout, bedrock::native_profile::number(at.at("value_offset")),
-            static_cast<std::uint32_t>(bedrock::native_profile::number(at.at("player_type_id"))));
+        return actors_.configure(profile.json(),
+                                 static_cast<std::size_t>(at.at("value_offset").get<std::uint64_t>()),
+                                 static_cast<std::uint32_t>(at.at("player_type_id").get<std::uint64_t>()),
+                                 resolver, failure);
     } catch (const std::exception &e) {
         failure = e.what();
         return false;
     }
-    return true;
 }
 
 std::optional<std::uint32_t> AutoMineMod::actorTypeOf(void *actor) {
-    std::uint32_t type = 0;
-    if (!actorRegistry_.readActorType(actor, type))
-        return std::nullopt;
-    return type;
+    return actors_.actorType(actor);
 }
 
-void AutoMineMod::probeActors(const bedrock::Vec3 &feet) {
+std::optional<std::vector<bedrock::sdk::ActorSample>> AutoMineMod::actorSamples() {
+    std::vector<bedrock::sdk::ActorSample> samples;
+    std::size_t cursor = 0;
+    std::string error;
+    if (!actors_.capture(level_.load(), false, cursor, samples, error))
+        return std::nullopt;
+    return samples;
+}
+
+void AutoMineMod::probeActors(const bedrock::sdk::Vec3Value &feet) {
     if (!actorsReady_) {
         note("probe: actor access not ready");
         return;
     }
-    const auto snap = runtimeActors_.snapshot(level_.load());
+    const auto snap = actorSamples();
     if (!snap) {
         note("probe: snapshot failed");
         return;
@@ -457,20 +464,24 @@ void AutoMineMod::probeActors(const bedrock::Vec3 &feet) {
     note("probe: raw actors=" + std::to_string(snap->size()));
     void *self = world_.localPlayer(client_.load());
     int n = 0;
-    for (void *a : *snap) {
-        bedrock::Vec3 pos;
-        if (!actorRegistry_.readPosition(a, pos))
+    for (const auto &sample : *snap) {
+        void *a = reinterpret_cast<void *>(sample.actorKey);
+        const auto posOpt = actors_.position(a);
+        if (!posOpt)
             continue;
+        const bedrock::sdk::Vec3Value pos = *posOpt;
         const double d = std::hypot(pos.x - feet.x, pos.z - feet.z);
         if (d > 40)
             continue;
         ++n;
-        bedrock::ActorBounds b{};
-        const bool hasB = actorRegistry_.readBounds(a, b);
-        std::uint32_t eid = 0;
-        actorRegistry_.readEntityId(a, eid);
+        bedrock::sdk::ActorBoundsValue b{};
+        const auto bounds = actors_.bounds(a);
+        const bool hasB = bounds.has_value();
+        if (bounds)
+            b = *bounds;
+        const std::uint32_t eid = sample.entityId;
         const auto type = actorTypeOf(a);
-        const auto ident = bedrock::detail::readActorIdentity(access_, a);
+        const bedrock::sdk::ActorIdentityValue ident = access_.actorIdentity(a);
         char buf[640];
         std::snprintf(buf, sizeof(buf),
                       "actor d=%.1f self=%d type=%d eid=%u bounds=%.2fx%.2f pos=%.1f,%.1f,%.1f "

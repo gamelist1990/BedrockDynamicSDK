@@ -16,7 +16,7 @@ void AutoMineMod::tickDeathWatch() {
     }
     if (aliveSig) {
         deathSigTicks_ = 0;
-        bedrock::Vec3 f;
+        bedrock::sdk::Vec3Value f;
         if (feetPos(f)) {
             lastAlivePos_ = f;
             hasLastAlivePos_ = true;
@@ -80,7 +80,7 @@ void AutoMineMod::recoverDone(bool arrived) {
     reply(arrived ? "荷物の場所に戻ったよ" : "荷物の回収はできなかった…");
 }
 
-void AutoMineMod::tickRecover(const bedrock::Vec3 &feet) {
+void AutoMineMod::tickRecover(const bedrock::sdk::Vec3Value &feet) {
     ++recoverTicks_;
     targetId_ = "corpse_run"; // dig detours may have overwritten it
     if (recoverTicks_ > 20 * 240) {
@@ -106,7 +106,7 @@ void AutoMineMod::tickRecover(const bedrock::Vec3 &feet) {
             recoverDone(true);
             return;
         }
-        bedrock::Vec3 eye;
+        bedrock::sdk::Vec3Value eye;
         if (eyePos(eye))
             faceAim(eye, deathPos_, 12.f, 0.3f);
         pressKey(kKeyW, dist > 0.8);
@@ -127,8 +127,8 @@ void AutoMineMod::tickRecover(const bedrock::Vec3 &feet) {
     }
     if (!path_.empty() && pathIdx_ < path_.size() && pathDig_[pathIdx_]) {
         const BlockPos3 &wp = path_[pathIdx_];
-        const bedrock::Vec3 eye{feet.x, feet.y + 1.62f, feet.z};
-        const bedrock::Vec3 c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
+        const bedrock::sdk::Vec3Value eye{feet.x, feet.y + 1.62f, feet.z};
+        const bedrock::sdk::Vec3Value c{wp.x + .5f, wp.y + .5f, wp.z + .5f};
         const double ddx = c.x - eye.x, ddy = c.y - eye.y, ddz = c.z - eye.z;
         if (ddx * ddx + ddy * ddy + ddz * ddz > 3.2 * 3.2) {
             faceAim(eye, c, 12.f, 0.3f);
@@ -141,7 +141,7 @@ void AutoMineMod::tickRecover(const bedrock::Vec3 &feet) {
         tickFollowPath(feet);
         return;
     }
-    bedrock::Vec3 eye;
+    bedrock::sdk::Vec3Value eye;
     if (!eyePos(eye))
         return;
     faceAim(eye, deathPos_, 12.f, 0.3f);
@@ -149,7 +149,7 @@ void AutoMineMod::tickRecover(const bedrock::Vec3 &feet) {
     pressKey(kKeySpace, inWaterNow(feet) || headInWater(feet));
 }
 
-bool AutoMineMod::tickJoinGuard(const bedrock::Vec3 &feet) {
+bool AutoMineMod::tickJoinGuard(const bedrock::sdk::Vec3Value &feet) {
     if (joinGuardTicks_ <= 0)
         return false;
     --joinGuardTicks_;
@@ -176,7 +176,7 @@ bool AutoMineMod::tickJoinGuard(const bedrock::Vec3 &feet) {
     return false;
 }
 
-bool AutoMineMod::tickIdleGuards(const bedrock::Vec3 &feet) {
+bool AutoMineMod::tickIdleGuards(const bedrock::sdk::Vec3Value &feet) {
     if (deathPending_)
         return false; // the death watch owns the client now
     const std::string screen = topScreenName();
@@ -204,18 +204,18 @@ bool AutoMineMod::tickIdleGuards(const bedrock::Vec3 &feet) {
     return false;
 }
 
-bool AutoMineMod::headInWater(const bedrock::Vec3 &feet) {
+bool AutoMineMod::headInWater(const bedrock::sdk::Vec3Value &feet) {
     void *src = region();
     if (!src)
         return false;
-    bedrock::BlockPos bp;
+    bedrock::sdk::BlockPos bp;
     bp.x = static_cast<int>(std::floor(feet.x));
     bp.y = static_cast<int>(std::floor(feet.y + 1.62f));
     bp.z = static_cast<int>(std::floor(feet.z));
     return contains(world_.getBlock(src, bp).identifier, "water");
 }
 
-bool AutoMineMod::inWaterNow(const bedrock::Vec3 &feet) {
+bool AutoMineMod::inWaterNow(const bedrock::sdk::Vec3Value &feet) {
     const auto feetId =
         blockAt({static_cast<int>(std::floor(feet.x)), static_cast<int>(std::floor(feet.y)),
                  static_cast<int>(std::floor(feet.z))});
@@ -260,7 +260,7 @@ void AutoMineMod::startEscape() {
     }
 }
 
-void AutoMineMod::tickEscape(const bedrock::Vec3 &feet) {
+void AutoMineMod::tickEscape(const bedrock::sdk::Vec3Value &feet) {
     ++escapeTicks_;
     pressKey(kKeySpace, true); // hold jump: swim up / bob at the surface
     if (!headInWater(feet)) {
@@ -274,7 +274,7 @@ void AutoMineMod::tickEscape(const bedrock::Vec3 &feet) {
     } else {
         dryTicks_ = 0;
         if (escapeTicks_ > 100 && lastDryValid_) {
-            bedrock::Vec3 eye;
+            bedrock::sdk::Vec3Value eye;
             if (eyePos(eye))
                 faceToward(eye, {lastDryPos_.x, eye.y, lastDryPos_.z}, 5.f);
             pressKey(kKeyW, true);
