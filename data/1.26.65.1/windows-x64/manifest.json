@@ -77,7 +77,7 @@
     },
     {
       "path": "classes/CommandRegistry.json",
-      "sha256": "0374d426720f6fd3e59144f890d273ac0008930705d64e84b486887624172bdf"
+      "sha256": "2de01cc2903334ca90745f85e4fe3005358029a026495926d51bb866c5b8f6c4"
     },
     {
       "path": "classes/CommandRequestPacket.json",

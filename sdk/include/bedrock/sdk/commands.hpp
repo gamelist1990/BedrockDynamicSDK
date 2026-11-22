@@ -28,9 +28,11 @@ class Commands { public:
  // the integrated server never sends AvailableCommands over the wire
  // path, so the client rejects the commands as unknown. When enabled
  // (call before load()), every definition is ALSO registered directly
- // in the client's command registry with a single message parameter,
- // and the definition's handler receives the raw line, exactly as on
- // the packet path. Registration is driven per world session: call
+ // in the client's command registry — with typed parameters when the
+ // overload set allows it (see Impl::mirrorLocal for the mapping), or
+ // a single message parameter otherwise — and the definition's
+ // handler receives the line, exactly as on the packet path.
+ // Registration is driven per world session: call
  // noteLocalSessionStart() when a world is joined, then
  // driveLocalRegistry(clientInstance) on the client tick. There is
  // no local/remote classification: the registry collision rule is
@@ -49,8 +51,12 @@ class Commands { public:
  // they can be suggested but not executed in singleplayer. A
  // consumer whose commands are client-side by design (ScriptClient)
  // should prefer this mode: the commands execute locally in both
- // singleplayer and remote sessions, at the cost of typed-parameter
- // completion (arguments show as one message parameter).
+ // singleplayer and remote sessions. Definitions whose overloads are
+ // non-empty and message-free register with typed parameters, so
+ // completion shows real parameter types and enum suggestions;
+ // definitions with a message parameter keep the single-message
+ // registration (a message overload would capture every invocation
+ // of the signature anyway).
  void preferLocalRegistry(bool prefer) noexcept;
  void noteLocalSessionStart() noexcept;
  void noteLocalSessionEnd() noexcept;

@@ -75,7 +75,7 @@
       },
       "evidence": "Client path offsets and register/find functions are the runtime-verified message_forwarding values. Integer descriptor (rule 0x129C7448, type id 0x129C7458) is the pair the exact-build Help registration uses for its 'page' integer parameter; the type global is referenced by 35 command registration functions (message descriptor: 8). This build has no standalone parameter constructor: the game inlines CommandParameterData construction at every registration site and CheckSig anchor porting found no signature hit, so NativeClientCommands builds the integer parameter inline, mirroring the game's own field values (the approach NativeMessageCommands already uses for message parameters).",
       "message_forwarding": {
-        "revision": 3,
+        "revision": 4,
         "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
         "client_minecraft_offset": "0x1D0",
         "minecraft_commands_offset": "0xC8",
@@ -299,7 +299,85 @@
           ]
         },
         "status": "verified",
-        "verification_scope": "user-reported-mod-operation"
+        "verification_scope": "user-reported-mod-operation",
+        "integer_type_rva": "0x129CA458",
+        "integer_rule_rva": "0x129CA448",
+        "float_type_rva": "0x129CA490",
+        "float_rule_rva": "0x129CA480",
+        "string_type_rva": "0x129CA3F8",
+        "string_rule_rva": "0x129CA3E8",
+        "descriptor_array_offset": "0xE0",
+        "descriptor_array_end_offset": "0xE8",
+        "descriptor_stride": "0x48",
+        "descriptor_rule_offset": "0x28",
+        "finalize_overload": {
+          "rva": "0x55AE7B0",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC A8",
+          "abi": "void __fastcall(CommandRegistry*, void* signature, void* overload)",
+          "status": "verified",
+          "abi_verified": false,
+          "runtime_verified": false,
+          "verification_scope": "bol-typeprobe",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "bol-autotest",
+            "date": "2026-11-23",
+            "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+            "mods": [
+              "TypeProbe"
+            ],
+            "scope": "Typed native command registration (multi-parameter overload append + finalizer re-run)",
+            "limitations": [
+              "Confirmation applies to the exercised registration/execution paths; other origins and object lifetimes are not individually established."
+            ]
+          }
+        },
+        "param_copy": {
+          "rva": "0x55793E0",
+          "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC 28 48 89 D7",
+          "abi": "void* __fastcall(void* dstParam, void const* srcParam)",
+          "status": "verified",
+          "abi_verified": false,
+          "runtime_verified": false,
+          "verification_scope": "bol-typeprobe",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "bol-autotest",
+            "date": "2026-11-23",
+            "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+            "mods": [
+              "TypeProbe"
+            ],
+            "scope": "Typed native command registration (multi-parameter overload append + finalizer re-run)",
+            "limitations": [
+              "Confirmation applies to the exercised registration/execution paths; other origins and object lifetimes are not individually established."
+            ]
+          }
+        },
+        "param_reserve": {
+          "rva": "0x57B2A20",
+          "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68",
+          "abi": "void __fastcall(void* paramVector, uint64_t const* count)",
+          "status": "verified",
+          "abi_verified": false,
+          "runtime_verified": false,
+          "verification_scope": "bol-typeprobe",
+          "runtime_validation": {
+            "status": "complete",
+            "authority": "bol-autotest",
+            "date": "2026-11-23",
+            "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+            "mods": [
+              "TypeProbe"
+            ],
+            "scope": "Typed native command registration (multi-parameter overload append + finalizer re-run)",
+            "limitations": [
+              "Confirmation applies to the exercised registration/execution paths; other origins and object lifetimes are not individually established."
+            ]
+          }
+        },
+        "enum_rule_rva": "0x129CA400",
+        "enum_type_rva": "0x129CA410"
       }
     }
   },

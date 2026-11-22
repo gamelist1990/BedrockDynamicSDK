@@ -7,6 +7,7 @@
 #include <bedrock/profiles/profile_manager.hpp>
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -63,21 +64,72 @@ struct Commands::Impl {
     // load(): add() before it, addLoaded() after a successful one.
     // When the local load was attempted and failed, definitions are
     // skipped entirely.
-    void mirrorLocal(const std::vector<CommandDefinition>& commands) {
+    //
+    // A definition registers TYPED when every overload is non-empty
+    // and message-free: Integer maps to the registry's int kind,
+    // PacketEnum attaches the game's enum descriptor, CustomEnum
+    // attaches nothing (single-token string; a {true,false} value set
+    // becomes the Boolean kind). Typed registration renders real
+    // parameter completion and lets the native parser validate and
+    // convert values; the handler still receives the reconstructed
+    // line. Anything else (a Message parameter anywhere, an empty
+    // overload) keeps the single-message-parameter registration.
+    void mirrorLocal(const std::vector<CommandEnum>& enums, const std::vector<CommandDefinition>& commands) {
         {
             std::lock_guard lock(localMutex);
             for (const auto& c : commands) localHandlers[c.name] = c.handler;
         }
         if (!localEnabled) return;
         if (localLoadAttempted && !localLoaded) return;
+        std::unordered_map<std::string, const CommandEnum*> enumByName;
+        for (const auto& e : enums) enumByName[e.name] = &e;
         for (const auto& c : commands) {
             if (localRegistered.count(c.name)) continue;
             auto handler = [this, name = c.name](bedrock::NativeMessageInvocation invocation) {
                 dispatchLocal(name, std::move(invocation.line));
             };
-            const bool ok = localLoaded
-                ? localNative.addLoaded(c.name, c.description, std::move(handler), "message", true)
-                : localNative.add(c.name, c.description, std::move(handler), "message", true);
+            bool typed = !c.overloads.empty();
+            std::vector<std::vector<bedrock::NativeMessageParam>> typedOverloads;
+            for (const auto& overload : c.overloads) {
+                if (!typed) break;
+                if (overload.empty()) { typed = false; break; }
+                std::vector<bedrock::NativeMessageParam> params;
+                for (const auto& p : overload) {
+                    using Kind = bedrock::NativeMessageParamKind;
+                    switch (p.type) {
+                        case CommandParameterType::Integer:
+                            params.push_back({Kind::Int, p.name, p.optional, {}}); break;
+                        case CommandParameterType::PacketEnum:
+                            params.push_back({Kind::Enum, p.name, p.optional, p.enumName}); break;
+                        case CommandParameterType::CustomEnum: {
+                            bool booleanEnum = false;
+                            const auto found = enumByName.find(p.enumName);
+                            if (found != enumByName.end() && found->second->values.size() == 2) {
+                                std::vector<std::string> values = found->second->values;
+                                std::sort(values.begin(), values.end());
+                                booleanEnum = values[0] == "false" && values[1] == "true";
+                            }
+                            params.push_back({booleanEnum ? Kind::Bool : Kind::String, p.name, p.optional, {}});
+                            break; }
+                        case CommandParameterType::Message:
+                        default:
+                            typed = false; break;
+                    }
+                    if (!typed) break;
+                }
+                if (typed) typedOverloads.push_back(std::move(params));
+            }
+            bool ok = false;
+            if (typed) {
+                ok = localLoaded
+                    ? localNative.addTypedLoaded(c.name, c.description, typedOverloads, handler)
+                    : localNative.addTyped(c.name, c.description, typedOverloads, handler);
+            }
+            if (!ok) {
+                ok = localLoaded
+                    ? localNative.addLoaded(c.name, c.description, std::move(handler), "message", true)
+                    : localNative.add(c.name, c.description, std::move(handler), "message", true);
+            }
             if (ok) localRegistered.insert(c.name);
         }
     }
@@ -120,7 +172,7 @@ bedrock::InjectedType toNative(CommandParameterType type, const std::string& enu
 bool Commands::load(const std::string& profileJson, const std::vector<CommandEnum>& enums,
                     const std::vector<CommandDefinition>& commands, std::string& error) {
     if (impl_->preferLocal) {
-        impl_->mirrorLocal(commands);
+        impl_->mirrorLocal(enums, commands);
         bedrock::ProfileManager manager;
         if (!manager.prepareEmbeddedJson(profileJson,
             [this](const bedrock::RuntimeProfile& profile, std::string& loadError) {
@@ -152,7 +204,7 @@ bool Commands::load(const std::string& profileJson, const std::vector<CommandEnu
             error = commandError;
     }
     if (!error.empty()) return false;
-    impl_->mirrorLocal(commands);
+    impl_->mirrorLocal(enums, commands);
 
     bedrock::ProfileManager manager;
     if (!manager.prepareEmbeddedJson(profileJson,
@@ -175,7 +227,7 @@ bool Commands::load(const Profile& profile, const std::vector<CommandEnum>& enum
         // names un-executable in singleplayer (they become server
         // commands whose requests the local path never intercepts),
         // so definitions go only to the native registry adapter.
-        impl_->mirrorLocal(commands);
+        impl_->mirrorLocal(enums, commands);
         impl_->loadLocal(*runtime);
         if (!impl_->localLoaded) { error = impl_->localError; return false; }
         error.clear();
@@ -202,7 +254,7 @@ bool Commands::load(const Profile& profile, const std::vector<CommandEnum>& enum
             error = commandError;
     }
     if (!error.empty()) return false;
-    impl_->mirrorLocal(commands);
+    impl_->mirrorLocal(enums, commands);
     if (!impl_->native.load(*runtime, error)) return false;
     impl_->loadLocal(*runtime);
     error.clear();
@@ -237,13 +289,13 @@ bool Commands::replace(const std::vector<CommandEnum>& enums,
         nativeCommands.push_back(std::move(entry));
     }
     if (impl_->preferLocal) {
-        impl_->mirrorLocal(commands);
+        impl_->mirrorLocal(enums, commands);
         error.clear();
         return true;
     }
     if (!impl_->native.replaceDefinitions(std::move(enumEntries), std::move(nativeCommands), error))
         return false;
-    impl_->mirrorLocal(commands);
+    impl_->mirrorLocal(enums, commands);
     return true;
 }
 
