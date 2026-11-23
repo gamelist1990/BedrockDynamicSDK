@@ -58,9 +58,12 @@ public:
                 error = "Content Log write symbol guard mismatch";
                 return false;
             }
-            call_.store(def.value("call", "level_area_message") == "message_level_area"
-                            ? Call::MessageLevelArea : Call::LevelAreaMessage,
+            const auto callName = def.value("call", "level_area_message");
+            call_.store(callName == "message_level_area" ? Call::MessageLevelArea
+                        : callName == "level_area_stringref" ? Call::LevelAreaStringRef
+                        : Call::LevelAreaMessage,
                         std::memory_order_relaxed);
+            area_.store(def.value("area", 45u), std::memory_order_relaxed);
             target_.store(target, std::memory_order_release);
             error.clear();
             return true;
@@ -101,7 +104,21 @@ public:
         static HANDLE mutex = ::CreateMutexW(nullptr, FALSE, L"Local\\BedrockSdkContentLog");
         if (mutex) ::WaitForSingleObject(mutex, INFINITE);
         __try {
-            if (self->call_.load(std::memory_order_relaxed) == Call::MessageLevelArea) {
+            const auto call = self->call_.load(std::memory_order_relaxed);
+            if (call == Call::LevelAreaStringRef) {
+                // The game's public log dispatch (profile symbol
+                // ContentLog::write, 1.26.65.1): wrapped level/area
+                // values plus the message as a std::string&. The
+                // callee only reads the string, so a caller-owned
+                // std::string is safe; no game allocator is involved.
+                struct LevelWrap { std::uint16_t value; std::uint8_t hasValue; std::uint8_t pad; };
+                struct AreaWrap { std::uint32_t value; std::uint8_t hasValue; std::uint8_t pad[3]; };
+                const std::string text(buffer, static_cast<std::size_t>(length));
+                const LevelWrap level{static_cast<std::uint16_t>(gameLevel), 1, 0};
+                const AreaWrap area{self->area_.load(std::memory_order_relaxed), 1, {0, 0, 0}};
+                using Fn = void(__fastcall*)(const LevelWrap*, const AreaWrap*, const void*);
+                reinterpret_cast<Fn>(target)(&level, &area, &text);
+            } else if (call == Call::MessageLevelArea) {
                 using Fn = void(__fastcall*)(const char*, int, const char*);
                 reinterpret_cast<Fn>(target)(buffer, gameLevel, kArea);
             } else {
@@ -118,7 +135,7 @@ public:
 private:
     static constexpr const char* kSymbol = "ContentLog::write";
     static constexpr const char* kArea = "ContentLog";
-    enum class Call : unsigned char { LevelAreaMessage, MessageLevelArea };
+    enum class Call : unsigned char { LevelAreaMessage, MessageLevelArea, LevelAreaStringRef };
 
     static int mapLevel(LogLevel level) noexcept {
         switch (level) {
@@ -133,6 +150,7 @@ private:
 
     std::atomic<void*> target_{nullptr};
     std::atomic<Call> call_{Call::LevelAreaMessage};
+    std::atomic<std::uint32_t> area_{45};
 };
 
 } // namespace bedrock::native

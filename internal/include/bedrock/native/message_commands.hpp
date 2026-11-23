@@ -26,16 +26,22 @@ struct NativeMessageInvocation {
 // String is the registry's type-1 kind: a free-form single token stored
 // as std::string. Enum is the same kind with a registry enum descriptor
 // attached (value suggestions; the stored value is still the string).
-// Bool attaches the registry's Boolean descriptor. A typed entry must
-// not mix a message parameter into its overloads: a signature carrying
-// a message overload captures every invocation, so message-shaped
-// definitions keep the legacy single-message registration.
+// Bool attaches the registry's Boolean descriptor.
 // String is the registry's "text" kind (type 15): a single-token
 // std::string whose token rule accepts numeric tokens too — the
 // type-1 kind shared with Enum rejects any token that parses
 // entirely as a number. Enum is the type-1 kind with a game enum
 // descriptor attached (its values are non-numeric by construction).
-enum class NativeMessageParamKind { Int, Float, Bool, String, Enum };
+// Message is the registry's message kind (type 10), valid ONLY as an
+// overload's final parameter (TypeProbe round 6, 2026-11-23): the
+// parser stores a CommandMessage in the slot — a pointer triple, not
+// a std::string — and resolve_message reads back the whole remaining
+// line. The parser does NOT enforce required-ness for it: a missing
+// trailing message still executes, with an all-zero slot. A separate
+// message OVERLOAD on the same signature still captures every
+// invocation, so definitions whose Message parameter is not final
+// keep the legacy single-message registration.
+enum class NativeMessageParamKind { Int, Float, Bool, String, Enum, Message };
 struct NativeMessageParam {
     NativeMessageParamKind kind{NativeMessageParamKind::String};
     std::string name;
@@ -61,7 +67,8 @@ struct Route {
     std::vector<std::vector<NativeMessageParamKind>> effectiveKinds;
 };
 inline std::array<std::shared_ptr<Route>,32> routes;
-inline std::size_t nextSlot{}; // definitions are added before hooks start
+inline std::size_t nextSlot{}; // fresh slots are drawn from here; retired
+// slots return through the owning adapter's reclaim pass (see retire()).
 inline void destroyMessage(void* fn,void* value) noexcept {
     __try { reinterpret_cast<void(__fastcall*)(void*)>(fn)(value); }
     __except(EXCEPTION_EXECUTE_HANDLER) {}
@@ -190,6 +197,7 @@ public:
                 case NativeMessageParamKind::Bool: slot[0]=std::byte{0xcd}; break;
                 case NativeMessageParamKind::String:
                 case NativeMessageParamKind::Enum: break; // zeroed = valid empty string
+                case NativeMessageParamKind::Message: break; // zeroed = absent CommandMessage
             }
         }
     }
@@ -201,7 +209,8 @@ public:
         const auto& first=route->typedOverloads[0];
         for (std::size_t i=0;i<first.size() && i<kMaxSlots;++i) {
             const auto kind=effectiveKind(*route,0,i);
-            if (kind==NativeMessageParamKind::String || kind==NativeMessageParamKind::Enum)
+            if (kind==NativeMessageParamKind::String || kind==NativeMessageParamKind::Enum ||
+                kind==NativeMessageParamKind::Message)
                 destroyMessage(route->destroy,slots.data()+i*kSlotSize);
         }
     }
@@ -218,6 +227,9 @@ public:
                     case NativeMessageParamKind::Bool: return slot[0]!=std::byte{0xcd};
                     case NativeMessageParamKind::String:
                     case NativeMessageParamKind::Enum: { std::uint64_t s{}; std::memcpy(&s,slot+0x10,8); return s!=0; }
+                    case NativeMessageParamKind::Message: {
+                        for (std::size_t b=0;b<kSlotSize;++b) if (slot[b]!=std::byte{0}) return true;
+                        return false; }
                 }
                 return false;
             };
@@ -231,7 +243,12 @@ public:
                 for (std::size_t i=0;i<overload.size() && i<kMaxSlots;++i) {
                     const bool p=present(o,i);
                     if (p) ++score;
-                    if (!p && !overload[i].optional) ok=false;
+                    // The parser never enforces a trailing Message: an
+                    // absent one must not veto the overload, or the
+                    // invocation would vanish without the handler's own
+                    // missing-argument feedback.
+                    if (!p && !overload[i].optional &&
+                        effectiveKind(*route,o,i)!=NativeMessageParamKind::Message) ok=false;
                 }
                 if (ok && (best<0 || score>bestScore)) { best=static_cast<int>(o); bestScore=score; }
             }
@@ -251,6 +268,30 @@ public:
                     case NativeMessageParamKind::String:
                     case NativeMessageParamKind::Enum: {
                         std::string value=readStoredString(slot);
+                        if (value.find_first_of(" \"\\")==std::string::npos) { line+=value; break; }
+                        line+='"';
+                        for (const char c : value) { if (c=='"' || c=='\\') line+='\\'; line+=c; }
+                        line+='"';
+                        break; }
+                    case NativeMessageParamKind::Message: {
+                        // The slot holds a CommandMessage, not a
+                        // std::string: resolve it exactly like the
+                        // message command class resolves its field,
+                        // then append the text as ONE token (quoted
+                        // when it contains spaces), matching how the
+                        // downstream parser reads a Message argument.
+                        alignas(8) std::array<std::byte,0x28> result{};
+                        std::string value; bool have=false;
+                        if (route->resolve && resolveMessage(route->resolve,slot,result.data(),origin) &&
+                            result[0x20]==std::byte{1}) {
+                            std::size_t length{},capacity{}; const char* text{};
+                            std::memcpy(&length,result.data()+0x10,8); std::memcpy(&capacity,result.data()+0x18,8);
+                            if (capacity<16) text=reinterpret_cast<const char*>(result.data());
+                            else std::memcpy(&text,result.data(),8);
+                            if (length<=4096 && text) { value.assign(text,length); have=true; }
+                        }
+                        releaseString(route->free,result.data());
+                        if (!have) break;
                         if (value.find_first_of(" \"\\")==std::string::npos) { line+=value; break; }
                         line+='"';
                         for (const char c : value) { if (c=='"' || c=='\\') line+='\\'; line+=c; }
@@ -294,10 +335,13 @@ inline constexpr auto typedFactoryFunctions=typedFactories(std::make_index_seque
 class NativeMessageCommands {
 public:
     enum class State { WaitingClient, WaitingRegistry, WaitingTemplate, Registered, Collision, Failed };
-    // Routes are process-lifetime slots; clearing ours on destruction
-    // keeps a stale handler from firing after the owner is gone (the
-    // Command objects the game still holds check the route first).
-    ~NativeMessageCommands() { for (auto& entry:entries_) message_command_native::routes[entry.slot]=nullptr; }
+    // Clearing our routes on destruction keeps a stale handler from
+    // firing after the owner is gone (the Command objects the game
+    // still holds check the route first).
+    ~NativeMessageCommands() {
+        for (auto& entry:entries_) if (entry.slotAssigned) message_command_native::routes[entry.slot]=nullptr;
+        for (auto& rec:retired_) if (rec.slotAssigned) message_command_native::routes[rec.slot]=nullptr;
+    }
     // parameterName is only the label autocomplete shows for the message
     // argument (defaults to "message", as in /me); the parser type is the
     // CommandMessage type regardless of the label.
@@ -305,38 +349,67 @@ public:
              std::string parameterName = "message", bool parameterOptional = false) {
         if (loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
-            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
+            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos) return false;
         if (parameterName.empty() || parameterName.size()>15 ||
             parameterName.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos) return false;
         for (const auto& entry:entries_) if (entry.name==name) return false;
-        if (message_command_native::nextSlot>=32) return false;
-        const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
-        message_command_native::routes[slot]=route;
-        entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
+        Entry entry;
+        entry.name=std::move(name); entry.description=std::move(description); entry.route=std::move(route);
+        entry.parameterName=std::move(parameterName); entry.parameterOptional=parameterOptional;
+        entries_.push_back(std::move(entry)); return true;
     }
     // add() after load(): the route is wired with the function pointers
     // and text range load() resolved, and the entry registers on the
     // next update(). This exists so a definition set that grows after
     // startup (a plugin reload that adds a command) can still join the
-    // local registry; slots are process-lifetime, as with add().
+    // local registry. The route's factory slot is assigned lazily at
+    // registration time (see ensureSlot), so dropped definitions can
+    // return theirs through retire().
     bool addLoaded(std::string name, std::string description, std::function<void(NativeMessageInvocation)> handler,
              std::string parameterName = "message", bool parameterOptional = false) {
         if (!loaded_ || !handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
-            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
+            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos) return false;
         if (parameterName.empty() || parameterName.size()>15 ||
             parameterName.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos) return false;
         for (const auto& entry:entries_) if (entry.name==name) return false;
-        if (message_command_native::nextSlot>=32) return false;
-        const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
         route->resolve=resolve_; route->destroy=destroy_; route->free=free_;
         route->textBegin=textBegin_; route->textEnd=textEnd_;
-        message_command_native::routes[slot]=route;
-        entries_.push_back({std::move(name),std::move(description),slot,std::move(route),std::move(parameterName),parameterOptional}); return true;
+        Entry entry;
+        entry.name=std::move(name); entry.description=std::move(description); entry.route=std::move(route);
+        entry.parameterName=std::move(parameterName); entry.parameterOptional=parameterOptional;
+        entries_.push_back(std::move(entry)); return true;
+    }
+    // Retires a definition that a replace() dropped (the command was
+    // removed or renamed). The entry leaves the active set at once;
+    // its factory slot is reclaimed by update() once the name has been
+    // absent from the live registry on two successive drives — i.e.
+    // the registry contents were rebuilt without it, so no game-side
+    // overload can still mint command objects for the old factory. A
+    // definition whose overload never reached a registry frees its
+    // slot immediately. Until reclaim, the stale route stays in place
+    // (its handler is the owner's name-based dispatch, which no longer
+    // resolves the dropped name, so a late execution is a no-op).
+    void retire(const std::string& name) {
+        for (auto it=entries_.begin(); it!=entries_.end(); ++it) {
+            if (it->name!=name) continue;
+            if (!it->slotAssigned || !it->overloadPlaced) {
+                if (it->slotAssigned) {
+                    message_command_native::routes[it->slot]=nullptr;
+                    freeSlots_.push_back(it->slot);
+                }
+            } else {
+                Retired rec;
+                rec.name=it->name; rec.slot=it->slot; rec.slotAssigned=true; rec.route=it->route;
+                retired_.push_back(std::move(rec));
+            }
+            entries_.erase(it);
+            return;
+        }
     }
     // Typed variant of add(): the overloads register with real
     // parameter descriptors, so autocomplete renders typed parameters
@@ -437,6 +510,18 @@ public:
         std::uint16_t type{}; void* parser{};
         if (!native_profile::read(type_,0,type) || !type || type>4096 || !native_profile::read(rule_,0,parser) || !parser)
             return State::WaitingTemplate;
+        // Reclaim pass: a retired slot returns once its name has been
+        // absent from this registry on two successive drives.
+        for (auto it=retired_.begin(); it!=retired_.end();) {
+            void* existing{};
+            if (!lookup(find_,registry,&it->name,&existing)) { ++it; continue; }
+            if (existing) { it->absentStreak=0; ++it; continue; }
+            if (++it->absentStreak>=2) {
+                message_command_native::routes[it->slot]=nullptr;
+                freeSlots_.push_back(it->slot);
+                it=retired_.erase(it);
+            } else ++it;
+        }
         for (auto& entry:entries_) {
             if (entry.typed) {
                 const auto typedState=registerTyped(entry,registry);
@@ -463,14 +548,20 @@ public:
                 error_="command name already exists; preserved: /"+entry.name; return State::Collision;
             }
             if (entry.failedRegistry==registry) { error_="previous registration failed: /"+entry.name; return State::Failed; }
+            if (!ensureSlot(entry)) { error_="native registration slots exhausted; retired slots pending reclaim: /"+entry.name; return State::WaitingRegistry; }
             // The native overload helper consumes a fresh callable.
             alignas(8) std::array<std::byte,64> callable{};
             auto factory=message_command_native::factoryFunctions[entry.slot];
             std::memcpy(callable.data(),&factoryTable_,8); std::memcpy(callable.data()+8,&factory,8);
             void* created{};
-            if (!registerName(register_,registry,&entry.name,entry.description.c_str()) ||
-                !addOverload(overload_,registry,entry.name.c_str(),callable.data(),parameter.data()) ||
-                !lookup(find_,registry,&entry.name,&created) || !created || !ownsOverload(created,entry.slot)) {
+            if (!registerName(register_,registry,&entry.name,entry.description.c_str())) {
+                entry.failedRegistry=registry; error_="native message registration failed: /"+entry.name; return State::Failed;
+            }
+            if (!addOverload(overload_,registry,entry.name.c_str(),callable.data(),parameter.data())) {
+                entry.failedRegistry=registry; error_="native message registration failed: /"+entry.name; return State::Failed;
+            }
+            entry.overloadPlaced=true;
+            if (!lookup(find_,registry,&entry.name,&created) || !created || !ownsOverload(created,entry.slot)) {
                 entry.failedRegistry=registry; error_="native message registration failed: /"+entry.name; return State::Failed;
             }
             entry.registry=registry; entry.signature=created; entry.route->registry=registry;
@@ -484,24 +575,48 @@ private:
         std::string parameterName{"message"}; bool parameterOptional{};
         void* registry{}; void* signature{}; void* failedRegistry{};
         bool typed{};
+        bool slotAssigned{};    // routes[slot] holds this entry's route
+        bool overloadPlaced{};  // an overload carrying our factory reached a registry
     };
+    struct Retired {
+        std::string name; std::size_t slot{}; bool slotAssigned{};
+        std::shared_ptr<message_command_native::Route> route;
+        int absentStreak{};
+    };
+    // Assigns the entry's factory slot (a reclaimed one when available,
+    // otherwise a fresh one) and publishes its route. Called from
+    // update() immediately before the entry registers into a registry,
+    // so slots are only consumed by definitions that actually register.
+    bool ensureSlot(Entry& entry) {
+        if (entry.slotAssigned) return true;
+        std::size_t slot{};
+        if (!freeSlots_.empty()) { slot=freeSlots_.back(); freeSlots_.pop_back(); }
+        else if (message_command_native::nextSlot<message_command_native::routes.size())
+            slot=message_command_native::nextSlot++;
+        else return false;
+        entry.slot=slot; entry.slotAssigned=true;
+        message_command_native::routes[slot]=entry.route;
+        return true;
+    }
     bool addTypedImpl(std::string name, std::string description, std::vector<std::vector<NativeMessageParam>> overloads,
              std::function<void(NativeMessageInvocation)> handler, bool wireRoute) {
         if (!handler || name.empty() || name.size()>64 || description.size()>1024 ||
             description.find('\0')!=std::string::npos ||
-            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos || entries_.size()>=32) return false;
+            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-")!=std::string::npos) return false;
         if (overloads.empty() || overloads.size()>8) return false;
         for (const auto& overload : overloads) {
             if (overload.empty() || overload.size()>message_command_native::TypedCommand::kMaxSlots) return false;
-            for (const auto& param : overload) {
+            for (std::size_t i=0;i<overload.size();++i) {
+                const auto& param=overload[i];
                 if (param.name.empty() || param.name.size()>64 ||
                     param.name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=std::string::npos) return false;
                 if (param.kind==NativeMessageParamKind::Enum && param.enumName.empty()) return false;
+                // A Message parameter is only meaningful as the final
+                // parameter (it consumes the rest of the line).
+                if (param.kind==NativeMessageParamKind::Message && i+1!=overload.size()) return false;
             }
         }
         for (const auto& entry:entries_) if (entry.name==name) return false;
-        if (message_command_native::nextSlot>=32) return false;
-        const auto slot=message_command_native::nextSlot++;
         auto route=std::make_shared<message_command_native::Route>();
         route->name=name; route->handler=std::move(handler);
         route->typed=true; route->typedOverloads=std::move(overloads);
@@ -509,9 +624,8 @@ private:
             route->resolve=resolve_; route->destroy=destroy_; route->free=free_;
             route->textBegin=textBegin_; route->textEnd=textEnd_;
         }
-        message_command_native::routes[slot]=route;
         Entry entry;
-        entry.name=std::move(name); entry.description=std::move(description); entry.slot=slot;
+        entry.name=std::move(name); entry.description=std::move(description);
         entry.route=std::move(route); entry.typed=true;
         entries_.push_back(std::move(entry));
         return true;
@@ -552,6 +666,8 @@ private:
         const void* rule{};
         effectiveKind=param.kind;
         switch (param.kind) {
+            case NativeMessageParamKind::Message:
+                native_profile::read(type_,0,type); rule=rule_; break;
             case NativeMessageParamKind::Int:
                 native_profile::read(intType_,0,type); rule=intRule_; break;
             case NativeMessageParamKind::Float:
@@ -656,6 +772,7 @@ private:
             error_="command name already exists; preserved: /"+entry.name; return State::Collision;
         }
         if (entry.failedRegistry==registry) { error_="previous registration failed: /"+entry.name; return State::Failed; }
+        if (!ensureSlot(entry)) { error_="native registration slots exhausted; retired slots pending reclaim: /"+entry.name; return State::WaitingRegistry; }
         const auto descriptors=discoverDescriptors(registry);
         if (!registerName(register_,registry,&entry.name,entry.description.c_str())) {
             entry.failedRegistry=registry; error_="native typed registration failed: /"+entry.name; return State::Failed;
@@ -684,6 +801,7 @@ private:
             if (!addOverload(overload_,registry,entry.name.c_str(),callable.data(),images[0].data())) {
                 entry.failedRegistry=registry; error_="native typed registration failed: /"+entry.name; return State::Failed;
             }
+            entry.overloadPlaced=true;
             void* signature{};
             if (!lookup(find_,registry,&entry.name,&signature) || !signature) {
                 entry.failedRegistry=registry; error_="native typed registration failed: /"+entry.name; return State::Failed;
@@ -727,6 +845,8 @@ private:
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     std::vector<Entry> entries_;
+    std::vector<Retired> retired_;
+    std::vector<std::size_t> freeSlots_;
     std::atomic<DWORD> owner_{};
     std::uintptr_t base_{};
     std::uintptr_t textBegin_{},textEnd_{};

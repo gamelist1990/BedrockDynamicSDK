@@ -66,15 +66,19 @@ struct Commands::Impl {
     // skipped entirely.
     //
     // A definition registers TYPED when every overload is non-empty
-    // and message-free: Integer maps to the registry's int kind,
-    // PacketEnum attaches the game's enum descriptor, String is the
-    // game's text kind (single token, numeric tokens accepted),
-    // CustomEnum attaches nothing (also the text kind; a {true,false}
-    // value set becomes the Boolean kind). Typed registration renders real
-    // parameter completion and lets the native parser validate and
-    // convert values; the handler still receives the reconstructed
-    // line. Anything else (a Message parameter anywhere, an empty
-    // overload) keeps the single-message-parameter registration.
+    // and carries no mid-overload Message: Integer maps to the
+    // registry's int kind, PacketEnum attaches the game's enum
+    // descriptor, String is the game's text kind (single token,
+    // numeric tokens accepted), CustomEnum attaches nothing (also
+    // the text kind; a {true,false} value set becomes the Boolean
+    // kind), and a Message parameter in final position maps to the
+    // registry's message kind (the parser stores a CommandMessage
+    // that the adapter resolves back to the full remaining line).
+    // Typed registration renders real parameter completion and lets
+    // the native parser validate and convert values; the handler
+    // still receives the reconstructed line. Anything else (a
+    // Message parameter outside final position, an empty overload)
+    // keeps the single-message-parameter registration.
     void mirrorLocal(const std::vector<CommandEnum>& enums, const std::vector<CommandDefinition>& commands) {
         {
             std::lock_guard lock(localMutex);
@@ -82,6 +86,19 @@ struct Commands::Impl {
         }
         if (!localEnabled) return;
         if (localLoadAttempted && !localLoaded) return;
+        // Retire definitions the new set dropped (a command was removed
+        // or renamed): the adapter reclaims their native factory slots
+        // once the registry no longer holds them, so reload churn can
+        // no longer exhaust the slot table.
+        {
+            std::unordered_set<std::string> wanted;
+            for (const auto& c : commands) wanted.insert(c.name);
+            for (auto it = localRegistered.begin(); it != localRegistered.end();) {
+                if (wanted.count(*it)) { ++it; continue; }
+                localNative.retire(*it);
+                it = localRegistered.erase(it);
+            }
+        }
         std::unordered_map<std::string, const CommandEnum*> enumByName;
         for (const auto& e : enums) enumByName[e.name] = &e;
         for (const auto& c : commands) {
@@ -115,6 +132,15 @@ struct Commands::Impl {
                             params.push_back({booleanEnum ? Kind::Bool : Kind::String, p.name, p.optional, {}});
                             break; }
                         case CommandParameterType::Message:
+                            // A Message parameter registers typed only
+                            // as the overload's final parameter (it
+                            // consumes the rest of the line); anywhere
+                            // else the definition keeps the legacy
+                            // single-message registration.
+                            if (&p == &overload.back()) {
+                                params.push_back({Kind::Message, p.name, p.optional, {}});
+                            } else typed = false;
+                            break;
                         default:
                             typed = false; break;
                     }
