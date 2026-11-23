@@ -16,17 +16,20 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <string_view>
 
 namespace bedrock::native {
 
-// Bridges the SDK logger to the game's own Content Log write path. The call
+// Bridges the SDK logger to the game's Creator Content Log through the
+// Creator listener front end (profile symbol ContentLog::emitCreator), the
+// path proven to reach the Content Log GUI history and files. The call
 // target and its ABI are defined by the version profile, never by this file.
-// Resolution is fail-closed: if the exact-build symbol is missing, has no RVA,
-// or its entry guard does not match, nothing is installed and the existing
-// file/debug sinks remain the log surface.
+// Resolution is fail-closed: if the exact-build symbol is missing, has no
+// RVA, or its entry guard does not match, nothing is installed and the
+// existing file/debug sinks remain the log surface.
 class NativeContentLog {
 public:
     static NativeContentLog& instance() {
@@ -44,26 +47,27 @@ public:
             const auto& symbols = root.at("symbols");
             const auto it = symbols.find(kSymbol);
             if (it == symbols.end() || !it->contains("rva") || !it->contains("entry_check")) {
-                error = "Content Log write symbol is not defined in the exact-build profile";
+                error = "Content Log emit symbol is not defined in the exact-build profile";
                 return false;
             }
             const auto& def = *it;
             if (def.value("rva", std::string{}).empty() ||
                 def.value("entry_check", std::string{}).empty()) {
-                error = "Content Log write symbol has no exact-build RVA/guard (unresolved)";
+                error = "Content Log emit symbol has no exact-build RVA/guard (unresolved)";
                 return false;
             }
             void* target = native_profile::checked(root, def);
             if (!target) {
-                error = "Content Log write symbol guard mismatch";
+                error = "Content Log emit symbol guard mismatch";
                 return false;
             }
-            const auto callName = def.value("call", "level_area_message");
-            call_.store(callName == "message_level_area" ? Call::MessageLevelArea
-                        : callName == "level_area_stringref" ? Call::LevelAreaStringRef
-                        : Call::LevelAreaMessage,
-                        std::memory_order_relaxed);
-            area_.store(def.value("area", 45u), std::memory_order_relaxed);
+            const auto base = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+            guardAddr_.store(base + native_profile::number(def.at("guard_rva")),
+                             std::memory_order_relaxed);
+            serviceAddr_.store(base + native_profile::number(def.at("service_rva")),
+                               std::memory_order_relaxed);
+            flags_.store(def.value("flags", 1u), std::memory_order_relaxed);
+            area_.store(def.value("area", 29u), std::memory_order_relaxed);
             target_.store(target, std::memory_order_release);
             error.clear();
             return true;
@@ -96,68 +100,58 @@ public:
         if (static_cast<std::size_t>(length) >= sizeof(buffer)) length = sizeof(buffer) - 1;
         buffer[length] = '\0';
 
-        const int gameLevel = mapLevel(level);
         // Serialise across DLLs: every client module embeds its own copy of the
         // SDK runtime, so a module-local mutex would not protect the shared
         // game function when DynamicClient and ScriptClient log concurrently.
         // Process-lifetime named mutex: one handle, no per-line allocation.
         static HANDLE mutex = ::CreateMutexW(nullptr, FALSE, L"Local\\BedrockSdkContentLog");
         if (mutex) ::WaitForSingleObject(mutex, INFINITE);
-        // The native calls live in SEH-isolated helpers below: MSVC
+        // The native call lives in the SEH-isolated helper below: MSVC
         // forbids __try in any function that also holds C++ objects
         // requiring unwinding (C2712), so this function keeps none of
-        // its own __try blocks and the helpers stay POD-only.
-        const auto call = self->call_.load(std::memory_order_relaxed);
-        if (call == Call::LevelAreaStringRef) {
-            try {
-                // The game's public log dispatch (profile symbol
-                // ContentLog::write, 1.26.65.1): wrapped level/area
-                // values plus the message as a std::string&. The
-                // callee only reads the string, so a caller-owned
-                // std::string is safe; no game allocator is involved.
-                const std::string text(buffer, static_cast<std::size_t>(length));
-                callStringRef(target, static_cast<std::uint16_t>(gameLevel),
-                              self->area_.load(std::memory_order_relaxed), text);
-            } catch (...) {
-                // Allocation failure while logging: drop the line.
-            }
-        } else {
-            callRaw(target, call, buffer, gameLevel);
-        }
+        // its own __try blocks and the helper stays POD-only. mapLevel's
+        // sequential values are exactly the Creator severity ordinals
+        // (0=verbose, 1=inform, 2=warning, 3=error).
+        callCreatorEmit(target,
+                        self->guardAddr_.load(std::memory_order_relaxed),
+                        self->serviceAddr_.load(std::memory_order_relaxed),
+                        self->flags_.load(std::memory_order_relaxed),
+                        static_cast<std::uint32_t>(mapLevel(level)),
+                        self->area_.load(std::memory_order_relaxed), buffer);
         if (mutex) ::ReleaseMutex(mutex);
     }
 
 private:
-    static constexpr const char* kSymbol = "ContentLog::write";
-    static constexpr const char* kArea = "ContentLog";
-    enum class Call : unsigned char { LevelAreaMessage, MessageLevelArea, LevelAreaStringRef };
+    static constexpr const char* kSymbol = "ContentLog::emitCreator";
 
-    // SEH-isolated call helpers. Neither function may hold a C++
-    // object that requires unwinding (MSVC C2712); both take POD
-    // arguments only and never let a native fault escape.
-    static void callRaw(void* target, Call call, const char* buffer, int gameLevel) noexcept {
+    // SEH-isolated call helper. It may not hold a C++ object that
+    // requires unwinding (MSVC C2712); it takes POD arguments only
+    // and never lets a native fault escape.
+    //
+    // Creator listener front end, printf-style with a fixed two-%s format:
+    // the formatted line rides as data in the first argument and the second
+    // fragment is empty. The service is borrowed from the game on every
+    // call: the guard pointer must resolve to validity byte 1 and the
+    // service pointer must be live with its enabled field (+0x18) equal
+    // to 1, exactly the preconditions the game's own callsites run under.
+    // Any failed check drops the line instead of calling into a dead
+    // service.
+    static void callCreatorEmit(void* target, std::uintptr_t guardAddr,
+                                std::uintptr_t serviceAddr, std::uint32_t flags,
+                                std::uint32_t severity, std::uint32_t area,
+                                const char* text) noexcept {
         __try {
-            if (call == Call::MessageLevelArea) {
-                using Fn = void(__fastcall*)(const char*, int, const char*);
-                reinterpret_cast<Fn>(target)(buffer, gameLevel, kArea);
-            } else {
-                using Fn = void(__fastcall*)(int, const char*, const char*);
-                reinterpret_cast<Fn>(target)(gameLevel, kArea, buffer);
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            std::atomic_signal_fence(std::memory_order_seq_cst);
-        }
-    }
-
-    static void callStringRef(void* target, std::uint16_t levelValue,
-                              std::uint32_t areaValue, const std::string& text) noexcept {
-        struct LevelWrap { std::uint16_t value; std::uint8_t hasValue; std::uint8_t pad; };
-        struct AreaWrap { std::uint32_t value; std::uint8_t hasValue; std::uint8_t pad[3]; };
-        const LevelWrap level{levelValue, 1, 0};
-        const AreaWrap area{areaValue, 1, {0, 0, 0}};
-        using Fn = void(__fastcall*)(const LevelWrap*, const AreaWrap*, const void*);
-        __try {
-            reinterpret_cast<Fn>(target)(&level, &area, &text);
+            const auto guardPtr = *reinterpret_cast<const std::uintptr_t*>(guardAddr);
+            if (!guardPtr) return;
+            if (*reinterpret_cast<const std::uint8_t*>(guardPtr) != 1) return;
+            const auto service = *reinterpret_cast<const std::uintptr_t*>(serviceAddr);
+            if (!service) return;
+            if (*reinterpret_cast<const std::uint32_t*>(service + 0x18) != 1) return;
+            const char* first = text;
+            const char* second = "";
+            using Fn = void(__fastcall*)(std::uint32_t, std::uint32_t, std::uint32_t,
+                                         const char*, const char* const*, const char* const*);
+            reinterpret_cast<Fn>(target)(flags, severity, area, "%s%s", &first, &second);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             std::atomic_signal_fence(std::memory_order_seq_cst);
         }
@@ -175,8 +169,10 @@ private:
     }
 
     std::atomic<void*> target_{nullptr};
-    std::atomic<Call> call_{Call::LevelAreaMessage};
-    std::atomic<std::uint32_t> area_{45};
+    std::atomic<std::uint32_t> area_{29};
+    std::atomic<std::uint32_t> flags_{1};
+    std::atomic<std::uintptr_t> guardAddr_{0};
+    std::atomic<std::uintptr_t> serviceAddr_{0};
 };
 
 } // namespace bedrock::native

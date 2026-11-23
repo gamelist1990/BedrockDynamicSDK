@@ -1,55 +1,66 @@
 {
   "analysis": {
     "content_log_investigation": {
-    "status": "resolved-symbol-surfacing-negative",
-    "version": "1.26.65.1",
-    "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
-    "text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
-    "goal": "Identify a stable callable function that writes entries visible in Settings -> Creator -> Content Log, so the SDK logger and ScriptClient LogSink can hook the game's own path.",
-    "findings": [
-      {
-        "kind": "gui-surface",
-        "evidence": "OreUI strings menu.creator.contentLog.history/.location/.delete, content_log_item, content_log_grid_item, content_log_history.content_log_history_screen, content_log_gui_level_dropdown",
-        "note": "Confirms the in-game viewer is backed by a ContentLog store/file; this is the acceptance surface."
+      "status": "resolved-creator-emit-proven",
+      "version": "1.26.65.1",
+      "exe_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
+      "text_sha256": "87a97cd774cd9ac5c51a6f0b70064eb220cbe803b981f5d8de8804ad88f51796",
+      "goal": "Identify a stable callable function that writes entries visible in Settings -> Creator -> Content Log, so the SDK logger and ScriptClient LogSink can hook the game's own path.",
+      "findings": [
+        {
+          "kind": "gui-surface",
+          "evidence": "OreUI strings menu.creator.contentLog.history/.location/.delete, content_log_item, content_log_grid_item, content_log_history.content_log_history_screen, content_log_gui_level_dropdown",
+          "note": "Confirms the in-game viewer is backed by a ContentLog store/file; this is the acceptance surface."
+        },
+        {
+          "kind": "settings",
+          "evidence": "CONTENT_LOG_FILE / CONTENT_LOG_GUI / CONTENT_LOG_GUI_LEVEL / CONTENT_LOG_GUI_SHOW_ON_ERRORS at rdata 0xf298b0e..0xf298b45; options.content_log_file_enabled / options.content_log_gui_enabled",
+          "note": "Shows a configurable Content Log file and GUI filter; the debug/OutputDebugString sink is a different, non-GUI surface."
+        },
+        {
+          "kind": "logger-subsystem",
+          "evidence": "BedrockLog::LogDetails::createLog RTTI lambda type in .data; Bedrock::ResultLogger::log(LogLevel, LogArea, const std::string&, const CallStack&) __FUNCSIG__ at rdata 0xf830f69; Bedrock::LogOrAssertLevel / Bedrock::LogArea parameter types; ContentLog::ThreadSpecificData inside Bedrock::Threading::InstancedThreadLocal RTTI at .data 0x123241e0",
+          "note": "The game has a structured BedrockLog/ContentLog logger with level+area parameters. No callable RVA was recovered: the release EXE has no PDB, Ghidra auto-analysis of the 327MB image times out, and the ContentLog strings are pooled with zero direct xrefs."
+        },
+        {
+          "kind": "reader-anchor",
+          "evidence": "RVA 0x886b530..0x886d523 reads all three menu.creator.contentLog strings (lea at 0x886c0d3 / 0x886c7e6 / 0x886ce81); supplied by Muse 2026-11-20",
+          "note": "This is the GUI reader side, NOT the write function. Follow its store access to reach the writer in a future live/PDB-assisted round."
+        },
+        {
+          "kind": "dispatch-funnel-pinned",
+          "evidence": "RVA 0x3B13E0; entry bytes 56 57 53 48 81 EC 80 00 00 00 4C 89 C7 80 79 02 00; the ResultLogger::log FUNCSIG string (rdata 0xf830f69) has exactly one code xref, inside this function. ABI: void __fastcall(const LevelWrap*, const AreaWrap*, const std::string&); defaults level=2 / area=45 when hasValue=0. Muse RE 2026-11-23 (contentlog-re-20261123.md).",
+          "note": "This is the single dispatch funnel of the game's public log API. Its only caller is the queue drain FUN_1403b1260; the front-end FUN_1403b1130 (83 callsites) and fmt front-end FUN_1403b1570 converge to it, so every game log entry passes through here."
+        },
+        {
+          "kind": "handler-pair-never-installed",
+          "evidence": "Global pair at VA 0x1528CD388 read live as null at every probe round (BOL 2026-11-23, rounds 1-3, UI on and off, in-world). A full .text RIP-relative scan finds 5 reference sites, all inside the funnel/drain cluster; the only write (RVA 0x3B1517, movups of a zeroed xmm) CLEARS the pair. No direct installer exists in .text.",
+          "note": "F's path 1 (installed-handler dispatch, the GUI history feed) is inert in this retail build/session type; the installer is presumably an editor/dev-side hookup or an indirect registration not present here."
+        },
+        {
+          "kind": "surfacing-negative-exhaustive",
+          "evidence": "BOL probe rounds 1-3 (2026-11-23): 212 dispatches through the funnel \u2014 areas 0..52 x levels {2, 258} x 2 rounds, plus targeted (level, area) sets at area 45 with levels {1,2,4,258} \u2014 all executed cleanly (0 faults). Zero entries appeared in the Content Log GUI history (checked with UI ON, level Verbose, scrolled) or in any file under the Wine prefix (full-tree grep; no ContentLog file created/modified in-session; 506 historical files from the game's content-loading pipeline untouched).",
+          "note": "F's path 2 (BedrockLog core emit when level & 0x100) also reaches no active sink in a normal gameplay session. Conclusion: on 1.26.65.1 retail, funnel-dispatched entries have no reachable surface; the historical ContentLog*.txt files are produced by the game's content-loading pipeline, a different producer. The SDK wiring stays fail-closed: the symbol is candidate, calls are entry-checked and SEH-guarded, file/debug logging is unaffected, and the route activates automatically wherever the game does install its handler."
+        },
+        {
+          "kind": "creator-frontend-proven",
+          "evidence": "RVA 0x5E9220; entry bytes 55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68. The historical [Sound][verbose] format literal is called through this front end at RVA 0xB020EA with (flags=1, severity ordinal 0, area 29). It borrows the Creator listener service (guard pointer VA 0x1528C2F60 -> validity byte 1; service pointer VA 0x1528C2F70, +0x18 == 1) and dispatches via 0x3D0610 -> 0x3D0680 to the registered listeners (file listener slot 0x3D4670; GUI listener 0x19284E0 -> ingress queue -> bounded history). BOL proof 2026-11-24 (OpenCode sol, verified firsthand by Muse): probe markers OC-CL-9C43F61D-20261124-T1/-T2 appeared in the Content Log GUI history and in ContentLog2026-11-24_00-56-19_1.txt lines 1 and 3 after normal exit.",
+          "note": "This is a separate subsystem from both the ResultLogger funnel (0x3B13E0) and the BedrockLog core (0x3CF040, one-hot levels 1/2/4/8, channel selected by first argument). The funnel conclusion stands for the funnel; it was never the Creator producer. Evidence: ~/Documents/PEXData/contentlog-handoff/opencode-report.md, chunk1-4."
+        }
+      ],
+      "symbol_to_add_when_resolved": {
+        "name": "ContentLog::emitCreator",
+        "required_fields": [
+          "rva",
+          "signature",
+          "entry_check",
+          "abi",
+          "status"
+        ],
+        "expected_shape": "void __fastcall(uint32_t flags, uint32_t severityOrdinal, uint32_t area, const char* format, const char* const* arg1, const char* const* arg2); adapter call shape 'creator_emit'",
+        "status_policy": "candidate with runtime_verified true after the 2026-11-24 BOL proof (GUI history + game file)"
       },
-      {
-        "kind": "settings",
-        "evidence": "CONTENT_LOG_FILE / CONTENT_LOG_GUI / CONTENT_LOG_GUI_LEVEL / CONTENT_LOG_GUI_SHOW_ON_ERRORS at rdata 0xf298b0e..0xf298b45; options.content_log_file_enabled / options.content_log_gui_enabled",
-        "note": "Shows a configurable Content Log file and GUI filter; the debug/OutputDebugString sink is a different, non-GUI surface."
-      },
-      {
-        "kind": "logger-subsystem",
-        "evidence": "BedrockLog::LogDetails::createLog RTTI lambda type in .data; Bedrock::ResultLogger::log(LogLevel, LogArea, const std::string&, const CallStack&) __FUNCSIG__ at rdata 0xf830f69; Bedrock::LogOrAssertLevel / Bedrock::LogArea parameter types; ContentLog::ThreadSpecificData inside Bedrock::Threading::InstancedThreadLocal RTTI at .data 0x123241e0",
-        "note": "The game has a structured BedrockLog/ContentLog logger with level+area parameters. No callable RVA was recovered: the release EXE has no PDB, Ghidra auto-analysis of the 327MB image times out, and the ContentLog strings are pooled with zero direct xrefs."
-      },
-      {
-        "kind": "reader-anchor",
-        "evidence": "RVA 0x886b530..0x886d523 reads all three menu.creator.contentLog strings (lea at 0x886c0d3 / 0x886c7e6 / 0x886ce81); supplied by Muse 2026-11-20",
-        "note": "This is the GUI reader side, NOT the write function. Follow its store access to reach the writer in a future live/PDB-assisted round."
-      },
-      {
-        "kind": "dispatch-funnel-pinned",
-        "evidence": "RVA 0x3B13E0; entry bytes 56 57 53 48 81 EC 80 00 00 00 4C 89 C7 80 79 02 00; the ResultLogger::log FUNCSIG string (rdata 0xf830f69) has exactly one code xref, inside this function. ABI: void __fastcall(const LevelWrap*, const AreaWrap*, const std::string&); defaults level=2 / area=45 when hasValue=0. Muse RE 2026-11-23 (contentlog-re-20261123.md).",
-        "note": "This is the single dispatch funnel of the game's public log API. Its only caller is the queue drain FUN_1403b1260; the front-end FUN_1403b1130 (83 callsites) and fmt front-end FUN_1403b1570 converge to it, so every game log entry passes through here."
-      },
-      {
-        "kind": "handler-pair-never-installed",
-        "evidence": "Global pair at VA 0x1528CD388 read live as null at every probe round (BOL 2026-11-23, rounds 1-3, UI on and off, in-world). A full .text RIP-relative scan finds 5 reference sites, all inside the funnel/drain cluster; the only write (RVA 0x3B1517, movups of a zeroed xmm) CLEARS the pair. No direct installer exists in .text.",
-        "note": "F's path 1 (installed-handler dispatch, the GUI history feed) is inert in this retail build/session type; the installer is presumably an editor/dev-side hookup or an indirect registration not present here."
-      },
-      {
-        "kind": "surfacing-negative-exhaustive",
-        "evidence": "BOL probe rounds 1-3 (2026-11-23): 212 dispatches through the funnel — areas 0..52 x levels {2, 258} x 2 rounds, plus targeted (level, area) sets at area 45 with levels {1,2,4,258} — all executed cleanly (0 faults). Zero entries appeared in the Content Log GUI history (checked with UI ON, level Verbose, scrolled) or in any file under the Wine prefix (full-tree grep; no ContentLog file created/modified in-session; 506 historical files from the game's content-loading pipeline untouched).",
-        "note": "F's path 2 (BedrockLog core emit when level & 0x100) also reaches no active sink in a normal gameplay session. Conclusion: on 1.26.65.1 retail, funnel-dispatched entries have no reachable surface; the historical ContentLog*.txt files are produced by the game's content-loading pipeline, a different producer. The SDK wiring stays fail-closed: the symbol is candidate, calls are entry-checked and SEH-guarded, file/debug logging is unaffected, and the route activates automatically wherever the game does install its handler."
-      }
-    ],
-    "symbol_to_add_when_resolved": {
-      "name": "ContentLog::write",
-      "required_fields": ["rva", "signature", "entry_check", "abi", "status"],
-      "expected_shape": "void __fastcall(level, area, message) or void __fastcall(message, level, area); the adapter selects via the optional 'call' field ('level_area_message' default, or 'message_level_area')",
-      "status_policy": "candidate until exact-build entry guard + ABI are verified; runtime_verified false until a live BOL observation"
-    },
-      "runtime_behavior": "The symbol is added as candidate with call shape 'level_area_stringref' (classes/ContentLog.json). The adapter resolves it under the exact-build entry guard, installs the writer, and dispatches through the funnel under SEH; on builds where the symbol is absent it fails closed exactly as before (one OutputDebugString line, file/debug logs kept). File logging is independent of the native writer and was verified unaffected in-session. Live surfacing in the Creator Content Log is negative on 1.26.65.1 retail sessions (see surfacing-negative-exhaustive) — a property of the game's build, not of the call."
+      "runtime_behavior": "The adapter resolves ContentLog::emitCreator only (classes/ContentLog.json, call shape 'creator_emit'): entry-checked under SEH, the service guard/service pointers are re-validated on every call, and lines are emitted with the proven (flags=1, area=29) baseline and the severity ordinal mapped from the SDK level. The funnel symbol ContentLog::write was removed from the profile and the adapter on 2026-11-24 at the user's direction (investigated, not adopted); with the emit symbol absent the adapter fails closed exactly as before (file/debug logs kept). File logging is independent of the native writer. Live surfacing through the Creator front end is BOL-proven on 1.26.65.1 (GUI history + game file); only (flags=1, severity=0, area=29) is live-proven, other areas/severities are static-only."
     }
   }
 }

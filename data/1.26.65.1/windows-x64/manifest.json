@@ -25,7 +25,7 @@
   "parts": [
     {
       "path": "analysis/content_log_investigation.json",
-      "sha256": "92cf9ad74a7fd4b332603164c2b3c232de0d2db711ca9540bc5ed9371e991d37"
+      "sha256": "13729fa1e89823e197bbac248e25f1805393caac27c2d72d7540e2147037bdad"
     },
     {
       "path": "analysis/entry_verification_policy.json",
@@ -97,7 +97,7 @@
     },
     {
       "path": "classes/ContentLog.json",
-      "sha256": "35d1cbea95c55d26780f1b2dbcfccc60f1d51c2eb8ae7c01213f02032275a696"
+      "sha256": "ca57a1f218e1f090f94375a650c40c0470ddbfeb86511a55154e8842da82f9c6"
     },
     {
       "path": "classes/GameCore.json",
