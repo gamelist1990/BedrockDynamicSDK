@@ -103,31 +103,26 @@ public:
         // Process-lifetime named mutex: one handle, no per-line allocation.
         static HANDLE mutex = ::CreateMutexW(nullptr, FALSE, L"Local\\BedrockSdkContentLog");
         if (mutex) ::WaitForSingleObject(mutex, INFINITE);
-        __try {
-            const auto call = self->call_.load(std::memory_order_relaxed);
-            if (call == Call::LevelAreaStringRef) {
+        // The native calls live in SEH-isolated helpers below: MSVC
+        // forbids __try in any function that also holds C++ objects
+        // requiring unwinding (C2712), so this function keeps none of
+        // its own __try blocks and the helpers stay POD-only.
+        const auto call = self->call_.load(std::memory_order_relaxed);
+        if (call == Call::LevelAreaStringRef) {
+            try {
                 // The game's public log dispatch (profile symbol
                 // ContentLog::write, 1.26.65.1): wrapped level/area
                 // values plus the message as a std::string&. The
                 // callee only reads the string, so a caller-owned
                 // std::string is safe; no game allocator is involved.
-                struct LevelWrap { std::uint16_t value; std::uint8_t hasValue; std::uint8_t pad; };
-                struct AreaWrap { std::uint32_t value; std::uint8_t hasValue; std::uint8_t pad[3]; };
                 const std::string text(buffer, static_cast<std::size_t>(length));
-                const LevelWrap level{static_cast<std::uint16_t>(gameLevel), 1, 0};
-                const AreaWrap area{self->area_.load(std::memory_order_relaxed), 1, {0, 0, 0}};
-                using Fn = void(__fastcall*)(const LevelWrap*, const AreaWrap*, const void*);
-                reinterpret_cast<Fn>(target)(&level, &area, &text);
-            } else if (call == Call::MessageLevelArea) {
-                using Fn = void(__fastcall*)(const char*, int, const char*);
-                reinterpret_cast<Fn>(target)(buffer, gameLevel, kArea);
-            } else {
-                using Fn = void(__fastcall*)(int, const char*, const char*);
-                reinterpret_cast<Fn>(target)(gameLevel, kArea, buffer);
+                callStringRef(target, static_cast<std::uint16_t>(gameLevel),
+                              self->area_.load(std::memory_order_relaxed), text);
+            } catch (...) {
+                // Allocation failure while logging: drop the line.
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            // Never propagate a native fault from a logging call.
-            std::atomic_signal_fence(std::memory_order_seq_cst);
+        } else {
+            callRaw(target, call, buffer, gameLevel);
         }
         if (mutex) ::ReleaseMutex(mutex);
     }
@@ -136,6 +131,37 @@ private:
     static constexpr const char* kSymbol = "ContentLog::write";
     static constexpr const char* kArea = "ContentLog";
     enum class Call : unsigned char { LevelAreaMessage, MessageLevelArea, LevelAreaStringRef };
+
+    // SEH-isolated call helpers. Neither function may hold a C++
+    // object that requires unwinding (MSVC C2712); both take POD
+    // arguments only and never let a native fault escape.
+    static void callRaw(void* target, Call call, const char* buffer, int gameLevel) noexcept {
+        __try {
+            if (call == Call::MessageLevelArea) {
+                using Fn = void(__fastcall*)(const char*, int, const char*);
+                reinterpret_cast<Fn>(target)(buffer, gameLevel, kArea);
+            } else {
+                using Fn = void(__fastcall*)(int, const char*, const char*);
+                reinterpret_cast<Fn>(target)(gameLevel, kArea, buffer);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+        }
+    }
+
+    static void callStringRef(void* target, std::uint16_t levelValue,
+                              std::uint32_t areaValue, const std::string& text) noexcept {
+        struct LevelWrap { std::uint16_t value; std::uint8_t hasValue; std::uint8_t pad; };
+        struct AreaWrap { std::uint32_t value; std::uint8_t hasValue; std::uint8_t pad[3]; };
+        const LevelWrap level{levelValue, 1, 0};
+        const AreaWrap area{areaValue, 1, {0, 0, 0}};
+        using Fn = void(__fastcall*)(const LevelWrap*, const AreaWrap*, const void*);
+        __try {
+            reinterpret_cast<Fn>(target)(&level, &area, &text);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+        }
+    }
 
     static int mapLevel(LogLevel level) noexcept {
         switch (level) {
