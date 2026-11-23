@@ -1,5 +1,6 @@
 #include <bedrock/logging/console.hpp>
 #include <bedrock/logging/logger.hpp>
+#include <bedrock/sdk/content_log.hpp>
 #include <bedrock/sdk/logging.hpp>
 #include <cassert>
 #include <filesystem>
@@ -148,9 +149,24 @@ int main() {
     log.info("with-sink");
     assert(ordinary.lines.size() == 1 && contentLines.size() == 4);
     log.setSink(nullptr);
+    using bedrock::sdk::ContentLog;
+    using SdkLevel = bedrock::sdk::LogLevel;
+    assert(ContentLog::available());
+    ContentLog::write(SdkLevel::Debug, "CppMod", "direct");
+    ContentLog::write(SdkLevel::Off, "CppMod", "not a severity");
+    bedrock::sdk::emitContentLog(SdkLevel::Warn, "ScriptMod", "legacy");
+    ContentLog::write(SdkLevel::Info, {}, {});
+    assert(contentLines.size() == 7 && ordinary.lines.size() == 1);
+    assert(contentLines[4].level == LogLevel::Debug && contentLines[4].tag == "CppMod" &&
+           contentLines[4].text == "direct");
+    assert(contentLines[5].level == LogLevel::Warn && contentLines[5].tag == "ScriptMod" &&
+           contentLines[5].text == "legacy");
+    assert(contentLines[6].tag.empty() && contentLines[6].text.empty());
     bedrock::setContentLogWriter(nullptr);
+    assert(!ContentLog::available());
+    ContentLog::write(SdkLevel::Error, "CppMod", "no writer");
     log.info("after-clear");
-    assert(contentLines.size() == 4); // no writer => no content-log lines
+    assert(contentLines.size() == 7); // no writer => no content-log lines
 
 #ifndef _WIN32
     assert(!bedrock::Console::isOpen());

@@ -1,7 +1,7 @@
 add_library(bedrock_stage_a STATIC
     src/settings.cpp src/system.cpp src/mod.cpp src/keybinds.cpp
     src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
-    src/logging.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
+    src/logging.cpp src/content_log.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
     src/roster.cpp src/packets.cpp src/overlay.cpp
     src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp
     src/automation_controls.cpp src/block_actions.cpp
@@ -72,6 +72,10 @@ target_link_libraries(bedrock_sdk_public INTERFACE bedrock_stage_a)
 add_library(bedrock::sdk ALIAS bedrock_sdk_public)
 
 if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
+    add_executable(sdk_content_log_test tests/content_log_test.cpp)
+    target_link_libraries(sdk_content_log_test PRIVATE bedrock::sdk)
+    add_test(NAME sdk_content_log_test COMMAND sdk_content_log_test)
+
     foreach(test IN ITEMS core world)
         set(target "stage_a_${test}_test")
         add_executable(${target} "tests/${test}_test.cpp")

@@ -8,6 +8,7 @@
 #include "bedrock/sdk/display.hpp"
 #include "bedrock/sdk/world.hpp"
 #include "bedrock/sdk/logging.hpp"
+#include "bedrock/sdk/content_log.hpp"
 #include "bedrock/sdk/profiles.hpp"
 #include "bedrock/sdk/commands.hpp"
 #include "bedrock/sdk/block_types.hpp"

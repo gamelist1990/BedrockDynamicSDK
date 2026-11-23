@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the BedrockDynamicSDK Pages site from XML."""
+"""Generate the BedrockDynamicSDK Pages site and XML indexes from source."""
 from __future__ import annotations
 
 import argparse
@@ -56,15 +56,22 @@ CATEGORY_MAP = {
 MODULE_SUMMARIES = {
     "sdk": "Aggregate header including every public SDK module.",
     "client_host": "Client host lifecycle, multi-Mod attach/detach, and display overrides.",
+    "content_log": "Write directly to Minecraft's Creator Content Log from a C++ mod.",
     "display": "Client-side brightness/gamma override that never writes player options.",
     "events": "Generic event signals and RAII subscriptions.",
     "game_types": "Vectors, positions, rotations, items, components and effects.",
     "keybinds": "Key binding registration, dispatch and change events.",
+    "logging": "SDK log levels, tagged loggers, and optional file sinks.",
     "mod": "Mod base class: id, settings, system, world and keybinds.",
     "result": "Result<T> / Result<void> with typed error codes.",
     "settings": "Settings page, setting kinds and localization.",
     "system": "Tick-based task scheduling owned by one Mod.",
     "world": "World, dimensions, blocks, entities and players.",
+}
+
+LOGGING_MODULES = {
+    "content_log": "Creator Content Log",
+    "logging": "Logger and file sinks",
 }
 
 GITHUB_REPO = "gamelist1990/BedrockDynamicSDK"
@@ -80,27 +87,50 @@ def strip_slash(line: str) -> str:
     return s
 
 
-def count_braces(s: str) -> int:
+# This is a lightweight header scanner, not a C++ compiler. Ignore punctuation
+# inside comments and ordinary literals when looking for declaration boundaries.
+CPP_TOKEN_RE = re.compile(r'''//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{}()[\];]''', re.DOTALL)
+ACCESS_RE = re.compile(r"^(public|private|protected)\s*:\s*")
+NON_FUNCTION_RE = re.compile(r"^(?:template\s*<[^>]*>\s*)?(?:class|struct|enum|namespace|using)\b")
+
+
+def closing_brace(text: str, start: int) -> int:
+    depth = 1
+    for match in CPP_TOKEN_RE.finditer(text, start):
+        token = match[0]
+        if token == "{":
+            depth += 1
+        elif token == "}":
+            depth -= 1
+            if depth == 0:
+                return match.start()
+    return len(text)
+
+
+def declaration_lines(body: str):
+    """Split compact declarations without splitting inline bodies or parameters."""
     depth = 0
-    in_str = False
-    i = 0
-    while i < len(s):
-        c = s[i]
-        if in_str:
-            if c == "\\":
-                i += 2
-                continue
-            if c == '"':
-                in_str = False
-        else:
-            if c == '"':
-                in_str = True
-            elif c == "{":
+    for raw in body.splitlines():
+        if raw.lstrip().startswith(("//", "#")):
+            yield raw
+            continue
+        # Carry open delimiters across physical lines.
+        start = 0
+        end = len(raw)
+        for match in CPP_TOKEN_RE.finditer(raw):
+            token = match[0]
+            if token.startswith("//"):
+                end = match.start()
+                break
+            if token in ("{", "(", "["):
                 depth += 1
-            elif c == "}":
+            elif token in ("}", ")", "]"):
                 depth -= 1
-        i += 1
-    return depth
+            elif token == ";" and depth == 0:
+                yield raw[start:match.end()]
+                start = match.end()
+        if start == 0 or raw[start:end].strip():
+            yield raw[start:end]
 
 
 def parse_enum_members(body: str):
@@ -131,65 +161,39 @@ def parse_enum_members(body: str):
     return members
 
 
-def is_function(decl: str) -> bool:
-    start = decl.find("(")
-    if start == -1:
-        return False
-    prefix = decl[:start].rstrip()
-    if not prefix:
-        return False
+def parameter_end(decl: str, start: int) -> int:
     depth = 0
-    i = start
-    while i < len(decl):
-        if decl[i] == "(":
+    for match in CPP_TOKEN_RE.finditer(decl, start):
+        if match[0] == "(":
             depth += 1
-        elif decl[i] == ")":
+        elif match[0] == ")":
             depth -= 1
             if depth == 0:
-                break
-        i += 1
-    if i >= len(decl):
+                return match.end()
+    return -1
+
+
+def is_function(decl: str) -> bool:
+    start = decl.find("(")
+    if start <= 0 or NON_FUNCTION_RE.match(decl):
         return False
-    after = decl[i + 1:].strip()
-    if re.match(r"^[A-Za-z_]\w*\s*[;=]", after):
+    end = parameter_end(decl, start)
+    if end == -1:
         return False
-    return True
+    if re.match(r"\s*[*&]", decl[start + 1:]) and decl[end:].lstrip().startswith("("):
+        return False
+    after = decl[end:].strip()
+    return not re.match(r"^(?!(?:const|volatile|noexcept|override|final)\b)[A-Za-z_]\w*\s*[;=]", after)
 
 
 def function_signature(decl: str) -> str:
-    start = decl.find("(")
-    if start == -1:
-        base = decl.split("{", 1)[0].strip()
-        return base if base.endswith(";") else base + ";"
-    depth = 0
-    i = start
-    while i < len(decl):
-        if decl[i] == "(":
-            depth += 1
-        elif decl[i] == ")":
-            depth -= 1
-            if depth == 0:
-                break
-        i += 1
-    if i >= len(decl):
-        base = decl.split("{", 1)[0].strip()
-        return base if base.endswith(";") else base + ";"
-    after = decl[i + 1:]
-    q = ""
-    for ch in after:
-        if ch in ":;{":
-            break
-        q += ch
-    q = q.strip()
-    base = decl[: i + 1].strip()
-    sig = base + ((" " + q) if q else "")
-    if not sig.endswith(";") and not sig.endswith("}") and not sig.endswith("{"):
-        sig += ";"
-    return sig
+    end = parameter_end(decl, decl.find("("))
+    # Drop inline bodies and constructor initializer lists, not C++ scopes.
+    after = re.split(r"(?<!:):(?!:)|[;{]", decl[end:], maxsplit=1)[0].strip()
+    return decl[:end].strip() + (f" {after}" if after else "") + ";"
 
 
 def parse_members(body: str, is_class: bool):
-    lines = body.splitlines()
     access = "private" if is_class else "public"
     current_doc = []
     pending = ""
@@ -202,11 +206,7 @@ def parse_members(body: str, is_class: bool):
             pending = ""
             current_doc = []
             return
-        if pending.strip() == "":
-            pending = ""
-            current_doc = []
-            return
-        if "friend " in decl:
+        if decl.startswith("friend "):
             pending = ""
             current_doc = []
             return
@@ -222,13 +222,16 @@ def parse_members(body: str, is_class: bool):
             sig = function_signature(decl)
             kind = "function"
         else:
-            sig = decl
+            # Compact nested definitions are a single declaration. Do not
+            # print their entire bodies (which can include private members).
+            sig = (decl.split("{", 1)[0].rstrip() + ";"
+                   if NON_FUNCTION_RE.match(decl) and "{" in decl else decl)
             kind = "field"
         members.append({"kind": kind, "signature": sig, "doc": " ".join(current_doc).strip()})
         pending = ""
         current_doc = []
 
-    for raw in lines:
+    for raw in declaration_lines(body):
         stripped = raw.strip()
         if not stripped:
             if pending.strip():
@@ -243,18 +246,21 @@ def parse_members(body: str, is_class: bool):
                 # comment after code; ignore for signature
                 pass
             continue
-        if stripped in ("public:", "private:", "protected:"):
+        label = ACCESS_RE.match(stripped) if not pending else None
+        if label:
             flush()
-            access = stripped[:-1]
-            current_doc = []
-            continue
+            access = label[1]
+            stripped = stripped[label.end():]
+            if not stripped:
+                continue
         if stripped.startswith("#"):
             continue
         if pending.strip():
             pending += " " + stripped
         else:
             pending = stripped
-        if count_braces(pending) == 0 and (
+        braces = [m[0] for m in CPP_TOKEN_RE.finditer(pending)]
+        if braces.count("{") == braces.count("}") and (
             pending.rstrip().endswith(";")
             or pending.rstrip().endswith("}")
             or "= default" in pending
@@ -270,6 +276,16 @@ TYPE_RE = re.compile(
     r"^(?:template\s*<[^>]*>\s*\n\s*)?(class|struct|enum)\s+(?:class\s+)?(\w+(?:<[^>]*>)?)(?:\s+final)?(?:\s*:\s*([^\{]+?))?\s*\{",
     re.MULTILINE,
 )
+SDK_NAMESPACE_RE = re.compile(r"^namespace\s+bedrock::sdk\s*\{", re.MULTILINE)
+
+
+def parse_free_functions(text: str):
+    functions = []
+    for match in SDK_NAMESPACE_RE.finditer(text):
+        body = text[match.end():closing_brace(text, match.end())]
+        functions.extend(member for member in parse_members(body, False)
+                         if member["kind"] == "function")
+    return functions
 
 
 def parse_header(text: str):
@@ -292,16 +308,7 @@ def parse_header(text: str):
             j -= 1
         type_doc = " ".join(doc_lines).strip()
         # body
-        depth = 1
-        k = m.end()
-        while k < len(text) and depth > 0:
-            c = text[k]
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-            k += 1
-        body = text[m.end(): k - 1]
+        body = text[m.end():closing_brace(text, m.end())]
         if kind == "enum":
             members = parse_enum_members(body)
         else:
@@ -363,7 +370,8 @@ def collect_modules():
         module_doc, types = parse_header(text)
         rel = p.relative_to(REPO_ROOT).as_posix()
         name = p.stem
-        summary = module_doc or MODULE_SUMMARIES.get(name, "")
+        summary = (MODULE_SUMMARIES[name] if name in LOGGING_MODULES
+                   else module_doc or MODULE_SUMMARIES.get(name, ""))
         if not summary:
             summary = "Public C++ SDK module."
         modules.append(
@@ -372,6 +380,7 @@ def collect_modules():
                 "path": rel,
                 "doc": summary,
                 "types": types,
+                "functions": parse_free_functions(text),
             }
         )
     return modules
@@ -474,6 +483,11 @@ def write_xml(out: Path, modules, articles):
                 )
                 desc = ET.SubElement(mem_el, "description")
                 desc.text = mem["doc"]
+        if mod["functions"]:
+            functions_el = ET.SubElement(m_el, "functions")
+            for fn in mod["functions"]:
+                fn_el = ET.SubElement(functions_el, "function", {"signature": fn["signature"]})
+                ET.SubElement(fn_el, "description").text = fn["doc"]
     ET.indent(api_root, space="  ")
     (out / "api.xml").write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(api_root, encoding="unicode") + "\n",
@@ -593,10 +607,14 @@ section.category h2 {
 .card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 .card .meta { margin-top: 8px; color: var(--muted); font-size: 0.78rem; }
 
-.api-layout { display: grid; grid-template-columns: 240px 1fr; gap: 32px; align-items: start; }
-@media (max-width: 820px) { .api-layout { grid-template-columns: 1fr; } }
+.api-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 820px) {
+  .api-layout { grid-template-columns: minmax(0, 1fr); }
+  .api-layout .side-nav { position: static; max-height: 12rem; }
+}
 .side-nav {
   position: sticky; top: 80px; align-self: start;
+  max-height: calc(100vh - 96px); overflow: auto;
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--panel); padding: 12px;
 }
@@ -613,9 +631,11 @@ section.category h2 {
 .module-card h3 { margin: 0 0 4px; font-size: 1.05rem; }
 .module-card .count { color: var(--muted); font-size: 0.8rem; margin-bottom: 6px; }
 .module-card p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+.api-section { margin-bottom: 32px; scroll-margin-top: 96px; }
+.related-api { margin: 0 0 24px; color: var(--muted); }
 
 .type-block { margin-bottom: 32px; }
-.type-block h3 { margin: 0 0 4px; }
+.type-block h2 { margin: 0 0 4px; }
 .type-block .kind { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .type-block .bases { color: var(--blue); font-size: 0.9rem; margin-bottom: 6px; }
 .type-block .doc { color: var(--ink-soft); margin: 6px 0 12px; }
@@ -677,6 +697,7 @@ def page_head(title: str, depth: int = 0) -> str:
     <a class="brand" href="{prefix}index.html">Bedrock<span>DynamicSDK</span></a>
     <nav class="nav-links">
       <a href="{prefix}api/index.html">API</a>
+      <a href="{prefix}api/index.html#logging">Logging</a>
       <a href="{GITHUB_BASE}">GitHub</a>
       <a href="{GITHUB_BASE}/releases">Releases</a>
     </nav>
@@ -754,29 +775,49 @@ def render_index(out: Path, modules, articles):
     (out / "index.html").write_text(html_doc, encoding="utf-8")
 
 
-def render_api_index(out: Path, modules):
-    api_dir = out / "api"
-    api_dir.mkdir(parents=True, exist_ok=True)
-    cards = ""
+def module_cards(modules):
+    cards = []
     for mod in modules:
         count = len(mod["types"])
         mem_count = sum(len(t["members"]) for t in mod["types"])
+        fn_count = len(mod["functions"])
+        functions = f" &middot; {fn_count} free function{'s' if fn_count != 1 else ''}" if fn_count else ""
         url = f"{mod['name']}.html"
         search = f"{mod['name']} {mod['doc']}"
-        cards += f"""
+        label = LOGGING_MODULES.get(mod["name"], mod["name"])
+        cards.append(f"""
       <article class="module-card" data-search="{esc(search)}">
-        <h3><a href="{esc(url)}">{esc(mod['name'])}</a></h3>
-        <div class="count">{count} types &middot; {mem_count} members</div>
+        <h3><a href="{esc(url)}">{esc(label)}</a></h3>
+        <div class="count">{count} types &middot; {mem_count} members{functions}</div>
         <p>{inline_code(mod['doc'])}</p>
-      </article>"""
+      </article>""")
+    return "".join(cards)
+
+
+def render_api_index(out: Path, modules):
+    api_dir = out / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    by_name = {mod["name"]: mod for mod in modules}
+    logging_cards = module_cards(by_name[name] for name in LOGGING_MODULES if name in by_name)
+    other_cards = module_cards(mod for mod in modules if mod["name"] not in LOGGING_MODULES)
     html_doc = page_head("API Reference", 1) + f"""
 <main class="container">
   <section class="hero">
     <h1>API Reference</h1>
     <p>Modules are generated from <code>sdk/include/bedrock/sdk.hpp</code> and <code>sdk/include/bedrock/sdk/*.hpp</code>.</p>
   </section>
-  <div class="module-card-grid">{cards}
-  </div>
+  <section class="api-section" id="logging">
+    <h2>Logging &amp; Content Log</h2>
+    <p>Choose <code>Logger</code> for ordinary SDK logging or
+    <a href="content_log.html"><code>ContentLog::write</code></a> to write only to the game's Creator Content Log.</p>
+    <div class="module-card-grid">{logging_cards}
+    </div>
+  </section>
+  <section class="api-section">
+    <h2>Other C++ modules</h2>
+    <div class="module-card-grid">{other_cards}
+    </div>
+  </section>
 </main>
 <footer class="site-footer"><div class="container"><a href="../index.html">Home</a></div></footer>
 <script src="../assets/app.js" defer></script>
@@ -786,49 +827,78 @@ def render_api_index(out: Path, modules):
     (api_dir / "index.html").write_text(html_doc, encoding="utf-8")
 
 
-def render_module_page(out: Path, modules, current):
-    api_dir = out / "api"
-    # side nav
-    nav_links = ""
-    for mod in modules:
-        active = "active" if mod["name"] == current["name"] else ""
-        nav_links += f'<a class="{active}" href="{esc(mod["name"])}.html">{esc(mod["name"])}</a>\n'
-    # types
-    types_html = ""
-    for t in current["types"]:
-        kind = t["kind"]
-        name = t["name"]
-        bases = t["bases"]
-        doc = t["doc"]
-        bases_html = f'<div class="bases">: {esc(bases)}</div>' if bases else ""
-        doc_html = f'<div class="doc">{inline_code(doc)}</div>' if doc else ""
-        rows = ""
-        for mem in t["members"]:
-            sig = mem["signature"]
-            desc = mem["doc"]
-            rows += f"""
+def signature_table(entries):
+    if not entries:
+        return ""
+    rows = "".join(f"""
         <tr>
-          <td><code>{esc(sig)}</code></td>
-          <td><div class="doc">{inline_code(desc) if desc else ''}</div></td>
-        </tr>"""
-        table = ""
-        if rows:
-            table = f"""
+          <td><code>{esc(entry['signature'])}</code></td>
+          <td><div class="doc">{inline_code(entry['doc'])}</div></td>
+        </tr>""" for entry in entries)
+    return f"""
       <table>
-        <thead><tr><th>Signature</th><th>Description</th></tr></thead>
+        <thead><tr><th scope="col">Signature</th><th scope="col">Description</th></tr></thead>
         <tbody>{rows}
         </tbody>
       </table>"""
-        types_html += f"""
+
+
+def logging_module_intro(name):
+    if name == "logging":
+        return """
+      <p class="related-api">For direct writes that bypass SDK sinks, see <a href="content_log.html">Creator Content Log</a>.</p>"""
+    if name != "content_log":
+        return ""
+    example = """#include <bedrock/sdk.hpp>
+
+void announceReady() {
+    using namespace bedrock::sdk;
+    if (ContentLog::available()) {
+        ContentLog::write(LogLevel::Info, "MyMod", "Ready");
+    }
+}"""
+    return f"""
+      <section class="api-section">
+        <h2>Write from a C++ mod</h2>
+        <p>Link <code>bedrock::sdk</code> and include <code>&lt;bedrock/sdk.hpp&gt;</code>.
+        Call from <code>Mod::onEnable()</code> or later when using <code>ClientHost</code>.
+        If the route is unavailable, writes are safe no-ops.</p>
+        <pre><code>{esc(example)}</code></pre>
+        <p>Find the game’s Content Log options in Settings → Creator. Availability only
+        means the SDK writer is installed: the game may still suppress the line, and
+        the API does not confirm whether the line was displayed or saved.</p>
+        <p class="related-api">For ordinary logging and SDK-owned files, see <a href="logging.html">Logger and file sinks</a>.</p>
+      </section>"""
+
+
+def render_module_page(out: Path, modules, current):
+    api_dir = out / "api"
+    nav_links = ""
+    for mod in modules:
+        active = ' class="active" aria-current="page"' if mod["name"] == current["name"] else ""
+        label = LOGGING_MODULES.get(mod["name"], mod["name"])
+        nav_links += f'<a{active} href="{esc(mod["name"])}.html">{esc(label)}</a>\n'
+    reference = ""
+    for t in current["types"]:
+        bases_html = f'<div class="bases">: {esc(t["bases"])}</div>' if t["bases"] else ""
+        doc_html = f'<div class="doc">{inline_code(t["doc"])}</div>' if t["doc"] else ""
+        reference += f"""
     <div class="type-block">
-      <div class="kind">{esc(kind)}</div>
-      <h3>{esc(name)}</h3>
+      <div class="kind">{esc(t['kind'])}</div>
+      <h2>{esc(t['name'])}</h2>
       {bases_html}
       {doc_html}
-      {table}
+      {signature_table(t['members'])}
     </div>"""
+    if current["functions"]:
+        reference += f"""
+    <section class="type-block">
+      <h2>Free functions</h2>
+      {signature_table(current['functions'])}
+    </section>"""
 
-    html_doc = page_head(f"API: {current['name']}", 1) + f"""
+    label = LOGGING_MODULES.get(current["name"], current["name"])
+    html_doc = page_head(f"API: {label}", 1) + f"""
 <main class="container">
   <div class="api-layout">
     <aside class="side-nav">
@@ -836,10 +906,11 @@ def render_module_page(out: Path, modules, current):
 {nav_links}    </aside>
     <div>
       <section class="hero" style="padding-top:0">
-        <h1>{esc(current['name'])}</h1>
+        <h1>{esc(label)}</h1>
         <p>{inline_code(current['doc'])}</p>
       </section>
-{types_html}
+{logging_module_intro(current['name'])}
+{reference}
     </div>
   </div>
 </main>
