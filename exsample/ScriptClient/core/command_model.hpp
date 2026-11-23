@@ -35,7 +35,7 @@ struct CommandDecl {
     std::vector<CommandBranch> branches;
 };
 
-enum class WireParamKind { CustomEnum, PacketEnum, Integer, Message };
+enum class WireParamKind { CustomEnum, PacketEnum, Integer, Message, String };
 
 struct WireParam {
     std::string name;

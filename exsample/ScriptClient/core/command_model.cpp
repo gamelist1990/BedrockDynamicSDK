@@ -152,6 +152,8 @@ WireDefinitions buildWireDefinitions(const std::vector<CommandDecl>& declaration
                     }
                     break;
                 case ArgKind::String:
+                    p.kind = WireParamKind::String;
+                    break;
                 case ArgKind::Message:
                     p.kind = WireParamKind::Message;
                     break;

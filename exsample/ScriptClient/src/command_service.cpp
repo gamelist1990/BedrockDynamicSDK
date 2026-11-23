@@ -18,6 +18,8 @@ bedrock::sdk::CommandParameterType toType(const WireParam& param) {
             return bedrock::sdk::CommandParameterType::Integer;
         case WireParamKind::Message:
             return bedrock::sdk::CommandParameterType::Message;
+        case WireParamKind::String:
+            return bedrock::sdk::CommandParameterType::String;
         case WireParamKind::CustomEnum:
         default:
             return bedrock::sdk::CommandParameterType::CustomEnum;

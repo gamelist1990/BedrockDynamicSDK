@@ -67,9 +67,10 @@ struct Commands::Impl {
     //
     // A definition registers TYPED when every overload is non-empty
     // and message-free: Integer maps to the registry's int kind,
-    // PacketEnum attaches the game's enum descriptor, CustomEnum
-    // attaches nothing (single-token string; a {true,false} value set
-    // becomes the Boolean kind). Typed registration renders real
+    // PacketEnum attaches the game's enum descriptor, String is the
+    // game's text kind (single token, numeric tokens accepted),
+    // CustomEnum attaches nothing (also the text kind; a {true,false}
+    // value set becomes the Boolean kind). Typed registration renders real
     // parameter completion and lets the native parser validate and
     // convert values; the handler still receives the reconstructed
     // line. Anything else (a Message parameter anywhere, an empty
@@ -99,6 +100,8 @@ struct Commands::Impl {
                     switch (p.type) {
                         case CommandParameterType::Integer:
                             params.push_back({Kind::Int, p.name, p.optional, {}}); break;
+                        case CommandParameterType::String:
+                            params.push_back({Kind::String, p.name, p.optional, {}}); break;
                         case CommandParameterType::PacketEnum:
                             params.push_back({Kind::Enum, p.name, p.optional, p.enumName}); break;
                         case CommandParameterType::CustomEnum: {
@@ -163,6 +166,7 @@ Commands::~Commands() = default;
 bedrock::InjectedType toNative(CommandParameterType type, const std::string& enumName) {
     switch (type) {
         case CommandParameterType::Integer: return bedrock::InjectedType::integer();
+        case CommandParameterType::String:
         case CommandParameterType::Message: return bedrock::InjectedType::message();
         case CommandParameterType::PacketEnum: return bedrock::InjectedType::packetEnum(enumName);
         default: return bedrock::InjectedType::customEnum(enumName);

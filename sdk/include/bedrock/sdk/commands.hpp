@@ -5,7 +5,7 @@
 #include <vector>
 namespace bedrock::sdk { class Profile; }
 namespace bedrock::sdk {
-enum class CommandParameterType { Integer, Message, CustomEnum, PacketEnum };
+enum class CommandParameterType { Integer, Message, CustomEnum, PacketEnum, String };
 struct CommandParameter { std::string name; CommandParameterType type{CommandParameterType::Message}; std::string enumName; bool optional{}; };
 struct CommandDefinition { std::string name; std::string description; std::vector<std::vector<CommandParameter>> overloads; std::function<void(const std::string&)> handler; };
 struct CommandEnum {
