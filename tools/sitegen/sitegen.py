@@ -12,8 +12,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SDK_INCLUDE = REPO_ROOT / "sdk" / "include"
 DOCS_DIR = REPO_ROOT / "docs"
+SCRIPTCLIENT_GUIDE = "scriptclient.html"
 
 CATEGORIES = [
+    ("scriptclient", "ScriptClient"),
     ("api", "API ガイド"),
     ("maintenance", "保守・更新"),
     ("design", "設計・構造"),
@@ -22,6 +24,7 @@ CATEGORIES = [
 ]
 
 CATEGORY_MAP = {
+    "scriptclient.md": "scriptclient",
     "client-api-quickstart.md": "api",
     "command-requests.md": "api",
     "native-client.md": "api",
@@ -449,6 +452,108 @@ def inline_code(s: str) -> str:
     return s
 
 
+def guide_inline(text: str) -> str:
+    # Match code before links so bracket syntax inside examples stays literal.
+    token = re.compile(r"`([^`]+)`|\[([^\]\n]+)\]\((https://[^\s)]+|#[\w-]+)\)")
+    parts = []
+    start = 0
+    for match in token.finditer(text):
+        parts.append(esc(text[start:match.start()]))
+        if match[1] is not None:
+            parts.append(f"<code>{esc(match[1])}</code>")
+        else:
+            parts.append(f'<a href="{esc(match[3])}">{esc(match[2])}</a>')
+        start = match.end()
+    return "".join(parts) + esc(text[start:])
+
+
+def heading_anchors():
+    used = set()
+
+    def anchor(label):
+        base = re.sub(r"[^\w]+", "-", label.lower()).strip("-") or "section"
+        slug = base
+        suffix = 2
+        while slug in used:
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        used.add(slug)
+        return slug
+
+    return anchor
+
+
+def heading(level, anchor, label):
+    return (f'<h{level} id="{esc(anchor)}">{guide_inline(label)} '
+            f'<a class="heading-link" href="#{esc(anchor)}" '
+            f'aria-label="Permalink: {esc(label)}">#</a></h{level}>')
+
+
+def contents(sections):
+    if len(sections) < 2:
+        return ""
+    links = "".join(
+        f'<li><a href="#{esc(anchor)}">{guide_inline(label)}</a></li>'
+        for anchor, label in sections
+    )
+    return f'<nav class="page-toc" aria-label="On this page"><p>On this page</p><ul>{links}</ul></nav>'
+
+
+def guide_blocks(text):
+    """Render the on-site guide's Markdown subset; other guides stay on GitHub.
+
+    Supports h2/h3 sections, paragraphs, flat bullets and backtick fences.
+    The page template supplies the h1. Raw HTML is always escaped.
+    """
+    blocks, sections, paragraph, bullets = [], [], [], []
+    anchor = heading_anchors()
+    lines = iter(text.splitlines())
+    for line in lines:
+        if line.startswith("- "):
+            if paragraph:
+                blocks.append(f"<p>{guide_inline(' '.join(paragraph))}</p>")
+                paragraph.clear()
+            bullets.append(f"<li>{guide_inline(line[2:])}</li>")
+            continue
+        if bullets:
+            blocks.append(f"<ul>{''.join(bullets)}</ul>")
+            bullets.clear()
+        if line.strip() and not line.startswith(("#", "```")):
+            paragraph.append(line)
+            continue
+        if paragraph:
+            blocks.append(f"<p>{guide_inline(' '.join(paragraph))}</p>")
+            paragraph.clear()
+        if match := re.fullmatch(r"(#{2,3}) (.+)", line):
+            label = match[2]
+            slug = anchor(label)
+            if len(match[1]) == 2:
+                sections.append((slug, label))
+            blocks.append(heading(len(match[1]), slug, label))
+        elif line.startswith("```"):
+            language = line[3:].strip()
+            code = []
+            for source in lines:
+                if source.strip() == "```":
+                    break
+                code.append(source)
+            else:
+                raise ValueError("Unclosed code fence in on-site guide")
+            blocks.append(code_block("\n".join(code), language))
+    if paragraph:
+        blocks.append(f"<p>{guide_inline(' '.join(paragraph))}</p>")
+    if bullets:
+        blocks.append(f"<ul>{''.join(bullets)}</ul>")
+    return contents(sections), "\n".join(blocks)
+
+
+def code_block(code, language=""):
+    caption = f'<div class="code-caption">{esc(language)}</div>' if language else ""
+    return (f'<div class="code-block">{caption}'
+            f'<pre tabindex="0" aria-label="{esc(language or "Code")} example"><code>'
+            f'{esc(code)}</code></pre></div>')
+
+
 def write_xml(out: Path, modules, articles):
     # api.xml
     api_root = ET.Element("api")
@@ -531,13 +636,12 @@ CSS = r"""
   --shadow: 0 12px 32px rgba(48, 41, 28, 0.08);
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 body {
   margin: 0;
   font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--bg);
-  line-height: 1.7;
+  line-height: 1.75;
 }
 h1, h2, h3, h4 {
   font-family: "Space Grotesk", "Noto Sans JP", sans-serif;
@@ -549,7 +653,11 @@ h1, h2, h3, h4 {
 p { text-wrap: pretty; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-2); text-decoration: underline; }
-code, pre { font-family: "Space Grotesk", "Consolas", monospace; }
+code, pre { font-family: ui-monospace, Consolas, monospace; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+[id] { scroll-margin-top: 5.5rem; }
+.skip-link { position: absolute; inset-inline-start: 1rem; top: 0; transform: translateY(-120%); }
+.skip-link:focus { transform: none; padding: .5rem; background: var(--panel); }
 
 .container { width: min(1180px, calc(100% - 48px)); margin: 0 auto; }
 
@@ -568,10 +676,30 @@ code, pre { font-family: "Space Grotesk", "Consolas", monospace; }
 .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
 .nav-links a { color: var(--ink-soft); font-size: 0.95rem; }
 .nav-links a:hover { color: var(--accent); text-decoration: none; }
+.nav-links a[aria-current] { color: var(--accent); text-decoration: underline; text-underline-offset: .25em; }
 
 .hero { padding: 56px 0 24px; }
-.hero h1 { font-size: clamp(2rem, 4vw, 3rem); margin: 0 0 12px; }
+.hero h1 { font-size: clamp(2rem, 4vw, 3rem); margin: 0 0 12px; overflow-wrap: anywhere; }
 .hero p { color: var(--muted); max-width: 62ch; margin: 0 0 20px; }
+.page-title { padding: 0 0 1rem; }
+.breadcrumbs { margin: 1.25rem 0 .75rem; color: var(--muted); font-size: .88rem; }
+.breadcrumbs ol { display: flex; flex-wrap: wrap; gap: .2rem .65rem; list-style: none; padding: 0; margin: 0; }
+.breadcrumbs li + li::before { content: "/"; margin-inline-end: .65rem; }
+.section-links { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: 0 0 1.75rem; }
+.section-links a, .page-toc a, .guide-copy a, .related-api a { text-decoration: underline; text-underline-offset: .15em; }
+.page-toc { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: .75rem 1rem; margin: 0 0 1.75rem; }
+.page-toc p { margin: 0; font-weight: 700; }
+.page-toc ul { columns: 15rem; margin: .35rem 0 0; padding-inline-start: 1.25rem; }
+.page-toc li { break-inside: avoid; overflow-wrap: anywhere; }
+.heading-link { font-size: .8em; padding-inline: .2em; color: var(--accent); }
+.guide-layout { max-width: 76ch; }
+.guide-copy h2, .type-block h2 { font-size: clamp(1.25rem, 2.6vw, 1.65rem); overflow-wrap: anywhere; }
+.guide-copy h2 { margin: 2.1rem 0 .5rem; }
+.guide-copy h3 { margin: 1.4rem 0 .5rem; }
+.guide-copy p, .guide-copy ul { margin: 0 0 1rem; overflow-wrap: anywhere; }
+.guide-copy li + li { margin-top: .3rem; }
+code { font-size: .9em; }
+:not(pre) > code { background: var(--code); border-radius: .25em; padding: .1em .25em; }
 .search {
   width: 100%; max-width: 560px; padding: 12px 16px;
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -598,56 +726,80 @@ section.category h2 {
   font-size: 1.35rem; border-bottom: 1px solid var(--line);
   padding-bottom: 8px; margin: 0 0 16px;
 }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 16px; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 18px; box-shadow: var(--shadow);
+  padding: 18px; box-shadow: var(--shadow); min-width: 0; overflow-wrap: anywhere;
 }
 .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
 .card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 .card .meta { margin-top: 8px; color: var(--muted); font-size: 0.78rem; }
 
-.api-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 32px; align-items: start; }
-@media (max-width: 820px) {
-  .api-layout { grid-template-columns: minmax(0, 1fr); }
-  .api-layout .side-nav { position: static; max-height: 12rem; }
-}
+.api-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.api-content { grid-column: 2; grid-row: 1; min-width: 0; }
 .side-nav {
+  grid-column: 1; grid-row: 1;
   position: sticky; top: 80px; align-self: start;
   max-height: calc(100vh - 96px); overflow: auto;
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--panel); padding: 12px;
 }
-.side-nav h3 { margin: 0 0 8px; font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.side-nav p { margin: 0 0 8px; font-size: 0.85rem; color: var(--muted); font-weight: 700; }
 .side-nav a { display: block; padding: 6px 10px; border-radius: 8px; color: var(--ink-soft); font-size: 0.9rem; }
 .side-nav a:hover { background: var(--code); color: var(--accent); text-decoration: none; }
 .side-nav a.active { background: var(--code); color: var(--accent); font-weight: 600; }
 
-.module-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.module-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 16px; }
 .module-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 18px; box-shadow: var(--shadow);
+  padding: 18px; box-shadow: var(--shadow); min-width: 0; overflow-wrap: anywhere;
 }
 .module-card h3 { margin: 0 0 4px; font-size: 1.05rem; }
 .module-card .count { color: var(--muted); font-size: 0.8rem; margin-bottom: 6px; }
 .module-card p { margin: 0; color: var(--muted); font-size: 0.88rem; }
-.api-section { margin-bottom: 32px; scroll-margin-top: 96px; }
+.api-section { margin-bottom: 32px; }
 .related-api { margin: 0 0 24px; color: var(--muted); }
 
-.type-block { margin-bottom: 32px; }
+.type-block { margin-bottom: 2rem; padding-top: .75rem; border-top: 1px solid var(--line); }
 .type-block h2 { margin: 0 0 4px; }
 .type-block .kind { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .type-block .bases { color: var(--blue); font-size: 0.9rem; margin-bottom: 6px; }
 .type-block .doc { color: var(--ink-soft); margin: 6px 0 12px; }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+.table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.scroll-hint { display: none; }
+.signature-table { width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--panel); }
+.signature-table.has-description th:first-child { width: 62%; }
+th, td { padding: .5rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+tbody tr:last-child td { border-bottom: 0; }
 th { font-family: "Space Grotesk", sans-serif; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-td code { background: var(--code); padding: 2px 6px; border-radius: 6px; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
-td .doc { color: var(--muted); font-size: 0.88rem; }
+thead, tbody tr:nth-child(even) { background: var(--bg); }
+.signature-table td { overflow-wrap: anywhere; font-size: .9rem; line-height: 1.5; }
+.signature-table td.signature code { padding: 0; background: none; font-size: .94em; white-space: pre-wrap; }
 
-pre, .code-panel {
+.code-block {
   background: var(--code); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 16px; overflow: auto; font-size: 0.88rem;
+  margin: 0 0 1rem; overflow: hidden;
+}
+.code-caption { padding: .35rem 1rem; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+.code-block pre { margin: 0; padding: .85rem 1rem; overflow-x: auto; line-height: 1.55; font-size: .9rem; }
+.code-block pre:focus-visible { outline-offset: -3px; }
+.code-block code { font-size: inherit; }
+
+@media (max-width: 820px) {
+  [id] { scroll-margin-top: 1rem; }
+  .container { width: calc(100% - 32px); }
+  .site-header { position: static; }
+  .nav-inner, .nav-links { gap: .5rem 1rem; }
+  .hero { padding-top: 2rem; }
+  .page-title { padding-top: 0; }
+  .api-layout { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .api-content, .side-nav { grid-column: auto; grid-row: auto; }
+  .side-nav { position: static; max-height: none; }
+  .side-nav a { display: inline-block; }
+}
+@media (max-width: 433px) {
+  .signature-table.has-description { min-width: 25rem; }
+  .scroll-hint { display: block; margin: 0 0 .25rem; color: var(--muted); font-size: .8rem; }
 }
 
 footer.site-footer {
@@ -678,14 +830,28 @@ APP_JS = r"""
 """
 
 
-def page_head(title: str, depth: int = 0) -> str:
-    prefix = "" if depth == 0 else "../" * depth
+def page_head(title: str, depth: int = 0, current: str = "", current_kind: str = "page") -> str:
+    prefix = "../" * depth
+    nav = [
+        ("Guides", f"{prefix}index.html#guides"),
+        ("ScriptClient", f"{prefix}{SCRIPTCLIENT_GUIDE}"),
+        ("C++ API", f"{prefix}api/index.html"),
+        ("Logging", f"{prefix}api/index.html#logging"),
+        ("GitHub", GITHUB_BASE),
+        ("Releases", f"{GITHUB_BASE}/releases"),
+    ]
+    links = []
+    for label, url in nav:
+        active = f' aria-current="{current_kind}"' if label == current else ""
+        links.append(f'      <a href="{esc(url)}"{active}>{esc(label)}</a>')
+    nav_html = "\n".join(links)
+    browser_title = "BedrockDynamicSDK" if not title else f"{title} | BedrockDynamicSDK"
     return f"""<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(title)}</title>
+<title>{esc(browser_title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
@@ -693,17 +859,41 @@ def page_head(title: str, depth: int = 0) -> str:
 </head>
 <body>
 <header class="site-header">
+  <a class="skip-link" href="#main">Skip to content</a>
   <div class="container nav-inner">
     <a class="brand" href="{prefix}index.html">Bedrock<span>DynamicSDK</span></a>
-    <nav class="nav-links">
-      <a href="{prefix}api/index.html">API</a>
-      <a href="{prefix}api/index.html#logging">Logging</a>
-      <a href="{GITHUB_BASE}">GitHub</a>
-      <a href="{GITHUB_BASE}/releases">Releases</a>
+    <nav class="nav-links" aria-label="Main navigation">
+{nav_html}
     </nav>
   </div>
 </header>
 """
+
+
+def breadcrumbs(parents, title):
+    links = "".join(f'<li><a href="{esc(url)}">{esc(label)}</a></li>' for label, url in parents)
+    return (f'<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>{links}'
+            f'<li aria-current="page">{esc(title)}</li></ol></nav>')
+
+
+def render_scriptclient(out: Path, article):
+    title, source = article["title"], article["file"]
+    toc, body = guide_blocks((REPO_ROOT / source).read_text(encoding="utf-8"))
+    trail = breadcrumbs([("Home", "index.html"), ("Guides", "index.html#guides")], title)
+    page = page_head(title, current="ScriptClient") + f"""
+<main id="main" class="container" tabindex="-1">
+  {trail}
+  <div class="guide-layout">
+    <header class="hero page-title"><h1>{esc(title)}</h1></header>
+    {toc}
+    <article class="guide-copy">{body}</article>
+  </div>
+</main>
+<footer class="site-footer"><div class="container"><a href="index.html#guides">Guides</a> &middot; <a href="api/index.html">C++ API</a> &middot; <a href="{GITHUB_BASE}/blob/main/{esc(source)}">Markdown source</a></div></footer>
+</body>
+</html>
+"""
+    (out / SCRIPTCLIENT_GUIDE).write_text(page, encoding="utf-8")
 
 
 def render_index(out: Path, modules, articles):
@@ -731,40 +921,46 @@ def render_index(out: Path, modules, articles):
     <a class="button" href="{release_url}">Release notes / download</a>
   </div>"""
 
-    cat_map = {cid: label for cid, label in CATEGORIES}
     by_cat = {cid: [] for cid, _ in CATEGORIES}
     for art in articles:
         by_cat.setdefault(art["category"], []).append(art)
 
     sections_html = ""
+    jumps = []
     for cid, label in CATEGORIES:
         arts = by_cat.get(cid, [])
         if not arts:
             continue
+        jumps.append(f'<a href="#{esc(cid)}">{esc(label)}</a>')
         cards = ""
         for art in arts:
-            url = f"{GITHUB_BASE}/blob/main/{art['file']}"
+            on_site = art["id"] == "scriptclient"
+            url = SCRIPTCLIENT_GUIDE if on_site else f"{GITHUB_BASE}/blob/main/{art['file']}"
+            attrs = "" if on_site else ' target="_blank" rel="noopener"'
             search = f"{art['title']} {art['summary']}"
+            summary = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", art["summary"])
             cards += f"""
       <article class="card" data-search="{esc(search)}">
-        <h3><a href="{esc(url)}" target="_blank" rel="noopener">{esc(art['title'])}</a></h3>
-        <p>{inline_code(art['summary'])}</p>
+        <h3><a href="{esc(url)}"{attrs}>{esc(art['title'])}</a></h3>
+        <p>{inline_code(summary)}</p>
       </article>"""
         sections_html += f"""
-  <section class="category">
+  <section class="category" id="{esc(cid)}">
     <h2>{esc(label)}</h2>
     <div class="cards">{cards}
     </div>
   </section>"""
 
-    html_doc = page_head("BedrockDynamicSDK", 0) + f"""
-<main class="container">
+    html_doc = page_head("") + f"""
+<main id="main" class="container" tabindex="-1">
   <section class="hero">
-    <h1>BedrockDynamicSDK</h1>
-    <p>Public C++20 SDK for Minecraft Bedrock native mods. API reference is generated from the headers; documentation index is generated from <code>docs/*.md</code>.</p>
-    <input id="search" class="search" type="search" placeholder="Search docs, titles, summaries..." autocomplete="off">
+    <h1>Bedrock<wbr>DynamicSDK</h1>
+    <p>Public C++20 SDK for Minecraft Bedrock native mods, and ScriptClient for TypeScript mods.</p>
   </section>
 {downloads_html}
+  <h2 id="guides">Guides</h2>
+  <nav class="section-links" aria-label="Guide categories">{''.join(jumps)}</nav>
+  <p><input id="search" class="search" type="search" aria-label="Search guides" placeholder="Search guides by title or summary" autocomplete="off"></p>
 {sections_html}
 </main>
 <footer class="site-footer"><div class="container">Generated by tools/sitegen/sitegen.py. Source: <a href="{GITHUB_BASE}">GitHub</a>.</div></footer>
@@ -800,12 +996,19 @@ def render_api_index(out: Path, modules):
     by_name = {mod["name"]: mod for mod in modules}
     logging_cards = module_cards(by_name[name] for name in LOGGING_MODULES if name in by_name)
     other_cards = module_cards(mod for mod in modules if mod["name"] not in LOGGING_MODULES)
-    html_doc = page_head("API Reference", 1) + f"""
-<main class="container">
-  <section class="hero">
-    <h1>API Reference</h1>
+    title = "C++ API Reference"
+    trail = breadcrumbs([("Home", "../index.html")], title)
+    html_doc = page_head(title, 1, "C++ API") + f"""
+<main id="main" class="container" tabindex="-1">
+  {trail}
+  <section class="hero page-title">
+    <h1>{title}</h1>
     <p>Modules are generated from <code>sdk/include/bedrock/sdk.hpp</code> and <code>sdk/include/bedrock/sdk/*.hpp</code>.</p>
   </section>
+  <nav class="section-links" aria-label="Reference sections">
+    <a href="#logging">Logging &amp; Content Log</a><a href="#modules">Other C++ modules</a>
+    <a href="../index.html#guides">Guides</a><a href="../{SCRIPTCLIENT_GUIDE}">ScriptClient (TypeScript)</a>
+  </nav>
   <section class="api-section" id="logging">
     <h2>Logging &amp; Content Log</h2>
     <p>Choose <code>Logger</code> for ordinary SDK logging or
@@ -813,7 +1016,7 @@ def render_api_index(out: Path, modules):
     <div class="module-card-grid">{logging_cards}
     </div>
   </section>
-  <section class="api-section">
+  <section class="api-section" id="modules">
     <h2>Other C++ modules</h2>
     <div class="module-card-grid">{other_cards}
     </div>
@@ -827,23 +1030,28 @@ def render_api_index(out: Path, modules):
     (api_dir / "index.html").write_text(html_doc, encoding="utf-8")
 
 
-def signature_table(entries):
+def signature_table(entries, label):
     if not entries:
         return ""
+    has_description = any(entry["doc"] for entry in entries)
+    description_heading = '<th scope="col">Description</th>' if has_description else ""
+    scroll_hint = '<p class="scroll-hint">Scroll the table to see descriptions →</p>' if has_description else ""
     rows = "".join(f"""
         <tr>
-          <td><code>{esc(entry['signature'])}</code></td>
-          <td><div class="doc">{inline_code(entry['doc'])}</div></td>
+          <td class="signature"><code>{esc(entry['signature'])}</code></td>
+          {f"<td>{inline_code(entry['doc'])}</td>" if has_description else ""}
         </tr>""" for entry in entries)
-    return f"""
-      <table>
-        <thead><tr><th scope="col">Signature</th><th scope="col">Description</th></tr></thead>
-        <tbody>{rows}
-        </tbody>
-      </table>"""
+    return f"""{scroll_hint}
+      <div class="table-scroll" tabindex="0" role="region" aria-label="{esc(label)} signatures">
+        <table class="signature-table{' has-description' if has_description else ''}">
+          <thead><tr><th scope="col">Signature</th>{description_heading}</tr></thead>
+          <tbody>{rows}
+          </tbody>
+        </table>
+      </div>"""
 
 
-def logging_module_intro(name):
+def logging_module_intro(name, intro_anchor):
     if name == "logging":
         return """
       <p class="related-api">For direct writes that bypass SDK sinks, see <a href="content_log.html">Creator Content Log</a>.</p>"""
@@ -859,11 +1067,11 @@ void announceReady() {
 }"""
     return f"""
       <section class="api-section">
-        <h2>Write from a C++ mod</h2>
+        {heading(2, intro_anchor, "Write from a C++ mod")}
         <p>Link <code>bedrock::sdk</code> and include <code>&lt;bedrock/sdk.hpp&gt;</code>.
         Call from <code>Mod::onEnable()</code> or later when using <code>ClientHost</code>.
         If the route is unavailable, writes are safe no-ops.</p>
-        <pre><code>{esc(example)}</code></pre>
+        {code_block(example, "C++")}
         <p>Find the game’s Content Log options in Settings → Creator. Availability only
         means the SDK writer is installed: the game may still suppress the line, and
         the API does not confirm whether the line was displayed or saved.</p>
@@ -879,39 +1087,54 @@ def render_module_page(out: Path, modules, current):
         label = LOGGING_MODULES.get(mod["name"], mod["name"])
         nav_links += f'<a{active} href="{esc(mod["name"])}.html">{esc(label)}</a>\n'
     reference = ""
+    anchor = heading_anchors()
+    sections = []
+    intro_anchor = ""
+    if current["name"] == "content_log":
+        intro_anchor = anchor("Write from a C++ mod")
+        sections.append((intro_anchor, "Write from a C++ mod"))
     for t in current["types"]:
+        name = t["name"]
+        slug = anchor(name)
+        sections.append((slug, name))
         bases_html = f'<div class="bases">: {esc(t["bases"])}</div>' if t["bases"] else ""
         doc_html = f'<div class="doc">{inline_code(t["doc"])}</div>' if t["doc"] else ""
         reference += f"""
-    <div class="type-block">
+    <section class="type-block">
       <div class="kind">{esc(t['kind'])}</div>
-      <h2>{esc(t['name'])}</h2>
+      {heading(2, slug, name)}
       {bases_html}
       {doc_html}
-      {signature_table(t['members'])}
-    </div>"""
+      {signature_table(t['members'], name)}
+    </section>"""
     if current["functions"]:
+        name = "Free functions"
+        slug = anchor(name)
+        sections.append((slug, name))
         reference += f"""
     <section class="type-block">
-      <h2>Free functions</h2>
-      {signature_table(current['functions'])}
+      {heading(2, slug, name)}
+      {signature_table(current['functions'], name)}
     </section>"""
 
     label = LOGGING_MODULES.get(current["name"], current["name"])
-    html_doc = page_head(f"API: {label}", 1) + f"""
-<main class="container">
+    trail = breadcrumbs([("Home", "../index.html"), ("C++ API", "index.html")], label)
+    html_doc = page_head(f"{label} — C++ API", 1, "C++ API", "location") + f"""
+<main id="main" class="container" tabindex="-1">
+  {trail}
   <div class="api-layout">
-    <aside class="side-nav">
-      <h3>Modules</h3>
-{nav_links}    </aside>
-    <div>
-      <section class="hero" style="padding-top:0">
+    <div class="api-content">
+      <header class="hero page-title">
         <h1>{esc(label)}</h1>
         <p>{inline_code(current['doc'])}</p>
-      </section>
-{logging_module_intro(current['name'])}
+      </header>
+{contents(sections)}
+{logging_module_intro(current['name'], intro_anchor)}
 {reference}
     </div>
+    <nav class="side-nav" aria-label="API modules">
+      <p>API modules</p>
+{nav_links}    </nav>
   </div>
 </main>
 <footer class="site-footer"><div class="container"><a href="index.html">API index</a> &middot; <a href="../index.html">Home</a></div></footer>
@@ -942,6 +1165,9 @@ def main():
     (out / "assets" / "app.js").write_text(APP_JS.strip() + "\n", encoding="utf-8")
 
     render_index(out, modules, articles)
+    for article in articles:
+        if article["id"] == "scriptclient":
+            render_scriptclient(out, article)
     render_api_index(out, modules)
     for mod in modules:
         render_module_page(out, modules, mod)
