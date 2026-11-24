@@ -1,4 +1,5 @@
 #include "bedrock/sdk/settings.hpp"
+#include "bedrock/sdk/profiles.hpp"
 #include <bedrock/detail/oreui_settings_backend.hpp>
 #include <cstring>
 #include <deque>
@@ -90,6 +91,14 @@ SettingsPage& SettingsPage::onChange(SettingChanged callback) { callback_ = std:
 SettingsPage& SettingsPage::modName(std::string key) { modNameKey_ = std::move(key); return *this; }
 
 Result<void> SettingsPage::registerPage() const noexcept {
+    return registerWith(nullptr);
+}
+
+Result<void> SettingsPage::registerPage(const Profile& profile) const noexcept {
+    return registerWith(&profile);
+}
+
+Result<void> SettingsPage::registerWith(const Profile* profile) const noexcept {
     try {
         auto state = std::make_shared<Registered>();
         state->controls.reserve(settings_.size());
@@ -137,7 +146,8 @@ Result<void> SettingsPage::registerPage() const noexcept {
         state->page.locales = state->locales.data();
         state->page.locale_count = static_cast<std::uint32_t>(state->locales.size());
         state->page.mod_name = modNameKey_.empty() ? Backend::Text{} : text(*state, modNameKey_);
-        const auto result = Backend::registerPage(state->page);
+        const auto snapshot = profile ? ProfileRuntimeAccess::runtime(*profile) : nullptr;
+        const auto result = Backend::registerPage(state->page, snapshot.get());
         if (result != Backend::Result::Ok) {
             auto error = mapError(result);
             return Result<void>::error(error.code, std::move(error.message));

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <type_traits>
 
+namespace bedrock { class RuntimeProfile; }
+
 namespace bedrock::detail::oreui_settings {
 
 // Strings are NUL-terminated UTF-8 and descriptor data is copied at registration.
@@ -126,7 +128,7 @@ static_assert(std::is_standard_layout_v<ControlDescriptor> && std::is_trivially_
 // after a successful committed write or action. Do not call game-thread-only
 // APIs or re-enter Mod Settings here. Input pointers are valid only until
 // the callback returns.
-Result registerPage(const PageDescriptor& page) noexcept;
+Result registerPage(const PageDescriptor& page, const RuntimeProfile* profile = nullptr) noexcept;
 Result unregisterPage(const char* mod_id) noexcept;
 
 // Only stored value controls are readable. For String and Option, pass a

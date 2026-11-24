@@ -10,6 +10,8 @@
 
 namespace bedrock::sdk {
 
+class Profile;
+
 using SettingValue = std::variant<bool, double, std::string>;
 using SettingChanged = std::function<void(std::string_view, const SettingValue&)>;
 
@@ -47,11 +49,15 @@ public:
     SettingsPage& modName(std::string key);
 
     [[nodiscard]] Result<void> registerPage() const noexcept;
+    // Reuse exact-build validation taken before other SDK hooks patched .text.
+    // The settings backend still checks its own live entry-point guards.
+    [[nodiscard]] Result<void> registerPage(const Profile& profile) const noexcept;
     [[nodiscard]] Result<void> unregisterPage() const noexcept;
     [[nodiscard]] Result<SettingValue> value(std::string_view settingId) const noexcept;
     [[nodiscard]] const std::string& id() const noexcept { return modId_; }
 
 private:
+    Result<void> registerWith(const Profile* profile) const noexcept;
     std::string modId_, titleKey_, modNameKey_;
     std::vector<Setting> settings_;
     std::vector<Locale> locales_;

@@ -758,6 +758,11 @@ DWORD WINAPI start(LPVOID parameter) {
             return 7;
         }
         state.world->connectBrightness(*state.clientHost);
+        state.manager = std::make_unique<stageb::ModManager>(
+            *state.host, *state.clientHost, profile, inbox,
+            [&state](const std::string& name) { state.syncScriptMods(name); },
+            [](const std::string& text) { logger.info(text); });
+        state.manager->prepare();
 
         if (!state.host->initialize(error)) {
             logger.error("PluginHost initialization failed: ", error);
@@ -816,10 +821,6 @@ DWORD WINAPI start(LPVOID parameter) {
         }
 
         state.syncScriptMods();
-        state.manager = std::make_unique<stageb::ModManager>(
-            *state.host, *state.clientHost, inbox,
-            [&state](const std::string& name) { state.syncScriptMods(name); },
-            [](const std::string& text) { logger.info(text); });
         state.commands->setReload([&state](const std::string& name) { state.manager->requestReload(name); });
         state.ready.store(true);
         logger.info("ScriptClient ready; mods dir: ", state.host->modsDir().string());

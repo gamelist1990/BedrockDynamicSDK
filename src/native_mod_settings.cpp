@@ -9,6 +9,7 @@
 #include <bedrock/detail/native_profile_functions.hpp>
 #include <bedrock/generated/mod_settings_js.hpp>
 #include <bedrock/generated/symbols.hpp>
+#include <bedrock/profiles/profile_manager.hpp>
 #include <bedrock/profiles/resolver.hpp>
 #include <bedrock/runtime/hook_runtime.h>
 
@@ -410,19 +411,22 @@ template<std::size_t Index> unsigned __fastcall resource(void* self, const void*
     return reinterpret_cast<Handler>(state.originals[Index])(self, request, response);
 }
 
-void install() noexcept {
+void install(const RuntimeProfile* snapshot) noexcept {
     try {
         using namespace native_profile;
         logDiagnostic("R9 install entered (live observation + execution marker)");
-        const auto profile = nlohmann::json::parse(generated::kSymbolDatabase);
+        const std::string_view profileJson = snapshot ? std::string_view(snapshot->json())
+                                                      : std::string_view(generated::kSymbolDatabase);
+        const auto profile = nlohmann::json::parse(profileJson);
         const auto& target = profile.at("target");
         if (target.at("version") != "1.26.65.1") return;
         const auto& layout = profile.at("layouts").at("OreUISettings");
         if (layout.at("schema") != 1) return;
-        Resolver resolver;
+        Resolver localResolver;
         std::string error;
-        if (!resolver.loadJson(generated::kSymbolDatabase, error) ||
-            !resolver.attachWindowsMainModule(error) || !resolver.exactBuild())
+        const auto& resolver = snapshot ? snapshot->resolver() : localResolver;
+        if ((!snapshot && (!localResolver.loadJson(generated::kSymbolDatabase, error) ||
+                           !localResolver.attachWindowsMainModule(error))) || !resolver.exactBuild())
             throw std::runtime_error("EXE fingerprint mismatch");
         const auto& req = layout.at("request");
         const auto& res = layout.at("response");
@@ -520,7 +524,7 @@ constexpr Service local_service{add, remove, read};
 constexpr auto service_export = "BedrockSDK_ModSettingsServiceV3";
 std::atomic<const Service*> service{};
 
-const Service* findService(bool create) {
+const Service* findService(bool create, const RuntimeProfile* profile = nullptr) {
     if (const auto* cached = service.load(std::memory_order_acquire)) return cached;
     // Serialize discovery and installation across all SDK copies in this
     // process. Never hold the election lock while dispatching store callbacks.
@@ -562,7 +566,7 @@ const Service* findService(bool create) {
     }
     if (!create || legacy_active) return nullptr;
     static std::once_flag once;
-    std::call_once(once, install);
+    std::call_once(once, install, profile);
     if (!available()) return nullptr;
     service.store(&local_service, std::memory_order_release);
     return &local_service;
@@ -573,9 +577,9 @@ extern "C" __declspec(dllexport) const Service* BedrockSDK_ModSettingsServiceV3(
     return available() ? &local_service : nullptr;
 }
 
-Result registerPage(const PageDescriptor& page) noexcept {
+Result registerPage(const PageDescriptor& page, const RuntimeProfile* profile) noexcept {
     try {
-        const auto* shared = findService(true);
+        const auto* shared = findService(true, profile);
         return shared ? shared->add(&page) : Result::Unavailable;
     } catch (...) { return Result::StorageError; }
 }

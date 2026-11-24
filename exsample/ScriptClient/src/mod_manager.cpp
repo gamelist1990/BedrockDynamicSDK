@@ -29,8 +29,15 @@ std::string rowId(char prefix, const std::string& value) {
 }
 } // namespace
 
-ModManager::ModManager(PluginHost& host, bedrock::sdk::ClientHost& client, fs::path inbox, Sync sync, Log log)
-    : host_(host), client_(client), inbox_(std::move(inbox)), sync_(std::move(sync)), log_(std::move(log)) {}
+ModManager::ModManager(PluginHost& host, bedrock::sdk::ClientHost& client, bedrock::sdk::Profile profile,
+                       fs::path inbox, Sync sync, Log log)
+    : host_(host), client_(client), profile_(std::move(profile)), inbox_(std::move(inbox)),
+      sync_(std::move(sync)), log_(std::move(log)) {}
+
+void ModManager::prepare() {
+    try { refreshPage(); }
+    catch (const std::exception& e) { log_(std::string("Mod Manager registration failed: ") + e.what()); }
+}
 
 void ModManager::enqueue(Request request) {
     {
@@ -129,7 +136,7 @@ void ModManager::refreshPage() {
             throw std::runtime_error(result.error().message);
         registered_ = false;
     }
-    const auto result = page.registerPage();
+    const auto result = page.registerPage(profile_);
     if (!result) throw std::runtime_error(result.error().message);
     registered_ = true;
 }

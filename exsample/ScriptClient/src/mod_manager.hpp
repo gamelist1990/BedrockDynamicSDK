@@ -3,6 +3,7 @@
 #include "plugin_host.hpp"
 
 #include <bedrock/sdk/client_host.hpp>
+#include <bedrock/sdk/profiles.hpp>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -12,7 +13,9 @@ class ModManager {
 public:
     using Sync = std::function<void(const std::string&)>;
     using Log = std::function<void(const std::string&)>;
-    ModManager(PluginHost& host, bedrock::sdk::ClientHost& client, fs::path inbox, Sync sync, Log log);
+    ModManager(PluginHost& host, bedrock::sdk::ClientHost& client, bedrock::sdk::Profile profile,
+               fs::path inbox, Sync sync, Log log);
+    void prepare();
     void requestReload(std::string name);
     void run(); // ScriptClient's pinned loader thread; does not depend on world ticks.
 
@@ -30,6 +33,7 @@ private:
 
     PluginHost& host_;
     bedrock::sdk::ClientHost& client_;
+    bedrock::sdk::Profile profile_;
     fs::path inbox_;
     Sync sync_;
     Log log_;
