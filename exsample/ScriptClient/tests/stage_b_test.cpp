@@ -3,6 +3,7 @@
 #include "manifest.hpp"
 #include "mod_scanner.hpp"
 #include "module_loader.hpp"
+#include "package.hpp"
 #include "plugin_host.hpp"
 #include "sdk_bindings.hpp"
 #include "transpiler.hpp"
@@ -1264,6 +1265,49 @@ void testDevBindings() {
           "module.info throws Unavailable, got: " + dev4);
 }
 
+std::string readTestLog(const fs::path& dir, std::string name);
+void checkActive(PluginHost& host, const std::string& name);
+
+void testManagerPackages(const fs::path& fixtures) {
+    const auto dir = tempDir("manager-packages");
+    fs::create_directories(dir / "mods");
+    CHECK(selectStorageRoot(dir, fixtures) == dir, "uses EXE storage root");
+    CHECK(selectStorageRoot(dir / "missing-game", dir) == dir, "uses writable DLL fallback");
+    for (const char* invalid : {"traversal.zip", "case.mods", "no-marker.zip", "symlink.mods",
+                                "native.mods", "device.mods", "incompatible.mods"}) {
+        bool rejected = false;
+        try { (void)installPackage(fixtures / invalid, dir / "mods", "1.26.65.1"); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected && fs::is_empty(dir / "mods"), std::string("rejected without publishing: ") + invalid);
+    }
+    PluginHost host(dir / "mods", "1.26.65.1");
+    host.setStateDirectory(dir / ".scriptclient-disabled");
+    host.setLogDirectory(dir / "logs");
+    std::string error;
+    CHECK(host.initialize(error) && host.list().empty(), "empty initial scan");
+    const auto name = installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1");
+    CHECK(name == "ManagerTest" && host.reload(name, error), "install + reload discovers a new mod: " + error);
+    checkActive(host, name);
+    CHECK(readTestLog(dir, name).find("test-enabled") != std::string::npos, "TypeScript entry executed");
+    bool duplicate = false;
+    try { (void)installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1"); }
+    catch (const std::exception&) { duplicate = true; }
+    CHECK(duplicate && fs::is_regular_file(dir / "mods" / name / "index.ts"), "no replacement");
+    host.setEnabled(name, false);
+    CHECK(host.reload(name, error) && host.list().front().status == ModStatus::Disabled,
+          "disable reload leaves mod listed");
+    const auto disabledLog = readTestLog(dir, name);
+    CHECK(disabledLog.find("test-disabled") != std::string::npos, "unload lifecycle executed");
+    PluginHost reopened(dir / "mods", "1.26.65.1");
+    reopened.setStateDirectory(dir / ".scriptclient-disabled");
+    reopened.setLogDirectory(dir / "logs");
+    CHECK(reopened.initialize(error) && reopened.list().front().status == ModStatus::Disabled &&
+          readTestLog(dir, name) == disabledLog, "fresh host skips disabled mod before JS startup");
+    reopened.setEnabled(name, true);
+    CHECK(reopened.reload(name, error), "re-enable uses same reload path");
+    checkActive(reopened, name);
+}
+
 } // namespace
 
 namespace {
@@ -1564,6 +1608,11 @@ system.runInterval(() => ++ticks);
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--manager") {
+        testManagerPackages(argv[2]);
+        std::cout << "checks=" << checks << " failures=" << failures << "\n";
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--http-only") {
         testHttp();
         std::cout << "checks=" << checks << " failures=" << failures << "\n";

@@ -127,6 +127,7 @@
       if (!id || entry.id === id) deliver(updated + key, dataFor(entry.name, entry.id));
   }
 
+  let lastMenus = "";
   function loadMenus() {
     const ticket = ++menuRequest;
     writes.then(() => {
@@ -137,6 +138,9 @@
           log("menus-read-failed");
           return;
         }
+        const fingerprint = JSON.stringify(data);
+        if (fingerprint === lastMenus) return;
+        lastMenus = fingerprint;
         const reported = normalizeLocale(data.language || data.locale);
         if (reported) language = reported;
         menuLabel = data.menuLabel;
@@ -364,4 +368,10 @@
   nativeTrigger(subscribe + localeQuery, localeKey);
   loadMenus();
   setInterval(paintImages, 350);
+  // A manager operation completes on the loader thread, after the write
+  // request returns. Poll only while this dynamic page is subscribed.
+  setInterval(() => {
+    if ([...local.values()].some(entry => entry.id.includes("scriptclient-mod-manager")))
+      loadMenus();
+  }, 1000);
 })();

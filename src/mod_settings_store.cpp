@@ -53,6 +53,7 @@ std::optional<StoredValue> convert(const Row& row, const RawValue& value) {
     if (value.kind != row.kind) return {};
     switch (row.kind) {
     case Kind::Boolean:
+    case Kind::SessionBoolean:
         if (value.boolean <= 1) return StoredValue(value.boolean != 0);
         break;
     case Kind::Number:
@@ -206,7 +207,7 @@ Result Store::add(const PageDescriptor& page) {
         default:
             break;
         }
-        if (row.kind == Kind::Boolean || row.kind == Kind::Number || row.kind == Kind::Key ||
+        if (row.kind == Kind::Boolean || row.kind == Kind::SessionBoolean || row.kind == Kind::Number || row.kind == Kind::Key ||
             row.kind == Kind::Option || row.kind == Kind::String) {
             auto initial = convert(row, control.initial);
             if (!initial) return Result::Invalid;
@@ -278,15 +279,17 @@ Result Store::dispatch(std::string_view id, const RawValue& value, bool commit) 
     auto& page = entry->second;
     const auto row = std::ranges::find(page.menu.rows, id.substr(separator + 1), &Row::id);
     if (row == page.menu.rows.end()) return Result::NotFound;
-    if (row->kind != value.kind || row->kind == Kind::Image || row->kind == Kind::Text) return Result::WrongType;
-    auto next = convert(*row, value);
+    auto input = value;
+    if (row->kind == Kind::SessionBoolean && input.kind == Kind::Boolean) input.kind = row->kind;
+    if (row->kind != input.kind || row->kind == Kind::Image || row->kind == Kind::Text) return Result::WrongType;
+    auto next = convert(*row, input);
     if (!next) return Result::Invalid;
     if (!commit) return Result::Ok;
     if (row->kind != Kind::Action) {
         if (row->value == *next) return Result::Ok;
         auto previous = std::exchange(row->value, std::move(*next));
         try {
-            if (!save(page.menu)) {
+            if (row->kind != Kind::SessionBoolean && !save(page.menu)) {
                 row->value = std::move(previous);
                 return Result::StorageError;
             }
@@ -298,7 +301,7 @@ Result Store::dispatch(std::string_view id, const RawValue& value, bool commit) 
     if (page.callback) {
         char control_id[65]{};
         std::ranges::copy(row->id, control_id);
-        page.callback(page.context, control_id, &value);
+        page.callback(page.context, control_id, &input);
     }
     return Result::Ok;
 }
@@ -306,6 +309,7 @@ Result Store::dispatch(std::string_view id, const RawValue& value, bool commit) 
 bool Store::save(const Menu& menu) const {
     Json values = Json::object();
     for (const auto& row : menu.rows) {
+        if (row.kind == Kind::SessionBoolean) continue;
         std::visit([&](const auto& value) {
             if constexpr (!std::is_same_v<std::decay_t<decltype(value)>, std::monostate>)
                 values[row.id] = value;

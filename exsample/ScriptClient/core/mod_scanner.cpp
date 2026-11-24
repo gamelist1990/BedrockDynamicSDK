@@ -1,16 +1,9 @@
 #include "mod_scanner.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <fstream>
 
 namespace stageb {
-
-fs::path resolveModsDir(const fs::path& hostDllDirectory) {
-    if (const char* override = std::getenv("BEDROCK_SDK_MODS_DIR"))
-        if (*override) return fs::absolute(fs::path(override));
-    return hostDllDirectory / "mods";
-}
 
 ScanResult scanMods(const fs::path& modsDir, const std::string& gameVersion,
                     bool createIfMissing) {

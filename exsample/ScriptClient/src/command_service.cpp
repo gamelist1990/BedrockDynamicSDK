@@ -80,6 +80,7 @@ CommandService::DefinitionSet CommandService::makeDefinitions(
 }
 
 void CommandService::enqueue(const std::string& line) {
+    std::lock_guard lock(queueMutex_);
     if (queue_.size() >= kMaxQueuedLines) return;
     queue_.push_back(line);
 }
@@ -128,7 +129,7 @@ bool CommandService::replaceDefinitions(const WireDefinitions& definitions,
 
     bedrock::sdk::CommandEnum names;
     names.name = "ModsModName";
-    names.values = modNames_; // refreshed by setModNames() after every scan (§6.5)
+    names.values = modNames_.empty() ? std::vector<std::string>{"none"} : modNames_;
     set.enums.push_back(std::move(names));
 
     bedrock::sdk::CommandDefinition mods;
@@ -179,11 +180,18 @@ void CommandService::drain(PluginHost& host) {
                 diagnostic_("commands: local registry fallback: " + localError_);
         }
     }
-    while (!queue_.empty()) {
-        const auto line = queue_.front();
-        queue_.pop_front();
+    std::deque<std::string> pending;
+    {
+        std::lock_guard lock(queueMutex_);
+        pending.swap(queue_);
+    }
+    for (const auto& line : pending) {
         const auto tokens = tokenize(line);
         if (!tokens.empty() && tokens[0] == "mods") {
+            if (tokens.size() > 2 && tokens[1] == "reload" && reload_) {
+                reload_(tokens[2]);
+                continue;
+            }
             const auto response = host.handleModsCommand(line);
             if (respond_ && !response.empty()) respond_(response);
             continue;

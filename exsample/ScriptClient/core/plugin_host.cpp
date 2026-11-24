@@ -1,5 +1,6 @@
 #include "plugin_host.hpp"
 #include "builtin_sources.hpp"
+#include "package.hpp"
 #include "vanilla_catalog.hpp"
 
 #include <array>
@@ -29,6 +30,24 @@ PluginHost::PluginHost(fs::path modsDir, std::string gameVersion,
       world_(std::move(world)) {}
 
 PluginHost::~PluginHost() = default;
+
+bool PluginHost::isEnabled(const std::string& name) const {
+    return disabledDir_.empty() || !isScriptModName(name) ||
+           !fs::exists(disabledDir_ / lowerCopy(name));
+}
+
+void PluginHost::setEnabled(const std::string& name, bool enabled) {
+    if (disabledDir_.empty() || !isScriptModName(name))
+        throw std::runtime_error("invalid mod name or unavailable enable-state directory");
+    const auto marker = disabledDir_ / lowerCopy(name);
+    if (enabled) {
+        if (fs::exists(marker) && !fs::remove(marker))
+            throw std::runtime_error("cannot remove the disabled marker");
+    } else {
+        fs::create_directories(disabledDir_);
+        fs::create_directory(marker);
+    }
+}
 
 bool PluginHost::initialize(std::string& error) {
     if (!world_) world_ = std::make_shared<NullWorldBackend>();
@@ -63,6 +82,15 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
                          std::string& error) {
     auto mod = std::make_unique<LoadedMod>();
     mod->dir = candidate.dir;
+    mod->manifest.name = candidate.folderName;
+    mod->manifest.displayName = candidate.folderName;
+    if (candidate.validation.ok) mod->manifest = candidate.validation.manifest;
+    if (!isEnabled(candidate.folderName)) {
+        mod->status = ModStatus::Disabled;
+        out = std::move(mod);
+        error.clear();
+        return true;
+    }
     if (!candidate.validation.ok) {
         mod->status = candidate.validation.incompatible ? ModStatus::Incompatible
                                                         : ModStatus::Error;
@@ -71,8 +99,6 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
         error = out->error;
         return false;
     }
-    mod->manifest = candidate.validation.manifest;
-
     JsOptions options;
     options.memoryMiB = mod->manifest.memoryMiB;
     options.budgetMs = faultBudgetMs_;
@@ -358,16 +384,21 @@ bool PluginHost::reload(const std::string& name, std::string& error) {
             break;
         }
     }
-    if (!foundExisting) { error = "unknown mod: " + name; return false; }
-    auto* existing = loaded_[index].get();
-    unloadOne(*existing);
-
     const auto scan = scanMods(modsDir_, gameVersion_);
     candidates_ = scan.candidates;
     const ModCandidate* found = nullptr;
     for (const auto& candidate : candidates_)
         if (candidate.folderName == name) { found = &candidate; break; }
-    if (!found) { error = "mod directory disappeared: " + name; return false; }
+    if (!found) {
+        error = foundExisting ? "mod directory disappeared: " + name : "unknown mod: " + name;
+        if (foundExisting) {
+            unloadOne(*loaded_[index]);
+            loaded_.erase(loaded_.begin() + index);
+            publishDefinitions();
+        }
+        return false;
+    }
+    if (foundExisting) unloadOne(*loaded_[index]);
 
     std::unique_ptr<LoadedMod> replacement;
     std::string loadError;
@@ -378,8 +409,9 @@ bool PluginHost::reload(const std::string& name, std::string& error) {
         replacement->manifest.name = name;
         replacement->status = ModStatus::Error;
     }
-    loaded_[index] = std::move(replacement);
-    if (!ok) error = loadError;
+    if (foundExisting) loaded_[index] = std::move(replacement);
+    else loaded_.push_back(std::move(replacement));
+    error = loadError;
     publishDefinitions();
     return ok;
 }

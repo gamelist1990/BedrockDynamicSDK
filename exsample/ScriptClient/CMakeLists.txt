@@ -42,9 +42,17 @@ foreach(builtin path events files network)
 endforeach()
 configure_file(core/builtin_sources.hpp.in builtin_sources.hpp @ONLY)
 
+set(MINIZ_DIR "${BEDROCK_SDK_ROOT}/third_party/miniz")
+add_library(script_client_zip STATIC
+    "${MINIZ_DIR}/miniz.c" "${MINIZ_DIR}/miniz_tinfl.c" "${MINIZ_DIR}/miniz_zip.c")
+target_include_directories(script_client_zip PUBLIC "${MINIZ_DIR}")
+target_compile_definitions(script_client_zip PUBLIC
+    MINIZ_NO_DEFLATE_APIS MINIZ_NO_ZLIB_COMPATIBLE_NAMES MINIZ_NO_STDIO)
+
 add_library(script_client_core STATIC
     core/manifest.cpp
     core/mod_scanner.cpp
+    core/package.cpp
     core/js_runtime.cpp
     core/transpiler.cpp
     core/module_loader.cpp
@@ -63,7 +71,7 @@ target_include_directories(script_client_core PUBLIC
 target_include_directories(script_client_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk bedrock::internal_headers)
 find_package(Threads REQUIRED)
-target_link_libraries(script_client_core PRIVATE Threads::Threads)
+target_link_libraries(script_client_core PRIVATE Threads::Threads script_client_zip)
 if(WIN32)
     target_link_libraries(script_client_core PRIVATE winhttp)
 else()
@@ -81,6 +89,7 @@ if(WIN32)
     add_library(ScriptClient SHARED
         src/main.cpp
         src/command_service.cpp
+        src/mod_manager.cpp
     )
     target_include_directories(ScriptClient PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(ScriptClient PRIVATE
@@ -89,6 +98,8 @@ if(WIN32)
     set_target_properties(ScriptClient PROPERTIES PREFIX ""
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET script_client_core PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_property(TARGET script_client_zip PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
@@ -110,6 +121,9 @@ if(BUILD_TESTING)
     if(NOT CMAKE_CROSSCOMPILING)
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
+            add_test(NAME scriptclient_mod_manager
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_fixture.py"
+                    "$<TARGET_FILE:stage_b_test>")
             add_test(NAME stage_c_ts_sdk
                 COMMAND "${Python3_EXECUTABLE}" "${BEDROCK_SDK_ROOT}/tests/test_stage_c_ts_sdk.py")
             if(WIN32 OR CURL_FOUND)

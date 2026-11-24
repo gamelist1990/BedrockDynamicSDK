@@ -163,6 +163,9 @@ jobs:
       - name: Mod input and DLL smoke tests
         if: matrix.mod == 'CheckSig' || matrix.mod == 'GlobalResourcePack' || matrix.mod == 'DynamicClient'
         run: ctest --test-dir build-mod -C Release --output-on-failure
+      - name: Test ScriptClient package intake and enable state
+        if: matrix.mod == 'ScriptClient'
+        run: ctest --test-dir build-mod -C Release --output-on-failure -R '^scriptclient_mod_manager$'
       - name: CheckSig profile installer tests (Windows PowerShell 5.1)
         if: matrix.mod == 'CheckSig'
         env:

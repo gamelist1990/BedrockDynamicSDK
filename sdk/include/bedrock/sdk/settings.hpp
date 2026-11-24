@@ -18,8 +18,11 @@ struct Locale { std::string id; std::vector<Translation> entries; };
 
 class Setting {
 public:
-    enum class Kind { Toggle, Slider, Choice, Text, Key };
+    enum class Kind { Toggle, Slider, Choice, Text, Key, Action, SessionToggle };
     static Setting toggle(std::string id, std::string labelKey, bool initial);
+    // A toggle whose durable state is managed by the caller, not Mod Settings.
+    static Setting sessionToggle(std::string id, std::string labelKey, bool initial);
+    static Setting action(std::string id, std::string labelKey, std::string descriptionKey = {});
     static Setting slider(std::string id, std::string labelKey, double initial,
                           double minimum, double maximum, double step);
     static Setting choice(std::string id, std::string labelKey, std::string initial,

@@ -27,7 +27,8 @@ bool sequence(std::string_view value) {
 
 constexpr std::string_view kindName(Kind kind) {
     switch (kind) {
-    case Kind::Boolean: return "boolean";
+    case Kind::Boolean:
+    case Kind::SessionBoolean: return "boolean";
     case Kind::Number: return "number";
     case Kind::Option: return "option";
     case Kind::String: return "string";

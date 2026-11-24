@@ -6,7 +6,7 @@
 namespace bedrock::detail::oreui_settings {
 
 // Strings are NUL-terminated UTF-8 and descriptor data is copied at registration.
-enum class Kind : std::uint32_t { Boolean, Number, Option, String, Action, Text, Image, Key };
+enum class Kind : std::uint32_t { Boolean, Number, Option, String, Action, Text, Image, Key, SessionBoolean };
 
 struct Text {
     const char* value{};

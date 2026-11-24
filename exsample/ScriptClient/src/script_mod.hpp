@@ -15,10 +15,8 @@ namespace stageb {
 // notifyPlayerSpawn(), and notifyKeybind().
 class ScriptMod final : public bedrock::sdk::Mod {
 public:
-    using Drain = std::function<void()>;
-
-    ScriptMod(PluginHost& host, std::string name, Drain drain)
-        : Mod(lowerCopy(name)), host_(host), name_(std::move(name)), drain_(std::move(drain)) {}
+    ScriptMod(PluginHost& host, std::string name)
+        : Mod(lowerCopy(name)), host_(host), name_(std::move(name)) {}
 
     const std::string& modName() const noexcept { return name_; }
 
@@ -39,7 +37,6 @@ private:
 
     void onUpdate() override {
         host_.tickMod(name_);
-        if (drain_) drain_(); // queued command lines run on the owning tick
     }
 
     // §8.1: event subscriptions are forwarded by the host on the owning tick.
@@ -54,7 +51,6 @@ private:
 
     PluginHost& host_;
     std::string name_;
-    Drain drain_;
     bool spawnedOnce_ = false;
 };
 

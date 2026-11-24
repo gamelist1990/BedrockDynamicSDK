@@ -48,7 +48,8 @@ void onBackendChange(void* context, const char* id, const Backend::RawValue* val
     auto* registered = static_cast<Registered*>(context);
     try {
         SettingValue converted;
-        if (value->kind == Backend::Kind::Boolean) converted = value->boolean != 0;
+        if (value->kind == Backend::Kind::Boolean || value->kind == Backend::Kind::SessionBoolean)
+            converted = value->boolean != 0;
         else if (value->kind == Backend::Kind::Number || value->kind == Backend::Kind::Key) converted = value->number;
         else converted = std::string(value->text ? value->text : "");
         if (registered->callback) registered->callback(id ? id : "", converted);
@@ -58,6 +59,12 @@ void onBackendChange(void* context, const char* id, const Backend::RawValue* val
 
 Setting Setting::toggle(std::string id, std::string labelKey, bool initial) {
     return {std::move(id), std::move(labelKey), {}, Kind::Toggle, initial};
+}
+Setting Setting::sessionToggle(std::string id, std::string labelKey, bool initial) {
+    return {std::move(id), std::move(labelKey), {}, Kind::SessionToggle, initial};
+}
+Setting Setting::action(std::string id, std::string labelKey, std::string descriptionKey) {
+    return {std::move(id), std::move(labelKey), std::move(descriptionKey), Kind::Action, false};
 }
 Setting Setting::slider(std::string id, std::string labelKey, double initial,
                         double minimum, double maximum, double step) {
@@ -100,6 +107,8 @@ Result<void> SettingsPage::registerPage() const noexcept {
             control.description = setting.descriptionKey.empty() ? Backend::Text{} : text(*state, setting.descriptionKey);
             switch (setting.kind) {
             case Setting::Kind::Toggle: control.kind = Backend::Kind::Boolean; control.initial = {control.kind, std::get<bool>(setting.initial) ? 1u : 0u}; break;
+            case Setting::Kind::SessionToggle: control.kind = Backend::Kind::SessionBoolean; control.initial = {control.kind, std::get<bool>(setting.initial) ? 1u : 0u}; break;
+            case Setting::Kind::Action: control.kind = Backend::Kind::Action; break;
             case Setting::Kind::Slider: control.kind = Backend::Kind::Number; control.initial = {control.kind, 0, std::get<double>(setting.initial)}; control.minimum = setting.minimum; control.maximum = setting.maximum; control.step = setting.step; break;
             case Setting::Kind::Choice:
                 control.kind = Backend::Kind::Option; control.initial = {control.kind, 0, 0, keep(*state, std::get<std::string>(setting.initial))};
@@ -158,7 +167,8 @@ Result<SettingValue> SettingsPage::value(std::string_view settingId) const noexc
             auto error = mapError(result);
             return Result<SettingValue>::error(error.code, std::move(error.message));
         }
-        if (raw.kind == Backend::Kind::Boolean) return Result<SettingValue>::ok(raw.boolean != 0);
+        if (raw.kind == Backend::Kind::Boolean || raw.kind == Backend::Kind::SessionBoolean)
+            return Result<SettingValue>::ok(raw.boolean != 0);
         if (raw.kind == Backend::Kind::Number || raw.kind == Backend::Kind::Key)
             return Result<SettingValue>::ok(raw.number);
         return Result<SettingValue>::ok(std::string(raw.text ? raw.text : text));

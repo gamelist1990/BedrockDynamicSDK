@@ -23,7 +23,5 @@ struct ScanResult {
 ScanResult scanMods(const fs::path& modsDir, const std::string& gameVersion,
                     bool createIfMissing = true);
 
-// §3.1: DLL-adjacent by default, overridable by BEDROCK_SDK_MODS_DIR.
-fs::path resolveModsDir(const fs::path& hostDllDirectory);
 
 } // namespace stageb

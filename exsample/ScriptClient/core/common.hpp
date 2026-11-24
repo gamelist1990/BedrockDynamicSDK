@@ -14,6 +14,7 @@ namespace fs = std::filesystem;
 // §8.4 Mod state machine. String values are the ones shown by /mods list.
 enum class ModStatus {
     Scanned,
+    Disabled,
     Loading,
     Active,
     Faulted,
@@ -24,6 +25,7 @@ enum class ModStatus {
 inline const char* statusName(ModStatus s) noexcept {
     switch (s) {
         case ModStatus::Scanned:      return "scanned";
+        case ModStatus::Disabled:     return "disabled";
         case ModStatus::Loading:      return "loading";
         case ModStatus::Active:       return "ok";
         case ModStatus::Faulted:      return "faulted";

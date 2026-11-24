@@ -29,6 +29,10 @@ public:
     // Both must run from the loader thread, outside callbacks (like start).
     [[nodiscard]] Result<void> attach(Mod& mod);
     [[nodiscard]] Result<void> detach(Mod& mod);
+    // Serialize a loader-thread operation with native callbacks, including at
+    // the title screen. The operation may attach/detach Mods; it has no game
+    // frame and must not start/stop the host.
+    [[nodiscard]] Result<void> synchronize(const std::function<void()>& operation);
 private:
     friend class BrightnessOverride;
     std::shared_ptr<const RuntimeProfile> profileSnapshot() const;

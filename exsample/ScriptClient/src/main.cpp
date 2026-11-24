@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #include "command_service.hpp"
+#include "mod_manager.hpp"
+#include "package.hpp"
 #include "script_mod.hpp"
 
 #include <bedrock/sdk/logging.hpp>
@@ -10,6 +12,7 @@
 #include <bedrock/sdk.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -617,37 +620,41 @@ struct Runtime {
     std::shared_ptr<GameWorldBackend> world = std::make_shared<GameWorldBackend>();
     std::unique_ptr<stageb::PluginHost> host;
     std::unique_ptr<stageb::CommandService> commands;
-    std::unique_ptr<bedrock::sdk::ClientHost> clientHost;
     std::vector<std::unique_ptr<stageb::ScriptMod>> scriptMods;
     std::unique_ptr<stageb::HostAnchorMod> anchor;
+    std::unique_ptr<bedrock::sdk::ClientHost> clientHost;
+    std::unique_ptr<stageb::ModManager> manager;
+    std::atomic<bool> ready{false};
     // World-change feed for the CommandService local-registry fallback.
     bedrock::sdk::SymbolResolver worldResolver;
     bedrock::sdk::Hooks worldHooks;
     bedrock::sdk::HookSubscription worldSubscription;
     bedrock::sdk::HookSubscription gameplaySubscription;
 
-    void syncScriptMods(bool allowCallback = false) {
+    void syncScriptMods(const std::string& reloaded = {}) {
         if (!host || !clientHost) return;
+        const auto views = host->list();
         // Detach mods that are no longer active
         for (auto it = scriptMods.begin(); it != scriptMods.end();) {
             const auto& name = (*it)->modName();
             bool stillActive = false;
-            for (const auto& view : host->list()) {
+            for (const auto& view : views) {
                 if (view.name == name && view.status == stageb::ModStatus::Active) {
                     stillActive = true;
                     break;
                 }
             }
-            if (!stillActive) {
+            if (!stillActive || name == reloaded) {
+                if (const auto detached = clientHost->detach(**it); !detached)
+                    logger.warn("Cannot detach ", name, ": ", detached.error().message);
                 world->detachMod(name);
-                if (!allowCallback) (void)clientHost->detach(**it);
                 it = scriptMods.erase(it);
             } else {
                 ++it;
             }
         }
         // Attach newly active mods
-        for (const auto& view : host->list()) {
+        for (const auto& view : views) {
             if (view.status != stageb::ModStatus::Active) continue;
             bool alreadyAttached = false;
             for (const auto& existing : scriptMods) {
@@ -657,17 +664,12 @@ struct Runtime {
                 }
             }
             if (alreadyAttached) continue;
-            auto mod = std::make_unique<stageb::ScriptMod>(
-                *host, view.name, [this] { commands->drain(*host); });
+            auto mod = std::make_unique<stageb::ScriptMod>(*host, view.name);
             world->attachMod(view.name, *mod);
-            if (!allowCallback) {
-                if (const auto attached = clientHost->attach(*mod); !attached) {
-                    world->detachMod(view.name);
-                    logger.error("Cannot attach ", view.name, ": ", attached.error().message);
-                    continue;
-                }
-            } else {
-                (void)mod->enable();
+            if (const auto attached = clientHost->attach(*mod); !attached) {
+                world->detachMod(view.name);
+                logger.error("Cannot attach ", view.name, ": ", attached.error().message);
+                continue;
             }
             scriptMods.push_back(std::move(mod));
         }
@@ -696,6 +698,16 @@ DWORD WINAPI start(LPVOID parameter) {
         const auto directory = std::filesystem::path(path).parent_path();
         const bool fileLogOpened = fileLog.open(directory / L"ScriptClient.log");
         if (fileLogOpened) fileLog.attach(logger);
+        const auto exeLength = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
+        const auto exeDirectory = exeLength && exeLength < ARRAYSIZE(path)
+            ? std::filesystem::path(path).parent_path() : std::filesystem::path{};
+        const auto storage = stageb::selectStorageRoot(exeDirectory, directory);
+        if (storage != exeDirectory)
+            logger.warn("Game EXE directory unavailable for writes; using ScriptClient DLL directory");
+        const auto inbox = storage / "packages";
+        std::filesystem::create_directories(storage / "mods");
+        std::filesystem::create_directories(storage / "mod-data");
+        std::filesystem::create_directories(inbox);
 
         bedrock::sdk::Profiles profiles;
         std::string error;
@@ -716,14 +728,12 @@ DWORD WINAPI start(LPVOID parameter) {
             logger.info(text);
         });
         state.host = std::make_unique<stageb::PluginHost>(
-            stageb::resolveModsDir(directory), version, state.world);
+            storage / "mods", version, state.world);
         state.host->setProfileJson(profile.json());
         // Bug 5: persist each mod's console.log to <ScriptClient.dll dir>/<Mod>.log.
         state.host->setLogDirectory(directory);
-        // File API roots are anchored to the DLL directory, not to the mods
-        // directory override, so mod data survives mod deletion/redeploy and
-        // `/mods reload`. Each mod gets <DLL dir>/mod-data/<ModName>/.
-        state.host->setDataDirectory(directory / "mod-data");
+        state.host->setDataDirectory(storage / "mod-data");
+        state.host->setStateDirectory(storage / ".scriptclient-disabled");
         state.host->setDefinitionsChanged([&state](const stageb::WireDefinitions& definitions) {
             std::vector<std::string> names;
             for (const auto& view : state.host->list()) names.push_back(view.name);
@@ -732,14 +742,13 @@ DWORD WINAPI start(LPVOID parameter) {
                 std::string replaceError;
                 if (!state.commands->replaceDefinitions(definitions, replaceError))
                     logger.error("command replaceDefinitions: ", replaceError);
-                state.syncScriptMods(true);
             }
         });
 
         // §7.1/§7.2: start with the anchor, then attach one ScriptMod per JS
         // plugin. All share the single GameFrameScope driven by ClientHost.
         state.anchor = std::make_unique<stageb::HostAnchorMod>(*state.host, [&state] {
-            state.commands->drain(*state.host);
+            if (state.ready.load()) state.commands->drain(*state.host);
         });
         state.clientHost = std::make_unique<bedrock::sdk::ClientHost>();
         if (const auto started = state.clientHost->start(*state.anchor, [](const auto& e) {
@@ -807,7 +816,14 @@ DWORD WINAPI start(LPVOID parameter) {
         }
 
         state.syncScriptMods();
+        state.manager = std::make_unique<stageb::ModManager>(
+            *state.host, *state.clientHost, inbox,
+            [&state](const std::string& name) { state.syncScriptMods(name); },
+            [](const std::string& text) { logger.info(text); });
+        state.commands->setReload([&state](const std::string& name) { state.manager->requestReload(name); });
+        state.ready.store(true);
         logger.info("ScriptClient ready; mods dir: ", state.host->modsDir().string());
+        state.manager->run();
         return 0;
     } catch (const std::exception& error) {
         logger.error("Startup failed: ", error.what());

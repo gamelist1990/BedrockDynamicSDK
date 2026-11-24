@@ -4,18 +4,45 @@ ScriptClient は Minecraft Bedrock クライアント内で JavaScript / TypeScr
 
 ## 配置
 
-`ScriptClient.dll` を通常の DLL Mod と同じ方法で読み込ませます。スクリプト Mod は既定で DLL と同じディレクトリにある `mods/` に置きます。`BEDROCK_SDK_MODS_DIR` をゲームプロセスの環境に設定すると、スクリプトの検索先だけを変更できます。ファイル API の保存先は変わらず、DLL に隣接する `mod-data/<ModName>/` です。
+`ScriptClient.dll` を通常の DLL Mod と同じ方法で読み込ませます。**`Minecraft.Windows.exe` があるフォルダー**が ScriptClient の保存先です。EXE のフォルダーに書き込めない場合にだけ `ScriptClient.dll` のフォルダーに切り替わります。
+
+| フォルダー | 用途 |
+| --- | --- |
+| `mods/<ModName>/` | インストール済みのスクリプト Mod |
+| `mod-data/<ModName>/` | Mod ごとの永続データ |
+| `packages/` | インストール前のパッケージ |
+
+旧版から移行する場合は、DLL 側の `mods/` と `mod-data/` に保存していた内容を、ゲームを終了してから EXE 側の同名フォルダーへ移してください。`BEDROCK_SDK_MODS_DIR` は使用しません。
+
+### Mod Manager でインストールする
+
+1. PEX Mod Studio のインストール後、ScriptClient 用 `.mods` をダブルクリックします。`.zip` は Studio のファイル選択・ドラッグ＆ドロップで開けます。どちらも直接 `packages/` に置くこともできます。
+2. Minecraft の **設定 → Mod Menu → Mod Manager** でパッケージの **Install …** 行を選び、実行します。インストールした Mod はその場で有効になり、元のファイルは `packages/installed/` に移動します。同名の Mod は上書きしません。
+3. 同じページのスイッチで有効・無効を変更できます。変更はゲームの再起動なしで反映され、無効化した Mod は次回起動時にも読み込まれません。
+
+### ScriptClient パッケージを作る
+
+通常の ZIP（`.mods` または `.zip`）に次の配置でファイルを入れます。
 
 ```text
-<DLL directory>/
-├── ScriptClient.dll
+scriptclient-package.json   {"format":"scriptclient-mod","version":1}
+mod/manifest.json           ScriptClient の Mod マニフェスト
+mod/src/index.ts            例: マニフェストの entry が src/index.ts の場合
+```
+
+ZIP の中に余分な親フォルダーを作らないでください。フォルダー名はマニフェストの `name` から決まり、ファイル名には Windows で使用できる ASCII 文字を使います。上限は ZIP が 32 MiB、展開後が 64 MiB、項目数が 4096 です。リンク、DLL などのネイティブバイナリは対象外です。Mod はコードを実行するため、信頼できるパッケージだけをインストールしてください。これは Minecraft の `.mcpack` や PEX Mod Studio の旧 `.mods` ライブラリ形式とは異なります。
+
+```text
+<Minecraft.Windows.exe directory>/
+├── Minecraft.Windows.exe
 ├── mods/
 │   └── EffectFake/
 │       ├── manifest.json
 │       └── src/
 │           └── index.ts
-└── mod-data/
-    └── EffectFake/    # ファイル API の初回利用時に作成
+├── mod-data/
+│   └── EffectFake/    # ファイル API の初回利用時に作成
+└── packages/
 ```
 
 ホストは検索先の直下だけを走査します。`.` または `_` で始まるディレクトリと、`manifest.json` がないディレクトリは読み込みません。

@@ -7,6 +7,7 @@
 
 #include <deque>
 #include <functional>
+#include <mutex>
 #include <string>
 
 namespace stageb {
@@ -26,6 +27,7 @@ public:
     void drain(PluginHost& host);
 
     void setRespond(Respond respond) { respond_ = std::move(respond); }
+    void setReload(Respond reload) { reload_ = std::move(reload); }
     void setDiagnostic(std::function<void(const std::string&)> diagnostic) {
         diagnostic_ = std::move(diagnostic);
     }
@@ -49,7 +51,9 @@ private:
 
     bedrock::sdk::Commands commands_;
     std::deque<std::string> queue_;
+    std::mutex queueMutex_;
     Respond respond_;
+    Respond reload_;
     std::function<void(const std::string&)> diagnostic_;
     std::vector<std::string> modNames_;
     void* clientInstance_{};

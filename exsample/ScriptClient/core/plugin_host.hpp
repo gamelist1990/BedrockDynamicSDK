@@ -51,7 +51,11 @@ public:
     void enqueueSettingChange(const std::string& name, const std::string& settingId,
                               const bedrock::sdk::SettingValue& value);
     bool reload(const std::string& name, std::string& error);
+    bool isEnabled(const std::string& name) const;
+    void setEnabled(const std::string& name, bool enabled);
+    void setStateDirectory(fs::path directory) { disabledDir_ = std::move(directory); }
     const fs::path& modsDir() const noexcept { return modsDir_; }
+    const std::string& gameVersion() const noexcept { return gameVersion_; }
 
     const SettingsDecl* settingsFor(const std::string& name) const;
     const KeybindsDecl* keybindsFor(const std::string& name) const;
@@ -72,7 +76,7 @@ public:
     // <logDir>/<ModName>.log. Left empty in tests so lines() stays the seam.
     void setLogDirectory(fs::path logDir) { logDir_ = std::move(logDir); }
     // Production hook: persistent per-Mod file roots under
-    // <ScriptClient.dll dir>/mod-data/<ModName>. Left empty in tests that do
+    // <storage root>/mod-data/<ModName>. Left empty in tests that do
     // not use files; tests set a temp directory for the same behavior.
     void setDataDirectory(fs::path dataDir) { dataDir_ = std::move(dataDir); }
     // Production hook: pass the loaded game profile JSON (symbols, target) to
@@ -118,6 +122,7 @@ private:
     fs::path modsDir_;
     fs::path logDir_;
     fs::path dataDir_;
+    fs::path disabledDir_;
     std::string gameVersion_;
     std::string profileJson_;
     std::shared_ptr<WorldBackend> world_;

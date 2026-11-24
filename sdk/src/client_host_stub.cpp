@@ -12,4 +12,7 @@ Result<void> ClientHost::attach(Mod&) {
     return Result<void>::error(ErrorCode::Unavailable, "Native client host was not built");
 }
 Result<void> ClientHost::detach(Mod&) { return Result<void>::ok(); }
+Result<void> ClientHost::synchronize(const std::function<void()>&) {
+    return Result<void>::error(ErrorCode::Unavailable, "Native client host was not built");
+}
 } // namespace bedrock::sdk

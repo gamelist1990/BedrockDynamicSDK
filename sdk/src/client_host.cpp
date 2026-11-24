@@ -28,7 +28,7 @@ struct ClientHost::Impl {
     std::vector<Mod*> mods;
     ErrorHandler errorHandler;
     std::shared_ptr<const RuntimeProfile> profile;
-    std::mutex dispatchMutex;
+    std::recursive_mutex dispatchMutex;
     std::atomic<bool> ready{};
     std::atomic<void*> client{};
     std::atomic<std::uint64_t> worldRevision{}, dimensionRevision{};
@@ -232,6 +232,14 @@ Result<void> ClientHost::detach(Mod& mod) {
         return Result<void>::error(ErrorCode::NotFound, "Mod is not attached");
     impl_->mods.erase(it); // no further callbacks are delivered
     return mod.disable();
+}
+
+Result<void> ClientHost::synchronize(const std::function<void()>& operation) {
+    if (!impl_ || !impl_->ready.load() || inHostCallback || !operation)
+        return Result<void>::error(ErrorCode::Invalid, "Cannot synchronize an inactive/reentrant client host");
+    std::lock_guard lock(impl_->dispatchMutex);
+    operation();
+    return Result<void>::ok();
 }
 
 std::shared_ptr<const RuntimeProfile> ClientHost::profileSnapshot() const {
