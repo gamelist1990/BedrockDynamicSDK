@@ -80,6 +80,9 @@ Setting Setting::choice(std::string id, std::string labelKey, std::string initia
 Setting Setting::text(std::string id, std::string labelKey, std::string descriptionKey) {
     return {std::move(id), std::move(labelKey), std::move(descriptionKey), Kind::Text, false};
 }
+Setting Setting::dropZone(std::string id, std::string labelKey) {
+    return {std::move(id), std::move(labelKey), {}, Kind::DropZone, false};
+}
 
 SettingsPage::SettingsPage(std::string modId, std::string titleKey)
     : modId_(std::move(modId)), titleKey_(std::move(titleKey)) {}
@@ -124,6 +127,7 @@ Result<void> SettingsPage::registerWith(const Profile* profile) const noexcept {
                 for (const auto& [id, label] : setting.choices) state->choices.push_back({keep(*state, id), text(*state, label)});
                 control.choices = state->choices.data() + (state->choices.size() - setting.choices.size()); control.choice_count = static_cast<std::uint32_t>(setting.choices.size()); break;
             case Setting::Kind::Text: control.kind = Backend::Kind::Text; break;
+            case Setting::Kind::DropZone: control.kind = Backend::Kind::DropZone; break;
             case Setting::Kind::Key:
                 control.kind = Backend::Kind::Key;
                 control.initial = {control.kind, 0, std::get<double>(setting.initial)};

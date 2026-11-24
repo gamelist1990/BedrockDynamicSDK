@@ -15,7 +15,7 @@
   const rootArgument = "settings-tabs-groups";
   const manager = "scriptclient-mod-manager";
   const managerRoute = "bedrockdynamic-mod-" + manager;
-  const types = { number: 0, boolean: 1, string: 2, option: 3, action: 4, text: 5, image: 5 };
+  const types = { number: 0, boolean: 1, string: 2, option: 3, action: 4, text: 5, image: 5, dropZone: 4 };
   const nativeOn = engine.on.bind(engine);
   const nativeOff = engine.off.bind(engine);
   const nativeTrigger = engine.trigger.bind(engine);
@@ -101,6 +101,7 @@
       case "string": return {...common, placeholder: "", maxLength: 2048, isValid: true,
         fallbackValue: row.value};
       case "action": return {...common, actionLabel, actionType: 1};
+      case "dropZone": return {...common, name: "", actionLabel: row.label, actionType: 1};
       default: return common;
     }
   }
@@ -305,6 +306,7 @@
         return;
       }
       const row = rows.get(id);
+      if (row?.kind === "dropZone" && kind === "action") return;
       if (!row || row.kind !== kind) return original.apply(this, args);
       if (method === "updateString") { drafts.set(id, value); return; }
       if (method === "commitString") {
@@ -360,6 +362,59 @@
     }
   }
 
+  // Resize the game's native action button; preserve its own border, colors,
+  // typography and focus treatment. Refuse ambiguous labels and publish no
+  // hit area while the button is clipped or transitioning.
+  let paintedZone = null;
+  let zonePage = "";
+  let zonePending = false;
+  function publishDropZone() {
+    const active = [...local.values()].filter(entry => entry.name === rootQuery);
+    const candidates = [];
+    for (const menu of menus.values()) {
+      if (!active.some(entry => entry.id === (menu.page || menu.id))) continue;
+      const row = menu.rows.find(row => row.kind === "dropZone");
+      if (row) candidates.push([menu.id.slice("bedrockdynamic-mod-".length), row]);
+    }
+    const [page, row] = candidates.length === 1 ? candidates[0] : [];
+    const titles = row ? [...document.querySelectorAll('.d338e4afd1aa1a084129 [data-testid="settings-panel-button"]')]
+      .filter(title => title.textContent === row.label || title.getAttribute("text") === row.label) : [];
+    const next = titles.length === 1 ? titles[0] : null;
+    if (paintedZone?.node !== next) {
+      if (paintedZone) paintedZone.node.style.cssText = paintedZone.style;
+      paintedZone = next ? {node: next, style: next.style.cssText} : null;
+      if (next) {
+        next.style.height = "96px";
+        next.style.width = "100%";
+      }
+    }
+    if (zonePending || (!zonePage && !page)) return;
+    let target = page, bounds = null;
+    if (zonePage && zonePage !== page) target = zonePage;
+    else if (next) {
+      const {left, top, right, bottom} = next.getBoundingClientRect();
+      const w = window.innerWidth, h = window.innerHeight;
+      const l = Math.ceil(left), t = Math.ceil(top), r = Math.floor(right), b = Math.floor(bottom);
+      if (l >= 0 && t >= 0 && r <= w && b <= h && r-l > 4 && b-t > 4 &&
+          [[l+1,t+1], [r-2,t+1], [l+1,b-2], [r-2,b-2], [(l+r)/2,(t+b)/2]]
+            .every(([x,y]) => {
+              for (let hit = document.elementFromPoint(x, y); hit; hit = hit.parentElement)
+                if (hit === next) return true;
+              return false;
+            })) bounds = [w, h, l, t, r, b];
+      const stamp = [w,h,l,t,r,b,!!bounds].join("-");
+      if (publishDropZone.stamp !== stamp) {
+        publishDropZone.stamp = stamp;
+        log("content-zone-" + stamp);
+      }
+    }
+    if (!bounds && !zonePage) return;
+    zonePage = bounds ? page : "";
+    zonePending = true;
+    request("zone/" + ++sequence + "/" + target + "/" + (bounds || [0,0,0,0,0,0]).join("/"),
+      () => { zonePending = false; });
+  }
+
   engine.on = on;
   engine.off = off;
   engine.trigger = trigger;
@@ -384,6 +439,7 @@
   nativeTrigger(subscribe + localeQuery, localeKey);
   loadMenus();
   setInterval(paintImages, 350);
+  setInterval(publishDropZone, 50);
   // A manager operation completes on the loader thread, after the write
   // request returns. Poll only while this dynamic page is subscribed.
   setInterval(() => {

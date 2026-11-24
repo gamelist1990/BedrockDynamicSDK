@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <bedrock/detail/oreui_settings_backend.hpp>
 
 #include <atomic>
 #include <mutex>
@@ -18,6 +19,23 @@ constexpr UINT maxPending = 32;
 std::atomic<HWND> attached{}, attaching{};
 std::mutex pendingMutex;
 std::vector<fs::path> pending;
+std::string zonePage;
+
+bool acceptsDrop(HWND window, HDROP drop) {
+    if (zonePage.empty()) return true;
+    namespace Backend = bedrock::detail::oreui_settings;
+    POINT point{};
+    RECT client{};
+    Backend::DropZoneRect zone{};
+    Backend::RawValue raw{};
+    if (!DragQueryPoint(drop, &point) || !GetClientRect(window, &client) ||
+        Backend::readValue(zonePage.c_str(), "$drop-zone", raw, reinterpret_cast<char*>(&zone), sizeof zone) !=
+            Backend::Result::Ok || raw.kind != Backend::Kind::DropZone) return false;
+    // This proof only admits an identity mapping. Never guess a DPI/view
+    // transform if the CSS viewport and HWND client extent do not agree.
+    return zone.width == client.right && zone.height == client.bottom &&
+        point.x >= zone.left && point.x < zone.right && point.y >= zone.top && point.y < zone.bottom;
+}
 
 LRESULT CALLBACK dropProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                           UINT_PTR id, DWORD_PTR) noexcept {
@@ -26,7 +44,7 @@ LRESULT CALLBACK dropProc(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         try {
             const auto count = DragQueryFileW(drop, 0xffffffffu, nullptr, 0);
             std::lock_guard lock(pendingMutex);
-            for (UINT i = 0; i < count && i < maxPending && pending.size() < maxPending; ++i) {
+            if (acceptsDrop(window, drop)) for (UINT i = 0; i < count && i < maxPending && pending.size() < maxPending; ++i) {
                 const auto length = DragQueryFileW(drop, i, nullptr, 0);
                 if (!length || length > 32767) continue;
                 std::wstring path(length + 1, L'\0');
@@ -113,11 +131,22 @@ void ensureAttached() {
 
 namespace bedrock::sdk {
 std::vector<std::filesystem::path> pollWindowFileDrops() {
+    return pollWindowFileDropsForZone({});
+}
+std::vector<std::filesystem::path> pollWindowFileDropsForZone(std::string_view pageId) {
 #ifdef _WIN32
+    {
+        std::lock_guard lock(pendingMutex);
+        if (zonePage != pageId) {
+            zonePage = pageId;
+            pending.clear();
+        }
+    }
     ensureAttached();
     std::lock_guard lock(pendingMutex);
     return std::exchange(pending, {});
 #else
+    (void)pageId;
     return {};
 #endif
 }

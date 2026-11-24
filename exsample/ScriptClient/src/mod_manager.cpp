@@ -169,6 +169,7 @@ void ModManager::refreshPage() {
         }
         choice(Action::Cancel, "cancel-", "Cancel");
     } else {
+        page.add(Setting::dropZone("drop-zone", "Drop a trusted .mods or .zip here"));
         const auto totalPages = (std::max(mods_.size(), packages_.size()) + pageSize - 1) / pageSize;
         pageIndex_ = std::min(pageIndex_, totalPages ? totalPages - 1 : 0);
         if (totalPages > 1) {
@@ -222,7 +223,6 @@ void ModManager::run() {
     if (const auto result = client_.synchronize([&] { mods_ = host_.list(); }); !result)
         throw std::runtime_error(result.error().message);
     bool refresh = true;
-    const bedrock::sdk::SettingsPage visibility(pageId, title);
     auto nextScan = std::chrono::steady_clock::now();
     for (;;) {
         std::deque<Request> pending;
@@ -230,9 +230,8 @@ void ModManager::run() {
             std::lock_guard lock(mutex_);
             pending.swap(requests_);
         }
-        const auto drops = bedrock::sdk::pollWindowFileDrops();
-        const bool visible = !drops.empty() && visibility.visible();
-        for (const auto& drop : drops) pending.push_back({Action::Drop, {}, drop, visible});
+        const auto drops = bedrock::sdk::pollWindowFileDropsForZone(pageId);
+        for (const auto& drop : drops) pending.push_back({Action::Drop, {}, drop, true});
         for (const auto& request : pending) {
             try { apply(request); }
             catch (const std::exception& e) {

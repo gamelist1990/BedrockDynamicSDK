@@ -20,7 +20,7 @@ struct Locale { std::string id; std::vector<Translation> entries; };
 
 class Setting {
 public:
-    enum class Kind { Toggle, Slider, Choice, Text, Key, Action, SessionToggle };
+    enum class Kind { Toggle, Slider, Choice, Text, Key, Action, SessionToggle, DropZone };
     static Setting toggle(std::string id, std::string labelKey, bool initial);
     // A toggle whose durable state is managed by the caller, not Mod Settings.
     static Setting sessionToggle(std::string id, std::string labelKey, bool initial);
@@ -30,6 +30,8 @@ public:
     static Setting choice(std::string id, std::string labelKey, std::string initial,
                           std::vector<std::pair<std::string, std::string>> choices);
     static Setting text(std::string id, std::string labelKey, std::string descriptionKey = {});
+    // One per page; pair with pollWindowFileDropsForZone(page.id()).
+    static Setting dropZone(std::string id, std::string labelKey);
 
     std::string id;
     std::string labelKey;

@@ -58,6 +58,6 @@ private:
     std::uint64_t nextConfirmation_{};
     std::size_t pageIndex_{};
     bool registered_{};
-    std::string status_{"Drop a trusted .mods/.zip onto Minecraft, or select a pending package."};
+    std::string status_{"Drop onto the frame below, or select a pending package."};
 };
 } // namespace stageb

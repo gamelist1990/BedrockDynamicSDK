@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <set>
 #include <utility>
@@ -73,6 +74,7 @@ std::optional<StoredValue> convert(const Row& row, const RawValue& value) {
         break;
     case Kind::Image:
     case Kind::Text:
+    case Kind::DropZone:
     case Kind::Action:
         return StoredValue(std::monostate{});
     }
@@ -172,6 +174,7 @@ Result Store::add(const PageDescriptor& page) {
     }
     std::set<std::string_view> ids;
     std::size_t image_bytes = 0;
+    bool has_zone = false;
     for (std::uint32_t i = 0; i < page.control_count; ++i) {
         const auto& control = page.controls[i];
         if (!control.id || !validId(control.id) || !ids.emplace(control.id).second ||
@@ -180,6 +183,9 @@ Result Store::add(const PageDescriptor& page) {
         Row row{control.id, copyDisplay(control.label), copyDisplay(control.description), control.kind,
                 {}, 0, 0, 0, {}, {}};
         switch (row.kind) {
+        case Kind::DropZone:
+            if (std::exchange(has_zone, true)) return Result::Invalid;
+            break;
         case Kind::Number:
             row.minimum = control.minimum;
             row.maximum = control.maximum;
@@ -213,7 +219,8 @@ Result Store::add(const PageDescriptor& page) {
             if (!initial) return Result::Invalid;
             row.value = std::move(*initial);
             if (row.kind == Kind::Key) row.default_key = static_cast<unsigned>(control.initial.number);
-        } else if (row.kind != Kind::Image && row.kind != Kind::Text && row.kind != Kind::Action) {
+        } else if (row.kind != Kind::Image && row.kind != Kind::Text && row.kind != Kind::Action &&
+                   row.kind != Kind::DropZone) {
             return Result::Invalid;
         }
         entry.menu.rows.push_back(std::move(row));
@@ -251,6 +258,21 @@ void Store::noteVisibility(std::string_view mod_id, bool visible) {
                                            : std::chrono::steady_clock::time_point{};
 }
 
+Result Store::noteDropZone(std::string_view mod_id, DropZoneRect rect) {
+    std::lock_guard lock(mutex_);
+    const auto page = pages_.find(mod_id);
+    if (page == pages_.end() || !std::ranges::any_of(page->second.menu.rows,
+        [](const Row& row) { return row.kind == Kind::DropZone; })) return Result::NotFound;
+    const bool clear = !rect.width && !rect.height && !rect.left && !rect.top && !rect.right && !rect.bottom;
+    if (!clear && (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0 ||
+        rect.right <= rect.left || rect.bottom <= rect.top || rect.right > rect.width ||
+        rect.bottom > rect.height)) return Result::Invalid;
+    page->second.zone = rect;
+    page->second.zoneUntil = clear ? std::chrono::steady_clock::time_point{} :
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(180);
+    return Result::Ok;
+}
+
 Result Store::read(std::string_view mod_id, std::string_view control_id, RawValue& out,
                    char* text_buffer, std::size_t capacity) const {
     std::lock_guard lock(mutex_);
@@ -259,6 +281,13 @@ Result Store::read(std::string_view mod_id, std::string_view control_id, RawValu
     // Reserved, non-rendered read through the existing shared service ABI.
     if (control_id == "$visible") {
         out = {Kind::Boolean, std::chrono::steady_clock::now() < page->second.visibleUntil ? 1u : 0u};
+        return Result::Ok;
+    }
+    if (control_id == "$drop-zone") {
+        if (std::chrono::steady_clock::now() >= page->second.zoneUntil) return Result::NotFound;
+        if (!text_buffer || capacity < sizeof(DropZoneRect)) return Result::BufferTooSmall;
+        std::memcpy(text_buffer, &page->second.zone, sizeof(DropZoneRect));
+        out = {Kind::DropZone};
         return Result::Ok;
     }
     const auto& rows = page->second.menu.rows;
@@ -294,7 +323,8 @@ Result Store::dispatch(std::string_view id, const RawValue& value, bool commit) 
     if (row == page.menu.rows.end()) return Result::NotFound;
     auto input = value;
     if (row->kind == Kind::SessionBoolean && input.kind == Kind::Boolean) input.kind = row->kind;
-    if (row->kind != input.kind || row->kind == Kind::Image || row->kind == Kind::Text) return Result::WrongType;
+    if (row->kind != input.kind || row->kind == Kind::Image || row->kind == Kind::Text ||
+        row->kind == Kind::DropZone) return Result::WrongType;
     auto next = convert(*row, input);
     if (!next) return Result::Invalid;
     if (!commit) return Result::Ok;

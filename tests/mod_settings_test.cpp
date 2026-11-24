@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -39,6 +40,7 @@ int main() {
         text("text", "Text", tr("missing.description")),
         {.id="image", .label="Image", .kind=Kind::Image, .image_path=path.c_str()},
         {.id="embedded-image", .label="Embedded", .kind=Kind::Image, .image_png=png, .image_png_size=sizeof png},
+        {.id="drop-zone", .label="Drop here", .kind=Kind::DropZone},
     };
     int calls = 0;
     char ja_title[] = "設定ページ";
@@ -133,6 +135,25 @@ int main() {
     assert(settingsResource(store, "menus/4/en_US.json") == snapshot);
     assert(!settingsResource(store, "menus/5/ja_JP/foo.json"));
     assert(store.read("example", "$visible", read_back, nullptr, 0) == Result::Ok && !read_back.boolean);
+    DropZoneRect zone{};
+    auto readZone = [&] {
+        return store.read("example", "$drop-zone", read_back, reinterpret_cast<char*>(&zone), sizeof zone);
+    };
+    assert(readZone() == Result::NotFound);
+    assert(!settingsResource(store, "zone/1/example/1920/1080/700/200/1800.json"));
+    assert(!settingsResource(store, "zone/1/example/1920/1080/700/200/1800/300/0.json"));
+    assert(!settingsResource(store, "zone/2/example/1920/1080/700/2x/1800/300.json"));
+    assert(settingsResource(store, "zone/3/example/1920/1080/700/200/1921/300.json") == R"({"ok":false})");
+    assert(settingsResource(store, "zone/4/example/1920/1080/700/200/1800/300.json") == R"({"ok":true})");
+    assert(readZone() == Result::Ok && read_back.kind == Kind::DropZone);
+    assert(zone.width == 1920 && zone.height == 1080 && zone.left == 700 &&
+           zone.top == 200 && zone.right == 1800 && zone.bottom == 300);
+    assert(store.dispatch(id("drop-zone"), {Kind::DropZone}) == Result::WrongType);
+    assert(settingsResource(store, "zone/5/example/0/0/0/0/0/0.json") == R"({"ok":true})");
+    assert(readZone() == Result::NotFound);
+    assert(settingsResource(store, "zone/6/example/1920/1080/700/200/1800/300.json") == R"({"ok":true})");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    assert(readZone() == Result::NotFound);
     assert(!settingsResource(store, "visibility/not-a-sequence/1/example.json"));
     assert(settingsResource(store, "visibility/6/1/example.json"));
     assert(store.read("example", "$visible", read_back, nullptr, 0) == Result::Ok && read_back.boolean);

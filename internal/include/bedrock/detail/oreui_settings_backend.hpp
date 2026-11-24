@@ -8,7 +8,13 @@ namespace bedrock { class RuntimeProfile; }
 namespace bedrock::detail::oreui_settings {
 
 // Strings are NUL-terminated UTF-8 and descriptor data is copied at registration.
-enum class Kind : std::uint32_t { Boolean, Number, Option, String, Action, Text, Image, Key, SessionBoolean };
+enum class Kind : std::uint32_t { Boolean, Number, Option, String, Action, Text, Image, Key, SessionBoolean, DropZone };
+
+// Private "$drop-zone" read: viewport and inward-rounded border in CSS px.
+// Passed by copy in the caller's buffer without changing the shared ABI.
+struct DropZoneRect {
+    std::int32_t width, height, left, top, right, bottom;
+};
 
 struct Text {
     const char* value{};

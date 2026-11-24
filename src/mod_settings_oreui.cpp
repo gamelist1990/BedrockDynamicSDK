@@ -1,6 +1,7 @@
 #include "bedrock/detail/mod_settings_oreui.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -35,6 +36,7 @@ constexpr std::string_view kindName(Kind kind) {
     case Kind::Action: return "action";
     case Kind::Text: return "text";
     case Kind::Image: return "image";
+    case Kind::DropZone: return "dropZone";
     case Kind::Key: return "key";
     }
     return {};
@@ -179,6 +181,29 @@ bool isNativeLanguageToken(std::string_view token) {
 } // namespace
 
 std::optional<std::string> settingsResource(Store& store, std::string_view endpoint) {
+    if (endpoint.starts_with("zone/") && endpoint.ends_with(".json")) {
+        auto args = endpoint.substr(5, endpoint.size() - 10);
+        const auto seq = args.find('/');
+        if (seq == std::string_view::npos || !sequence(args.substr(0, seq))) return {};
+        args.remove_prefix(seq + 1);
+        const auto sep = args.find('/');
+        if (sep == std::string_view::npos || sep > 64) return {};
+        const auto page = args.substr(0, sep);
+        args.remove_prefix(sep + 1);
+        DropZoneRect rect{};
+        std::int32_t* fields[] = {&rect.width, &rect.height, &rect.left, &rect.top, &rect.right, &rect.bottom};
+        for (auto* field : fields) {
+            const auto end = args.find('/');
+            const auto value = args.substr(0, end);
+            if (value.empty() || value.size() > 5 || (end == std::string_view::npos) != (field == fields[5]))
+                return {};
+            const auto result = std::from_chars(value.data(), value.data() + value.size(), *field);
+            if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) return {};
+            if (end != std::string_view::npos) args.remove_prefix(end + 1);
+        }
+        const auto result = store.noteDropZone(page, rect);
+        return result == Result::Ok ? R"({"ok":true})" : R"({"ok":false})";
+    }
     if (endpoint.starts_with("visibility/") && endpoint.ends_with(".json")) {
         endpoint.remove_prefix(std::string_view("visibility/").size());
         endpoint.remove_suffix(5);
