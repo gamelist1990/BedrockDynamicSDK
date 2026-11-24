@@ -152,6 +152,10 @@ jobs:
         run: |
           $extraArgs = @()
           if ("${{ matrix.mod }}" -eq "CheckSig") { $extraArgs += "-DCHECKSIG_BUILD_TESTS=ON" }
+          if ("${{ matrix.mod }}" -eq "ScriptClient") {
+            # Match ScriptClient's static CRT for QuickJS and standalone tests.
+            $extraArgs += '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'
+          }
           cmake -S "${{ matrix.source }}" -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
