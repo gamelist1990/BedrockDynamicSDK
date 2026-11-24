@@ -362,9 +362,10 @@
     }
   }
 
-  // Resize the game's native action button; preserve its own border, colors,
-  // typography and focus treatment. Refuse ambiguous labels and publish no
-  // hit area while the button is clipped or transitioning.
+  // Expand the native action layout as well as its button: the default right
+  // control column otherwise leaves half the panel empty. Preserve the game's
+  // border, colors, typography and focus treatment, and measure that same button
+  // for native hit-testing. Refuse ambiguous, clipped or transitioning targets.
   let paintedZone = null;
   let zonePage = "";
   let zonePending = false;
@@ -379,13 +380,30 @@
     const [page, row] = candidates.length === 1 ? candidates[0] : [];
     const titles = row ? [...document.querySelectorAll('.d338e4afd1aa1a084129 [data-testid="settings-panel-button"]')]
       .filter(title => title.textContent === row.label || title.getAttribute("text") === row.label) : [];
-    const next = titles.length === 1 ? titles[0] : null;
+    const button = titles.length === 1 ? titles[0] : null;
+    const layout = button?.closest(".c8b6272ddf99d92bb0bf");
+    const caption = layout?.querySelector(".e3ced6482fb1626666c9");
+    const controls = layout?.querySelector(".ed1b7a4d9678c3bdeb2a");
+    const wrapper = button?.closest(".ef3d5438eb1747f0d59d");
+    const next = layout && caption && !caption.textContent && controls && wrapper ? button : null;
     if (paintedZone?.node !== next) {
-      if (paintedZone) paintedZone.node.style.cssText = paintedZone.style;
-      paintedZone = next ? {node: next, style: next.style.cssText} : null;
+      if (paintedZone)
+        for (const [node, style] of paintedZone.styles) node.style.cssText = style;
+      paintedZone = next ? {node: next,
+        styles: [layout, caption, controls, wrapper, next].map(node => [node, node.style.cssText])} : null;
       if (next) {
-        next.style.height = "96px";
+        layout.style.flexDirection = "column";
+        layout.style.alignItems = "stretch";
+        caption.style.display = "none";
+        controls.style.width = "100%";
+        controls.style.flex = "none"; // Keep the tall button in normal row flow.
+        wrapper.style.flex = "1";
+        wrapper.style.minWidth = "0";
+        next.style.height = "14.4rem"; // Three native 4.8rem button heights.
         next.style.width = "100%";
+        next.style.minWidth = "0";
+        next.style.alignItems = "center";
+        next.style.justifyContent = "center";
       }
     }
     if (zonePending || (!zonePage && !page)) return;
