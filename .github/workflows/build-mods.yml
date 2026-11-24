@@ -49,7 +49,7 @@ jobs:
           clients = ['HitBox', 'SpeedBuilder']
           tools = ['CheckSig', 'Top']
           if version == '1.26.65.1':
-              clients.extend(['DynamicClient', 'AutoMine'])
+              clients.extend(['DynamicClient', 'AutoMine', 'ScriptClient'])
               tools.extend(['BlockProbe', 'CraftProbe', 'InputProbe', 'StackProbe', 'Fake', 'GlobalResourcePack', 'ModSettingsDemo'])
           available = clients + tools
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
@@ -206,6 +206,13 @@ jobs:
         run: |
           Copy-Item exsample/DynamicClient/README.md build-mod/Release/
           Copy-Item exsample/DynamicClient/LICENSE.Zoom build-mod/Release/LICENSE.Zoom.txt
+      - name: Package ScriptClient usage and guide
+        if: matrix.mod == 'ScriptClient'
+        shell: pwsh
+        run: |
+          if (!(Test-Path "build-mod/Release/ScriptClient.dll")) { throw "ScriptClient.dll was not produced" }
+          Copy-Item exsample/ScriptClient/README.md build-mod/Release/
+          Copy-Item docs/scriptclient.md build-mod/Release/
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mod }}-${{ needs.plan.outputs.version }}-windows-x64
