@@ -1072,6 +1072,10 @@ void announceReady() {
         Call from <code>Mod::onEnable()</code> or later when using <code>ClientHost</code>.
         If the route is unavailable, writes are safe no-ops.</p>
         {code_block(example, "C++")}
+        <p>On Bedrock 1.26.65.1, SDK writes use the game's <code>[Scripting]</code>
+        area (28), not <code>[Sound]</code>. A warning sent through this API was
+        verified in both Creator Content Log History and the game's ContentLog
+        file on BedrockOnLinux. Other severities with this area were not tested.</p>
         <p>Find the game’s Content Log options in Settings → Creator. Availability only
         means the SDK writer is installed: the game may still suppress the line, and
         the API does not confirm whether the line was displayed or saved.</p>

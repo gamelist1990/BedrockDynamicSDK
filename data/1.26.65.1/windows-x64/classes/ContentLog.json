@@ -1,1 +1,21 @@
-{"symbols":{"ContentLog::emitCreator":{"abi":"void __fastcall(uint32_t flags, uint32_t severityOrdinal, uint32_t area, const char* format, const char* const* arg1, const char* const* arg2); printf-style front end of the Creator listener service; severity ordinal 0=verbose 1=inform 2=warning 3=error; arg1/arg2 point to caller-owned NUL-terminated const char* cells that must outlive the call; no game container or allocator ownership crosses the call","abi_verified":true,"area":29,"call":"creator_emit","confidence":"exact-build-entry-verified; BOL-proven 2026-11-24: a native probe calling (flags=1, severity=0, area=29, \"%s%s\") delivered two unique markers to BOTH the Creator Content Log GUI history and the game's ContentLog file (flushed on exit). Only that (flags, severity, area) combination is live-proven; other areas/severities are static-only. Delivery is governed by the game's Creator File/UI toggles and sink filters; the call returns no delivery result.","cross_version_signature_available":false,"entry_check":"55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68","flags":1,"guard_rva":"0x128C2F60","runtime_verified":true,"rva":"0x5E9220","service_rva":"0x128C2F70","signature":"55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68","source":"OpenCode sol RE 2026-11-24, verified firsthand by Muse: the historical [Sound][verbose] ContentLog lines are produced through this front end (game callsite RVA 0xB020EA), which borrows the Creator listener service (guard pointer at guard_rva -> validity byte 1; service pointer at service_rva, +0x18 == 1 when enabled) and dispatches via 0x3D0610 -> 0x3D0680 to the registered listeners (file listener slot 0x3D4670, GUI listener 0x19284E0). Evidence: ~/Documents/PEXData/contentlog-handoff/opencode-report.md and chunk1-4 files; see analysis/content_log_investigation.json.","status":"candidate"}}}
+{
+  "symbols": {
+    "ContentLog::emitCreator": {
+      "abi": "void __fastcall(uint32_t flags, uint32_t severityOrdinal, uint32_t area, const char* format, const char* const* arg1, const char* const* arg2); printf-style front end of the Creator listener service; severity ordinal 0=verbose 1=inform 2=warning 3=error; arg1/arg2 point to caller-owned NUL-terminated const char* cells that must outlive the call; no game container or allocator ownership crosses the call",
+      "abi_verified": true,
+      "area": 28,
+      "call": "creator_emit",
+      "confidence": "BOL-proven on 1.26.65.1: the SDK ContentLogProbe delivered a unique marker with (flags=1, severity=2, area=28) as [Scripting][warning] in both Creator Content Log History and the game's ContentLog file. Area 28 is Scripting in the Creator table and used with flags 1 by the game's DDUI property access diagnostic. Other severities with area 28 were not tested. Delivery is governed by the game's Creator File/UI toggles and sink filters; the call returns no delivery result.",
+      "cross_version_signature_available": false,
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68",
+      "flags": 1,
+      "guard_rva": "0x128C2F60",
+      "runtime_verified": true,
+      "rva": "0x5E9220",
+      "service_rva": "0x128C2F70",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68",
+      "source": "Creator area table RVA 0xF001320, game callsite RVA 0x68FD29A. Route/service validation and earlier Sound baseline: see analysis/content_log_investigation.json.",
+      "status": "candidate"
+    }
+  }
+}

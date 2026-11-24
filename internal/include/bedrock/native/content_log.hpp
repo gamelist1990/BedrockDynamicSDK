@@ -62,12 +62,14 @@ public:
                 return false;
             }
             const auto base = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
-            guardAddr_.store(base + native_profile::number(def.at("guard_rva")),
-                             std::memory_order_relaxed);
-            serviceAddr_.store(base + native_profile::number(def.at("service_rva")),
-                               std::memory_order_relaxed);
-            flags_.store(def.value("flags", 1u), std::memory_order_relaxed);
-            area_.store(def.value("area", 29u), std::memory_order_relaxed);
+            const auto guardRva = native_profile::number(def.at("guard_rva"));
+            const auto serviceRva = native_profile::number(def.at("service_rva"));
+            const auto flags = def.at("flags").get<std::uint32_t>();
+            const auto area = def.at("area").get<std::uint32_t>();
+            guardAddr_.store(base + guardRva, std::memory_order_relaxed);
+            serviceAddr_.store(base + serviceRva, std::memory_order_relaxed);
+            flags_.store(flags, std::memory_order_relaxed);
+            area_.store(area, std::memory_order_relaxed);
             target_.store(target, std::memory_order_release);
             error.clear();
             return true;
@@ -169,8 +171,8 @@ private:
     }
 
     std::atomic<void*> target_{nullptr};
-    std::atomic<std::uint32_t> area_{29};
-    std::atomic<std::uint32_t> flags_{1};
+    std::atomic<std::uint32_t> area_{0};
+    std::atomic<std::uint32_t> flags_{0};
     std::atomic<std::uintptr_t> guardAddr_{0};
     std::atomic<std::uintptr_t> serviceAddr_{0};
 };
