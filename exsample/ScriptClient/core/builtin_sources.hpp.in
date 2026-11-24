@@ -5,5 +5,4 @@ inline constexpr char path[] = @BUILTIN_path@;
 inline constexpr char events[] = @BUILTIN_events@;
 inline constexpr char files[] = @BUILTIN_files@;
 inline constexpr char network[] = @BUILTIN_network@;
-inline constexpr char server[] = @BUILTIN_server@;
 }

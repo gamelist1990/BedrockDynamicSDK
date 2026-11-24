@@ -1,15 +1,13 @@
-import { EffectTypes, system, TicksPerSecond, world } from "@minecraft/server";
+import { system, TicksPerSecond, world } from "@bedrock/sdk";
 
 world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
   console.log(`[OfficialStyle] spawn initial=${initialSpawn} player=${player.name}`);
   system.run(() => {
     if (!player.isValid) return;
     player.sendMessage({ text: "Hello from the Script API style mod!" });
-    const speed = EffectTypes.get("speed");
-    if (speed) {
-      const effect = player.addEffect(speed, 2 * TicksPerSecond, { showParticles: false });
-      console.log(`[OfficialStyle] addEffect ${effect?.typeId} ticks=${effect?.duration}`);
-    }
+    player.addEffect("minecraft:speed", 2 * TicksPerSecond, { showParticles: false });
+    const effect = player.getEffect("minecraft:speed");
+    console.log(`[OfficialStyle] addEffect ${effect?.typeId} ticks=${effect?.duration} currentTick=${system.currentTick}`);
   });
 });
 

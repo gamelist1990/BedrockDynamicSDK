@@ -24,25 +24,20 @@ else()
 endif()
 set(vanilla_generator "${CMAKE_CURRENT_SOURCE_DIR}/../tools/vanilla_data.py")
 set(ts_sdk_generator "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_ts_sdk.py")
-set(binding_registry "${CMAKE_CURRENT_SOURCE_DIR}/../exsample/ScriptClient/data/binding-registry.json")
+set(ts_sdk_runtime "${CMAKE_CURRENT_SOURCE_DIR}/ts/node_modules/@bedrock/sdk/index.js")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${BEDROCK_DATA_INPUTS} "${vanilla_generator}" "${ts_sdk_generator}" "${binding_registry}")
+    ${BEDROCK_DATA_INPUTS} "${vanilla_generator}" "${ts_sdk_generator}" "${ts_sdk_runtime}")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${vanilla_generator}" generate
         --root "${CMAKE_CURRENT_SOURCE_DIR}/.." "--version=${BEDROCK_GAME_VERSION}"
         --cpp "${BEDROCK_GENERATED_INCLUDE}/bedrock/sdk/vanilla.hpp"
         --typescript "${CMAKE_CURRENT_BINARY_DIR}/generated/vanilla-data.ts"
     COMMAND_ERROR_IS_FATAL ANY)
-if(EXISTS "${binding_registry}")
-    execute_process(
-        COMMAND "${Python3_EXECUTABLE}" "${ts_sdk_generator}"
-            --root "${CMAKE_CURRENT_SOURCE_DIR}/.."
-            --registry "${binding_registry}"
-            --out-dir "${CMAKE_CURRENT_SOURCE_DIR}/ts"
-            --cpp-bootstrap "${CMAKE_CURRENT_SOURCE_DIR}/../exsample/ScriptClient/core/generated_sdk_bootstrap.hpp"
-            "--version=${BEDROCK_GAME_VERSION}"
-        COMMAND_ERROR_IS_FATAL ANY)
-endif()
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${ts_sdk_generator}"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        "--version=${BEDROCK_GAME_VERSION}"
+    COMMAND_ERROR_IS_FATAL ANY)
 if(TARGET bedrock::oreui_settings_backend)
     target_link_libraries(bedrock_stage_a PRIVATE bedrock::oreui_settings_backend)
 else()

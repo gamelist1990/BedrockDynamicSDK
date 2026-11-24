@@ -167,14 +167,6 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
     JsValue allIds(ctx, JS_NewCFunction(ctx, &vanillaAllEffectIds, "allEffectIds", 0));
     JS_SetPropertyStr(ctx, vanilla.get(), "allEffectIds", allIds.release());
     mod->loader->setBuiltin("@bedrock/vanilla-data", vanilla.get());
-    const JsValue compatArgs(ctx, JS_NewObject(ctx));
-    JS_SetPropertyStr(ctx, compatArgs.get(), "sdk", JS_DupValue(ctx, mod->bindings->moduleObject()));
-    JS_SetPropertyStr(ctx, compatArgs.get(), "vanillaEffects", JS_DupValue(ctx, ids.get()));
-    if (!mod->loader->installBuiltin("@minecraft/server", builtin::server, compatArgs.get(), error)) {
-        out = std::move(mod);
-        return false;
-    }
-
     if (!mod->loader->loadEntry(mod->manifest.entry, error)) { out = std::move(mod); return false; }
     if (!constructAndEnable(*mod, error)) { out = std::move(mod); return false; }
     mod->status = ModStatus::Active;

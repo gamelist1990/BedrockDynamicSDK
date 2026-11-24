@@ -1,5 +1,5 @@
 const { http, HttpRequest, HttpRequestMethod } = require("@minecraft/server-net");
-const { system, world } = require("@minecraft/server");
+const { system, world } = require("@bedrock/sdk");
 const base = "http://127.0.0.1:18765";
 
 const spawned = world.afterEvents.playerSpawn.subscribe(() => {

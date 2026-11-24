@@ -331,11 +331,8 @@ void testLifecycle() {
               R"({"apiVersion":"1.0.0","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"Loop","version":"0.1.0"})");
     writeFile(modDir / "package.json", R"({"name":"loop","type":"module","private":true,"version":"0.1.0"})");
     writeFile(modDir / "src/index.ts", R"TS(
-import { Mod } from "@bedrock/sdk";
-export default class Loop extends Mod {
-  onEnable() { globalThis.enabled = true; }
-  onUpdate() { while (true) {} }
-}
+export function onEnable() { globalThis.enabled = true; }
+export function onUpdate() { while (true) {} }
 )TS");
 
     PluginHost host(dir / "mods", "1.26.65.1");
@@ -349,12 +346,9 @@ export default class Loop extends Mod {
     CHECK(views[0].status == ModStatus::Faulted, "runaway onUpdate faults the mod");
 
     writeFile(modDir / "src/index.ts", R"TS(
-import { Mod } from "@bedrock/sdk";
-export default class Loop extends Mod {
-  private n: number = 0;
-  onEnable() { this.n = 1; }
-  onUpdate() { this.n++; }
-}
+let n: number = 0;
+export function onEnable() { n = 1; }
+export function onUpdate() { n++; }
 )TS");
     CHECK(host.reload("Loop", error), "reload after fixing: " + error);
     views = host.list();
@@ -377,9 +371,9 @@ void testBindingRegistry() {
     nlohmann::json doc;
     in >> doc;
     CHECK(doc["apiVersion"] == "1.0.0", "registry pins apiVersion 1.0.0");
-    CHECK(doc["exports"].size() >= 5, "registry lists the frozen exports");
+    CHECK(doc["exports"].size() >= 5, "registry lists the baseline exports");
     const auto modules = doc["builtinModules"].get<std::vector<std::string>>();
-    for (const char* expected : {"@bedrock/sdk", "@bedrock/vanilla-data", "@minecraft/server",
+    for (const char* expected : {"@bedrock/sdk", "@bedrock/vanilla-data",
                                  "@minecraft/server-net", "fs", "path", "events", "os"})
         CHECK(std::find(modules.begin(), modules.end(), expected) != modules.end(),
               std::string("builtin registered: ") + expected);
@@ -528,6 +522,10 @@ public:
         }) != 0;
         return BackendOutcome::success();
     }
+    BackendOutcome playerClearEffects(const std::string& modName, std::uint64_t) override {
+        effectsByMod[modName].clear();
+        return BackendOutcome::success();
+    }
 
     std::optional<std::string> dimensionGetBlockType(
         const std::string&, const std::string& dimId, BlockPosData pos) const override {
@@ -623,100 +621,95 @@ void testSettingsKeybindsBrightnessAndEvents() {
               R"({"apiVersion":"1.0.0","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"ModA","version":"1.0.0"})");
     writeFile(modADir / "package.json", R"({"name":"moda","type":"module","private":true,"version":"1.0.0"})");
     writeFile(modADir / "src/index.ts", R"TS(
-import { Mod, Setting, ItemStack, EquipmentSlot, brightness, world } from "@bedrock/sdk";
+import { system, Setting, ItemStack, EquipmentSlot, brightness, world } from "@bedrock/sdk";
 
-export default class ModA extends Mod {
-  private spawnSub?: { remove(): void };
-  private keySub?: { remove(): void };
+import type { PlayerSpawnAfterEvent } from "@bedrock/sdk";
 
-  onEnable(): void {
-    const page = this.settings("moda.title")
-      .modName("moda.name")
-      .add(Setting.toggle("enabled", "moda.enabled", true))
-      .add(Setting.slider("speed", "moda.speed", 2.5, 0.5, 10.0, 0.5))
-      .add(Setting.choice("mode", "moda.mode", "hold", [["hold", "moda.hold"], ["toggle", "moda.toggle"]]))
-      .add(Setting.text("info", "moda.info", "moda.desc"))
-      .locale("en_US", { "moda.title": "Mod A", "moda.enabled": "Enabled" })
-      .locale("ja_JP", [["moda.title", "Mod A 設定"], ["moda.enabled", "有効"]])
-      .onChange((id: string, val: unknown) => {
-        world.sendMessage(`setting:${id}=${String(val)}`);
-      })
-      .registerPage();
+function spawn(ev: PlayerSpawnAfterEvent): void {
+  world.sendMessage(`spawn:${ev.player.name}:${ev.initialSpawn}`);
+}
 
-    const initialSpeed = page.value("speed");
-    world.sendMessage(`initSpeed=${String(initialSpeed)}`);
+export function onEnable(): void {
+  const page = system.settings("moda.title")
+    .modName("moda.name")
+    .add(Setting.toggle("enabled", "moda.enabled", true))
+    .add(Setting.slider("speed", "moda.speed", 2.5, 0.5, 10.0, 0.5))
+    .add(Setting.choice("mode", "moda.mode", "hold", [["hold", "moda.hold"], ["toggle", "moda.toggle"]]))
+    .add(Setting.text("info", "moda.info", "moda.desc"))
+    .locale("en_US", { "moda.title": "Mod A", "moda.enabled": "Enabled" })
+    .locale("ja_JP", [["moda.title", "Mod A 設定"], ["moda.enabled", "有効"]])
+    .onChange((id: string, val: unknown) => {
+      world.sendMessage(`setting:${id}=${String(val)}`);
+    })
+    .registerPage();
 
-    this.keybinds
-      .add("zoom", "key.zoom", "KeyC")
-      .add("freecam", "key.freecam", "F5")
-      .locale("en_US", { "key.zoom": "Zoom", "key.freecam": "Freecam" });
+  const initialSpeed = page.value("speed");
+  world.sendMessage(`initSpeed=${String(initialSpeed)}`);
 
-    world.sendMessage(`zoomKey=${String(this.keybinds.key("zoom"))}`);
+  system.keybinds
+    .add("zoom", "key.zoom", "KeyC")
+    .add("freecam", "key.freecam", "F5")
+    .locale("en_US", { "key.zoom": "Zoom", "key.freecam": "Freecam" });
 
-    this.keySub = this.keybinds.changed.subscribe((ev: { id: string; pressed: boolean }) => {
-      world.sendMessage(`keySub:${ev.id}:${ev.pressed}`);
-    });
+  world.sendMessage(`zoomKey=${String(system.keybinds.key("zoom"))}`);
 
-    this.spawnSub = world.afterEvents.playerSpawn.subscribe((ev: { player: any; initialSpawn: boolean }) => {
-      world.sendMessage(`spawn:${ev.player.name}:${ev.initialSpawn}`);
-    });
+  system.afterEvents.keybindChanged.subscribe((ev: { id: string; pressed: boolean }) => {
+    world.sendMessage(`keySub:${ev.id}:${ev.pressed}`);
+  });
 
-    brightness.setGamma(20);
+  world.afterEvents.playerSpawn.subscribe(spawn);
+
+  brightness.setGamma(20);
+}
+
+export function onKeybind(id: string, pressed: boolean): void {
+  world.sendMessage(`onKeybind:${id}:${pressed}`);
+  if (id === "unsub" && pressed) {
+    world.afterEvents.playerSpawn.unsubscribe(spawn);
   }
+}
 
-  onKeybind(id: string, pressed: boolean): void {
-    world.sendMessage(`onKeybind:${id}:${pressed}`);
-    if (id === "unsub" && pressed && this.spawnSub) {
-      this.spawnSub.remove();
+export function onUpdate(): void {
+  const p = world.getLocalPlayer();
+  if (!p) return;
+  world.setDynamicProperty("modProp", "fromModA");
+  p.setDynamicProperty("pProp", 42);
+
+  const hp = p.getComponent("minecraft:health");
+  const food = p.getComponent("minecraft:food");
+  const mov = p.getComponent("minecraft:movement");
+  const inv = p.getComponent("minecraft:inventory");
+  const eq = p.getComponent("minecraft:equippable");
+  const slot0 = inv ? inv.container.getItem(0) : undefined;
+  const hand = eq ? eq.getEquipment(EquipmentSlot.Mainhand) : undefined;
+
+  const dim = world.currentDimension;
+  const blk = dim ? dim.getBlock({ x: 1, y: 64, z: -2 }) : undefined;
+  const oldBlkType = blk ? blk.typeId : "none";
+  if (blk) blk.setType("minecraft:stone");
+  const newBlk = dim ? dim.getBlock({ x: 1, y: 64, z: -2 }) : undefined;
+
+  const ents = dim ? dim.getEntities() : [];
+  let droppedInfo = "none";
+  for (const e of ents) {
+    if (e.typeId === "minecraft:item") {
+      const st = e.getComponent("minecraft:item")?.itemStack;
+      if (st) droppedInfo = `${st.typeId}x${st.amount}`;
     }
   }
 
-  onUpdate(): void {
-    const p = world.localPlayer();
-    if (!p) return;
-    world.setDynamicProperty("modProp", "fromModA");
-    p.setDynamicProperty("pProp", 42);
+  const customStack = new ItemStack("minecraft:apple", 5);
+  const rotation = p.getRotation();
+  const noUnavailableStubs = !("spawnEntity" in dim) && !("teleport" in p) && !("addTag" in p);
 
-    const hp = p.getComponent("minecraft:health");
-    const food = p.getComponent("minecraft:food");
-    const mov = p.getComponent("minecraft:movement");
-    const inv = p.getComponent("minecraft:inventory");
-    const eq = p.getComponent("minecraft:equippable");
-    const slot0 = inv ? inv.getItem(0) : undefined;
-    const hand = eq ? eq.getEquipment(EquipmentSlot.MainHand) : undefined;
-
-    const dim = world.currentDimension;
-    const blk = dim ? dim.getBlock({ x: 1, y: 64, z: -2 }) : undefined;
-    const oldBlkType = blk ? blk.typeId : "none";
-    if (blk) blk.setType("minecraft:stone");
-    const newBlk = dim ? dim.getBlock({ x: 1, y: 64, z: -2 }) : undefined;
-
-    const ents = dim ? dim.getEntities() : [];
-    let droppedInfo = "none";
-    for (const e of ents) {
-      if (e.typeId === "minecraft:item") {
-        const st = e.getItemStack();
-        if (st) droppedInfo = `${st.typeId}x${st.amount}`;
-      }
-    }
-
-    const customStack = new ItemStack("minecraft:apple", 5);
-    let spawnErrCode = "none";
-    try {
-      if (dim) dim.spawnEntity("minecraft:pig", { x: 0, y: 64, z: 0 });
-    } catch (e: any) {
-      spawnErrCode = e.code || "err";
-    }
-
-    world.sendMessage(
-      `tick:p=${p.name}:loc=${p.location.x},${p.location.y},${p.location.z}:rot=${p.rotation.x},${p.rotation.y}` +
-      `:hp=${hp.currentValue}:food=${food.currentValue}:vel=${mov.velocity.x}` +
-      `:inv=${slot0.typeId}x${slot0.amount}:eq=${hand.typeId}` +
-      `:blk=${oldBlkType}->${newBlk.typeId}:drop=${droppedInfo}` +
-      `:stack=${customStack.typeId}x${customStack.amount}:spawnErr=${spawnErrCode}` +
-      `:prop=${world.getDynamicProperty("modProp")}/${p.getDynamicProperty("pProp")}`
-    );
-  }
+  world.sendMessage(
+    `tick:p=${p.name}:loc=${p.location.x},${p.location.y},${p.location.z}:rot=${rotation.x},${rotation.y}` +
+    `:hp=${hp.currentValue}:food=${food.currentValue}:vel=${mov.velocity.x}` +
+    `:inv=${slot0.typeId}x${slot0.amount}:eq=${hand.typeId}` +
+    `:blk=${oldBlkType}->${newBlk.typeId}:drop=${droppedInfo}` +
+    `:stack=${customStack.typeId}x${customStack.amount}:noStubs=${noUnavailableStubs}` +
+    `:prop=${world.getDynamicProperty("modProp")}/${p.getDynamicProperty("pProp")}`
+  );
 }
 )TS");
 
@@ -724,19 +717,17 @@ export default class ModA extends Mod {
               R"({"apiVersion":"1.0.0","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"ModB","version":"1.0.0"})");
     writeFile(modBDir / "package.json", R"({"name":"modb","type":"module","private":true,"version":"1.0.0"})");
     writeFile(modBDir / "src/index.ts", R"TS(
-import { Mod, brightness, world } from "@bedrock/sdk";
+import { system, brightness, world } from "@bedrock/sdk";
 
-export default class ModB extends Mod {
-  onEnable(): void {
-    this.keybinds.add("unsub", "key.unsub", "KeyG");
-    brightness.setGamma(12);
-  }
-  onUpdate(): void {
-    const p = world.localPlayer();
-    const propFromA = world.getDynamicProperty("modProp");
-    world.setDynamicProperty("modProp", "fromModB");
-    world.sendMessage(`modB:p=${p ? p.name : "none"}:propA=${String(propFromA)}:propB=${String(world.getDynamicProperty("modProp"))}`);
-  }
+export function onEnable(): void {
+  system.keybinds.add("unsub", "key.unsub", "KeyG");
+  brightness.setGamma(12);
+}
+export function onUpdate(): void {
+  const p = world.getLocalPlayer();
+  const propFromA = world.getDynamicProperty("modProp");
+  world.setDynamicProperty("modProp", "fromModB");
+  world.sendMessage(`modB:p=${p ? p.name : "none"}:propA=${String(propFromA)}:propB=${String(world.getDynamicProperty("modProp"))}`);
 }
 )TS");
 
@@ -787,39 +778,36 @@ export default class ModB extends Mod {
     CHECK(hasMsg(msgsA, "blk=minecraft:glass->minecraft:stone"),
           "dimension.getBlock and block.setType");
     CHECK(hasMsg(msgsA, "drop=minecraft:acacia_logx4"),
-          "dimension.getEntities + entity.getItemStack (item-entity-detection)");
-    CHECK(hasMsg(msgsA, "stack=minecraft:applex5:spawnErr=Unavailable"),
-          "new ItemStack constructor and Unavailable error propagation");
+          "dimension.getEntities + minecraft:item component");
+    CHECK(hasMsg(msgsA, "stack=minecraft:applex5:noStubs=true"),
+          "new ItemStack constructor and no unavailable operation stubs");
     CHECK(hasMsg(msgsA, "prop=fromModA/42"), "world and entity dynamic properties");
 
     // 5. Per-Mod WorldBackend isolation
     CHECK(hasMsg(msgsB, "modB:p=Steve:propA=undefined:propB=fromModB"),
           "ModB sees its own world/player context and isolated dynamic properties");
 
-    // 6. Keybind dispatch -> both keybinds.changed.subscribe and Mod.onKeybind
+    // 6. Keybind dispatch -> both system.afterEvents and named onKeybind
     host.notifyKeybind("ModA", "zoom", true);
     CHECK(hasMsg(msgsA, "keySub:zoom:true") && hasMsg(msgsA, "onKeybind:zoom:true"),
-          "keybind notification reaches both changed.subscribe and onKeybind");
+          "keybind notification reaches both the after-event and lifecycle export");
 
     // 7. world.afterEvents.playerSpawn subscription & unsubscription
     host.notifyPlayerSpawn("ModA", 100, true);
     CHECK(hasMsg(msgsA, "spawn:Alex:true"), "playerSpawn delivered to JS subscriber");
 
     const auto countBeforeUnsub = msgsA.size();
-    host.notifyKeybind("ModA", "unsub", true); // triggers this.spawnSub.remove()
+    host.notifyKeybind("ModA", "unsub", true); // unsubscribes the spawn callback
     host.notifyPlayerSpawn("ModA", 100, false);
     bool spawnedAfterUnsub = false;
     for (std::size_t i = countBeforeUnsub; i < msgsA.size(); ++i) {
         if (msgsA[i].find("spawn:") != std::string::npos) spawnedAfterUnsub = true;
     }
-    CHECK(!spawnedAfterUnsub, "playerSpawn subscription.remove() stops future delivery");
+    CHECK(!spawnedAfterUnsub, "playerSpawn.unsubscribe(callback) stops future delivery");
 
     // 8. Unload / reload cleanup (SettingsPage unregister + BrightnessOverride restore)
     writeFile(modBDir / "src/index.ts", R"TS(
-import { Mod } from "@bedrock/sdk";
-export default class ModB extends Mod {
-  onEnable(): void {}
-}
+export function onEnable(): void {}
 )TS");
     CHECK(host.reload("ModB", error), "reload ModB without gamma override: " + error);
     CHECK(backend->activeGamma.has_value() && *backend->activeGamma == 20.0f,
@@ -883,38 +871,35 @@ void testLiveFixRegressions() {
     writeFile(probeDir / "package.json",
               R"({"name":"probe","type":"module","private":true,"version":"1.0.0"})");
     writeFile(probeDir / "src/index.ts", R"TS(
-import { Mod, Arg } from "@bedrock/sdk";
-export default class Probe extends Mod {
-  onEnable(): void {
-    this.commands.register("probe", (b: any) => {
-      b.literal("run")
-       .argument("n", Arg.int({ optional: true, default: 7 }))
-       .executes((ctx: any) => {
-         ctx.respond(`got=${String(ctx.get("n"))}|opt=${String(ctx.getOptional("n"))}|raw=${ctx.rawLine()}`);
-       });
-      b.literal("clear")
-       .argument("effect", Arg.effect({ optional: true }))
-       .executes((ctx: any) => {
-         ctx.respond(`opt=${String(ctx.getOptional("effect"))}|type=${typeof ctx.getOptional("effect")}`);
-       });
-    });
-  }
-}
+import { system } from "@bedrock/sdk";
+system.commands.register("probe", [
+  {
+    literals: ["run"], parameters: [{ name: "n", kind: "int", optional: true, default: 7 }],
+    execute(ctx) {
+      ctx.respond(`got=${String(ctx.get("n"))}|opt=${String(ctx.getOptional("n"))}|raw=${ctx.rawLine()}`);
+    },
+  },
+  {
+    literals: ["clear"], parameters: [{ name: "effect", kind: "effect", optional: true }],
+    execute(ctx) {
+      ctx.respond(`opt=${String(ctx.getOptional("effect"))}|type=${typeof ctx.getOptional("effect")}`);
+    },
+  },
+  {
+    literals: ["duration"],
+    parameters: [{ name: "ticks", kind: "duration", optional: true, default: 23, infinity: true }],
+    execute(ctx) { ctx.respond(`${ctx.get("ticks")}/${ctx.getOptional("ticks")}`); },
+  },
+]);
 )TS");
     writeFile(noLitDir / "manifest.json",
               R"({"apiVersion":"1.0.0","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"NoLit","version":"1.0.0"})");
     writeFile(noLitDir / "package.json",
               R"({"name":"nolit","type":"module","private":true,"version":"1.0.0"})");
     writeFile(noLitDir / "src/index.ts", R"TS(
-import { Mod } from "@bedrock/sdk";
-export default class NoLit extends Mod {
-  onEnable(): void {
-    console.log("hello-from-nolit");
-    this.commands.register("nolit", (b: any) => {
-      b.executes((ctx: any) => { ctx.respond("nolit-ok"); });
-    });
-  }
-}
+import { system } from "@bedrock/sdk";
+console.log("hello-from-nolit");
+system.commands.register("nolit", [{ execute(ctx) { ctx.respond("nolit-ok"); } }]);
 )TS");
 
     PluginHost host(dir / "mods", "1.26.65.1");
@@ -943,6 +928,16 @@ export default class NoLit extends Mod {
     CHECK(host.dispatchCommand("/probe clear speed", response), "probe dispatch present no-default arg");
     CHECK(response.find("opt=minecraft:speed|type=string") != std::string::npos,
           "present optional without default yields its value: " + response);
+
+    response.clear();
+    CHECK(host.dispatchCommand("/probe duration", response) && response == "23/undefined",
+          "duration default round-trips in ticks: " + response);
+    response.clear();
+    CHECK(host.dispatchCommand("/probe duration 2.05", response) && response == "41/41",
+          "explicit command seconds convert to ticks: " + response);
+    response.clear();
+    CHECK(host.dispatchCommand("/probe duration Infinity", response) && response == "Infinity/Infinity",
+          "explicit Infinity round-trips in both context methods: " + response);
 
     response.clear();
     CHECK(host.dispatchCommand("/nolit", response), "no-literal command dispatch");
@@ -1174,13 +1169,11 @@ void testFilesApiPluginHost() {
               R"({"apiVersion":"1.0.0","entry":"src/index.ts","gameVersions":["1.26.65.1"],"name":"FileMod","version":"1.0.0"})");
     writeFile(modDir / "package.json", R"({"name":"filemod","type":"module","private":true,"version":"1.0.0"})");
     writeFile(modDir / "src/index.ts", R"TS(
-import { Mod, files } from "@bedrock/sdk";
-export default class FileMod extends Mod {
-  onEnable(): void {
-    if (!files.exists("state.txt")) files.writeText("state.txt", "persisted");
-    console.log("root=" + files.dataDir);
-    console.log("value=" + files.readText("state.txt"));
-  }
+import { files } from "@bedrock/sdk";
+export function onEnable(): void {
+  if (!files.exists("state.txt")) files.writeText("state.txt", "persisted");
+  console.log("root=" + files.dataDir);
+  console.log("value=" + files.readText("state.txt"));
 }
 )TS");
 
@@ -1392,63 +1385,120 @@ console.log('node-builtins-ok');
           "no sandbox escape");
 }
 
-void testServerCompat() {
-    const auto dir = tempDir("server-compat");
+void testScriptStyleSdk() {
+    const auto dir = tempDir("script-style");
     const auto mods = dir / "mods";
     fs::create_directories(mods);
     fs::copy(fs::path(STAGEB_SOURCE_DIR) / "examples" / "OfficialStyle", mods / "OfficialStyle",
              fs::copy_options::recursive);
-    makeTestMod(dir, "CompatTest", R"JS(
-const { world, system, ItemStack, Player, EffectTypes, TicksPerSecond } = require('@minecraft/server');
-const sdk = require('@bedrock/sdk');
+    copyGolden(mods / "EffectFake");
+    makeTestMod(dir, "SdkTest", R"JS(
+const { world, system, ItemStack, Entity, Player, Block, Effect, EventSignal, TicksPerSecond } = require('@bedrock/sdk');
 function check(test, message) { if (!test) throw new Error(message); }
-check(!('localPlayer' in world) && 'localPlayer' in sdk.world, 'client extras isolated');
-check(Object.keys(world.beforeEvents).length === 0, 'no fabricated before signals');
+function code(fn) { try { fn(); } catch (error) { return error.code; } }
+check(code(() => require('@minecraft/server')) === 'NotFound', 'removed builtin does not resolve');
+check(!('beforeEvents' in world) && !('beforeEvents' in system) && !('localPlayer' in world),
+  'no fabricated phases or legacy accessor');
+check(system.currentTick === 0, 'clock starts at zero');
 let fired = 0;
-const cb = world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
+const spawn = world.afterEvents.playerSpawn;
+const cb = ({ player, initialSpawn }) => {
   ++fired;
-  world.afterEvents.playerSpawn.unsubscribe(cb);
-  check(player instanceof Player && initialSpawn && player.name === 'Alex', 'official spawn event');
+  spawn.unsubscribe(cb);
+  check(player instanceof Player && player instanceof Entity && initialSpawn && player.name === 'Alex',
+    'client spawn event wraps a Player');
+  check(player.id === world.getLocalPlayer().id && player.isValid && player.typeId === 'minecraft:player',
+    'player identity');
   check(world.getPlayers({ name: 'Alex' }).length === 1, 'name filter');
   check(world.getPlayers({ excludeNames: ['Alex'] }).length === 0, 'exclude filter');
   const block = world.getDimension('overworld').getBlock({x: 1.2, y: 64, z: -1.5});
-  check(block.typeId === 'minecraft:glass' && block.z === -2 &&
+  check(block instanceof Block && block.typeId === 'minecraft:glass' && block.z === -2 &&
     block.dimension.id === 'minecraft:overworld', 'Block reads');
+  check(world.getDimension('nether') === undefined, 'inactive dimension not accessible');
   check(new ItemStack('stone', 2).amount === 2 &&
     player.getComponent('inventory').container.getItem(0).typeId === 'minecraft:diamond', 'ItemStack reads');
-  const effect = EffectTypes.get('speed');
-  check(player.addEffect(effect, 2 * TicksPerSecond + 1).duration === 41, 'tick-based addEffect');
-  check(player.getEffects()[0].duration === 41 &&
-    sdk.world.localPlayer().getEffects()[0].duration === 2.05, 'effect units stay isolated');
-  check(player.removeEffect(effect) && player.getEffects().length === 0, 'effect removal');
-  const interval = system.runInterval(() => { throw new Error('cleared timer fired'); });
-  check(system.clearRun(interval) === undefined, 'clearRun return type');
-  system.runTimeout(() => console.log('timeout-ok'));
-  console.log('server-compat-ok');
+  check(code(() => player.addEffect('speed', 1.5)) === 'Invalid' &&
+    code(() => player.addEffect('speed', 0)) === 'Invalid', 'reject invalid tick duration');
+  check(player.addEffect('speed', 2 * TicksPerSecond + 1, { amplifier: 2, showParticles: false }) === undefined,
+    'no fabricated addEffect return');
+  const effect = player.getEffect('speed');
+  check(effect instanceof Effect && effect.duration === 41 && effect.amplifier === 2 && !effect.showParticles,
+    'effect snapshot round-trips ticks and options');
+  check(player.removeEffect('speed') && player.getEffects().length === 0, 'effect removal');
+  player.addEffect('night_vision', Infinity);
+  check(player.getEffects()[0].duration === Infinity, 'preserve host-reported Infinity');
+  player.clearEffects();
+  check(player.getEffects().length === 0, 'clear all effects');
+  player.addEffect('speed', 41);
+  console.log('sdk-player-ok');
+};
+check(spawn instanceof EventSignal && spawn.subscribe(cb) === cb && spawn.subscribe(cb) === cb,
+  'signal duplicates return the original callback');
+const signal = system.afterEvents.keybindChanged;
+const key = signal.subscribe(({ id, pressed }) => {
+  ++keyCount;
+  signal.unsubscribe(key);
+  console.log(`key:${id}:${pressed}`);
 });
-system.runInterval(() => { if (fired === 1) console.log('spawn-count-ok'); }, 2);
+let keyCount = 0;
+const trace = [];
+const record = name => trace.push(`${name}:${system.currentTick}`);
+system.run(() => {
+  record('run');
+  system.run(() => record('nested'));
+});
+system.runTimeout(() => record('default'));
+system.runTimeout(() => record('timeout'), 3);
+const canceled = system.runInterval(() => record('canceled'));
+check(system.clearRun(canceled) && !system.clearRun(canceled), 'cancellation reports removal');
+check(code(() => system.runTimeout(() => {}, -1)) === 'Invalid' &&
+  code(() => system.runInterval(() => {}, 0)) === 'Invalid', 'invalid delays rejected');
+const interval = system.runInterval(() => {
+  record('interval');
+  if (system.currentTick === 4) system.clearRun(interval);
+}, 2);
+system.runTimeout(() => console.log(`trace=${trace.join(',')} spawn=${fired} key=${keyCount}`), 5);
 )JS");
     auto world = std::make_shared<MockFullWorldBackend>();
     PluginHost host(mods, "1.26.65.1", world);
     host.setLogDirectory(dir / "logs");
     std::string error;
     CHECK(host.initialize(error), "initialize Script API mods: " + error);
-    checkActive(host, "CompatTest");
+    checkActive(host, "SdkTest");
     checkActive(host, "OfficialStyle");
-    host.notifyPlayerSpawn("CompatTest", 100, true);
-    host.notifyPlayerSpawn("CompatTest", 100, false);
+    checkActive(host, "EffectFake");
+    host.notifyPlayerSpawn("SdkTest", 100, true);
+    host.notifyPlayerSpawn("SdkTest", 100, false);
+    host.notifyKeybind("SdkTest", "zoom", true);
+    host.notifyKeybind("SdkTest", "zoom", false);
     host.notifyPlayerSpawn("OfficialStyle", 100, true);
     for (int i = 0; i < 21; ++i) host.tick();
-    const auto log = readTestLog(dir, "CompatTest");
-    CHECK(log.find("server-compat-ok") != log.npos, "compat checks: " + log);
-    CHECK(log.find("timeout-ok") != log.npos && log.find("spawn-count-ok") != log.npos,
-          "compat scheduler and unsubscribe");
+    const auto log = readTestLog(dir, "SdkTest");
+    CHECK(log.find("sdk-player-ok") != log.npos, "player surface: " + log);
+    CHECK(log.find("trace=run:1,default:1,interval:2,nested:2,timeout:3,interval:4 spawn=1 key=1") != log.npos,
+          "scheduler timing, cancellation, duplicate subscription and unsubscription: " + log);
+    const auto& effects = world->effectsByMod["SdkTest"];
+    CHECK(effects.size() == 1 && effects[0].durationSeconds == 2.05, "host edge still uses seconds");
     const auto sample = readTestLog(dir, "OfficialStyle");
     CHECK(sample.find("interval players=1") != sample.npos && sample.find("ticks=40") != sample.npos,
           "official sample ran: " + sample);
     CHECK(world->messagesByMod["OfficialStyle"] ==
               std::vector<std::string>{"Hello from the Script API style mod!"},
           "sample sends a message through the backend");
+    const auto invoke = [&](const std::string& line) {
+        std::string response;
+        return host.dispatchCommand(line, response) && response.empty();
+    };
+    auto& goldenEffects = world->effectsByMod["EffectFake"];
+    CHECK(invoke("/effectfake give speed") && goldenEffects.size() == 1 &&
+          goldenEffects[0].durationSeconds == 30 && goldenEffects[0].showParticles,
+          "EffectFake defaults apply via the SDK edge");
+    CHECK(invoke("/effectfake give night_vision Infinity 2 false") && goldenEffects.size() == 2 &&
+          std::isinf(goldenEffects[1].durationSeconds) && goldenEffects[1].amplifier == 2 &&
+          !goldenEffects[1].showParticles, "EffectFake preserves Infinity and options");
+    CHECK(invoke("/effectfake clear speed") && goldenEffects.size() == 1 &&
+          goldenEffects[0].typeId == "minecraft:night_vision", "EffectFake clears a single effect");
+    CHECK(invoke("/effectfake clear") && goldenEffects.empty(), "EffectFake clears all effects");
 }
 
 void testHttp() {
@@ -1458,7 +1508,7 @@ void testHttp() {
     const auto dir = tempDir("http");
     makeTestMod(dir, "HttpTest", "const url = " + nlohmann::json(base).dump() + ";\n" + R"JS(
 const { http, HttpRequest, HttpRequestMethod, HttpHeader, HttpResponse } = require('@minecraft/server-net');
-const { system } = require('@minecraft/server');
+const { system } = require('@bedrock/sdk');
 function check(test, message) { if (!test) throw new Error(message); }
 async function fails(promise, code) {
   try { await promise; } catch (err) { check(err instanceof Error && err.code === code,
@@ -1532,7 +1582,7 @@ int main(int argc, char** argv) {
     testFilesApi();
     testFilesApiPluginHost();
     testNodeBuiltins();
-    testServerCompat();
+    testScriptStyleSdk();
     // 5. Dev bindings (guarded memory, symbols, module introspection)
     testDevBindings();
     std::cout << "checks=" << checks << " failures=" << failures << "\n";

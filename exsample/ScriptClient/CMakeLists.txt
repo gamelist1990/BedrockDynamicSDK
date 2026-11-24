@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(BEDROCK_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "SDK checkout")
 set(BEDROCK_GAME_VERSION "1.26.65.1" CACHE STRING "Minecraft exact build")
-set(STAGEB_GOLDEN_DIR "$ENV{HOME}/WorkSpace/ts-mods/EffectFake" CACHE PATH
-    "Unmodified EffectFake golden case for Phase 1 tests")
+set(STAGEB_GOLDEN_DIR "${BEDROCK_SDK_ROOT}/tests/golden/EffectFake" CACHE PATH
+    "EffectFake fixture for ScriptClient host tests")
 
 # quickjs-ng is vendored at a pinned commit (§2.2); build it as a static lib.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -25,7 +25,7 @@ if(WIN32)
 endif()
 add_subdirectory("${BEDROCK_SDK_ROOT}" bedrock-sdk EXCLUDE_FROM_ALL)
 
-foreach(builtin path events files network server)
+foreach(builtin path events files network)
     set(source "${CMAKE_CURRENT_SOURCE_DIR}/core/builtins/${builtin}.js")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
     file(READ "${source}" source_text)

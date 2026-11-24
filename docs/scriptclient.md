@@ -37,7 +37,7 @@ ScriptClient は Minecraft Bedrock クライアント内で JavaScript / TypeScr
 ```
 
 - `name`: フォルダ名と完全一致。先頭は英数字、以降は英数字・`.`・`_`・`-`、全体で最大 64 文字です。
-- `version`: Mod のバージョンを示す空でない文字列です。`apiVersion` は SDK のバージョンで、ホストはメジャー `1` を受け付けます。
+- `version`: Mod のバージョンを示す空でない文字列です。`apiVersion` はホストの manifest 形式（メジャー `1`）です。TypeScript パッケージのバージョン `2.0.0` とは別です。
 - `gameVersions`: 対応ゲームバージョンの空でない文字列配列です。実行中のバージョンに完全一致する値か `*` が必要です。`*` は manifest の照合を通すだけで、DLL のビルド互換性を保証しません。
 - `entry`: Mod フォルダ内にある `.ts`、`.js`、`.mjs` のファイルを指定します。
 - 省略可: `description`、`displayName`（既定は `name`）、`memoryMiB`（既定は 64）。
@@ -45,28 +45,23 @@ ScriptClient は Minecraft Bedrock クライアント内で JavaScript / TypeScr
 ### src/index.ts
 
 ```ts
-import { Arg, Mod, world } from "@bedrock/sdk";
+import { system, TicksPerSecond, world } from "@bedrock/sdk";
 
-export default class EffectFake extends Mod {
-  onEnable(): void {
-    this.commands.register("effectfake", (cmd) => {
-      cmd.literal("give")
-        .argument("effect", Arg.effect())
-        .executes((ctx) => {
-          const player = world.localPlayer();
-          if (!player) return;
-          player.addEffect(ctx.get<string>("effect"), 30);
-          player.sendMessage("[EffectFake] Effect applied for 30 seconds.");
-        });
-    });
-    console.info("EffectFake enabled");
-  }
-}
+system.commands.register("effectfake", [{
+  literals: ["give"],
+  parameters: [{ name: "effect", kind: "effect" }],
+  execute(ctx) {
+    const player = world.getLocalPlayer();
+    if (!player) return;
+    player.addEffect(ctx.get<string>("effect"), 30 * TicksPerSecond);
+    player.sendMessage("[EffectFake] Effect applied for 30 seconds.");
+  },
+}]);
 ```
 
 ワールドに入って `/effectfake give night_vision` を実行します。効果はサーバーに送られません。完全版では `/effectfake give night_vision 30 0 true`、`/effectfake clear night_vision`、`/effectfake clear` も使えます。最小版と完全版は同じ Mod 名なので、どちらか一方を配置してください。
 
-ホストはエントリの default export を引数なしで生成し、`onEnable()` を呼びます。`.ts` はロード時に変換されますが、型検査は行われません。編集時の型情報には [生成済みの TS SDK](https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/sdk/ts) を使えます。`@bedrock/sdk` は実行時にはホストが提供します。
+エントリのトップレベルでコマンドやイベントを登録できます。必要なら名前付き関数 `onEnable` / `onDisable` を公開できます。`.ts` はロード時に変換されますが型検査は行われません。開発時は [TS SDK パッケージ](https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/sdk/ts) を使って型検査できます。`@bedrock/sdk` の実行時モジュールはホストが提供します。
 
 ## /mods コマンド
 
@@ -78,42 +73,54 @@ export default class EffectFake extends Mod {
 
 ## TypeScript API
 
-[バインディング定義](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/exsample/ScriptClient/data/binding-registry.json) と [`@bedrock/sdk` の型宣言](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/sdk/ts/node_modules/%40bedrock/sdk/index.d.ts) が入口です。型宣言に載っていても、操作によってはクライアント側で `Unavailable` になります。
+`@bedrock/sdk` は `world`・`system`・クラス・イベントを中心にした **クライアント用** API です。公開 API は [型宣言](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/sdk/ts/node_modules/%40bedrock/sdk/index.d.ts) と [OfficialStyle サンプル](https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample/ScriptClient/examples/OfficialStyle) を参照してください。サーバー版 Script API と同じ機能を提供するものではありません。
 
-- `Mod`: `onEnable()`、`onDisable()`、`onUpdate()`、`onKeybind(id, pressed)`。`commands`、`keybinds`、`settings(titleKey)` などの入口を持ちます。
-- `world`: `localPlayer()`、`getPlayers()` / `getAllPlayers()`、`currentDimension`、`getDimension()`、メッセージ、動的プロパティ。プレイヤーやディメンションがまだ利用できない場合を考慮してください。
-- `Player` / `Entity` / `Dimension` / `Block`: 座標・回転、`getComponent()`、プレイヤーの `addEffect()` / `removeEffect()` / `getEffects()`、`getBlock()` / `getEntities()` など。効果の持続時間はティックではなく秒です。`ItemStack`、`EquipmentSlot` も公開されています。インベントリや装備は読み取り用で、汎用の `spawnEntity()`、`teleport()`、`addTag()` はクライアントで利用できません。
-- `system`: `run()`、`runTimeout()`、`runInterval()`、`clearRun()`。遅延・間隔の単位はティックです。
-- `brightness.setGamma()` は 0〜25 の上書き、引数なしで解除。`keybinds` は `add()`、`locale()`、`key()` を提供します。`Setting` と `settings()` は設定の宣言用 API を持ちますが、ScriptClient の Windows アダプターに設定ページを表示する接続はありません。
-- `files`: Mod データの同期 I/O。詳細は下記を参照してください。
-- `dev`: 開発用の `memory`、`symbols`、`module.info()`。生メモリ操作には範囲ガードがありますが、Mod をプロセスから隔離する仕組みではありません。
+旧 SDK から移行するときは、基底クラスを継承する代わりにエントリのトップレベルで登録し、コマンドとキー割り当ては `system`、Mod データは `files` から扱います。ローカルプレイヤーの取得には `world.getLocalPlayer()` を使い、効果時間を秒で管理していたコードでは `TicksPerSecond` を掛けてから渡してください。
 
-スクリプト内蔵の `@bedrock/vanilla-data` が提供するのは `dataVersion`、`MinecraftEffectTypes`、`allEffectIds()` です。生成済みパッケージの型宣言にはブロックやアイテムなど他のカタログも載っていますが、そちらはホスト内蔵版にはありません。
+### イベントとスケジューラー
 
-### イベントとログ
+```ts
+import { system, TicksPerSecond, world } from "@bedrock/sdk";
 
-- `world.afterEvents.playerSpawn.subscribe(handler)` のイベントには `player` と `initialSpawn` が入ります。
-- `this.keybinds.changed.subscribe(handler)` のイベントには `id` と `pressed` が入ります。購読解除には戻り値の `remove()` を使います。
-- `console.log()`、`console.info()`、`console.warn()`、`console.error()` を使えます。Mod ログは、ファイルを開けた場合は DLL 隣の `<ModName>.log` に追記され、ゲームの Creator Content Log にも転送されます。Creator Content Log はゲーム側の接続と表示設定に依存します。
+const spawn = world.afterEvents.playerSpawn;
+const greet = spawn.subscribe(({ player, initialSpawn }) => {
+  if (!initialSpawn) return;
+  spawn.unsubscribe(greet);
+  system.run(() => {
+    if (player.isValid) player.sendMessage(`Hello at tick ${system.currentTick}`);
+  });
+});
 
-### 型付きコマンド
+const runId = system.runInterval(() => {
+  if (world.getAllPlayers().length > 0) system.clearRun(runId);
+}, TicksPerSecond);
+```
 
-`this.commands.register(name, builder)` に `/` なしの名前を渡します。ビルダーで `literal()`、`argument(name, Arg.…())`、`executes(handler)` を組み合わせます。`executes()` で一つの分岐が確定するので、同じビルダーに続けて別の分岐を書けます。解除は `this.commands.unregister(name)` です。
+- `subscribe(callback)` はコールバック自身を返し、`unsubscribe(callback)` が以後の配信を解除します。同じ関数の二重登録は行いません。`playerSpawn` はこのクライアントで検知したローカルのスポーンで、`initialSpawn` はその Mod の初回通知を示します。`system.afterEvents.keybindChanged` は `{ id, pressed }` を配信します。
+- `system.run()`、`runTimeout()`、`runInterval()`、`clearRun()` が使えます。遅延・間隔は整数ティックです。`run()` と遅延 `0` は同期実行ではなく次のスケジューラー処理が対象です。`currentTick` は Mod ごとのスケジューラーのカウントで、最初は `0`、リロードでリセットされます。ワールド全体のティックではありません。
+- `console.log()`、`info()`、`warn()`、`error()` は DLL 隣の `<ModName>.log` と、接続・表示設定に応じてゲームの Creator Content Log に出力されます。
 
-- `Arg.effect()`: エフェクト ID の文字列。名前空間を省くと `minecraft:` が付きます。
-- `Arg.duration()`: 秒数。`infinity: true` のとき `Infinity` を指定できます。
-- `Arg.int()`: 整数。`min` / `max` で範囲を指定できます。
-- `Arg.bool()`: `true` または `false`。ハンドラーでは `boolean` です。
-- `Arg.string()` / `Arg.message()`: 文字列。現行の ScriptClient パーサーでは `message` も一つのトークンとして読むため、未引用の残りの行がすべて入るとは限りません。
-- `Arg.float()`: ハンドラーでは `number`。ローカルコマンド UI では Float 引数は数値欄ではなくテキスト扱いで、`min` / `max` は現行の Float パーサーでは強制されません。
+### World、Player、Entity、Dimension
 
-`optional: true` で引数を省略可能にし、`default` で既定値を設定できます。`ctx.get<T>(name)` は省略時の既定値を含む値を返し、`ctx.getOptional<T>(name)` は入力されなかった引数に対して `undefined` を返します。`ctx.rawLine()` で受け取った行を参照できます。コンテキストはハンドラー呼び出し中に使います。
+- `world.getLocalPlayer()` はクライアント拡張です。プレイヤーがまだ使えなければ `undefined` を返します。`getPlayers({ name, excludeNames })` / `getAllPlayers()` はクライアントから見えるプレイヤーが対象です。`getDimension()` / `currentDimension` は現在のクライアントディメンションのみアクセスできます。
+- `Player` は `Entity` を継承します。`location` はブロック単位、`getRotation()` は度です。`getComponent()` で体力・空腹値・速度・インベントリ・装備・ドロップアイテムを読み取れます。`ItemStack` は `typeId` と `amount` のみ、`EquipmentSlot` は装備部位の定数です。`Dimension.getBlock()` は小数座標を切り下げます。`Block.setType()` はクライアントの地形操作が利用できる場合のみで、既存のスナップショットは更新されません。
+- `player.addEffect()` / `Effect.duration` は **ティック** 単位です。`TicksPerSecond` は `20` です。`Infinity` を指定できますが、ネイティブが有限の最大値として保存する場合は読み取りにもその値が返ります。効果の操作はローカルプレイヤーのティック内に限られます。`sendMessage()` は文字列または `text` / `rawtext` のローカル表示です。
+- 動的プロパティは Mod ごと・ワールドセッション内のメモリにのみ保存されます。永続データには `files` を使います。サーバー操作、`beforeEvents`、スポーン以外のワールドイベント、汎用のテレポート・タグ付け・エンティティ生成、アイテムメタデータ、インベントリ/装備の書き換え、翻訳/スコアメッセージは公開していません。
+- `system.keybinds` は `add()`、`locale()`、`key()`。`system.settings(titleKey)` と `Setting` はクライアント設定ページの宣言用です。実際の表示はネイティブ設定バックエンドの利用可否に依存します。`brightness.setGamma()` は 0〜25 の上書きで、引数なしで解除。`dev` はプラットフォーム依存の診断用で、隔離機構ではありません。
 
-シングルプレイでは、統合サーバー向けのパケット注入ではなくローカルレジストリを使います。このモードの `CustomEnum` 引数には値候補が付きません（`true` / `false` の組はネイティブの Boolean 扱い）。`suggestions` に値を書いても、ローカル UI の候補を保証するものではありません。
+内蔵の `@bedrock/vanilla-data` が提供するのは `dataVersion`、`MinecraftEffectTypes`、`allEffectIds()` です。生成済みパッケージの型宣言には他のカタログも載っていますが、ホスト内蔵版にはありません。
+
+### クライアントコマンド
+
+エントリの読み込み時に `system.commands.register(name, branches)` を使います。`name` に `/` を付けず、各分岐に `literals`、順番付きの `parameters`、`execute(ctx)` を指定します。解除は `system.commands.unregister(name)` です。
+
+- `kind` は `effect`、`duration`、`int`、`bool`、`string`、`message`、`float`。`duration` の **チャット入力・補完候補は秒** ですが、**コード内の `default` とコマンドハンドラー内の値はティック** です。`infinity: true` で `Infinity` を許可します。`int` のみ `min` / `max` を強制できます。`message` は現在のパーサーでは一つのトークンです。
+- `optional: true` で省略可能にします。`ctx.get<T>(name)` は既定値を含み、`ctx.getOptional<T>(name)` は入力がないと `undefined` です。`ctx.rawLine()` と `ctx.respond()` もハンドラーの呼び出し中だけ使います。
+- シングルプレイではローカルレジストリを使います。Boolean を除く `CustomEnum` の引数は UI で値候補を保証しません。
 
 ## ファイル API とサンドボックス
 
-`this.files` または `import { files } from "@bedrock/sdk"` を使います。`files.dataDir` は遅延作成されるデータルートの絶対パスを返しますが、他のメソッドに渡すパスは、このルートからの相対パスです。空文字列、絶対パス、ドライブやルートの指定は不可です。`..` は使わないでください。実装は正規化後にルート外へ出るパスを拒否する方式で、ルート内に収まる `..` まで一律に拒否するわけではありません。
+`import { files } from "@bedrock/sdk"` を使います。`files.dataDir` は遅延作成されるデータルートの絶対パスを返しますが、他のメソッドに渡すパスは、このルートからの相対パスです。空文字列、絶対パス、ドライブやルートの指定は不可です。`..` は使わないでください。実装は正規化後にルート外へ出るパスを拒否する方式で、ルート内に収まる `..` まで一律に拒否するわけではありません。
 
 ```ts
 import { files } from "@bedrock/sdk";
@@ -123,9 +130,9 @@ const options = files.readJson("config/options.json");
 console.info(JSON.stringify(options));
 ```
 
-- テキスト: `readText()`、`writeText()`、`appendText()`。バイト列: `readBytes()`、`writeBytes()`（型宣言の入力は `Uint8Array`）。書き込みは必要に応じて親ディレクトリを作ります。
+- テキスト: `readText()`、`writeText()`、`appendText()`。バイト列: `readBytes()`、`writeBytes()`、`appendBytes()`（書き込み入力は `Uint8Array`）。書き込みは必要に応じて親ディレクトリを作ります。
 - JSON: `readJson()`、`writeJson()`。JSON の構文エラーなどは JavaScript の例外で、SDK の `code` が付くとは限りません。
-- パス操作: `exists()`、`stat()`、`list()`（既定は `.`）、`mkdir()`、`rename()`、`remove()`。ディレクトリの削除には `{ recursive: true }` が必要です。
+- パス操作: `exists()`、`stat()`、`list()`（既定は `.`）、`mkdir()`、`rename()`、`copy()`、`remove()`。ディレクトリの削除には `{ recursive: true }` が必要です。
 - ファイル API の `error.code`: `Invalid` は無効なパスや削除オプション、`NotFound` は読み取れないファイルや目的のパスがない場合など、`WrongType` は `writeBytes()` の入力型が不正な場合、`Storage` はディレクトリ作成・書き込み・名前変更などの I/O 失敗です。`exists()` は存在確認エラーでも `false` を返す場合があります。
 
 ## 実行環境の制限
@@ -161,12 +168,3 @@ showStatus().catch(error => console.error(error.code, error.message));
 CommonJS 変換のためエントリでトップレベル `await` は使えません。`fetch(url, { method, headers, body, timeoutMs, maxResponseBytes })` のレスポンスは `status`、`ok`、`headers.get()`、`text()`、`json()`、`arrayBuffer()` を提供します。ブラウザの完全な Fetch API ではなく、ストリーム、Cookie ストア、CORS、`AbortSignal` はありません。
 
 通信は非同期のみで、Windows では WinHTTP をワーカースレッドで実行し、Promise はゲームのティックで完了します。タイムアウトの既定は 10 秒、上限は 30 秒です。レスポンス本文は既定 2 MiB、設定上限 8 MiB（`HttpRequest.maxResponseBytes`、または `fetch` の同名オプション）です。独自ヘッダーのないリクエストだけ最大 5 回リダイレクトし、HTTPS から HTTP へは遷移しません。`http.cancelAll(reason)` はその Mod のリクエストを中止します。通信・制限エラーは `code`（例: `ETIMEDOUT`、`EMSGSIZE`）と `message` を持つエラーで reject され、404 などの HTTP ステータスは通常レスポンスとして返ります。
-
-## Writing mods like the Script API
-
-`import { world, system } from "@minecraft/server"` をそのまま使えます。公式のスタイルで書かれた [OfficialStyle サンプル](https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample/ScriptClient/examples/OfficialStyle) と、実装済み範囲だけを記載した [型宣言](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/sdk/ts/node_modules/%40minecraft/server/index.d.ts) を参照してください。`@bedrock/sdk` は従来どおり利用できます。
-
-- `world.getPlayers()` / `getAllPlayers()` が返すのはクライアントから読めるプレイヤーです。`getPlayers` の絞り込みは `name` / `excludeNames` のみ。`world.getDimension()` は現在のクライアントディメンションだけ利用できます。`localPlayer()` は公式互換モジュールにはなく、`@bedrock/sdk` に残ります。
-- `world.afterEvents.playerSpawn.subscribe(callback)` はコールバックを返し、`unsubscribe(callback)` で解除できます。クライアントが検知したスポーンだけが対象で、`beforeEvents` には対応イベントがありません。`system.run` / `runTimeout` / `runInterval` / `clearRun` はティック単位で使えます。
-- `Player.sendMessage` は文字列と `text` / `rawtext` を受け付けます。`Player.addEffect` と `getEffects` の持続時間は **ティック** です（20 ティック = 1 秒）。`@bedrock/sdk` で指定・取得する効果時間は引き続き **秒** です。効果やメッセージはクライアント側だけに適用されます。
-- `Dimension.getBlock`、`Block.typeId` / `location`、インベントリなどの `ItemStack.typeId` / `amount` は読み取り用です。サーバー側の操作や未対応イベント、アイテムの追加メタデータは使えません。

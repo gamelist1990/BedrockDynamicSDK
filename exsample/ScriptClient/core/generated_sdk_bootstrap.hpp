@@ -1,496 +1,348 @@
-// Generated from exsample/ScriptClient/data/binding-registry.json by tools/generate_ts_sdk.py.
+// Embedded from sdk/ts/node_modules/@bedrock/sdk/index.js by tools/generate_ts_sdk.py.
 // Do not edit by hand.
 #pragma once
 
 namespace stageb {
 
 inline constexpr const char* kGeneratedBootstrap = R"STAGEB_BINDINGS(
-// Generated from exsample/ScriptClient/data/binding-registry.json (apiVersion 1.0.0).
-// Do not edit by hand; re-run tools/generate_ts_sdk.py.
-(function (root) {
+// Hand-authored ScriptClient SDK. The packager embeds this file verbatim.
+(function (root, H) {
   "use strict";
+  if (!H) throw new Error("@bedrock/sdk requires ScriptClient");
 
-  function installSdkModule(H) {
-    if (!H) {
-      throw new Error("@bedrock/sdk requires the BedrockDynamicSDK ScriptClient host runtime");
-    }
-
-    class CommandBuilder {
-      constructor(id) {
-        this.__id = id;
-        this.__literals = [];
-        this.__args = [];
-      }
-      literal(value) {
-        this.__literals.push(String(value));
-        return this;
-      }
-      argument(name, spec) {
-        this.__args.push({ name: String(name), spec: spec });
-        return this;
-      }
-      executes(handler) {
-        H.executes(this.__id, this.__literals, this.__args, handler);
-        this.__literals = [];
-        this.__args = [];
-        return this;
-      }
-    }
-
-    class ItemStack {
-      constructor(typeId, amount) {
-        if (typeof typeId !== 'string' || typeId.length === 0) {
-          const err = new Error('ItemStack requires a non-empty typeId');
-          err.code = 'Invalid';
-          throw err;
-        }
-        const amt = amount === undefined ? 1 : Number(amount);
-        if (!Number.isFinite(amt) || amt < 0 || Math.trunc(amt) !== amt) {
-          const err = new Error('ItemStack amount must be a non-negative integer');
-          err.code = 'Invalid';
-          throw err;
-        }
-        Object.defineProperty(this, '__typeId', { value: String(typeId), enumerable: false });
-        Object.defineProperty(this, '__amount', { value: amt >>> 0, enumerable: false });
-      }
-      get typeId() { return this.__typeId; }
-      get amount() { return this.__amount; }
-    }
-
-    class Block {
-      constructor(dimId, pos, typeId) {
-        Object.defineProperty(this, '__dimId', { value: String(dimId), enumerable: false });
-        Object.defineProperty(this, '__pos', {
-          value: { x: Math.trunc(pos.x), y: Math.trunc(pos.y), z: Math.trunc(pos.z) },
-          enumerable: false
-        });
-        Object.defineProperty(this, '__typeId', { value: String(typeId), enumerable: false });
-      }
-      get typeId() { return this.__typeId; }
-      get location() { return { x: this.__pos.x, y: this.__pos.y, z: this.__pos.z }; }
-      setType(typeId) {
-        return H.blockSetType(this.__dimId, this.__pos.x, this.__pos.y, this.__pos.z, String(typeId));
-      }
-    }
-
-    class Dimension {
-      constructor(dimId) {
-        Object.defineProperty(this, '__dimId', { value: String(dimId), enumerable: false });
-      }
-      get id() { return this.__dimId; }
-      get typeId() { return this.__dimId; }
-      getBlock(pos) {
-        if (!pos || typeof pos !== 'object') {
-          const err = new Error('getBlock expects a BlockPosition {x,y,z}');
-          err.code = 'Invalid';
-          throw err;
-        }
-        const t = H.dimensionGetBlock(this.__dimId, Math.trunc(pos.x), Math.trunc(pos.y), Math.trunc(pos.z));
-        if (t === undefined) return undefined;
-        return new Block(this.__dimId, pos, t);
-      }
-      getEntities() {
-        const list = H.dimensionGetEntities(this.__dimId) || [];
-        return list.map(function (entry) {
-          return entry.isPlayer ? new Player(entry.id) : new Entity(entry.id);
-        });
-      }
-      spawnEntity(typeId, pos) {
-        if (!pos || typeof pos !== 'object') {
-          const err = new Error('spawnEntity expects a Vector3 {x,y,z}');
-          err.code = 'Invalid';
-          throw err;
-        }
-        const id = H.dimensionSpawnEntity(this.__dimId, String(typeId), Number(pos.x), Number(pos.y), Number(pos.z));
-        return new Entity(id);
-      }
-    }
-
-    class Entity {
-      constructor(id) {
-        Object.defineProperty(this, '__id', { value: Number(id), enumerable: false });
-      }
-      get id() { return String(this.__id); }
-      get isValid() { return Boolean(H.entityIsValid(this.__id)); }
-      get typeId() { return H.entityTypeId(this.__id); }
-      get location() { return H.entityLocation(this.__id); }
-      get rotation() { return H.entityRotation(this.__id); }
-      get dimension() {
-        const d = H.entityDimension(this.__id);
-        return d === undefined ? undefined : new Dimension(d);
-      }
-      getRotation() { return H.entityRotation(this.__id); }
-      getItemStack() {
-        const item = H.entityGetItemStack(this.__id);
-        return item === undefined ? undefined : new ItemStack(item.typeId, item.amount);
-      }
-      teleport(pos) {
-        if (!pos || typeof pos !== 'object') {
-          const err = new Error('teleport expects a Vector3 {x,y,z}');
-          err.code = 'Invalid';
-          throw err;
-        }
-        return H.entityTeleport(this.__id, Number(pos.x), Number(pos.y), Number(pos.z));
-      }
-      addTag(tag) {
-        return H.entityAddTag(this.__id, String(tag));
-      }
-      getDynamicProperty(key) {
-        return H.entityGetDynamicProperty(this.__id, String(key));
-      }
-      setDynamicProperty(key, value) {
-        return H.entitySetDynamicProperty(this.__id, String(key), value);
-      }
-      getComponent(componentId) {
-        const raw = H.entityGetComponent(this.__id, String(componentId));
-        if (raw === undefined) return undefined;
-        if (raw.__kind === 'inventory') {
-          const slots = (raw.slots || []).map(function (s) {
-            return s ? new ItemStack(s.typeId, s.amount) : undefined;
-          });
-          const container = {
-            size: slots.length,
-            getItem: function (slot) {
-              const idx = Math.trunc(Number(slot));
-              return (idx >= 0 && idx < slots.length) ? slots[idx] : undefined;
-            }
-          };
-          return {
-            typeId: 'minecraft:inventory',
-            size: slots.length,
-            container: container,
-            getItem: container.getItem
-          };
-        }
-        if (raw.__kind === 'equippable') {
-          const map = raw.slots || {};
-          return {
-            typeId: 'minecraft:equippable',
-            getEquipment: function (slot) {
-              const key = String(slot);
-              const s = map[key];
-              return s ? new ItemStack(s.typeId, s.amount) : undefined;
-            }
-          };
-        }
-        if (raw.typeId === 'minecraft:item' && raw.itemStack) {
-          return {
-            typeId: 'minecraft:item',
-            itemStack: new ItemStack(raw.itemStack.typeId, raw.itemStack.amount)
-          };
-        }
-        return raw;
-      }
-    }
-
-    class Player extends Entity {
-      constructor(id) {
-        super(id);
-      }
-      get name() { return H.playerName(this.__id); }
-      sendMessage(text) { return H.playerSendMessage(this.__id, String(text)); }
-      addEffect(typeId, durationSeconds, options) {
-        const opts = options || {};
-        const amp = opts.amplifier === undefined ? 0 : Number(opts.amplifier);
-        const vis = opts.showParticles === undefined ? true : Boolean(opts.showParticles);
-        return H.playerAddEffect(this.__id, String(typeId), Number(durationSeconds), amp, vis);
-      }
-      removeEffect(typeId) {
-        return H.playerRemoveEffect(this.__id, String(typeId));
-      }
-      clearEffects() {
-        return H.playerClearEffects(this.__id);
-      }
-      getEffects() {
-        return H.playerGetEffects(this.__id);
-      }
-    }
-
-    const Setting = {
-      toggle: function (id, labelKey, initial, descriptionKey) {
-        return {
-          kind: 'toggle',
-          id: String(id),
-          labelKey: String(labelKey),
-          initial: Boolean(initial),
-          descriptionKey: descriptionKey === undefined ? '' : String(descriptionKey)
-        };
-      },
-      slider: function (id, labelKey, initial, minimum, maximum, step, descriptionKey) {
-        return {
-          kind: 'slider',
-          id: String(id),
-          labelKey: String(labelKey),
-          initial: Number(initial),
-          minimum: Number(minimum),
-          maximum: Number(maximum),
-          step: step === undefined ? 1 : Number(step),
-          descriptionKey: descriptionKey === undefined ? '' : String(descriptionKey)
-        };
-      },
-      choice: function (id, labelKey, initial, choices, descriptionKey) {
-        return {
-          kind: 'choice',
-          id: String(id),
-          labelKey: String(labelKey),
-          initial: String(initial),
-          choices: Array.isArray(choices) ? choices : [],
-          descriptionKey: descriptionKey === undefined ? '' : String(descriptionKey)
-        };
-      },
-      text: function (id, labelKey, descriptionKey) {
-        return {
-          kind: 'text',
-          id: String(id),
-          labelKey: String(labelKey),
-          descriptionKey: descriptionKey === undefined ? '' : String(descriptionKey)
-        };
-      }
-    };
-
-    class SettingsPageBuilder {
-      constructor(titleKey) {
-        this.__titleKey = String(titleKey);
-      }
-      add(setting) {
-        H.settingsAdd(this.__titleKey, setting);
-        return this;
-      }
-      locale(localeId, entries) {
-        H.settingsLocale(this.__titleKey, String(localeId), entries);
-        return this;
-      }
-      onChange(callback) {
-        H.settingsOnChange(this.__titleKey, callback);
-        return this;
-      }
-      modName(key) {
-        H.settingsModName(this.__titleKey, String(key));
-        return this;
-      }
-      registerPage() {
-        H.settingsRegisterPage(this.__titleKey);
-        return this;
-      }
-      unregisterPage() {
-        H.settingsUnregisterPage(this.__titleKey);
-        return this;
-      }
-      value(settingId) {
-        return H.settingsValue(this.__titleKey, String(settingId));
-      }
-    }
-
-    const keybindsObject = {
-      add: function (id, labelKey, defaultKey) {
-        H.keybindAdd(String(id), String(labelKey), defaultKey);
-        return keybindsObject;
-      },
-      locale: function (localeId, entries) {
-        H.keybindLocale(String(localeId), entries);
-        return keybindsObject;
-      },
-      key: function (id) {
-        return H.keybindKey(String(id));
-      },
-      changed: {
-        subscribe: function (fn) {
-          const subId = H.keybindSubscribe(fn);
-          return {
-            remove: function () { H.keybindUnsubscribe(subId); }
-          };
-        }
-      }
-    };
-
-    const brightnessObject = {
-      setGamma: function (gamma) {
-        H.brightnessSetGamma(gamma);
-      }
-    };
-
-    // Synchronous, sandboxed per-Mod file surface. The host owns the data root
-    // and rejects absolute/escaping paths; readJson/writeJson are thin JS
-    // wrappers over the same readText/writeText primitives.
-    const filesObject = {
-      get dataDir() { return H.filesDataDir(); },
-      readText: function (path) { return H.filesReadText(String(path)); },
-      writeText: function (path, text) { return H.filesWriteText(String(path), String(text)); },
-      appendText: function (path, text) { return H.filesAppendText(String(path), String(text)); },
-      readBytes: function (path) { return H.filesReadBytes(String(path)); },
-      writeBytes: function (path, bytes) { return H.filesWriteBytes(String(path), bytes); },
-      readJson: function (path) { return JSON.parse(H.filesReadText(String(path))); },
-      writeJson: function (path, value) { return H.filesWriteText(String(path), JSON.stringify(value)); },
-      exists: function (path) { return H.filesExists(String(path)); },
-      stat: function (path) { return H.filesStat(String(path)); },
-      list: function (path) { return H.filesList(path === undefined ? '.' : String(path)); },
-      mkdir: function (path) { return H.filesMkdir(String(path)); },
-      remove: function (path, options) {
-        return H.filesRemove(String(path), Boolean(options && options.recursive));
-      },
-      rename: function (from, to) { return H.filesRename(String(from), String(to)); }
-    };
-
-    const worldSingleton = {
-      localPlayer: function () {
-        const id = H.worldLocalPlayer();
-        return id === undefined ? undefined : new Player(id);
-      },
-      getAllPlayers: function () {
-        const ids = H.worldGetAllPlayers() || [];
-        return ids.map(function (id) { return new Player(id); });
-      },
-      getPlayers: function () {
-        const ids = H.worldGetAllPlayers() || [];
-        return ids.map(function (id) { return new Player(id); });
-      },
-      get currentDimension() {
-        const d = H.worldCurrentDimension();
-        return d === undefined ? undefined : new Dimension(d);
-      },
-      getDimension: function (id) {
-        const d = H.worldGetDimension(String(id));
-        return d === undefined ? undefined : new Dimension(d);
-      },
-      sendMessage: function (text) {
-        return H.worldSendMessage(String(text));
-      },
-      getDynamicProperty: function (key) {
-        return H.worldGetDynamicProperty(String(key));
-      },
-      setDynamicProperty: function (key, value) {
-        return H.worldSetDynamicProperty(String(key), value);
-      },
-      afterEvents: {
-        playerSpawn: {
-          subscribe: function (fn) {
-            const subId = H.worldSubscribePlayerSpawn(fn);
-            return {
-              remove: function () { H.worldUnsubscribePlayerSpawn(subId); }
-            };
-          },
-          unsubscribe: function (handle) {
-            if (handle && typeof handle.remove === 'function') handle.remove();
-          }
-        }
-      }
-    };
-
-    class Mod {
-      constructor() {
-        const scope = H.createScope();
-        this.__scope = scope;
-        this.commands = {
-          register(name, callback) {
-            callback(new CommandBuilder(H.beginCommand(String(name))));
-          },
-          unregister(name) { H.unregisterCommand(String(name)); }
-        };
-        this.settings = function (titleKey) {
-          return new SettingsPageBuilder(titleKey);
-        };
-        this.keybinds = keybindsObject;
-        this.brightness = brightnessObject;
-        this.files = filesObject;
-        this.world = worldSingleton;
-        this.system = H.systemObject();
-      }
-      onEnable() {}
-      onDisable() {}
-      onUpdate() {}
-      onKeybind() {}
-    }
-
-    const Arg = {
-    effect: function (o) { return Object.assign({ __kind: 'effect' }, o || {}); },
-    duration: function (o) { return Object.assign({ __kind: 'duration' }, o || {}); },
-    int: function (o) { return Object.assign({ __kind: 'int' }, o || {}); },
-    bool: function (o) { return Object.assign({ __kind: 'bool' }, o || {}); },
-    string: function (o) { return Object.assign({ __kind: 'string' }, o || {}); },
-    message: function (o) { return Object.assign({ __kind: 'message' }, o || {}); },
-    float: function (o) { return Object.assign({ __kind: 'float' }, o || {}); }
-    };
-
-    const EquipmentSlot = {
-      MainHand: 'MainHand',
-      Offhand: 'Offhand',
-      Head: 'Head',
-      Chest: 'Chest',
-      Legs: 'Legs',
-      Feet: 'Feet'
-    };
-
-    root.__stagebMakePlayer = function (id) { return new Player(id); };
-    root.__stagebMakeEntity = function (id) { return new Entity(id); };
-
-    const devObject = {
-      memory: {
-        readBytes: function (address, length) {
-          return H.devMemoryReadBytes(Number(address), Number(length));
-        },
-        readU32: function (address) {
-          return H.devMemoryReadU32(Number(address));
-        },
-        readI64: function (address) {
-          return H.devMemoryReadI64(Number(address));
-        },
-        readF32: function (address) {
-          return H.devMemoryReadF32(Number(address));
-        },
-        readPtr: function (address) {
-          return H.devMemoryReadPtr(Number(address));
-        },
-        writeBytes: function (address, bytes) {
-          return H.devMemoryWriteBytes(Number(address), bytes);
-        },
-        scanAob: function (pattern) {
-          return H.devMemoryScanAob(String(pattern));
-        }
-      },
-      symbols: {
-        list: function () {
-          return H.devSymbolsList();
-        },
-        status: function (name) {
-          return H.devSymbolsStatus(String(name));
-        }
-      },
-      module: {
-        info: function () {
-          return H.devModuleInfo();
-        }
-      }
-    };
-
-    const sdkModule = {
-      Mod: Mod,
-      Arg: Arg,
-      Setting: Setting,
-      ItemStack: ItemStack,
-      EquipmentSlot: EquipmentSlot,
-      brightness: brightnessObject,
-      files: filesObject,
-      world: worldSingleton,
-      system: H.systemObject(),
-      dev: devObject
-    };
-    root.__sdkModule = sdkModule;
-    return sdkModule;
+  const hostOnly = Symbol("host-only constructor");
+  const TicksPerSecond = 20;
+  const maxTicks = 0x7fffffff;
+  function invalid(message) {
+    throw Object.assign(new Error(message), { code: "Invalid" });
+  }
+  function assertHost(token) {
+    if (token !== hostOnly) invalid("This object is created by ScriptClient");
+  }
+  function typeId(id) {
+    if (typeof id !== "string" || !id) invalid("Expected a type identifier");
+    return id.includes(":") ? id : `minecraft:${id}`;
+  }
+  function textOf(message, depth = 0) {
+    if (typeof message === "string") return message;
+    if (!message || typeof message !== "object" || depth >= 32)
+      invalid("Expected a string or text-only RawMessage");
+    if ("translate" in message || "score" in message || "with" in message)
+      throw Object.assign(new Error("Only text RawMessage tokens are supported"), { code: "Unavailable" });
+    if (typeof message.text === "string") return message.text;
+    if (Array.isArray(message.rawtext))
+      return message.rawtext.map(part => textOf(part, depth + 1)).join("");
+    invalid("Expected text or rawtext");
+  }
+  function tickCount(value, min) {
+    if (!Number.isInteger(value) || value < min || value > maxTicks)
+      invalid(`Expected an integer tick count in ${min}..${maxTicks}`);
+    return value;
+  }
+  function secondsToTicks(seconds) {
+    return Math.round(seconds * TicksPerSecond);
+  }
+  function effectSeconds(ticks) {
+    if (ticks === Infinity) return Infinity;
+    const seconds = tickCount(ticks, 1) / TicksPerSecond;
+    // The host multiplies by 20 and the game truncates to an integer.
+    return seconds * TicksPerSecond < ticks ? seconds * (1 + Number.EPSILON) : seconds;
   }
 
-  if (root.__bedrockHost) {
-    installSdkModule(root.__bedrockHost);
+  class EventSignal {
+    #add;
+    #remove;
+    #subscriptions = new Map();
+    constructor(token, add, remove) {
+      assertHost(token);
+      this.#add = add;
+      this.#remove = remove;
+    }
+    subscribe(callback) {
+      if (typeof callback !== "function") invalid("Expected an event callback");
+      if (!this.#subscriptions.has(callback))
+        this.#subscriptions.set(callback, this.#add(callback));
+      return callback;
+    }
+    unsubscribe(callback) {
+      if (!this.#subscriptions.has(callback)) return;
+      this.#remove(this.#subscriptions.get(callback));
+      this.#subscriptions.delete(callback);
+    }
   }
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = root.__sdkModule || new Proxy({}, {
-      get: function (_target, prop) {
-        if (root.__sdkModule) return root.__sdkModule[prop];
-        if (root.__bedrockHost) return installSdkModule(root.__bedrockHost)[prop];
-        throw new Error("@bedrock/sdk is a BedrockDynamicSDK host-bound module and cannot be invoked outside ScriptClient");
+
+  class ItemStack {
+    #typeId;
+    #amount;
+    constructor(id, amount = 1) {
+      this.#typeId = typeId(id);
+      if (!Number.isInteger(amount) || amount < 0 || amount > 0xffffffff)
+        invalid("Item amount must be an unsigned 32-bit integer");
+      this.#amount = amount;
+    }
+    get typeId() { return this.#typeId; }
+    get amount() { return this.#amount; }
+  }
+  const itemStack = item => item ? new ItemStack(item.typeId, item.amount) : undefined;
+  const EquipmentSlot = Object.freeze({
+    Mainhand: "Mainhand", Offhand: "Offhand", Head: "Head", Chest: "Chest", Legs: "Legs", Feet: "Feet",
+  });
+
+  class Block {
+    #dimension;
+    #location;
+    #typeId;
+    constructor(token, dimension, location, id) {
+      assertHost(token);
+      this.#dimension = dimension;
+      this.#location = location;
+      this.#typeId = id;
+    }
+    get dimension() { return this.#dimension; }
+    get location() { return { ...this.#location }; }
+    get typeId() { return this.#typeId; }
+    get x() { return this.#location.x; }
+    get y() { return this.#location.y; }
+    get z() { return this.#location.z; }
+    setType(id) { H.blockSetType(this.dimension.id, this.x, this.y, this.z, typeId(id)); }
+  }
+
+  class Dimension {
+    #id;
+    constructor(token, id) {
+      assertHost(token);
+      this.#id = id;
+    }
+    get id() { return this.#id; }
+    getBlock(location) {
+      const x = Math.floor(location?.x ?? NaN);
+      const y = Math.floor(location?.y ?? NaN);
+      const z = Math.floor(location?.z ?? NaN);
+      if (![x, y, z].every(n => Number.isInteger(n) && n >= -0x80000000 && n <= 0x7fffffff))
+        invalid("Expected a finite block location in the signed 32-bit range");
+      const id = H.dimensionGetBlock(this.#id, x, y, z);
+      return id === undefined ? undefined : new Block(hostOnly, this, { x, y, z }, id);
+    }
+    getEntities() {
+      return H.dimensionGetEntities(this.#id).map(({ id, isPlayer }) =>
+        isPlayer ? makePlayer(id) : new Entity(hostOnly, id));
+    }
+  }
+  const dimension = id => id === undefined ? undefined : new Dimension(hostOnly, id);
+
+  class Entity {
+    #id;
+    constructor(token, id) {
+      assertHost(token);
+      this.#id = id;
+    }
+    get id() { return String(this.#id); }
+    get isValid() { return H.entityIsValid(this.#id); }
+    get typeId() { return H.entityTypeId(this.#id); }
+    get location() { return H.entityLocation(this.#id); }
+    get dimension() { return dimension(H.entityDimension(this.#id)); }
+    getRotation() { return H.entityRotation(this.#id); }
+    getDynamicProperty(key) { return H.entityGetDynamicProperty(this.#id, key); }
+    setDynamicProperty(key, value) { H.entitySetDynamicProperty(this.#id, key, value); }
+    getComponent(id) {
+      const component = H.entityGetComponent(this.#id, typeId(id));
+      if (!component) return undefined;
+      if (component.__kind === "inventory") {
+        const slots = component.slots.map(itemStack);
+        return { typeId: "minecraft:inventory", container: {
+          size: slots.length,
+          getItem: slot => Number.isInteger(slot) ? slots[slot] : undefined,
+        } };
       }
+      if (component.__kind === "equippable") {
+        const slots = component.slots;
+        return { typeId: "minecraft:equippable", getEquipment(slot) {
+          const key = String(slot).toLowerCase();
+          return Object.hasOwn(slots, key) ? itemStack(slots[key]) : undefined;
+        } };
+      }
+      if (component.typeId === "minecraft:item")
+        return { typeId: component.typeId, itemStack: itemStack(component.itemStack) };
+      return component;
+    }
+  }
+
+  class Effect {
+    #snapshot;
+    constructor(token, snapshot) {
+      assertHost(token);
+      this.#snapshot = snapshot;
+    }
+    get typeId() { return this.#snapshot.typeId; }
+    get duration() { return secondsToTicks(this.#snapshot.duration); }
+    get amplifier() { return this.#snapshot.amplifier; }
+    get showParticles() { return this.#snapshot.showParticles; }
+  }
+  class Player extends Entity {
+    #id;
+    constructor(token, id) {
+      super(token, id);
+      this.#id = id;
+    }
+    get name() { return H.playerName(this.#id); }
+    sendMessage(message) { H.playerSendMessage(this.#id, textOf(message)); }
+    addEffect(id, duration, { amplifier = 0, showParticles = true } = {}) {
+      if (!Number.isInteger(amplifier) || amplifier < 0 || amplifier > 255)
+        invalid("Effect amplifier must be 0..255");
+      H.playerAddEffect(this.#id, typeId(id), effectSeconds(duration), amplifier, showParticles);
+    }
+    getEffects() { return H.playerGetEffects(this.#id).map(data => new Effect(hostOnly, data)); }
+    getEffect(id) {
+      const key = typeId(id);
+      return this.getEffects().find(effect => typeId(effect.typeId) === key);
+    }
+    removeEffect(id) { return H.playerRemoveEffect(this.#id, typeId(id)); }
+    clearEffects() { H.playerClearEffects(this.#id); }
+  }
+  function makePlayer(id) { return id === undefined ? undefined : new Player(hostOnly, id); }
+  const allPlayers = () => H.worldGetAllPlayers().map(makePlayer);
+  const world = Object.freeze({
+    afterEvents: Object.freeze({
+      playerSpawn: new EventSignal(hostOnly, H.worldSubscribePlayerSpawn, H.worldUnsubscribePlayerSpawn),
+    }),
+    getLocalPlayer: () => makePlayer(H.worldLocalPlayer()),
+    getAllPlayers: allPlayers,
+    getPlayers(options = {}) {
+      const { name, excludeNames = [] } = options;
+      if (Object.keys(options).some(key => key !== "name" && key !== "excludeNames") ||
+          (name !== undefined && typeof name !== "string") || !Array.isArray(excludeNames) ||
+          !excludeNames.every(entry => typeof entry === "string"))
+        invalid("Only name and excludeNames player queries are supported");
+      return allPlayers().filter(player => {
+        const playerName = player.name;
+        return (name === undefined || playerName === name) && !excludeNames.includes(playerName);
+      });
+    },
+    get currentDimension() { return dimension(H.worldCurrentDimension()); },
+    getDimension: id => dimension(H.worldGetDimension(typeId(id))),
+    sendMessage: message => H.worldSendMessage(textOf(message)),
+    getDynamicProperty: H.worldGetDynamicProperty,
+    setDynamicProperty: H.worldSetDynamicProperty,
+  });
+
+  const commandKinds = new Set(["effect", "duration", "int", "bool", "string", "message", "float"]);
+  function commandBranch({ literals = [], parameters = [], execute }) {
+    if (typeof execute !== "function") invalid("Expected a command handler");
+    const durations = new Set();
+    const args = parameters.map(({ name, kind, ...options }) => {
+      if (!commandKinds.has(kind)) invalid(`Unknown command parameter kind: ${kind}`);
+      if (kind === "duration") {
+        durations.add(name);
+        if (options.default !== undefined) {
+          if (options.default === Infinity) {
+            if (!options.infinity) invalid("An infinite duration default requires infinity: true");
+          } else tickCount(options.default, 0);
+          // QuickJS's arrow-parameter lookahead can leave a pending exception
+          // if it misreads a slash after `.default` as a regexp.
+          options.default = (options.default) / TicksPerSecond;
+        }
+      }
+      return { name, spec: { ...options, __kind: kind } };
     });
+    const convert = (name, value) =>
+      value !== undefined && durations.has(name) ? secondsToTicks(value) : value;
+    return {
+      literals, args, execute: context => execute(Object.freeze({
+        get: name => convert(name, context.get(name)),
+        getOptional: name => convert(name, context.getOptional(name)),
+        rawLine: () => context.rawLine(),
+        respond: text => context.respond(text),
+      })),
+    };
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+  const commands = Object.freeze({
+    register(name, branches) {
+      const compiled = branches.map(commandBranch);
+      if (!compiled.length) invalid("Expected at least one command branch");
+      const id = H.beginCommand(name);
+      for (const branch of compiled) H.executes(id, branch.literals, branch.args, branch.execute);
+    },
+    unregister: H.unregisterCommand,
+  });
+
+  const Setting = Object.freeze({
+    toggle: (id, labelKey, initial, descriptionKey) => ({ kind: "toggle", id, labelKey, initial, descriptionKey }),
+    slider: (id, labelKey, initial, minimum, maximum, step = 1, descriptionKey) =>
+      ({ kind: "slider", id, labelKey, initial, minimum, maximum, step, descriptionKey }),
+    choice: (id, labelKey, initial, choices, descriptionKey) =>
+      ({ kind: "choice", id, labelKey, initial, choices, descriptionKey }),
+    text: (id, labelKey, descriptionKey) => ({ kind: "text", id, labelKey, descriptionKey }),
+  });
+  function settings(titleKey) {
+    const page = Object.freeze({
+      add(control) { H.settingsAdd(titleKey, control); return page; },
+      locale(id, entries) { H.settingsLocale(titleKey, id, entries); return page; },
+      onChange(callback) { H.settingsOnChange(titleKey, callback); return page; },
+      modName(key) { H.settingsModName(titleKey, key); return page; },
+      registerPage() { H.settingsRegisterPage(titleKey); return page; },
+      unregisterPage() { H.settingsUnregisterPage(titleKey); return page; },
+      value: id => H.settingsValue(titleKey, id),
+    });
+    return page;
+  }
+  const keybinds = Object.freeze({
+    add(id, labelKey, defaultKey) { H.keybindAdd(id, labelKey, defaultKey); return keybinds; },
+    locale(id, entries) { H.keybindLocale(id, entries); return keybinds; },
+    key: H.keybindKey,
+  });
+  const brightness = Object.freeze({ setGamma: H.brightnessSetGamma });
+
+  // Native tasks are dispatched in ascending task ID order. This private,
+  // realm-lifetime interval runs before any public task on each scheduler pulse.
+  let currentTick = 0;
+  const clock = H.systemRunInterval(() => { ++currentTick; }, 1);
+  const system = Object.freeze({
+    get currentTick() { return currentTick; },
+    afterEvents: Object.freeze({
+      keybindChanged: new EventSignal(hostOnly, H.keybindSubscribe, H.keybindUnsubscribe),
+    }),
+    run: H.systemRun,
+    runTimeout: (callback, delay = 0) => H.systemRunTimeout(callback, tickCount(delay, 0)),
+    runInterval: (callback, interval = 1) => H.systemRunInterval(callback, tickCount(interval, 1)),
+    clearRun(id) {
+      if (!Number.isSafeInteger(id) || id < 0) invalid("Expected a valid run ID");
+      return id !== clock && H.systemClear(id);
+    },
+    commands, settings, keybinds,
+  });
+
+  const files = Object.freeze({
+    get dataDir() { return H.filesDataDir(); },
+    readText: H.filesReadText, writeText: H.filesWriteText, appendText: H.filesAppendText,
+    readBytes: H.filesReadBytes, writeBytes: H.filesWriteBytes, appendBytes: H.filesAppendBytes,
+    readJson: path => JSON.parse(H.filesReadText(path)),
+    writeJson(path, value) {
+      const json = JSON.stringify(value);
+      if (json === undefined) invalid("Value is not JSON-serializable");
+      H.filesWriteText(path, json);
+    },
+    exists: H.filesExists, stat: H.filesStat, list: (path = ".") => H.filesList(path),
+    mkdir: H.filesMkdir, remove: (path, options) => H.filesRemove(path, options?.recursive ?? false),
+    rename: H.filesRename, copy: (from, to, options) => H.filesCopy(from, to, options?.exclusive ?? false),
+  });
+  const dev = Object.freeze({
+    memory: Object.freeze({
+      readBytes: H.devMemoryReadBytes, readU32: H.devMemoryReadU32, readI64: H.devMemoryReadI64,
+      readF32: H.devMemoryReadF32, readPtr: H.devMemoryReadPtr,
+      writeBytes: H.devMemoryWriteBytes, scanAob: H.devMemoryScanAob,
+    }),
+    symbols: Object.freeze({ list: H.devSymbolsList, status: H.devSymbolsStatus }),
+    module: Object.freeze({ info: H.devModuleInfo }),
+  });
+
+  const sdk = Object.freeze({
+    world, system, Entity, Player, Dimension, Block, Effect, ItemStack, EventSignal,
+    EquipmentSlot, TicksPerSecond, Setting, brightness, files, dev,
+  });
+  root.__stagebMakePlayer = makePlayer;
+  root.__sdkModule = sdk;
+  if (typeof module !== "undefined") module.exports = sdk;
+})(globalThis, globalThis.__bedrockHost);
 )STAGEB_BINDINGS";
 
 } // namespace stageb

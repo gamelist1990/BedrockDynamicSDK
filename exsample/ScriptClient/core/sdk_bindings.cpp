@@ -31,10 +31,8 @@ std::string toHex(T value) {
     return ss.str();
 }
 
-// §5.3 / §6.4 / §11: the frozen apiVersion 1.0.0 binding bootstrap is generated
-// by Stage C (`tools/generate_ts_sdk.py`) from `data/binding-registry.json`.
-// The C++ host functions are attached as __bedrockHost before this runs; plugin
-// code only sees the Mod/Arg/world/system/Setting/ItemStack/brightness surface.
+// The generated header embeds the hand-authored JS SDK. The existing host
+// functions are attached as __bedrockHost before it runs.
 constexpr const char* kBootstrap = kGeneratedBootstrap;
 
 #ifdef _WIN32

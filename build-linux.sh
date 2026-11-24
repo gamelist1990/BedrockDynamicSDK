@@ -120,21 +120,15 @@ if [ "$STAGE_B" = 1 ]; then
   build_one ScriptClient exsample/ScriptClient "$LATEST"
 
   if [ -d "sdk/ts/node_modules" ]; then
-    mkdir -p dist/sdk/ts
-    cp -R sdk/ts/. dist/sdk/ts/
+    # This is a generated package tree, not a mod/user data directory.
+    cmake -E rm -rf dist/sdk/ts
+    cp -R sdk/ts dist/sdk/
     echo "staged TypeScript SDK packages: dist/sdk/ts/node_modules/@bedrock/{sdk,vanilla-data}"
   fi
 
-  # Stage the unmodified golden case next to the DLL (DESIGN §3.1/§10.3-2).
-  # The source project under ~/WorkSpace/ts-mods is never edited.
-  GOLDEN="$HOME/WorkSpace/ts-mods/EffectFake"
-  if [ -d "$GOLDEN" ]; then
-    mkdir -p "dist/$LATEST/mods"
-    cp -R "$GOLDEN/." "dist/$LATEST/mods/EffectFake/"
-    echo "staged golden mod: dist/$LATEST/mods/EffectFake"
-  else
-    echo "warning: golden mod not found at $GOLDEN (manual staging required)"
-  fi
+  mkdir -p "dist/$LATEST/mods"
+  cp -R tests/golden/EffectFake/. "dist/$LATEST/mods/EffectFake/"
+  echo "staged golden mod: dist/$LATEST/mods/EffectFake"
 
   file "dist/$LATEST/ScriptClient.dll" "dist/$LATEST/CheckSig.dll" \
        dist/sdk/BedrockHookRuntime.dll dist/sdk/BedrockSymbolProbe.dll dist/sdk/BedrockClientLocator.dll

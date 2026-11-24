@@ -3,7 +3,7 @@
   "apiVersion": "1.0.0",
   "packageName": "@bedrock/sdk",
   "vanillaPackageName": "@bedrock/vanilla-data",
-  "description": "Machine-readable Stage B/C binding surface. Stage C generates @bedrock/sdk (.d.ts, index.js, package.json) and @bedrock/sdk-bootstrapheader from this registry (DESIGN.md §11).",
+  "description": "Historical Stage B/C public binding inventory (v1); the hand-authored TypeScript SDK is the source of truth for v2.",
   "naming": {
     "case": "camelCase",
     "getter": "C++ accessor -> JS property",
@@ -169,6 +169,6 @@
     }
   ],
   "errorCodes": ["Invalid", "AlreadyRegistered", "NotFound", "WrongType", "Storage", "Unavailable", "BufferTooSmall", "Internal"],
-  "builtinModules": ["@bedrock/sdk", "@bedrock/vanilla-data", "@minecraft/server", "@minecraft/server-net", "fs", "fs/promises", "path", "events", "os"],
+  "builtinModules": ["@bedrock/sdk", "@bedrock/vanilla-data", "@minecraft/server-net", "fs", "fs/promises", "path", "events", "os"],
   "commandArgs": ["effect", "duration", "int", "bool", "string", "message", "float"]
 }
