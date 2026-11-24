@@ -46,6 +46,11 @@
           "kind": "creator-frontend-proven",
           "evidence": "RVA 0x5E9220; entry bytes 55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68. The historical [Sound][verbose] format literal is called through this front end at RVA 0xB020EA with (flags=1, severity ordinal 0, area 29). It borrows the Creator listener service (guard pointer VA 0x1528C2F60 -> validity byte 1; service pointer VA 0x1528C2F70, +0x18 == 1) and dispatches via 0x3D0610 -> 0x3D0680 to the registered listeners (file listener slot 0x3D4670; GUI listener 0x19284E0 -> ingress queue -> bounded history). BOL proof 2026-11-24 (OpenCode sol, verified firsthand by Muse): probe markers OC-CL-9C43F61D-20261124-T1/-T2 appeared in the Content Log GUI history and in ContentLog2026-11-24_00-56-19_1.txt lines 1 and 3 after normal exit.",
           "note": "This is a separate subsystem from both the ResultLogger funnel (0x3B13E0) and the BedrockLog core (0x3CF040, one-hot levels 1/2/4/8, channel selected by first argument). The funnel conclusion stands for the funnel; it was never the Creator producer. Evidence: ~/Documents/PEXData/contentlog-handoff/opencode-report.md, chunk1-4."
+        },
+        {
+          "kind": "creator-scripting-area-proven",
+          "evidence": "Creator file formatter RVA 0x3D5080 and GUI listener RVA 0x19284E0 use the same 40-entry area table at RVA 0xF001320; index 28 is Scripting. The game calls the same front end at RVA 0x68FD29A with flags=1 and area=28 for a DDUI property access diagnostic. In BOL 1.26.65.1 (EXE SHA-256 b5db23aad1fce6cdcb348a120e5cabf7dd9adf46f51c5bcf4345131211424ff4), the public SDK ContentLogProbe showed [Scripting][warning]-[ContentLogProbe] CPP_CONTENT_LOG_PROBE_1795515181262 in Creator Content Log History and in ContentLog2026-11-24_19-10-46_1.txt after normal exit.",
+          "note": "Both sinks include the area label; out-of-range ordinals map to unknown, not an empty label. Other severity ordinals with Scripting and flags other than 1 were not tested. Evidence: ~/Documents/PEXData/contentlog-area/opencode-report.md."
         }
       ],
       "symbol_to_add_when_resolved": {
@@ -60,7 +65,7 @@
         "expected_shape": "void __fastcall(uint32_t flags, uint32_t severityOrdinal, uint32_t area, const char* format, const char* const* arg1, const char* const* arg2); adapter call shape 'creator_emit'",
         "status_policy": "candidate with runtime_verified true after the 2026-11-24 BOL proof (GUI history + game file)"
       },
-      "runtime_behavior": "The adapter resolves ContentLog::emitCreator only (classes/ContentLog.json, call shape 'creator_emit'): entry-checked under SEH, the service guard/service pointers are re-validated on every call, and lines are emitted with the proven (flags=1, area=29) baseline and the severity ordinal mapped from the SDK level. The funnel symbol ContentLog::write was removed from the profile and the adapter on 2026-11-24 at the user's direction (investigated, not adopted); with the emit symbol absent the adapter fails closed exactly as before (file/debug logs kept). File logging is independent of the native writer. Live surfacing through the Creator front end is BOL-proven on 1.26.65.1 (GUI history + game file); only (flags=1, severity=0, area=29) is live-proven, other areas/severities are static-only."
+      "runtime_behavior": "The adapter resolves ContentLog::emitCreator only (classes/ContentLog.json, call shape 'creator_emit'): the entry is checked when loading the profile, the service guard/service pointers are re-validated under SEH on every call, and lines use the profile's flags=1 and area=28 (Scripting), with the severity ordinal mapped from the SDK level. The funnel symbol ContentLog::write was removed from the profile and adapter (investigated, not adopted). With the emit symbol absent the adapter fails closed; SDK file/debug logging is independent. The new default is BOL-proven at severity=2 (warning) in GUI history and the game file; the previous area=29 proof at severity=0 (verbose) remains historical evidence only."
     }
   }
 }
