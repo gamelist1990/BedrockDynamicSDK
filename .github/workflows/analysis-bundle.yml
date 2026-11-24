@@ -1,0 +1,131 @@
+name: Analysis bundle
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Target Minecraft executable version (e.g. 1.26.65.1)
+        type: string
+        required: true
+      exe_url:
+        description: Optional HTTPS URL overriding the target executable download
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve and download executables
+        id: executables
+        env:
+          GH_TOKEN: ${{ secrets.EXE_TRANSFER_TOKEN }}
+          TRANSFER_REPO: gamelist1990/bedrock-exe-transfer
+          TARGET_VERSION: ${{ inputs.version }}
+          EXE_URL: ${{ inputs.exe_url }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TARGET_VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+            echo "::error::Version must have four numeric components, e.g. 1.26.65.1."
+            exit 1
+          fi
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Add the Actions repository secret EXE_TRANSFER_TOKEN with access to gamelist1990/bedrock-exe-transfer. It is required for reference selection even with exe_url."
+            exit 1
+          fi
+
+          downloads="$RUNNER_TEMP/analysis-executables"
+          mkdir -p "$downloads"
+          gh api --paginate --slurp "repos/$TRANSFER_REPO/releases?per_page=100" > "$downloads/releases.json"
+          jq -r '
+            [.versions | to_entries[] | select(.value["windows-x64"]) | .key]
+            | sort_by(split(".") | map(tonumber)) | reverse | .[]
+          ' data/manifest.json > "$downloads/profile-versions.txt"
+
+          has_asset() {
+            jq -e --arg tag "$1" --arg asset "Minecraft.Windows-$1.exe" \
+              'any(.[][]; .tag_name == $tag and any(.assets[]; .name == $asset))' \
+              "$downloads/releases.json" > /dev/null
+          }
+          download_release_exe() {
+            gh release download "$1" --repo "$TRANSFER_REPO" \
+              --pattern "Minecraft.Windows-$1.exe" --output "$2"
+          }
+
+          reference_version=
+          while IFS= read -r version; do
+            if [[ -f "data/$version/windows-x64/manifest.json" ]] && has_asset "$version"; then
+              reference_version="$version"
+              break
+            fi
+          done < "$downloads/profile-versions.txt"
+          if [[ -z "$reference_version" ]]; then
+            echo "::error::No Windows x64 profile in data/ has a matching release executable in $TRANSFER_REPO."
+            exit 1
+          fi
+
+          target="$downloads/$TARGET_VERSION/Minecraft.Windows.exe"
+          reference="$downloads/$reference_version/Minecraft.Windows.exe"
+          mkdir -p "$(dirname "$target")" "$(dirname "$reference")"
+          if [[ -n "$EXE_URL" ]]; then
+            # Deliberately do not send the transfer token to the override URL.
+            curl --fail --silent --show-error --location --retry 3 \
+              --proto '=https' --proto-redir '=https' --output "$target" -- "$EXE_URL"
+          elif has_asset "$TARGET_VERSION"; then
+            download_release_exe "$TARGET_VERSION" "$target"
+          else
+            echo "::error::No Minecraft.Windows-$TARGET_VERSION.exe asset in $TRANSFER_REPO. Supply exe_url to override the target."
+            exit 1
+          fi
+          if [[ "$target" != "$reference" ]]; then
+            download_release_exe "$reference_version" "$reference"
+          fi
+
+          echo "Target: $TARGET_VERSION; reference: $reference_version"
+          {
+            echo "target=$target"
+            echo "reference=$reference"
+            echo "reference_version=$reference_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bundle dependencies
+        run: python -m pip install -r tools/re_package/requirements.txt
+      - name: Generate bundle
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+          TARGET_EXE: ${{ steps.executables.outputs.target }}
+          REFERENCE_EXE: ${{ steps.executables.outputs.reference }}
+          REFERENCE_VERSION: ${{ steps.executables.outputs.reference_version }}
+        run: |
+          set -euo pipefail
+          symbols="$RUNNER_TEMP/reference-symbols.json"
+          python -m tools.re_package.symbols_from_profile \
+            "data/$REFERENCE_VERSION/windows-x64/manifest.json" \
+            --reference-exe "$REFERENCE_EXE" --output "$symbols"
+          mkdir -p dist
+          archive="dist/Minecraft.Windows-$TARGET_VERSION.artifacts.zip"
+          python tools/re_package/re_package.py "$TARGET_EXE" \
+            --reference-exe "$REFERENCE_EXE" --symbols-json "$symbols" \
+            --no-binary --sdk-data data/ --output "$archive"
+          {
+            echo "## Analysis bundle"
+            echo "- Target: $TARGET_VERSION"
+            echo "- Reference: $REFERENCE_VERSION"
+            echo "- Size: $(stat -c '%s' "$archive") bytes"
+            echo "- SHA-256: \`$(sha256sum "$archive" | cut -d ' ' -f 1)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Minecraft.Windows-${{ inputs.version }}.artifacts
+          path: dist/*.artifacts.zip
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
