@@ -1269,6 +1269,7 @@ std::string readTestLog(const fs::path& dir, std::string name);
 void checkActive(PluginHost& host, const std::string& name);
 
 void testManagerPackages(const fs::path& fixtures) {
+    std::cerr << "manager: storage and rejected archives\n";
     const auto dir = tempDir("manager-packages");
     fs::create_directories(dir / "mods");
     CHECK(selectStorageRoot(dir, fixtures) == dir, "uses EXE storage root");
@@ -1285,6 +1286,7 @@ void testManagerPackages(const fs::path& fixtures) {
     host.setLogDirectory(dir / "logs");
     std::string error;
     CHECK(host.initialize(error) && host.list().empty(), "empty initial scan");
+    std::cerr << "manager: publish and load valid archive\n";
     const auto name = installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1");
     CHECK(name == "ManagerTest" && host.reload(name, error), "install + reload discovers a new mod: " + error);
     checkActive(host, name);
@@ -1293,6 +1295,7 @@ void testManagerPackages(const fs::path& fixtures) {
     try { (void)installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1"); }
     catch (const std::exception&) { duplicate = true; }
     CHECK(duplicate && fs::is_regular_file(dir / "mods" / name / "index.ts"), "no replacement");
+    std::cerr << "manager: disable, reopen and re-enable\n";
     host.setEnabled(name, false);
     CHECK(host.reload(name, error) && host.list().front().status == ModStatus::Disabled,
           "disable reload leaves mod listed");
@@ -1609,7 +1612,12 @@ system.runInterval(() => ++ticks);
 
 int main(int argc, char** argv) {
     if (argc == 3 && std::string_view(argv[1]) == "--manager") {
-        testManagerPackages(argv[2]);
+        try {
+            testManagerPackages(argv[2]);
+        } catch (const std::exception& e) {
+            std::cerr << "manager test stopped: " << e.what() << '\n';
+            return 1;
+        }
         std::cout << "checks=" << checks << " failures=" << failures << "\n";
         return failures == 0 ? 0 : 1;
     }

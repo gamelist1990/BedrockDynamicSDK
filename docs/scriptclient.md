@@ -20,6 +20,8 @@ ScriptClient は Minecraft Bedrock クライアント内で JavaScript / TypeScr
 2. Minecraft の **設定 → Mod Menu → Mod Manager** でパッケージの **Install …** 行を選び、実行します。インストールした Mod はその場で有効になり、元のファイルは `packages/installed/` に移動します。同名の Mod は上書きしません。
 3. 同じページのスイッチで有効・無効を変更できます。変更はゲームの再起動なしで反映され、無効化した Mod は次回起動時にも読み込まれません。
 
+タイトル画面で DLL を後から注入した場合は、一度 **プレイ** を開いてタイトル画面へ戻ってから設定を開いてください。先に設定を開くと、既存の OreUI アダプターが最初の設定画面に間に合わない場合があります。
+
 ### ScriptClient パッケージを作る
 
 通常の ZIP（`.mods` または `.zip`）に次の配置でファイルを入れます。
