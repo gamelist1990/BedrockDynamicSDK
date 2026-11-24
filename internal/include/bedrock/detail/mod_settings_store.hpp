@@ -2,6 +2,7 @@
 
 #include "bedrock/detail/oreui_settings_backend.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -51,6 +52,7 @@ public:
     Result read(std::string_view mod_id, std::string_view control_id, RawValue& out,
                 char* text_buffer, std::size_t capacity) const;
     std::vector<Menu> snapshot() const;
+    void noteVisibility(std::string_view mod_id, bool visible);
     Result dispatch(std::string_view wire_id, const RawValue& value, bool commit = true);
 
     static constexpr std::string_view prefix = "bedrockdynamic.mod.";
@@ -61,6 +63,7 @@ private:
         Menu menu;
         OnChange callback;
         void* context;
+        std::chrono::steady_clock::time_point visibleUntil{};
     };
     bool save(const Menu& menu) const;
     bool load(Menu& menu) const;

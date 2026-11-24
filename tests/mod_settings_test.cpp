@@ -132,6 +132,12 @@ int main() {
     assert(settingsResource(store, "menus/3/fr_FR.json"));
     assert(settingsResource(store, "menus/4/en_US.json") == snapshot);
     assert(!settingsResource(store, "menus/5/ja_JP/foo.json"));
+    assert(store.read("example", "$visible", read_back, nullptr, 0) == Result::Ok && !read_back.boolean);
+    assert(!settingsResource(store, "visibility/not-a-sequence/1/example.json"));
+    assert(settingsResource(store, "visibility/6/1/example.json"));
+    assert(store.read("example", "$visible", read_back, nullptr, 0) == Result::Ok && read_back.boolean);
+    assert(settingsResource(store, "visibility/7/0/example.json"));
+    assert(store.read("example", "$visible", read_back, nullptr, 0) == Result::Ok && !read_back.boolean);
     const auto write = [&](std::string_view payload) {
         constexpr char h[] = "0123456789abcdef";
         std::string path = "write/123/";

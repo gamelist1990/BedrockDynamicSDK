@@ -1277,38 +1277,94 @@ void testManagerPackages(const fs::path& fixtures) {
     for (const char* invalid : {"traversal.zip", "case.mods", "no-marker.zip", "symlink.mods",
                                 "native.mods", "device.mods", "incompatible.mods"}) {
         bool rejected = false;
-        try { (void)installPackage(fixtures / invalid, dir / "mods", "1.26.65.1"); }
+        try { (void)PreparedPackage::prepare(fixtures / invalid, dir / "mods", "1.26.65.1"); }
         catch (const std::exception&) { rejected = true; }
         CHECK(rejected && fs::is_empty(dir / "mods"), std::string("rejected without publishing: ") + invalid);
     }
     PluginHost host(dir / "mods", "1.26.65.1");
+    host.setDataDirectory(dir / "mod-data");
     host.setStateDirectory(dir / ".scriptclient-disabled");
     host.setLogDirectory(dir / "logs");
     std::string error;
     CHECK(host.initialize(error) && host.list().empty(), "empty initial scan");
     std::cerr << "manager: publish and load valid archive\n";
-    const auto name = installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1");
-    CHECK(name == "ManagerTest" && host.reload(name, error), "install + reload discovers a new mod: " + error);
+    const auto inbox = dir / "packages";
+    fs::create_directory(inbox);
+    const auto staged = stageDroppedPackage(fixtures / "valid.mods", inbox);
+    const auto repeated = stageDroppedPackage(fixtures / "valid.mods", inbox);
+    CHECK(staged != repeated && listPackages(inbox).size() == 2, "collision-safe staging");
+    CHECK(stageDroppedPackage(staged, inbox) == staged, "no duplicate for a file already in the inbox");
+    auto first = PreparedPackage::prepare(staged, host.modsDir(), host.gameVersion());
+    const auto name = first.name();
+    CHECK(name == "ManagerTest" && !first.isUpdate() && host.install(first, error), "new mod: " + error);
     checkActive(host, name);
     CHECK(readTestLog(dir, name).find("test-enabled") != std::string::npos, "TypeScript entry executed");
-    bool duplicate = false;
-    try { (void)installPackage(fixtures / "valid.mods", dir / "mods", "1.26.65.1"); }
-    catch (const std::exception&) { duplicate = true; }
-    CHECK(duplicate && fs::is_regular_file(dir / "mods" / name / "index.ts"), "no replacement");
-    std::cerr << "manager: disable, reopen and re-enable\n";
+    archivePackage(staged);
+    archivePackage(stageDroppedPackage(fixtures / "valid.mods", inbox));
+    CHECK(fs::is_regular_file(inbox / "installed" / "valid.mods") &&
+          fs::is_regular_file(inbox / "installed" / "valid-1.mods"), "repeated archive names are retained");
+
+    const auto data = dir / "mod-data" / name / "sentinel";
+    writeFile(data, "kept");
+    const auto obsolete = dir / "mods" / name / "obsolete.txt";
+    CHECK(fs::exists(obsolete), "v1 files published");
+    auto v2 = PreparedPackage::prepare(fixtures / "v2.mods", host.modsDir(), host.gameVersion());
+    CHECK(v2.isUpdate() && v2.name() == name && v2.oldVersion() == "1.0.0" && v2.version() == "2.0.0",
+          "case-insensitive identity and version preview");
+    CHECK(fs::exists(obsolete) && readTestLog(dir, name).find("test-disabled") == std::string::npos,
+          "preparing an update does not unload or alter v1");
+
+    // Fail the second rename after unloading: the staged copy vanished before publish.
+    auto broken = PreparedPackage::prepare(fixtures / "v3.mods", host.modsDir(), host.gameVersion());
+    for (const auto& entry : fs::directory_iterator(host.modsDir())) {
+        if (!entry.path().filename().string().starts_with(".scriptclient-install-")) continue;
+        std::ifstream manifest(entry.path() / "mod" / "manifest.json");
+        if (!manifest) continue;
+        const auto doc = nlohmann::json::parse(manifest);
+        manifest.close();
+        if (doc.at("version") == "3.0.0") fs::remove_all(entry.path() / "mod");
+    }
+    bool rolledBack = false;
+    try { (void)host.install(broken, error); }
+    catch (const fs::filesystem_error&) { rolledBack = true; }
+    CHECK(rolledBack && fs::exists(obsolete) && host.list().front().version == "1.0.0",
+          "failed publish restores former code and realm");
+    checkActive(host, name);
+
+    CHECK(host.install(v2, error) && host.isEnabled(name), "update preserves enabled state: " + error);
+    const auto updateLog = readTestLog(dir, name);
+    CHECK(updateLog.rfind("test-disabled") < updateLog.find("v2-enabled") &&
+          updateLog.find("v2-enabled") != std::string::npos, "v1 unloads before v2 runs");
+    CHECK(fs::exists(data) && !fs::exists(obsolete) && host.list().front().version == "2.0.0",
+          "published v2 replaces all code but keeps data");
+
+    std::cerr << "manager: update a disabled mod; verify restart and both delete choices\n";
     host.setEnabled(name, false);
     CHECK(host.reload(name, error) && host.list().front().status == ModStatus::Disabled,
           "disable reload leaves mod listed");
     const auto disabledLog = readTestLog(dir, name);
-    CHECK(disabledLog.find("test-disabled") != std::string::npos, "unload lifecycle executed");
+    CHECK(disabledLog.find("v2-disabled") != std::string::npos, "unload lifecycle executed");
+    auto v3 = PreparedPackage::prepare(fixtures / "v3.mods", host.modsDir(), host.gameVersion());
+    CHECK(host.install(v3, error) && !host.isEnabled(name) && host.list().front().version == "3.0.0" &&
+          readTestLog(dir, name) == disabledLog, "disabled update publishes code without running it");
     PluginHost reopened(dir / "mods", "1.26.65.1");
     reopened.setStateDirectory(dir / ".scriptclient-disabled");
     reopened.setLogDirectory(dir / "logs");
+    reopened.setDataDirectory(dir / "mod-data");
     CHECK(reopened.initialize(error) && reopened.list().front().status == ModStatus::Disabled &&
           readTestLog(dir, name) == disabledLog, "fresh host skips disabled mod before JS startup");
     reopened.setEnabled(name, true);
     CHECK(reopened.reload(name, error), "re-enable uses same reload path");
     checkActive(reopened, name);
+    CHECK(readTestLog(dir, name).find("v3-enabled") != std::string::npos, "re-enable uses v3 code");
+    CHECK(reopened.remove(name, false).empty() && reopened.list().empty() && fs::exists(data),
+          "default delete removes the mod but keeps its data");
+    CHECK(readTestLog(dir, name).find("v3-disabled") != std::string::npos, "delete unloads running mod");
+    CHECK(reopened.initialize(error) && reopened.list().empty(), "restart scan skips deleted mod");
+    auto reinstall = PreparedPackage::prepare(fixtures / "valid.mods", reopened.modsDir(), reopened.gameVersion());
+    CHECK(!reinstall.isUpdate() && reopened.install(reinstall, error), "can reinstall a deleted mod");
+    CHECK(reopened.remove(name, true).empty() && !fs::exists(data.parent_path()) && reopened.list().empty(),
+          "explicit delete removes code and data");
 }
 
 } // namespace

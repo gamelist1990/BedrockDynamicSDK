@@ -13,6 +13,8 @@
   const updated = "query:updated/";
   const rootQuery = query + "GroupQuery";
   const rootArgument = "settings-tabs-groups";
+  const manager = "scriptclient-mod-manager";
+  const managerRoute = "bedrockdynamic-mod-" + manager;
   const types = { number: 0, boolean: 1, string: 2, option: 3, action: 4, text: 5, image: 5 };
   const nativeOn = engine.on.bind(engine);
   const nativeOff = engine.off.bind(engine);
@@ -176,6 +178,16 @@
     loadMenus();
   }
 
+  let managerVisible = false;
+  function reportManagerVisibility(heartbeat = false) {
+    const visible = [...local.values()].some(entry =>
+      (entry.id === managerRoute || entry.id === managerRoute + ".page") && entry.name === rootQuery);
+    if (visible !== managerVisible || (visible && heartbeat))
+      request("visibility/" + ++sequence + "/" + (visible ? 1 : 0) + "/" + manager);
+    managerVisible = visible;
+    return visible;
+  }
+
   function on(event, callback, ...rest) {
     const match = /^(?:query:subscribed|query:updated)\/(.+)$/.exec(event);
     if (!match || typeof callback !== "function") return nativeOn(event, callback, ...rest);
@@ -209,13 +221,17 @@
       roots.delete(String(args[0]));
       const entry = local.get(String(args[0]));
       if (capture && entry?.id === capture) finishCapture();
-      if (local.delete(String(args[0]))) return;
+      if (local.delete(String(args[0]))) {
+        reportManagerVisibility();
+        return;
+      }
     }
     if (typeof event === "string" && event.startsWith(subscribe)) {
       const [key, id] = args;
       const name = event.slice(subscribe.length);
       if (name.startsWith(query) && ownId(id)) {
         local.set(String(key), {name, id});
+        reportManagerVisibility();
         // Query listeners are already registered by the shipped driver.
         deliver(subscribed + key, dataFor(name, id));
         return;
@@ -371,7 +387,6 @@
   // A manager operation completes on the loader thread, after the write
   // request returns. Poll only while this dynamic page is subscribed.
   setInterval(() => {
-    if ([...local.values()].some(entry => entry.id.includes("scriptclient-mod-manager")))
-      loadMenus();
-  }, 1000);
+    if (reportManagerVisibility(true)) loadMenus();
+  }, 650);
 })();

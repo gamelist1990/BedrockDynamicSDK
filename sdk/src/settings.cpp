@@ -185,4 +185,10 @@ Result<SettingValue> SettingsPage::value(std::string_view settingId) const noexc
     } catch (const std::exception& e) { return Result<SettingValue>::error(ErrorCode::Internal, e.what()); }
       catch (...) { return Result<SettingValue>::error(ErrorCode::Internal, "settings read failed"); }
 }
+
+bool SettingsPage::visible() const noexcept {
+    Backend::RawValue raw{};
+    return Backend::readValue(modId_.c_str(), "$visible", raw, nullptr, 0) == Backend::Result::Ok &&
+           raw.kind == Backend::Kind::Boolean && raw.boolean != 0;
+}
 } // namespace bedrock::sdk

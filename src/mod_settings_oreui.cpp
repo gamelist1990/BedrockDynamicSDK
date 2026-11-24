@@ -179,6 +179,16 @@ bool isNativeLanguageToken(std::string_view token) {
 } // namespace
 
 std::optional<std::string> settingsResource(Store& store, std::string_view endpoint) {
+    if (endpoint.starts_with("visibility/") && endpoint.ends_with(".json")) {
+        endpoint.remove_prefix(std::string_view("visibility/").size());
+        endpoint.remove_suffix(5);
+        const auto seq = endpoint.find('/');
+        if (seq == std::string_view::npos || !sequence(endpoint.substr(0, seq))) return {};
+        endpoint.remove_prefix(seq + 1);
+        if (!endpoint.starts_with("1/") && !endpoint.starts_with("0/")) return {};
+        store.noteVisibility(endpoint.substr(2), endpoint.front() == '1');
+        return R"({"ok":true})";
+    }
     if (endpoint.starts_with("menus/") && endpoint.ends_with(".json") && endpoint.size() > 11) {
         const auto args = endpoint.substr(6, endpoint.size() - 11);
         const auto slash = args.find('/');

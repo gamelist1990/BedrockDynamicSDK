@@ -2,7 +2,7 @@ add_library(bedrock_stage_a STATIC
     src/settings.cpp src/system.cpp src/mod.cpp src/keybinds.cpp
     src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
     src/logging.cpp src/content_log.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
-    src/roster.cpp src/packets.cpp src/overlay.cpp
+    src/roster.cpp src/packets.cpp src/overlay.cpp src/window_file_drop.cpp
     src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp
     src/automation_controls.cpp src/block_actions.cpp
     src/item_stack_requests.cpp src/safe_teleport.cpp)
@@ -49,7 +49,7 @@ target_link_libraries(bedrock_stage_a PRIVATE
     bedrock_mod_settings_store bedrock_nlohmann_headers bedrock_resolver)
 if(WIN32)
     target_link_libraries(bedrock_stage_a PRIVATE
-        EnTT::EnTT bedrock::hook_runtime bedrock::game_hooks)
+        EnTT::EnTT bedrock::hook_runtime bedrock::game_hooks comctl32 shell32)
     if(BEDROCK_SDK_ENABLE_NATIVE_WORLD)
         target_link_libraries(bedrock_stage_a PRIVATE bedrock::world)
     endif()

@@ -10,6 +10,12 @@
 #include <regex>
 #include <stdexcept>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace stageb {
 namespace {
 constexpr std::size_t maxArchive = 32 * 1024 * 1024;
@@ -18,6 +24,7 @@ constexpr std::size_t maxEntries = 4096;
 
 struct TempDirectory {
     fs::path path;
+    bool keep{};
     TempDirectory(const fs::path& parent, const char* prefix) {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         for (int i = 0; i != 8; ++i) {
@@ -30,6 +37,7 @@ struct TempDirectory {
         throw std::runtime_error("cannot create a private staging directory");
     }
     ~TempDirectory() {
+        if (keep) return;
         std::error_code ignored;
         fs::remove_all(path, ignored);
     }
@@ -72,6 +80,62 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+bool plainDirectory(const fs::path& path) {
+    if (!fs::is_directory(fs::symlink_status(path))) return false;
+#ifdef _WIN32
+    const auto attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    return true;
+#endif
+}
+
+std::string utf8Path(const fs::path& path) {
+    const auto text = path.u8string();
+    return {text.begin(), text.end()};
+}
+
+struct ExistingMod {
+    std::string name;
+    std::string version;
+    bool operator==(const ExistingMod&) const = default;
+};
+
+ExistingMod findExistingMod(const fs::path& modsDir, const std::string& name) {
+    ExistingMod result;
+    for (const auto& entry : fs::directory_iterator(modsDir)) {
+        const auto spelling = utf8Path(entry.path().filename());
+        if (lowerCopy(spelling) != lowerCopy(name)) continue;
+        require(result.name.empty(), "ambiguous installed mod name");
+        require(plainDirectory(entry.path()), "the mod path is not a regular directory");
+        const auto manifest = entry.path() / "manifest.json";
+        require(fs::is_regular_file(fs::symlink_status(manifest)) &&
+                fs::file_size(manifest) <= 256 * 1024, "the existing path is not a ScriptClient mod");
+        std::ifstream stream(manifest, std::ios::binary);
+        const auto doc = nlohmann::json::parse(stream);
+        require(doc.value("name", std::string{}) == spelling, "installed manifest name does not match its folder");
+        result = {spelling, doc.value("version", std::string{})};
+    }
+    return result;
+}
+
+// The worker serializes intake and archive moves. Reserve unique names so a
+// repeated drop (including the same file name at a new version) never replaces
+// a different pending or archived package.
+fs::path availableName(const fs::path& dir, const fs::path& file) {
+    for (int suffix = 0; suffix < 1000; ++suffix) {
+        auto name = file;
+        if (suffix) {
+            name = file.stem();
+            name += "-" + std::to_string(suffix);
+            name += file.extension();
+        }
+        const auto dest = dir / name;
+        if (!fs::exists(fs::symlink_status(dest))) return dest;
+    }
+    throw std::runtime_error("too many packages with this file name");
+}
+
 std::size_t writeMember(void* output, mz_uint64, const void* bytes, std::size_t size) {
     auto& file = *static_cast<std::ofstream*>(output);
     file.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
@@ -107,8 +171,61 @@ std::vector<fs::path> listPackages(const fs::path& inbox) {
     return result;
 }
 
-std::string installPackage(const fs::path& archive, const fs::path& modsDir,
-                           const std::string& gameVersion) {
+fs::path stageDroppedPackage(const fs::path& source, const fs::path& inbox) {
+    require(source.is_absolute() && isPackagePath(source) && fs::is_regular_file(fs::symlink_status(source)),
+            "drop a regular .mods or .zip file");
+    if (fs::equivalent(source.parent_path(), inbox)) return source;
+    std::ifstream in(source, std::ios::binary | std::ios::ate);
+    const auto length = in.tellg();
+    require(length > 0 && length <= static_cast<std::streamoff>(maxArchive), "invalid ZIP size");
+    in.seekg(0);
+    const TempDirectory stage(inbox, ".scriptclient-drop-");
+    const auto copied = stage.path / "package";
+    std::ofstream out(copied, std::ios::binary);
+    char buffer[16 * 1024];
+    for (auto left = static_cast<std::streamoff>(length); left > 0;) {
+        const auto count = std::min<std::streamoff>(left, sizeof(buffer));
+        require(static_cast<bool>(in.read(buffer, count)), "cannot read dropped package");
+        out.write(buffer, count);
+        left -= count;
+    }
+    out.close();
+    require(static_cast<bool>(out), "cannot write dropped package");
+    const auto dest = availableName(inbox, source.filename());
+    fs::rename(copied, dest);
+    return dest;
+}
+
+void archivePackage(const fs::path& archive) {
+    const auto done = archive.parent_path() / "installed";
+    fs::create_directories(done);
+    require(plainDirectory(done), "the package archive path is not a regular directory");
+    fs::rename(archive, availableName(done, archive.filename()));
+}
+
+struct PreparedPackage::State {
+    explicit State(const fs::path& root) : stage(root, ".scriptclient-install-"),
+        modsDir(root), body(stage.path / "mod") {}
+    TempDirectory stage;
+    fs::path modsDir;
+    fs::path body;
+    std::string name;
+    std::string version;
+    ExistingMod existing;
+};
+
+PreparedPackage::PreparedPackage(std::unique_ptr<State> state) : state_(std::move(state)) {}
+PreparedPackage::PreparedPackage(PreparedPackage&&) noexcept = default;
+PreparedPackage& PreparedPackage::operator=(PreparedPackage&&) noexcept = default;
+PreparedPackage::~PreparedPackage() = default;
+
+const std::string& PreparedPackage::name() const { return state_->name; }
+const std::string& PreparedPackage::version() const { return state_->version; }
+const std::string& PreparedPackage::oldVersion() const { return state_->existing.version; }
+bool PreparedPackage::isUpdate() const { return !state_->existing.name.empty(); }
+
+PreparedPackage PreparedPackage::prepare(const fs::path& archive, const fs::path& modsDir,
+                                         const std::string& gameVersion) {
     require(isPackagePath(archive) && fs::is_regular_file(fs::symlink_status(archive)),
             "select a regular .mods or .zip file");
     std::ifstream input(archive, std::ios::binary | std::ios::ate);
@@ -123,8 +240,8 @@ std::string installPackage(const fs::path& archive, const fs::path& modsDir,
     const auto files = mz_zip_reader_get_num_files(&zip.zip);
     require(files > 0 && files <= maxEntries, "invalid ZIP entry count");
 
-    const TempDirectory stage(modsDir, ".scriptclient-install-");
-    const auto body = stage.path / "mod";
+    auto state = std::make_unique<State>(modsDir);
+    const auto& body = state->body;
     fs::create_directory(body);
     struct Entry { std::string spelling; bool directory; bool explicitEntry; };
     std::map<std::string, Entry> seen;
@@ -195,18 +312,65 @@ std::string installPackage(const fs::path& archive, const fs::path& modsDir,
     const auto manifest = body / "manifest.json";
     require(fs::is_regular_file(manifest) && fs::file_size(manifest) <= 256 * 1024,
             "mod/manifest.json is missing or too large");
-    const auto doc = [&] {
+    auto doc = [&] {
         std::ifstream stream(manifest, std::ios::binary);
         return nlohmann::json::parse(stream);
     }(); // Windows cannot rename the staged directory while this handle is open.
-    const auto name = doc.value("name", std::string{});
+    auto name = doc.value("name", std::string{});
     require(isScriptModName(name), "invalid mod name");
     const auto validation = validateManifest(doc, name, body, gameVersion);
     if (!validation.ok) throw std::runtime_error(validation.error);
-    for (const auto& entry : fs::directory_iterator(modsDir))
-        require(lowerCopy(entry.path().filename().string()) != lowerCopy(name),
-                "a mod with this name already exists; no files were overwritten");
-    fs::rename(body, modsDir / name);
-    return name;
+    state->existing = findExistingMod(modsDir, name);
+    if (!state->existing.name.empty() && name != state->existing.name) {
+        // Keep the installed spelling: mod-data and runtime settings are keyed by it.
+        name = state->existing.name;
+        doc["name"] = name;
+        std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
+        out << doc.dump(2);
+        out.close();
+        require(static_cast<bool>(out), "cannot normalize the staged manifest name");
+    }
+    state->name = std::move(name);
+    state->version = validation.manifest.version;
+    return PreparedPackage(std::move(state));
+}
+
+void PreparedPackage::publish(const std::function<void()>& unload) {
+    auto& state = *state_;
+    require(findExistingMod(state.modsDir, state.name) == state.existing,
+            "installed mod changed after preview; select the package again");
+    const auto target = state.modsDir / state.name;
+    if (!isUpdate()) {
+        fs::rename(state.body, target);
+        return;
+    }
+    const auto backup = state.stage.path / "previous";
+    unload();
+    fs::rename(target, backup);
+    try {
+        fs::rename(state.body, target);
+    } catch (...) {
+        std::error_code ec;
+        fs::rename(backup, target, ec);
+        if (ec) {
+            state.stage.keep = true;
+            throw std::runtime_error("could not restore old mod; backup: " + utf8Path(backup));
+        }
+        throw;
+    }
+}
+
+std::string removeModFiles(const fs::path& modsDir, const std::string& name,
+                           const std::function<void()>& unload) {
+    require(isScriptModName(name), "invalid mod name");
+    const auto target = modsDir / name;
+    require(plainDirectory(target) && fs::is_regular_file(fs::symlink_status(target / "manifest.json")),
+            "installed mod directory is missing or is not a regular directory");
+    TempDirectory stage(modsDir, ".scriptclient-delete-");
+    unload();
+    fs::rename(target, stage.path / "deleted");
+    std::error_code ec;
+    fs::remove_all(stage.path, ec);
+    return ec ? "could not clean up hidden mod files: " + utf8Path(stage.path) : "";
 }
 } // namespace stageb

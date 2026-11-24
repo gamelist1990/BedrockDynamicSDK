@@ -19,6 +19,8 @@
 
 namespace stageb {
 
+class PreparedPackage;
+
 struct ModView {
     std::string name;
     std::string displayName;
@@ -51,6 +53,8 @@ public:
     void enqueueSettingChange(const std::string& name, const std::string& settingId,
                               const bedrock::sdk::SettingValue& value);
     bool reload(const std::string& name, std::string& error);
+    bool install(PreparedPackage& package, std::string& error);
+    std::string remove(const std::string& name, bool removeData);
     bool isEnabled(const std::string& name) const;
     void setEnabled(const std::string& name, bool enabled);
     void setStateDirectory(fs::path directory) { disabledDir_ = std::move(directory); }
@@ -111,6 +115,7 @@ private:
     bool loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMod>& out,
                  std::string& error);
     void unloadOne(LoadedMod& mod);
+    bool unloadByName(const std::string& name);
     bool constructAndEnable(LoadedMod& mod, std::string& error);
     bool callLifecycle(LoadedMod& mod, const char* method, std::string& error);
     void publishDefinitions();

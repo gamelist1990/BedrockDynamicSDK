@@ -54,6 +54,9 @@ public:
     [[nodiscard]] Result<void> registerPage(const Profile& profile) const noexcept;
     [[nodiscard]] Result<void> unregisterPage() const noexcept;
     [[nodiscard]] Result<SettingValue> value(std::string_view settingId) const noexcept;
+    // True while the UI reports an active subscription; false on backends
+    // that do not report visibility.
+    [[nodiscard]] bool visible() const noexcept;
     [[nodiscard]] const std::string& id() const noexcept { return modId_; }
 
 private:

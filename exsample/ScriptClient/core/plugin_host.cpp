@@ -370,6 +370,62 @@ const KeybindsDecl* PluginHost::keybindsFor(const std::string& name) const {
     return (mod && mod->bindings) ? &mod->bindings->keybinds() : nullptr;
 }
 
+bool PluginHost::unloadByName(const std::string& name) {
+    const auto found = std::find_if(loaded_.begin(), loaded_.end(), [&](const auto& mod) {
+        return mod && mod->manifest.name == name;
+    });
+    if (found == loaded_.end()) return false;
+    unloadOne(**found);
+    loaded_.erase(found);
+    return true;
+}
+
+bool PluginHost::install(PreparedPackage& package, std::string& error) {
+    const auto& name = package.name();
+    bool unloaded = false;
+    try {
+        package.publish([&] { unloaded = unloadByName(name); });
+    } catch (...) {
+        if (unloaded && !reload(name, error)) publishDefinitions();
+        throw;
+    }
+    if (!package.isUpdate() && !isEnabled(name)) setEnabled(name, true);
+    return reload(name, error);
+}
+
+std::string PluginHost::remove(const std::string& name, bool removeData) {
+    if (!findByName(name)) throw std::runtime_error("mod is no longer installed: " + name);
+    bool unloaded = false;
+    std::string warning;
+    try {
+        warning = removeModFiles(modsDir_, name, [&] { unloaded = unloadByName(name); });
+    } catch (...) {
+        std::string error;
+        if (unloaded && !reload(name, error)) publishDefinitions();
+        throw;
+    }
+    publishDefinitions();
+    auto warn = [&](const std::string& message) {
+        if (!warning.empty()) warning += "; ";
+        warning += message;
+    };
+    if (removeData) {
+        std::error_code ec;
+        if (dataDir_.empty()) warn("mod-data directory is unavailable");
+        else {
+            // remove_all removes a symlink itself; it does not traverse its target.
+            fs::remove_all(dataDir_ / name, ec);
+            if (ec) warn("could not remove all mod-data: " + ec.message());
+        }
+    }
+    try {
+        if (!isEnabled(name)) setEnabled(name, true);
+    } catch (const std::exception& e) {
+        warn(std::string("could not clear enable state: ") + e.what());
+    }
+    return warning;
+}
+
 bool PluginHost::reload(const std::string& name, std::string& error) {
     if (reloading_) { error = "reload already in progress"; return false; }
     reloading_ = true;

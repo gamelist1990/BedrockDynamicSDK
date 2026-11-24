@@ -1,5 +1,6 @@
 #pragma once
 
+#include "package.hpp"
 #include "plugin_host.hpp"
 
 #include <bedrock/sdk/client_host.hpp>
@@ -7,6 +8,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <optional>
 
 namespace stageb {
 class ModManager {
@@ -20,15 +22,25 @@ public:
     void run(); // ScriptClient's pinned loader thread; does not depend on world ticks.
 
 private:
-    enum class Action { Reload, Toggle, Install, Previous, Next };
+    enum class Action { Reload, Toggle, Install, Drop, Delete, Confirm, ConfirmWithData, Cancel, Previous, Next };
     struct Request {
         Action action;
         std::string name{};
         fs::path package{};
         bool enabled{};
+        std::uint64_t confirmation{};
+    };
+    struct Confirmation {
+        std::uint64_t id;
+        std::string name;
+        fs::path archive;
+        std::optional<PreparedPackage> update;
     };
     void enqueue(Request request);
     void apply(const Request& request);
+    void prepareInstall(const fs::path& archive);
+    void install(PreparedPackage& package, const fs::path& archive);
+    void synchronized(const std::string& name, const std::function<void()>& operation);
     void refreshPage();
 
     PluginHost& host_;
@@ -42,8 +54,10 @@ private:
     std::deque<Request> requests_;
     std::vector<fs::path> packages_;
     std::vector<ModView> mods_;
+    std::optional<Confirmation> confirmation_;
+    std::uint64_t nextConfirmation_{};
     std::size_t pageIndex_{};
     bool registered_{};
-    std::string status_{"Select a package to install, or toggle an installed mod."};
+    std::string status_{"Drop a trusted .mods/.zip onto Minecraft, or select a pending package."};
 };
 } // namespace stageb

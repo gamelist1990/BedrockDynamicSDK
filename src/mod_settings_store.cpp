@@ -243,11 +243,24 @@ std::vector<Menu> Store::snapshot() const {
     return result;
 }
 
+void Store::noteVisibility(std::string_view mod_id, bool visible) {
+    std::lock_guard lock(mutex_);
+    const auto page = pages_.find(mod_id);
+    if (page != pages_.end())
+        page->second.visibleUntil = visible ? std::chrono::steady_clock::now() + std::chrono::seconds(2)
+                                           : std::chrono::steady_clock::time_point{};
+}
+
 Result Store::read(std::string_view mod_id, std::string_view control_id, RawValue& out,
                    char* text_buffer, std::size_t capacity) const {
     std::lock_guard lock(mutex_);
     const auto page = pages_.find(mod_id);
     if (page == pages_.end()) return Result::NotFound;
+    // Reserved, non-rendered read through the existing shared service ABI.
+    if (control_id == "$visible") {
+        out = {Kind::Boolean, std::chrono::steady_clock::now() < page->second.visibleUntil ? 1u : 0u};
+        return Result::Ok;
+    }
     const auto& rows = page->second.menu.rows;
     const auto row = std::ranges::find(rows, control_id, &Row::id);
     if (row == rows.end()) return Result::NotFound;
