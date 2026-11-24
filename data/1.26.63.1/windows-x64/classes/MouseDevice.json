@@ -1,0 +1,17 @@
+{
+  "symbols": {
+    "MouseDevice::feed": {
+      "rva": "0x427530",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(MouseDevice*, int8 action, int8 state, int16 x, int16 y, int16 dx, int16 dy, bool forceMotionlessPointer)",
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ?? 44 89 CF 44 89 C3 89 D5 48 89 CE 44 0F B7 A4 24 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC 48 44 89 CF 44 89 C3 89 D5",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "36-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

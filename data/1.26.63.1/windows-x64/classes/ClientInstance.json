@@ -1,0 +1,91 @@
+{
+  "symbols": {
+    "ClientInstance::grabCursor": {
+      "rva": "0x65BBA00",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 38 04 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "45-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "ClientInstance::releaseCursor": {
+      "rva": "0x65BBA50",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(ClientInstance*)",
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 40 04 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "45-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "ClientInstance::onPlayerLoaded": {
+      "rva": "0x65BD9B0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "49 89 D0 48 89 CA 48 8B 89 C8 01 00 00 48 8B 01",
+      "cross_version_signature_available": true,
+      "entry_check": "49 89 D0 48 89 CA 48 8B 89 C8 01 00",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte masked profile signature unique in .text; no .pdata start (possible leaf/thunk)"
+    },
+    "ClientInstance::onDimensionChangedEvent": {
+      "rva": "0x65ACFE0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "56 48 83 EC ?? 48 89 CE 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "cross_version_signature_available": true,
+      "entry_check": "56 48 83 EC 40 48 89 CE 48 8D 91 68",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "20-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "ClientInstance::getRegion": {
+      "rva": "0x659EC50",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "56 57 48 83 EC ?? 48 8D 91 68 02 00 00 48 8D 4C 24 ??",
+      "cross_version_signature_available": true,
+      "entry_check": "56 57 48 83 EC 48 48 8D 91 68 02 00",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "18-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "ClientInstance::getLocalPlayer": {
+      "rva": "0x659EDD0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "LocalPlayer* __fastcall(ClientInstance*)",
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8D 91 68 02 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "48 83 EC 48 48 8B 05 E5 B2 D6 0B 48 31 E0 48 89",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "26-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "ClientInstance::onLevelExit": {
+      "rva": "0x65A3CB0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CF 48 8D B1 78 FF FF FF",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "31-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

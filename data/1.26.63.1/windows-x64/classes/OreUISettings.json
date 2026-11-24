@@ -1,0 +1,30 @@
+{
+  "symbols": {
+    "OreUI::HybridResourceHandler::onResourceRequest": {
+      "rva": "0x1F54430",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "uint32_t __fastcall(void* handler, const ResourceRequest* request, ResourceResponse* response)",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 10 FE FF FF FF 4C 89 C6 48 89 D7 48 89 CB 48 8B 41 38",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 98",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "48-byte entry signature unique in both .text sections; full 1100-byte instruction stream matches 65.1 0x1f54420 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    },
+    "OreUI::PackResourceHandler::onResourceRequest": {
+      "rva": "0x1F4E310",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "uint32_t __fastcall(void* handler, const ResourceRequest* request, ResourceResponse* response)",
+      "signature": "55 41 57 41 56 56 57 53 48 81 EC 18 01 00 00 48 8D AC 24 80 00 00 00 48 C7 85 90 00 00 00 FE FF FF FF 4C 89 C6 48 89 D7 48 89 CB B9 80 01 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 56 57 53 48 81 EC 18 01 00 00 48",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "48-byte entry signature unique in both .text sections; full 910-byte instruction stream matches 65.1 0x1f4e300 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    }
+  }
+}

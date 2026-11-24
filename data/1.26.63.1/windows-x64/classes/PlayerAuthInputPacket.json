@@ -1,0 +1,28 @@
+{
+  "symbols": {
+    "PlayerAuthInputPacket::isValid": {
+      "rva": "0x401C5A0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? B8 FF FF FF 7F",
+      "cross_version_signature_available": true,
+      "entry_check": "56 57 48 83 EC 38 48 8B 05 13 DB 2E 0E 48 31 E0",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "26-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "PlayerAuthInputPacket::getId": {
+      "rva": "0x16D5400",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "41 57 41 56 41 54 56 57 53 48 83 EC ?? 89 D7 48 89 CE 48 8D 05 ?? ?? ?? ?? 48 89 01 48 8B 59 08 48 85 DB 74 ??",
+      "cross_version_signature_available": true,
+      "entry_check": "41 57 41 56 41 54 56 57 53 48 83 EC",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "37-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "symbols": {
+    "ContainerOpenDispatcher::handle": {
+      "rva": "0x23A7340",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(Dispatcher*, NetworkIdentifier*, NetEventCallback*, const shared_ptr<Packet>*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "4C 89 C1 4D 8B 01 48 8B 01 48 8B 80 48 06 00 00",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte entry guard unique in .text; no .pdata start (possible leaf/thunk)"
+    },
+    "ContainerCloseDispatcher::handle": {
+      "rva": "0x23A7380",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(Dispatcher*, NetworkIdentifier*, NetEventCallback*, const shared_ptr<Packet>*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "4C 89 C1 4D 8B 01 48 8B 01 48 8B 80 40 06 00 00",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte entry guard unique in .text; no .pdata start (possible leaf/thunk)"
+    },
+    "InteractPacket::getId": {
+      "rva": "0x29FD440",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "int __fastcall(Packet*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "B8 21 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte entry guard unique in .text; no .pdata start (possible leaf/thunk)"
+    },
+    "InteractPacket::write": {
+      "rva": "0x29FD470",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(Packet*, Writer*, Context*, version)",
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 81 EC 60 03 00 00 48 8D AC 24 80 00 00 00 48 C7 85 D8 02 00 00 FE FF FF FF 4D 89 CE 4C 89 C6 48 89 D3 48 89 CF 48 8B 01 48 8B 40 60 FF 15 ?? ?? ?? ?? 41 89 C7 49 0F BA E6 20 45 0F 42 FE 48 8B 07 48 8B 40 08 48 89 F9 FF 15 ?? ?? ?? ?? 41 83 FF 05 0F 85 97 02 00 00 66 C7 85 C0 02 00 00 00 00 48 8D 05 ?? ?? ?? ?? 48 89 85 B8 02 00 00 48 89 9D C8 02 00 00 48 89 75 A8 4C 8D 3D ?? ?? ?? ?? 4C 89 7D A0 C7 45 B0 FF FF FF FF 48 8D 5D C8 48 89 5D B8 48 B8 00 00 00 00 08 00 00 00 48 89 45 C0 4C 8D B5 D8 00 00 00 4C 89 B5 C8 00 00 00 48 89 85 D0 00 00 00 66 C7 85 58 02 00 00 FC FF C6 85 5A 02 00 00 01 48 B8 00 00 00 00 FF FF FF FF 48 89 85 60 02 00 00 48 C7 85 68 02 00 00 00 00 00 00 66 C7 85 70 02 00 00 00 00 48 8D 05 ?? ?? ?? ?? 48 89 85 D0 02 00 00 48 83 3D ?? ?? ?? ?? 00 75 06 E8 ?? ?? ?? ?? 90 48 83 C7 30 48 83 C6 18 48 8D 05 ?? ?? ?? ?? 48 89 85 88 02 00 00 48 C7 85 90 02 00 00 00 00 00 00 C7 85 98 02 00 00 5B 93 AE 2A C6 85 9C 02 00 00 04 48 89 BD 78 02 00 00 48 89 B5 A0 02 00 00 48 C7 85 A8 02 00 00 00 00 00 00 48 8D 05 ?? ?? ?? ?? 48 89 85 B0 02 00 00 48 8D 4D A0 48 8D 95 B8 02 00 00 4C 8D 85 78 02 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 60 03 00",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "384-byte entry signature unique in both .text sections; full 786-byte instruction stream matches 65.1 0x29fd4f0 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    },
+    "ContainerClosePacket::getId": {
+      "rva": "0x419F7D0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "int __fastcall(Packet*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "B8 2F 00 00 00 C3 CC CC CC CC CC CC CC CC CC CC",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte entry guard unique in .text; no .pdata start (possible leaf/thunk)"
+    },
+    "ContainerClosePacket::write": {
+      "rva": "0x419F800",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(Packet*, Writer*, Context*, version)",
+      "signature": "41 57 41 56 56 57 53 48 83 EC 20 4D 89 CE 4C 89 C3 48 89 D6 48 89 CF 48 8B 01 48 8B 40 60 FF 15 ?? ?? ?? ?? 41 89 C7 49 0F BA E6 20 45 0F 42 FE 4C 8D 77 30 48 8B 07 48 8B 40 08 48 89 F9 FF 15 ?? ?? ?? ?? 41 8D 47 FD 83 F8 02 72 06 41 83 FF 05 75 19 48 89 D9 4C 89 F2 49 89 F0 48 83 C4 20 5B 5F 5E 41 5E 41 5F E9 ?? ?? ?? ?? 0F B6 57 30 48 8B 06 48 8B 40 18 4C 8D 05 ?? ?? ?? ?? 48 89 F1 45 31 C9 FF 15 ?? ?? ?? ?? 0F B6 57 31 48 8B 06 48 8B 40 18 4C 8D 05 ?? ?? ?? ?? 48 89 F1 45 31 C9 FF 15 ?? ?? ?? ?? 0F B6 57 32 48 8B 06 48 8B 40 10 4C 8B 15 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "entry_check": "41 57 41 56 56 57 53 48 83 EC 20 4D 89 CE 4C 89",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "186-byte entry signature unique in both .text sections; full 217-byte instruction stream matches 65.1 0x419f880 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    }
+  }
+}

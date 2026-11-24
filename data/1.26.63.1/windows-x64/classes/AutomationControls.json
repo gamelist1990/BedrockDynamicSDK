@@ -1,0 +1,17 @@
+{
+  "symbols": {
+    "MoveInputComponent::directionConsumer": {
+      "rva": "0x10DBC20",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "bool __fastcall(input rule context*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "56 57 55 53 48 83 EC 28 48 8B 71 08 48 8B 7E 78",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "Unique complete 758-byte masked .pdata body in both .text sections; early prefixes have clones."
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "analysis": {
+    "status": "candidate",
+    "runtime_verified": false,
+    "scope": "Function entry candidates and the MobEffect default data template; no ABI or runtime behavior is verified.",
+    "layout_policy": "Unported native layouts, helper RVAs, vtables and field offsets are omitted.",
+    "resolved_symbols": 97,
+    "unresolved_symbols": 0
+  }
+}

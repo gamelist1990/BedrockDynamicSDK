@@ -1,0 +1,16 @@
+{
+  "symbols": {
+    "MovePlayerPacket::isValid": {
+      "rva": "0x3401BE0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "48 83 EC ?? F3 0F 10 49 38 0F 28 05 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "entry_check": "48 83 EC 28 F3 0F 10 49 38 0F 28 05",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

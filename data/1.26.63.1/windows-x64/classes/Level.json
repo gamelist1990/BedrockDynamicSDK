@@ -1,0 +1,29 @@
+{
+  "symbols": {
+    "Level::getRuntimeActorList": {
+      "rva": "0x232EEB0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 41 56 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 48 8B B1 B8 04 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 56 56 57 53 48 83 EC 40 48 8D",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "30-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "Level::getPlayerList": {
+      "rva": "0x232ECD0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "PlayerList* __fastcall(Level*)",
+      "signature": "",
+      "cross_version_signature_available": false,
+      "entry_check": "48 8B 81 E8 04 00 00 C3",
+      "function_boundary": false,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "8-byte entry guard unique in .text; no .pdata start (possible leaf/thunk)"
+    }
+  }
+}

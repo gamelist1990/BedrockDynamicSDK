@@ -1,0 +1,17 @@
+{
+  "symbols": {
+    "ContentLog::emitCreator": {
+      "rva": "0x5E9220",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "void __fastcall(uint32_t flags, uint32_t severityOrdinal, uint32_t area, const char* format, const char* const* arg1, const char* const* arg2); printf-style front end of the Creator listener service; severity ordinal 0=verbose 1=inform 2=warning 3=error; arg1/arg2 point to caller-owned NUL-terminated const char* cells that must outlive the call; no game container or allocator ownership crosses the call",
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68 48 8D 6C 24 60 48 C7 45 00 FE FF FF FF 4D 89 CE 44 89 C6 89 D3 41 89 CF 48 8B 7D 78 4C 8B 6D 70 4C 8D 25 ?? ?? ?? ?? 4C 89 E1 E8 ?? ?? ?? ?? F0 48 FF 05 ?? ?? ?? ?? 4C 89 E1 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 85 C0 74 28 80 38 01 75 23 41 89 F1 48 8B 0D ?? ?? ?? ?? 48 85 C9 74 5C F0 FF 41 08 48 8B 05 ?? ?? ?? ?? 48 8B 35 ?? ?? ?? ?? EB 4A 48 C7 45 D8 00 00 00 00 C6 45 E0 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 80 7D E0 01 75 19 48 8B 4D D8 48 83 C4 68 5B 5F 5E 41 5C 41 5D 41 5E 41 5F 5D E9 ?? ?? ?? ?? 48 83 C4 68 5B 5F 5E 41 5C 41 5D 41 5E 41 5F 5D C3 31 F6 48 8B 0D ?? ?? ?? ?? 4C 89 65 D8 C6 45 E0 01 48 89 45 E8 48 89 75 F0 48 89 4D F8 48 85 C0 74 2D 80 38 01 75 28 80 79 18 01 75 22 48 8B 07 49 8B 55 00 48 89 44 24 30",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC 68",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "260-byte entry signature unique in both .text sections; full 421-byte instruction stream matches 65.1 0x5e9220 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    }
+  }
+}

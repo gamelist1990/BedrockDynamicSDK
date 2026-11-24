@@ -43,6 +43,27 @@
         "rtti_types": 0
       }
     },
+    "1.26.63.1": {
+      "windows-x64": {
+        "path": "data/1.26.63.1/windows-x64/manifest.json",
+        "sha256": "1bb1ca912d1cf73c38ad242cf108425895bf00464c1aa02ecbd144e54eda47cf",
+        "module_sha256": "e8d40b55e2bd46181fa3770f00458cb22ae2ad807bde1a07a995a4e8ea305d65",
+        "symbols": 97,
+        "protocol": {
+          "path": "data/protocols/1.26.60/protocol.json",
+          "version_path": "data/protocols/1.26.60/version.json",
+          "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+          "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+          "wire_roster_available": true
+        },
+        "vanilla_data": "data/vanilla/1.26.60.json",
+        "module_text_sha256": "912820caf8a11518f4f2790380507e5ff0c444b40b7d80dae38bb178794af5fa",
+        "size_of_image": 327405568,
+        "text_rva": "0x1000",
+        "text_size": 250375168,
+        "rtti_types": 0
+      }
+    },
     "1.26.65.1": {
       "windows-x64": {
         "path": "data/1.26.65.1/windows-x64/manifest.json",

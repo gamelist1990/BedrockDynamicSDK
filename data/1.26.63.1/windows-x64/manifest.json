@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "target": {
+    "product": "minecraft-bedrock",
+    "kind": "client",
+    "platform": "windows",
+    "arch": "x64",
+    "version": "1.26.63.1",
+    "sha256": "e8d40b55e2bd46181fa3770f00458cb22ae2ad807bde1a07a995a4e8ea305d65",
+    "text_sha256": "912820caf8a11518f4f2790380507e5ff0c444b40b7d80dae38bb178794af5fa",
+    "image_base": "0x140000000",
+    "size_of_image": 327405568,
+    "text_rva": "0x1000",
+    "text_size": 250375168,
+    "file_version": "1.26.63.1"
+  },
+  "protocol": {
+    "path": "data/protocols/1.26.60/protocol.json",
+    "version_path": "data/protocols/1.26.60/version.json",
+    "sha256": "9a044ddbeb0614521afe7a956cdf383007bb8f71682a76605e7a6cf2012ac0d3",
+    "source_commit": "9c97fe50a82feb2c0f2be1cff35ce19c891bfb35",
+    "wire_roster_available": true
+  },
+  "format": "bedrock-profile-parts",
+  "parts": [
+    {
+      "path": "analysis/status.json",
+      "sha256": "bf0e8b0a19c955e4729efbad74bae479c8cc82a6a854b9eb15b348942112fa1d"
+    },
+    {
+      "path": "classes/Actor.json",
+      "sha256": "965bd8f5d3f6e4ad7d14b625de67f5b9066539a2c8a79346fc071a321b2895ed"
+    },
+    {
+      "path": "classes/AutomationControls.json",
+      "sha256": "a22c7eeee4fe21bbff5f67dc11dc85fbb8567e2267e0b7b1dd77a449475c92dd"
+    },
+    {
+      "path": "classes/BackgroundContainers.json",
+      "sha256": "3aab08cd78452d40a91b592c52c1427f05f2826c691f421871f487580c69cad3"
+    },
+    {
+      "path": "classes/BedrockMemory.json",
+      "sha256": "b6ef8180fa96eb9e571eb860f774b5e31e7f12e980a55d451a0d162618a0a160"
+    },
+    {
+      "path": "classes/BlockSource.json",
+      "sha256": "8755414b9665a70a043224e6f6eac6bd17563f8ac90ce0e4bc06278eeaef8369"
+    },
+    {
+      "path": "classes/ClientInstance.json",
+      "sha256": "514e7c6a554d30aeac247d850d8ce9ca33a0d6cfe45cc4cf2eb9d925dbec52f9"
+    },
+    {
+      "path": "classes/CommandRegistry.json",
+      "sha256": "66756f0cd7b922d3c04cc322416ed8303dfc67921b310799ffb9c14f03b898e7"
+    },
+    {
+      "path": "classes/ContentLog.json",
+      "sha256": "42b8f7bca8e080fe485c28f6d84ff894ae11ab93dd99ab7766d127ca59b7370c"
+    },
+    {
+      "path": "classes/GameCore.json",
+      "sha256": "fbba7b4f7cea34cb1f03738c13d6d6473c701f976e8c3cc5af7ffc1ff45f1600"
+    },
+    {
+      "path": "classes/GameMode.json",
+      "sha256": "9c12a177cb7bbe22b6ad9b0cd362ff6f1a08bc48ced09c7d96001a97ebb6054d"
+    },
+    {
+      "path": "classes/GuiData.json",
+      "sha256": "9af8ae70169e6e3bff32d627ab51824e04502f02205ae5fb28554918fb3f1ef4"
+    },
+    {
+      "path": "classes/Internal.json",
+      "sha256": "35a3c7b7695279ad4c8f0e05595580732fc9bb90e90a5bcb2719ed653428fa62"
+    },
+    {
+      "path": "classes/ItemStackBase.json",
+      "sha256": "0b3e556869ad5310ba7d7b7c7b363bd6770df26ce793b29ce6320331e5f4e204"
+    },
+    {
+      "path": "classes/Keyboard.json",
+      "sha256": "ab99e163190f856e867cc23ea8795d27e0076ec60b3344e9f85653bef082919a"
+    },
+    {
+      "path": "classes/Level.json",
+      "sha256": "9d4207bd9b382c9f0a89c88c79e83f0058a4d281fac88d9ca3490b6ce2a75cd8"
+    },
+    {
+      "path": "classes/LevelRendererPlayer.json",
+      "sha256": "5e60d1d02236e9a85c4f53a1c14dedca6cab7d49f3bcb0a146a81eb665235fb6"
+    },
+    {
+      "path": "classes/MobEffect.json",
+      "sha256": "2a78ba49387b3625c489b4ac2a28e4de66eae6748d19c4d896fa1f22a9349189"
+    },
+    {
+      "path": "classes/MouseDevice.json",
+      "sha256": "8926476ed9849f182ef7ba7633aa74c006d18a5c144fa80c1dcda422d3f115f3"
+    },
+    {
+      "path": "classes/MovePlayerPacket.json",
+      "sha256": "db417e9a94b54bb11af3c3460c8007579341fc2bcc7d21e22639739c7434696a"
+    },
+    {
+      "path": "classes/MultiPlayerLevel.json",
+      "sha256": "012485b06faede53c7753aaea9c215d528252df101ff9936f46e3c49164634ad"
+    },
+    {
+      "path": "classes/OreUISettings.json",
+      "sha256": "4c53bd7ee5ce7c26e153a5b8275e0d63343c06753ce816ae0e92cbd13c60ea29"
+    },
+    {
+      "path": "classes/Player.json",
+      "sha256": "1386c75e73d94a8458836c340b5eefdfcd3375a66bc24e396c7119351999dfca"
+    },
+    {
+      "path": "classes/PlayerAuthInputPacket.json",
+      "sha256": "6451fc1ec36e064dbe691879a59825a4f50bf77e247504000f6b6129a0d1ebe5"
+    },
+    {
+      "path": "classes/ResourcePackManager.json",
+      "sha256": "4f4e1017908f700de775a381a7ecd46aedc8c171fb069f4e1acc22ee82cf28d8"
+    },
+    {
+      "path": "classes/Tessellator.json",
+      "sha256": "0b3def18671822fa574a83fb1d5ede819dffbe1df88914212381a354ba090a28"
+    },
+    {
+      "path": "metadata/maintenance.json",
+      "sha256": "c0506e800ac150771a47556236c4f83da7732d21be5f8918925b2bf145bd2e09"
+    }
+  ],
+  "symbols": 97
+}

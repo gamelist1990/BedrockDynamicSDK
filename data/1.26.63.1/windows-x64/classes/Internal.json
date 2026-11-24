@@ -1,0 +1,160 @@
+{
+  "symbols": {
+    "sub_6F313F0": {
+      "rva": "0x6F31D50",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ?? ?? ?? ?? 44 0F 29 94 24 ?? ?? ?? ?? 44 0F 29 8C 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 4C 89 C6",
+      "cross_version_signature_available": true,
+      "entry_check": "41 57 41 56 41 55 41 54 56 57 55 53",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "65-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_5AFB520": {
+      "rva": "0x5AFBA40",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? 41 B8 32 00 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "48 83 EC 38 48 8B 05 75 E6 80 0C 48 31 E0 48 89",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "37-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_56887B0": {
+      "rva": "0x5688CD0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "56 48 83 EC ?? 48 8B 71 08 4C 8B 02 4C 8B 4A 08",
+      "cross_version_signature_available": true,
+      "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "16-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_5417230": {
+      "rva": "0x5417300",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "56 57 55 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 80 B9 A0 02 00 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "56 57 55 53 48 83 EC 38 48 8B 05 B1 2D EF 0C 48",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "30-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_76A710": {
+      "rva": "0x76A5D0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 D7 48 89 CE 48 8D 59 08",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "31-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_4DE7250": {
+      "rva": "0x4DE7180",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 0F 29 75 F0 48 C7 45 E8 FE FF FF FF 49 89 D1",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 48 83 EC 50 48 8D 6C 24 50",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "27-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_B94CA0": {
+      "rva": "0xB94BE0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 00 FE FF FF FF 48 8B 81 90 02 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 53 48 81 EC 88 00 00 00 48",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "34-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_65BD080": {
+      "rva": "0x65BD9E0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 F8 FE FF FF FF 89 D6 48 8B 01",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 48 83 EC 40 48 8D 6C 24 40",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "25-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_8AB690": {
+      "rva": "0x8AB5A0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 48 89 CE 48 8B B9 D0 09 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 53 48 83 EC 38 48 8D 6C 24",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "31-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_65A8500": {
+      "rva": "0x65A8E60",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 45 10 FE FF FF FF 48 89 CE 48 8B 89 D0 01 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 56 57 53 48 81 EC 98 00 00 00 48",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "37-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_537E6E0": {
+      "rva": "0x537E7B0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 83 EC ?? 48 8D 6C 24 ?? 48 C7 45 00 FE FF FF FF 4D 89 C5 48 89 CE 80 FA 05",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "38-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_5376690": {
+      "rva": "0x5376760",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 85 E0 0B 00 00",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "35-byte masked profile signature unique in .text; .pdata function-start aligned"
+    },
+    "sub_5AD5F90": {
+      "rva": "0x5AD64B0",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "signature": "55 41 57 41 56 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 48 C7 85 C8 03 00 00 FE FF FF FF",
+      "cross_version_signature_available": true,
+      "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "36-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

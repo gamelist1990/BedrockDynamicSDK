@@ -1,0 +1,30 @@
+{
+  "symbols": {
+    "BlockSource::getBlock": {
+      "rva": "0x32CE100",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "Block const* __fastcall(BlockSource*, BlockPos const*)",
+      "signature": "56 57 48 83 EC 38 48 89 CF 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 30 8B 42 04 0F BF 49 3A 39 C8 0F 8C B9 00 00 00 0F BF 4F 38 39 C8 0F 8D AD 00 00 00 48 89 D6 8B 02 C1 F8 04 89 44 24 28 8B 42 08 C1 F8 04 89 44 24 2C 48 8B 07 48 8B 80 48 01 00 00 48 8D 54 24 28 48 89 F9 FF 15 ?? ?? ?? ?? 48 85 C0 74 7A 44 0F B7 46 04 66 44 2B 47 3A 41 0F BF C8 C1 E9 04 48 0F BF C9 48 8B 90 C8 01 00 00 48 8B 80 D0 01 00 00 48 29 D0 48 C1 F8 03 49 B9 C5 4E EC C4 4E EC C4 4E 4C 0F AF C8 49 39 C9 76 3D 48 6B C1 68 48 8B 4C 02 30 48 85 C9 74 2F 0F B7 46 08",
+      "cross_version_signature_available": true,
+      "entry_check": "56 57 48 83 EC 38 48 89 CF 48 8B 05 B0 BF 03 0F",
+      "function_boundary": true,
+      "source": "1.26.65.1 -> 1.26.63.1 static comparison",
+      "evidence": "181-byte entry signature unique in both .text sections; full 298-byte instruction stream matches 65.1 0x32ce180 after masking RIP-relative references and external branch targets; .pdata entry in both builds."
+    },
+    "BlockSource::getChunk": {
+      "rva": "0x32CD210",
+      "status": "candidate",
+      "abi_verified": false,
+      "runtime_verified": false,
+      "abi": "LevelChunk* __fastcall(BlockSource*, ChunkPos const*)",
+      "signature": "41 56 56 57 53 48 83 EC 38 49 89 D0 48 89 CE 48 8B 81 B8 00 00 00 48 3B",
+      "cross_version_signature_available": true,
+      "entry_check": "41 56 56 57 53 48 83 EC 38 49 89 D0 48 89 CE 48 8B 81 B8 00 00 00 48 3B",
+      "function_boundary": true,
+      "source": "1.26.65.1 pattern port; independently checked on 1.26.63.1",
+      "evidence": "24-byte masked profile signature unique in .text; .pdata function-start aligned"
+    }
+  }
+}

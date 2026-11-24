@@ -57,7 +57,7 @@ void profiles(const fs::path& repository) {
     rejects([&]{ parseProfile(invalid.dump()); }, "out-of-image text accepted");
     rejects([&]{ readU32("0x1000junk"); }, "trailing RVA text accepted");
     rejects([&]{ readU32(-1); }, "negative RVA accepted");
-    for (const auto& version : {"1.26.52.3", "1.26.60.5", "1.26.65.1"}) {
+    for (const auto& version : {"1.26.52.3", "1.26.60.5", "1.26.63.1", "1.26.65.1"}) {
         std::string text, error;
         const auto path=repository / "data" / version / "windows-x64" / "manifest.json";
         require(readBounded(path,text,maxProfileBytes,error),"repo profile manifest read failed");
