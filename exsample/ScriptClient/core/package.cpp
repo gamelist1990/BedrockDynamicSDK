@@ -195,8 +195,10 @@ std::string installPackage(const fs::path& archive, const fs::path& modsDir,
     const auto manifest = body / "manifest.json";
     require(fs::is_regular_file(manifest) && fs::file_size(manifest) <= 256 * 1024,
             "mod/manifest.json is missing or too large");
-    std::ifstream stream(manifest, std::ios::binary);
-    const auto doc = nlohmann::json::parse(stream);
+    const auto doc = [&] {
+        std::ifstream stream(manifest, std::ios::binary);
+        return nlohmann::json::parse(stream);
+    }(); // Windows cannot rename the staged directory while this handle is open.
     const auto name = doc.value("name", std::string{});
     require(isScriptModName(name), "invalid mod name");
     const auto validation = validateManifest(doc, name, body, gameVersion);
