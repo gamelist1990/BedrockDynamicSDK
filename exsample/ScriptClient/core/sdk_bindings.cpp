@@ -743,22 +743,65 @@ bool SdkBindings::ensureFilesRoot(std::string& error) {
         error = "cannot create mod data root: " + ec.message();
         return false;
     }
+    const auto parent = fs::canonical(filesRoot_.parent_path(), ec);
+    const auto root = ec ? fs::path{} : fs::canonical(filesRoot_, ec);
+    if (ec || root != parent / filesRoot_.filename()) {
+        error = "mod data root must not redirect to another directory";
+        return false;
+    }
     return true;
 }
 
 std::optional<fs::path> SdkBindings::resolveFilesPath(const std::string& relative,
                                                       std::string& error) const {
-    fs::path input(relative);
-    if (input.empty()) {
-        error = "path must not be empty";
+    if (relative.empty() || relative.find('\0') != std::string::npos) {
+        error = "path must not be empty or contain a NUL";
         return std::nullopt;
     }
+    fs::path input(relative);
     if (input.is_absolute() || input.has_root_name() || input.has_root_directory()) {
         error = "absolute paths are not allowed; paths are relative to the mod data root";
         return std::nullopt;
     }
-    const auto resolved = confinedResolve(filesRoot_, input);
-    if (!resolved) {
+#ifdef _WIN32
+    for (const auto& part : input) {
+        const auto name = part.generic_string();
+        const auto end = name.find('.');
+        if (name.empty() || name == "." || name == "..") continue;
+        auto stem = lowerCopy(name.substr(0, end));
+        while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+        const auto suffix = stem.size() > 3 ? std::string_view(stem).substr(3) : std::string_view{};
+        const bool reservedPort = (stem.starts_with("com") || stem.starts_with("lpt")) &&
+            ((suffix.size() == 1 && suffix.front() >= '0' && suffix.front() <= '9') ||
+             suffix == "\xb9" || suffix == "\xb2" || suffix == "\xb3" ||
+             suffix == "\xc2\xb9" || suffix == "\xc2\xb2" || suffix == "\xc2\xb3");
+        if (name.find_first_of(":<>\"|?*") != std::string::npos ||
+            name.back() == ' ' || name.back() == '.' ||
+            stem == "con" || stem == "prn" || stem == "aux" || stem == "nul" ||
+            stem == "conin$" || stem == "conout$" || reservedPort) {
+            error = "path uses a reserved Windows file name";
+            return std::nullopt;
+        }
+    }
+#endif
+    std::error_code ec;
+    const auto root = fs::canonical(filesRoot_, ec);
+    if (ec) { error = "cannot resolve mod data root"; return std::nullopt; }
+    // weakly_canonical treats dangling links like missing path tails. A
+    // subsequent write would follow the link and could create its target.
+    auto prefix = root;
+    for (const auto& part : input) {
+        prefix /= part;
+        const auto entry = fs::symlink_status(prefix, ec);
+        if (fs::is_symlink(entry) && !fs::exists(prefix, ec)) {
+            error = "path contains a dangling symlink";
+            return std::nullopt;
+        }
+    }
+    ec.clear();
+    const auto resolved = fs::weakly_canonical(root / input, ec);
+    if (ec || (resolved != root &&
+               !resolved.generic_string().starts_with(root.generic_string() + "/"))) {
         error = "path escapes the mod data root";
         return std::nullopt;
     }
@@ -854,6 +897,7 @@ bool SdkBindings::install(std::string& error) {
         {"filesDataDir", Op::FilesDataDir}, {"filesReadText", Op::FilesReadText},
         {"filesWriteText", Op::FilesWriteText}, {"filesAppendText", Op::FilesAppendText},
         {"filesReadBytes", Op::FilesReadBytes}, {"filesWriteBytes", Op::FilesWriteBytes},
+        {"filesAppendBytes", Op::FilesAppendBytes}, {"filesCopy", Op::FilesCopy},
         {"filesExists", Op::FilesExists}, {"filesStat", Op::FilesStat},
         {"filesList", Op::FilesList}, {"filesMkdir", Op::FilesMkdir},
         {"filesRemove", Op::FilesRemove}, {"filesRename", Op::FilesRename},
@@ -1500,6 +1544,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
                                                           : bytes.data(),
                                         bytes.size());
         }
+        case Op::FilesAppendBytes:
         case Op::FilesWriteBytes: {
             std::string err;
             if (!self.ensureFilesRoot(err)) return throwJsError(ctx, "Storage", err);
@@ -1525,7 +1570,7 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
                     return throwJsError(ctx, "Storage", "cannot access the byte array data");
                 bytes.assign(data, data + size);
             }
-            if (!self.writeFileBytes(*path, bytes, false, err))
+            if (!self.writeFileBytes(*path, bytes, op == Op::FilesAppendBytes, err))
                 return throwJsError(ctx, "Storage", err);
             return JS_UNDEFINED;
         }
@@ -1596,7 +1641,10 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             const auto path = self.resolveFilesPath(jsToString(ctx, arg(0)), err);
             if (!path) return throwJsError(ctx, "Invalid", err);
             std::error_code ec;
-            fs::create_directories(*path, ec);
+            if (JS_IsUndefined(arg(1)) || jsToBool(ctx, arg(1), false))
+                fs::create_directories(*path, ec);
+            else if (!fs::create_directory(*path, ec) && !ec)
+                return throwJsError(ctx, "Storage", "directory already exists");
             if (ec) return throwJsError(ctx, "Storage", "cannot create directory: " + ec.message());
             return JS_UNDEFINED;
         }
@@ -1607,6 +1655,10 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             if (!path) return throwJsError(ctx, "Invalid", err);
             const bool recursive = jsToBool(ctx, arg(1), false);
             std::error_code ec;
+            if (jsToBool(ctx, arg(2), false)) {
+                if (const auto root = fs::canonical(self.filesRoot_, ec); ec || *path == root)
+                    return throwJsError(ctx, "Invalid", "cannot remove the mod data root");
+            }
             const auto status = fs::status(*path, ec);
             if (ec || !fs::exists(status))
                 return throwJsError(ctx, "NotFound", "path does not exist: " + path->generic_string());
@@ -1617,7 +1669,8 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             if (ec) return throwJsError(ctx, "Storage", "cannot remove path: " + ec.message());
             return JS_UNDEFINED;
         }
-        case Op::FilesRename: {
+        case Op::FilesRename:
+        case Op::FilesCopy: {
             std::string err;
             if (!self.ensureFilesRoot(err)) return throwJsError(ctx, "Storage", err);
             const auto from = self.resolveFilesPath(jsToString(ctx, arg(0)), err);
@@ -1625,6 +1678,20 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
             const auto to = self.resolveFilesPath(jsToString(ctx, arg(1)), err);
             if (!to) return throwJsError(ctx, "Invalid", err);
             std::error_code ec;
+            const auto root = fs::canonical(self.filesRoot_, ec);
+            if (ec || *from == root || *to == root)
+                return throwJsError(ctx, "Invalid", "cannot move or copy the mod data root");
+            if (op == Op::FilesCopy) {
+                if (!fs::exists(*from, ec) && !ec)
+                    return throwJsError(ctx, "NotFound", "source path does not exist");
+                if (!ec && !fs::is_regular_file(*from, ec) && !ec)
+                    return throwJsError(ctx, "WrongType", "source path is not a regular file");
+                const auto mode = jsToBool(ctx, arg(2), false)
+                    ? fs::copy_options::none : fs::copy_options::overwrite_existing;
+                if (ec || !fs::copy_file(*from, *to, mode, ec))
+                    return throwJsError(ctx, "Storage", "cannot copy file: " + ec.message());
+                return JS_UNDEFINED;
+            }
             fs::create_directories(to->parent_path(), ec);
             if (ec) return throwJsError(ctx, "Storage", "cannot create parent directory: " + ec.message());
             fs::rename(*from, *to, ec);
@@ -1942,20 +2009,24 @@ void SdkBindings::advanceTick() {
     drainPendingSettings();
     ++tick_;
     const auto ctx = runtime_.context();
-    for (auto it = tasks_.begin(); it != tasks_.end();) {
-        if (it->second.due > tick_) { ++it; continue; }
-        const auto function = it->second.function;
-        const bool repeat = it->second.period != 0;
-        if (repeat) it->second.due = tick_ + it->second.period;
+    // Callbacks may clear themselves, cancel other ready tasks, or enqueue
+    // more work. Never hold an iterator across the JS call.
+    std::vector<std::uint64_t> ready;
+    for (const auto& [id, task] : tasks_)
+        if (task.due <= tick_) ready.push_back(id);
+    for (const auto id : ready) {
+        const auto it = tasks_.find(id);
+        if (it == tasks_.end()) continue;
+        const JsValue function(ctx, JS_DupValue(ctx, it->second.function));
+        if (it->second.period != 0) it->second.due = tick_ + it->second.period;
         else {
-            JS_FreeValue(ctx, function);
-            it = tasks_.erase(it);
+            JS_FreeValue(ctx, it->second.function);
+            tasks_.erase(it);
         }
         JsRuntime::CallScope scope(runtime_);
-        const JsValue result(ctx, JS_Call(ctx, function, JS_UNDEFINED, 0, nullptr));
+        const JsValue result(ctx, JS_Call(ctx, function.get(), JS_UNDEFINED, 0, nullptr));
         if (JS_IsException(result.get())) runtime_.takeException();
         if (runtime_.faulted()) { runtime_.clearFault(); break; }
-        if (!repeat) continue;
     }
 }
 

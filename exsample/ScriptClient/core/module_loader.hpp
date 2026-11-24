@@ -17,8 +17,11 @@ class ModuleLoader {
 public:
     ModuleLoader(JsRuntime& runtime, Transpiler& transpiler, const fs::path& modRoot,
                  HostContext& host);
+    ~ModuleLoader();
 
     void setBuiltin(const std::string& name, JSValue value);
+    bool installBuiltin(const char* name, const char* factory, JSValueConst argument,
+                        std::string& error);
     bool loadEntry(const std::string& absolutePath, std::string& error);
     JSValue entryExports() const noexcept { return entryExports_; }
     void clearCache();

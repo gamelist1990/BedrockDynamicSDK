@@ -12,6 +12,7 @@ class SdkBindings;
 class CommandRegistry;
 class WorldBackend;
 class LogSink;
+class HttpClient;
 
 // Stored as the quickjs context opaque. C callbacks reach the host services
 // through this struct; no JS value ever leaves the owning tick (§1.2).
@@ -21,6 +22,7 @@ struct HostContext {
     CommandRegistry* commands = nullptr;
     WorldBackend* world = nullptr;
     LogSink* log = nullptr;
+    HttpClient* http = nullptr;
 
     // Game profile JSON (symbols, target info). Set once at load time; read-only
     // during tick. Used by the dev.* symbol introspection surface.

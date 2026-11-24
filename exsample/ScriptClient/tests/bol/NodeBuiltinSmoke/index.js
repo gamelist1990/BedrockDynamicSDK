@@ -1,0 +1,11 @@
+const fs = require("fs");
+const path = require("path");
+const { EventEmitter } = require("events");
+const file = path.join("nested", "roundtrip.txt");
+const emitter = new EventEmitter();
+emitter.on("read", value => console.log(`[NodeBuiltinSmoke] event ${value}`));
+fs.writeFileSync(file, "sandbox-ok");
+const value = fs.readFileSync(file, "utf8");
+if (value !== "sandbox-ok") throw new Error("fs round-trip did not match");
+emitter.emit("read", value);
+console.log(`[NodeBuiltinSmoke] round-trip path=${file} bytes=${fs.statSync(file).size}`);

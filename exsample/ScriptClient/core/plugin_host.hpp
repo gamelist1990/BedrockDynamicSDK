@@ -1,5 +1,7 @@
 #pragma once
 
+#include "http_client.hpp"
+
 #include "command_model.hpp"
 #include "common.hpp"
 #include "host_context.hpp"
@@ -93,6 +95,7 @@ private:
         std::unique_ptr<CommandRegistry> commands;
         std::unique_ptr<SdkBindings> bindings;
         std::unique_ptr<ModuleLoader> loader;
+        std::unique_ptr<HttpClient> http;
         JSValue instance = JS_UNDEFINED;
 
         ~LoadedMod() {

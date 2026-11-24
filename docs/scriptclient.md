@@ -130,6 +130,43 @@ console.info(JSON.stringify(options));
 
 ## 実行環境の制限
 
-ScriptClient は Node.js ではありません。`require("fs")` や `require("path")` は提供されず、`Unavailable` になります。Mod のデータ保存にはファイル API を使ってください。ファイル API のパス制限や QuickJS の制限は、信用できないコードを安全に実行するための OS レベルの隔離ではありません。
+ScriptClient は Node.js ではありませんが、`require("fs")`、`require("path")`、`require("events")`、最小限の `require("os")` が使えます。`node:` 接頭辞も使えます。生ソケットの `net`、プロセスを起動する `child_process`、`worker_threads` は `Unavailable` です。Node ストリーム互換の `http` / `https` は内蔵していません。HTTP 通信には下記の API を使ってください。
+
+- `fs` は `files` と同じ Mod データディレクトリ `mod-data/<ModName>/` に限定されます。`readFileSync`、`writeFileSync`、`appendFileSync`、`existsSync`、`readdirSync`、`mkdirSync`、`rmSync`、`renameSync`、`statSync`、`copyFileSync` に対応します。既定の読み取り結果は `Uint8Array`、`"utf8"` を指定すると文字列です。`statSync` は `size`、`mtime`、`isFile()`、`isDirectory()` を返します。エラーは `Error` で、`code` は上記のファイル API と共通です。
+- `fs.promises` / `fs/promises` とコールバック形式は同じ同期処理を JS ジョブキューに遅延するだけです。ディスク I/O をゲームスレッドから分離するものではありません。大きなファイルの処理には注意してください。ファイルディスクリプタ、ストリーム、`Buffer`、UTF-8 以外のエンコーディング、カスタムの open フラグはありません。
+- `path` は `posix` / `win32` の純粋な文字列操作です。`resolve` は実際の作業ディレクトリではなく仮想ルート（Windows は `C:\`、Linux ホストは `/`）を使います。`fs` には `resolve` の絶対パスではなく `join` などで作った相対パスを渡してください。
+- `events` は `EventEmitter` の `on`、`once`、`off`、`emit`、リスナーの列挙・削除などを提供します。`os` は `platform()`、`arch()`、`EOL` のみです。
+
+ファイルのパス制限や QuickJS の制限は、信用できないコードを安全に実行するための **OS レベルの隔離ではありません**。Mod は信頼できるものだけを読み込んでください。
 
 `memoryMiB` は各 Mod の QuickJS ランタイムに適用されるメモリ上限です。8〜1024 の整数を設定でき、範囲外や不正な型は警告のうえ 64 MiB に戻ります。上限に達すると QuickJS の割り当てが失敗します。DLL 全体やネイティブ側のメモリをこの値で制限するものではありません。別に JS 呼び出しのウォッチドッグがあり、長い実行は中断されます。更新処理で異常終了した Mod は `faulted` となり、`/mods reload <name>` で読み直せます。
+
+## HTTP / HTTPS リクエスト
+
+外部ネットワークには内蔵モジュール `@minecraft/server-net` の `http.request()` / `http.get()` とグローバルの `fetch()` でアクセスできます。公式の `@minecraft/server-net` は権限の設定が必要な Bedrock Dedicated Server 専用モジュールですが、ScriptClient ではクライアント Mod の内蔵機能です。BDS の権限ゲートはなく、読み込んだ Mod は直接ネットワークにアクセスできます。`SecretString` と BDS のテスト用フックはありません。
+
+```ts
+import { http, HttpRequest, HttpRequestMethod } from "@minecraft/server-net";
+
+async function showStatus() {
+  const request = new HttpRequest("https://example.com/")
+    .setMethod(HttpRequestMethod.GET)
+    .setTimeout(5); // 秒
+  const response = await http.request(request);
+  console.log(response.status, response.body);
+}
+showStatus().catch(error => console.error(error.code, error.message));
+```
+
+CommonJS 変換のためエントリでトップレベル `await` は使えません。`fetch(url, { method, headers, body, timeoutMs, maxResponseBytes })` のレスポンスは `status`、`ok`、`headers.get()`、`text()`、`json()`、`arrayBuffer()` を提供します。ブラウザの完全な Fetch API ではなく、ストリーム、Cookie ストア、CORS、`AbortSignal` はありません。
+
+通信は非同期のみで、Windows では WinHTTP をワーカースレッドで実行し、Promise はゲームのティックで完了します。タイムアウトの既定は 10 秒、上限は 30 秒です。レスポンス本文は既定 2 MiB、設定上限 8 MiB（`HttpRequest.maxResponseBytes`、または `fetch` の同名オプション）です。独自ヘッダーのないリクエストだけ最大 5 回リダイレクトし、HTTPS から HTTP へは遷移しません。`http.cancelAll(reason)` はその Mod のリクエストを中止します。通信・制限エラーは `code`（例: `ETIMEDOUT`、`EMSGSIZE`）と `message` を持つエラーで reject され、404 などの HTTP ステータスは通常レスポンスとして返ります。
+
+## Writing mods like the Script API
+
+`import { world, system } from "@minecraft/server"` をそのまま使えます。公式のスタイルで書かれた [OfficialStyle サンプル](https://github.com/gamelist1990/BedrockDynamicSDK/tree/main/exsample/ScriptClient/examples/OfficialStyle) と、実装済み範囲だけを記載した [型宣言](https://github.com/gamelist1990/BedrockDynamicSDK/blob/main/sdk/ts/node_modules/%40minecraft/server/index.d.ts) を参照してください。`@bedrock/sdk` は従来どおり利用できます。
+
+- `world.getPlayers()` / `getAllPlayers()` が返すのはクライアントから読めるプレイヤーです。`getPlayers` の絞り込みは `name` / `excludeNames` のみ。`world.getDimension()` は現在のクライアントディメンションだけ利用できます。`localPlayer()` は公式互換モジュールにはなく、`@bedrock/sdk` に残ります。
+- `world.afterEvents.playerSpawn.subscribe(callback)` はコールバックを返し、`unsubscribe(callback)` で解除できます。クライアントが検知したスポーンだけが対象で、`beforeEvents` には対応イベントがありません。`system.run` / `runTimeout` / `runInterval` / `clearRun` はティック単位で使えます。
+- `Player.sendMessage` は文字列と `text` / `rawtext` を受け付けます。`Player.addEffect` と `getEffects` の持続時間は **ティック** です（20 ティック = 1 秒）。`@bedrock/sdk` で指定・取得する効果時間は引き続き **秒** です。効果やメッセージはクライアント側だけに適用されます。
+- `Dimension.getBlock`、`Block.typeId` / `location`、インベントリなどの `ItemStack.typeId` / `amount` は読み取り用です。サーバー側の操作や未対応イベント、アイテムの追加メタデータは使えません。

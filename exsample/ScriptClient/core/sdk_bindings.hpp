@@ -443,8 +443,8 @@ private:
         KeybindSubscribe, KeybindUnsubscribe,
         BrightnessSetGamma,
         FilesDataDir, FilesReadText, FilesWriteText, FilesAppendText,
-        FilesReadBytes, FilesWriteBytes, FilesExists, FilesStat, FilesList,
-        FilesMkdir, FilesRemove, FilesRename,
+        FilesReadBytes, FilesWriteBytes, FilesAppendBytes, FilesExists, FilesStat, FilesList,
+        FilesMkdir, FilesRemove, FilesRename, FilesCopy,
         WorldObject, SystemObject, BrightnessObject,
         // --- dev namespace ---
         DevMemoryReadBytes, DevMemoryReadU32, DevMemoryReadI64, DevMemoryReadF32,

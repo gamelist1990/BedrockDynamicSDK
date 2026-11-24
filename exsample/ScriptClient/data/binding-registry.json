@@ -169,6 +169,6 @@
     }
   ],
   "errorCodes": ["Invalid", "AlreadyRegistered", "NotFound", "WrongType", "Storage", "Unavailable", "BufferTooSmall", "Internal"],
-  "builtinModules": ["@bedrock/sdk", "@bedrock/vanilla-data"],
+  "builtinModules": ["@bedrock/sdk", "@bedrock/vanilla-data", "@minecraft/server", "@minecraft/server-net", "fs", "fs/promises", "path", "events", "os"],
   "commandArgs": ["effect", "duration", "int", "bool", "string", "message", "float"]
 }

@@ -1,0 +1,8 @@
+{
+  "name": "OfficialStyle",
+  "displayName": "Official Script API Style",
+  "version": "1.0.0",
+  "apiVersion": "1.0.0",
+  "entry": "src/index.ts",
+  "gameVersions": ["*"]
+}

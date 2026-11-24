@@ -25,6 +25,23 @@ if(WIN32)
 endif()
 add_subdirectory("${BEDROCK_SDK_ROOT}" bedrock-sdk EXCLUDE_FROM_ALL)
 
+foreach(builtin path events files network server)
+    set(source "${CMAKE_CURRENT_SOURCE_DIR}/core/builtins/${builtin}.js")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+    file(READ "${source}" source_text)
+    # MSVC limits the size of an individual source literal. The builtin
+    # sources are ASCII; adjacent raw literals preserve the exact JS bytes.
+    string(LENGTH "${source_text}" source_length)
+    set(offset 0)
+    set(BUILTIN_${builtin} "")
+    while(offset LESS source_length)
+        string(SUBSTRING "${source_text}" ${offset} 8192 chunk)
+        string(APPEND BUILTIN_${builtin} "\nR\"scriptclient(${chunk})scriptclient\"")
+        math(EXPR offset "${offset} + 8192")
+    endwhile()
+endforeach()
+configure_file(core/builtin_sources.hpp.in builtin_sources.hpp @ONLY)
+
 add_library(script_client_core STATIC
     core/manifest.cpp
     core/mod_scanner.cpp
@@ -34,6 +51,8 @@ add_library(script_client_core STATIC
     core/command_model.cpp
     core/sdk_bindings.cpp
     core/plugin_host.cpp
+    core/http_client.cpp
+    core/http_transport.cpp
 )
 target_include_directories(script_client_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/core"
@@ -41,7 +60,22 @@ target_include_directories(script_client_core PUBLIC
     "${BEDROCK_SDK_ROOT}/third_party"
     "${BEDROCK_SDK_ROOT}/third_party/quickjs-ng"
 )
+target_include_directories(script_client_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(script_client_core PUBLIC qjs bedrock::sdk bedrock::internal_headers)
+find_package(Threads REQUIRED)
+target_link_libraries(script_client_core PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(script_client_core PRIVATE winhttp)
+else()
+    # The shipped DLL uses WinHTTP. libcurl enables real HTTP(S) on native test hosts.
+    find_package(CURL 7.85 QUIET)
+    if(CURL_FOUND)
+        target_link_libraries(script_client_core PRIVATE CURL::libcurl)
+        target_compile_definitions(script_client_core PUBLIC SCRIPTCLIENT_HAS_CURL)
+    else()
+        message(STATUS "libcurl >= 7.85 not found; native ScriptClient HTTP unavailable")
+    endif()
+endif()
 
 if(WIN32)
     add_library(ScriptClient SHARED
@@ -68,7 +102,7 @@ if(BUILD_TESTING)
         STAGEB_GOLDEN_DIR="${STAGEB_GOLDEN_DIR}"
         STAGEB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     if(MSVC)
-        target_compile_options(stage_b_test PRIVATE /UNDEBUG)
+        target_compile_options(stage_b_test PRIVATE /UNDEBUG /utf-8)
     else()
         target_compile_options(stage_b_test PRIVATE -UNDEBUG)
     endif()
@@ -78,6 +112,11 @@ if(BUILD_TESTING)
         if(Python3_Interpreter_FOUND)
             add_test(NAME stage_c_ts_sdk
                 COMMAND "${Python3_EXECUTABLE}" "${BEDROCK_SDK_ROOT}/tests/test_stage_c_ts_sdk.py")
+            if(WIN32 OR CURL_FOUND)
+                add_test(NAME stage_b_http COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_fixture.py" --
+                    "$<TARGET_FILE:stage_b_test>" --http-only)
+            endif()
         endif()
     endif()
 endif()

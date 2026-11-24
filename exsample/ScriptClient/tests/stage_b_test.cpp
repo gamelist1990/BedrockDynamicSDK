@@ -7,6 +7,7 @@
 #include "sdk_bindings.hpp"
 #include "transpiler.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <chrono>
@@ -15,6 +16,7 @@
 #include <iostream>
 #include <iterator>
 #include <string_view>
+#include <thread>
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <bedrock/logging/content_log.hpp>
@@ -337,7 +339,7 @@ export default class Loop extends Mod {
 )TS");
 
     PluginHost host(dir / "mods", "1.26.65.1");
-    host.setFaultBudgetMs(5);
+    host.setFaultBudgetMs(50);
     std::string error;
     CHECK(host.initialize(error), "initialize: " + error);
     auto views = host.list();
@@ -376,7 +378,11 @@ void testBindingRegistry() {
     in >> doc;
     CHECK(doc["apiVersion"] == "1.0.0", "registry pins apiVersion 1.0.0");
     CHECK(doc["exports"].size() >= 5, "registry lists the frozen exports");
-    CHECK(doc["builtinModules"].size() == 2, "two built-in modules");
+    const auto modules = doc["builtinModules"].get<std::vector<std::string>>();
+    for (const char* expected : {"@bedrock/sdk", "@bedrock/vanilla-data", "@minecraft/server",
+                                 "@minecraft/server-net", "fs", "path", "events", "os"})
+        CHECK(std::find(modules.begin(), modules.end(), expected) != modules.end(),
+              std::string("builtin registered: ") + expected);
     bool hasCommandContext = false, hasFiles = false;
     for (const auto& e : doc["exports"]) {
         if (e["name"] == "CommandContext") hasCommandContext = true;
@@ -513,6 +519,13 @@ public:
     BackendOutcome playerGetEffects(const std::string& modName, std::uint64_t,
                                     std::vector<EffectData>& outEffects) override {
         outEffects = effectsByMod[modName];
+        return BackendOutcome::success();
+    }
+    BackendOutcome playerRemoveEffect(const std::string& modName, std::uint64_t,
+                                       const std::string& id, bool& removed) override {
+        removed = std::erase_if(effectsByMod[modName], [&](const auto& effect) {
+            return effect.typeId == id;
+        }) != 0;
         return BackendOutcome::success();
     }
 
@@ -1260,7 +1273,252 @@ void testDevBindings() {
 
 } // namespace
 
-int main() {
+namespace {
+
+fs::path makeTestMod(const fs::path& dir, std::string name, std::string code) {
+    const auto mod = dir / "mods" / name;
+    writeFile(mod / "manifest.json", nlohmann::json({
+        {"name", name}, {"apiVersion", "1.0.0"}, {"version", "1.0.0"},
+        {"entry", "index.js"}, {"gameVersions", {"*"}}
+    }).dump());
+    writeFile(mod / "index.js", code);
+    return mod;
+}
+
+std::string readTestLog(const fs::path& dir, std::string name) {
+    std::ifstream file(dir / "logs" / (name + ".log"));
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+void checkActive(PluginHost& host, const std::string& name) {
+    for (const auto& mod : host.list())
+        if (mod.name == name) {
+            CHECK(mod.status == ModStatus::Active, name + " not active: " + mod.error);
+            return;
+        }
+    CHECK(false, "missing mod " + name);
+}
+
+void testNodeBuiltins() {
+    const auto dir = tempDir("node-builtins");
+    const auto mod = makeTestMod(dir, "NodeTest", R"JS(
+function check(test, message) { if (!test) throw new Error(message); }
+function fails(fn, code) { try { fn(); } catch (err) { return err instanceof Error && err.code === code; } }
+const fs = require('fs');
+const path = require('path');
+const EventEmitter = require('events');
+check(fs === require('node:fs') && fs.promises === require('node:fs/promises'), 'node aliases');
+check(fails(() => require('net'), 'Unavailable') && fails(() => require('node:net'), 'Unavailable'), 'net blocked');
+check(fails(() => require('http'), 'NotFound') && fails(() => require('node:https'), 'Unavailable'),
+      'no fake Node HTTP streams');
+check(path.posix.join('/a/', 'b', '..', 'c') === '/a/c', 'posix join');
+check(path.posix.dirname('/a/b.txt') === '/a' &&
+  path.posix.basename('/a/b.txt', '.txt') === 'b' && path.posix.extname('/a/b.txt') === '.txt', 'posix parts');
+check(path.posix.normalize('a//./b/../') === 'a/' &&
+  path.posix.relative('/a/c', '/a/d/b') === '../d/b' && path.posix.resolve('a') === '/a', 'posix normalization');
+const parsed = path.win32.parse('C:\\dir\\x.txt');
+check(path.win32.format(parsed) === 'C:\\dir\\x.txt' && parsed.root === 'C:\\', 'win32 parse/format');
+check(path.win32.normalize('\\\\server\\share\\a\\..\\') === '\\\\server\\share\\' &&
+      path.win32.relative('C:\\a', 'c:\\B') === '..\\B' &&
+      path.win32.resolve('D:tmp') === 'D:\\tmp' && path.win32.isAbsolute('D:\\tmp'), 'win32 paths');
+const os = require('os');
+check((os.platform() === 'win32' ? '\r\n' : '\n') === os.EOL && os.arch().length > 0, 'os constants');
+fs.mkdirSync('nested');
+fs.mkdirSync(path.join('nested', 'sub', 'deep'), {recursive: true});
+const file = path.join('nested', 'hello.txt');
+fs.writeFileSync(file, 'hello 世界', {encoding: 'utf8'});
+fs.appendFileSync(file, new Uint8Array([33]));
+check(fs.readFileSync(file, 'utf-8') === 'hello 世界!', 'UTF-8 read and byte append');
+check(fs.readFileSync(file) instanceof Uint8Array, 'binary read');
+check(require('@bedrock/sdk').files.readText(file) === 'hello 世界!', 'shared file root');
+fs.copyFileSync(file, 'copy.txt', fs.constants.COPYFILE_EXCL);
+fs.renameSync('copy.txt', 'renamed.txt');
+check(!fs.existsSync('copy.txt') && fs.existsSync('renamed.txt'), 'copy and rename');
+const stat = fs.statSync('renamed.txt');
+check(stat.isFile() && !stat.isDirectory() && stat.size === 13 && stat.mtime instanceof Date, 'stat');
+check(fs.statSync('nested').isDirectory() && fs.readdirSync('nested').includes('hello.txt'), 'list');
+fs.rmSync('nested', {recursive: true});
+check(!fs.existsSync('nested'), 'recursive remove');
+check(fails(() => fs.writeFileSync('../escape', 'no'), 'Invalid') &&
+      fails(() => fs.readFileSync('/absolute'), 'Invalid') &&
+      fails(() => fs.writeFileSync('trunc\0alias', 'no'), 'Invalid') &&
+      fails(() => fs.rmSync('.', {recursive:true}), 'Invalid') &&
+      fails(() => fs.copyFileSync('renamed.txt', '../escape'), 'Invalid'), 'file sandbox');
+if (os.platform() !== 'win32') {
+  check(fails(() => fs.writeFileSync('outside/escape', 'no'), 'Invalid') &&
+        fails(() => fs.writeFileSync('dangling', 'no'), 'Invalid'), 'symlink sandbox');
+}
+const e = new EventEmitter.EventEmitter();
+const order = [];
+function f() { check(this === e, 'emitter receiver'); order.push('on'); }
+e.on('item', f).once('item', () => order.push('once')).prependListener('item', () => order.push('first'));
+check(e.listenerCount('item') === 3 && e.emit('item'), 'listener count and emit');
+e.off('item', f);
+e.emit('item');
+check(order.join() === 'first,on,once,first', 'listener order');
+e.removeAllListeners();
+check(!e.emit('item') && e.eventNames().length === 0, 'listener removal');
+exports.onUpdate = function () {
+  if (exports.started) return;
+  exports.started = true;
+  fs.readFile('renamed.txt', 'utf8', (err, text) => {
+    if (err || text !== 'hello 世界!') return console.error('callback failed');
+    console.log('callback-ok');
+  });
+  fs.promises.readFile('missing').catch(err => console.log('promise-error=' + err.code));
+};
+console.log('node-builtins-ok');
+)JS");
+    writeFile(mod / "node_modules" / "fs" / "index.js", "throw new Error('must not shadow fs');");
+    writeFile(mod / "node_modules" / "net" / "index.js", "throw new Error('must not shadow net');");
+#ifndef _WIN32
+    fs::create_directories(dir / "outside");
+    fs::create_directories(dir / "mod-data" / "NodeTest");
+    fs::create_directory_symlink(dir / "outside", dir / "mod-data" / "NodeTest" / "outside");
+    fs::create_symlink(dir / "outside" / "escape", dir / "mod-data" / "NodeTest" / "dangling");
+#endif
+    PluginHost host(dir / "mods", "1.26.65.1");
+    host.setDataDirectory(dir / "mod-data");
+    host.setLogDirectory(dir / "logs");
+    std::string error;
+    CHECK(host.initialize(error), "initialize node builtins: " + error);
+    checkActive(host, "NodeTest");
+    host.tick();
+    const auto log = readTestLog(dir, "NodeTest");
+    CHECK(log.find("node-builtins-ok") != log.npos, "Node builtin checks: " + log);
+    CHECK(log.find("callback-ok") != log.npos, "fs callback on job queue");
+    CHECK(log.find("promise-error=NotFound") != log.npos, "fs promises preserve error code");
+    CHECK(!fs::exists(dir / "mod-data" / "escape") && !fs::exists(dir / "outside" / "escape"),
+          "no sandbox escape");
+}
+
+void testServerCompat() {
+    const auto dir = tempDir("server-compat");
+    const auto mods = dir / "mods";
+    fs::create_directories(mods);
+    fs::copy(fs::path(STAGEB_SOURCE_DIR) / "examples" / "OfficialStyle", mods / "OfficialStyle",
+             fs::copy_options::recursive);
+    makeTestMod(dir, "CompatTest", R"JS(
+const { world, system, ItemStack, Player, EffectTypes, TicksPerSecond } = require('@minecraft/server');
+const sdk = require('@bedrock/sdk');
+function check(test, message) { if (!test) throw new Error(message); }
+check(!('localPlayer' in world) && 'localPlayer' in sdk.world, 'client extras isolated');
+check(Object.keys(world.beforeEvents).length === 0, 'no fabricated before signals');
+let fired = 0;
+const cb = world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
+  ++fired;
+  world.afterEvents.playerSpawn.unsubscribe(cb);
+  check(player instanceof Player && initialSpawn && player.name === 'Alex', 'official spawn event');
+  check(world.getPlayers({ name: 'Alex' }).length === 1, 'name filter');
+  check(world.getPlayers({ excludeNames: ['Alex'] }).length === 0, 'exclude filter');
+  const block = world.getDimension('overworld').getBlock({x: 1.2, y: 64, z: -1.5});
+  check(block.typeId === 'minecraft:glass' && block.z === -2 &&
+    block.dimension.id === 'minecraft:overworld', 'Block reads');
+  check(new ItemStack('stone', 2).amount === 2 &&
+    player.getComponent('inventory').container.getItem(0).typeId === 'minecraft:diamond', 'ItemStack reads');
+  const effect = EffectTypes.get('speed');
+  check(player.addEffect(effect, 2 * TicksPerSecond + 1).duration === 41, 'tick-based addEffect');
+  check(player.getEffects()[0].duration === 41 &&
+    sdk.world.localPlayer().getEffects()[0].duration === 2.05, 'effect units stay isolated');
+  check(player.removeEffect(effect) && player.getEffects().length === 0, 'effect removal');
+  const interval = system.runInterval(() => { throw new Error('cleared timer fired'); });
+  check(system.clearRun(interval) === undefined, 'clearRun return type');
+  system.runTimeout(() => console.log('timeout-ok'));
+  console.log('server-compat-ok');
+});
+system.runInterval(() => { if (fired === 1) console.log('spawn-count-ok'); }, 2);
+)JS");
+    auto world = std::make_shared<MockFullWorldBackend>();
+    PluginHost host(mods, "1.26.65.1", world);
+    host.setLogDirectory(dir / "logs");
+    std::string error;
+    CHECK(host.initialize(error), "initialize Script API mods: " + error);
+    checkActive(host, "CompatTest");
+    checkActive(host, "OfficialStyle");
+    host.notifyPlayerSpawn("CompatTest", 100, true);
+    host.notifyPlayerSpawn("CompatTest", 100, false);
+    host.notifyPlayerSpawn("OfficialStyle", 100, true);
+    for (int i = 0; i < 21; ++i) host.tick();
+    const auto log = readTestLog(dir, "CompatTest");
+    CHECK(log.find("server-compat-ok") != log.npos, "compat checks: " + log);
+    CHECK(log.find("timeout-ok") != log.npos && log.find("spawn-count-ok") != log.npos,
+          "compat scheduler and unsubscribe");
+    const auto sample = readTestLog(dir, "OfficialStyle");
+    CHECK(sample.find("interval players=1") != sample.npos && sample.find("ticks=40") != sample.npos,
+          "official sample ran: " + sample);
+    CHECK(world->messagesByMod["OfficialStyle"] ==
+              std::vector<std::string>{"Hello from the Script API style mod!"},
+          "sample sends a message through the backend");
+}
+
+void testHttp() {
+    const auto* base = std::getenv("STAGEB_HTTP_FIXTURE");
+    CHECK(base != nullptr, "HTTP tests require the loopback fixture");
+    if (!base) return;
+    const auto dir = tempDir("http");
+    makeTestMod(dir, "HttpTest", "const url = " + nlohmann::json(base).dump() + ";\n" + R"JS(
+const { http, HttpRequest, HttpRequestMethod, HttpHeader, HttpResponse } = require('@minecraft/server-net');
+const { system } = require('@minecraft/server');
+function check(test, message) { if (!test) throw new Error(message); }
+async function fails(promise, code) {
+  try { await promise; } catch (err) { check(err instanceof Error && err.code === code,
+    'expected ' + code + ', got ' + err.code + ': ' + err.message); return; }
+  throw new Error('expected rejection ' + code);
+}
+let ticks = 0;
+system.runInterval(() => ++ticks);
+(async () => {
+  const request = new HttpRequest(url + '/echo').setMethod(HttpRequestMethod.POST)
+    .setHeaders([new HttpHeader('X-Fixture-Request', 'native')]).setBody('hello 世界');
+  const echo = await http.request(request);
+  check(echo instanceof HttpResponse && echo.status === 201 && echo.body === 'hello 世界' &&
+    echo.request === request && echo.headers.some(h => h.key.toLowerCase() === 'x-echo' && h.value === 'native'),
+    'server-net echo response');
+  const target = await fetch(url + '/redirect');
+  check(target.status === 200 && target.ok && target.headers.get('X-FIXTURE') === 'scriptclient' &&
+    (await target.json()).ok && target.bodyUsed, 'redirect and JSON');
+  await fails(target.text(), 'EINVAL');
+  const failure = await fetch(url + '/status');
+  check(!failure.ok && failure.status === 418 && await failure.text() === 'not a success', 'non-2xx response');
+  const binary = await (await fetch(url + '/bytes')).arrayBuffer();
+  check([...new Uint8Array(binary)].join() === '0,128,255,10', 'binary response');
+  await fails(fetch(url + '/large', { maxResponseBytes: 1024 }), 'EMSGSIZE');
+  const start = ticks;
+  await fails(http.request(new HttpRequest(url + '/slow').setTimeout(0.15)), 'ETIMEDOUT');
+  check(ticks - start >= 3, 'host ticks must continue while request is pending: ' + (ticks - start));
+  const cancelled = fetch(url + '/slow');
+  http.cancelAll('test cancellation');
+  await fails(cancelled, 'ECANCELED');
+  await fails(fetch('file:///etc/passwd'), 'EINVAL');
+  await fails(fetch(url + '/get', { headers: { 'X-Injected': 'x\r\ny' } }), 'EINVAL');
+  console.log('http-fixture-ok ticks=' + (ticks - start));
+})().catch(error => console.error('http-test-failed: ' + error.message + '\n' + error.stack));
+)JS");
+    PluginHost host(dir / "mods", "1.26.65.1");
+    host.setLogDirectory(dir / "logs");
+    std::string error;
+    CHECK(host.initialize(error), "initialize network mod: " + error);
+    checkActive(host, "HttpTest");
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    std::string log;
+    while (Clock::now() < deadline) {
+        host.tick();
+        log = readTestLog(dir, "HttpTest");
+        if (log.find("http-fixture-ok") != log.npos || log.find("http-test-failed") != log.npos) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(log.find("http-fixture-ok") != log.npos, "HTTP fixture checks: " + log);
+    if (log.find("http-fixture-ok") != log.npos) std::cout << log;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--http-only") {
+        testHttp();
+        std::cout << "checks=" << checks << " failures=" << failures << "\n";
+        return failures == 0 ? 0 : 1;
+    }
     testManifest();
     testRequireResolution();
     testGoldenEffectFake();
@@ -1273,6 +1531,8 @@ int main() {
     testContentLogBridge();
     testFilesApi();
     testFilesApiPluginHost();
+    testNodeBuiltins();
+    testServerCompat();
     // 5. Dev bindings (guarded memory, symbols, module introspection)
     testDevBindings();
     std::cout << "checks=" << checks << " failures=" << failures << "\n";

@@ -1,4 +1,5 @@
 #include "plugin_host.hpp"
+#include "builtin_sources.hpp"
 #include "vanilla_catalog.hpp"
 
 #include <array>
@@ -46,6 +47,9 @@ bool PluginHost::initialize(std::string& error) {
                 mod->status = candidate.status == ModStatus::Scanned ? ModStatus::Error
                                                                      : candidate.status;
                 mod->error = modError.empty() ? candidate.validation.error : modError;
+            } else if (!modError.empty()) {
+                if (mod->status == ModStatus::Loading) mod->status = ModStatus::Error;
+                mod->error = modError;
             }
         }
         loaded_.push_back(std::move(mod));
@@ -106,6 +110,42 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
     mod->loader = std::make_unique<ModuleLoader>(*mod->runtime, *mod->transpiler,
                                                  mod->dir, *mod->host);
     mod->loader->setBuiltin("@bedrock/sdk", mod->bindings->moduleObject());
+    const JsValue builtinGlobal(ctx, JS_GetGlobalObject(ctx));
+    const JsValue nativeBindings(ctx, JS_GetPropertyStr(ctx, builtinGlobal.get(), "__bedrockHost"));
+#ifdef _WIN32
+    constexpr bool windows = true;
+#else
+    constexpr bool windows = false;
+#endif
+    if (!mod->loader->installBuiltin("path", builtin::path, JS_NewBool(ctx, windows), error) ||
+        !mod->loader->installBuiltin("events", builtin::events, JS_UNDEFINED, error) ||
+        !mod->loader->installBuiltin("fs", builtin::files, nativeBindings.get(), error)) {
+        out = std::move(mod);
+        return false;
+    }
+    const JsValue os(ctx, JS_NewObject(ctx));
+    JS_SetPropertyStr(ctx, os.get(), "platform", JS_NewCFunction(ctx,
+        [](JSContext* c, JSValueConst, int, JSValueConst*) {
+            return JS_NewString(c, windows ? "win32" : "linux");
+        }, "platform", 0));
+    JS_SetPropertyStr(ctx, os.get(), "arch", JS_NewCFunction(ctx,
+        [](JSContext* c, JSValueConst, int, JSValueConst*) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+            return JS_NewString(c, "arm64");
+#elif defined(__x86_64__) || defined(_M_X64)
+            return JS_NewString(c, "x64");
+#else
+            return JS_NewString(c, "unknown");
+#endif
+        }, "arch", 0));
+    JS_SetPropertyStr(ctx, os.get(), "EOL", JS_NewString(ctx, windows ? "\r\n" : "\n"));
+    mod->loader->setBuiltin("os", os.get());
+    mod->http = std::make_unique<HttpClient>(*mod->runtime);
+    mod->host->http = mod->http.get();
+    if (!mod->http->install(*mod->loader, error)) {
+        out = std::move(mod);
+        return false;
+    }
     // Pass the loaded game profile JSON to the SDK for dev.* introspection
     if (mod->host) mod->host->profileJson = profileJson_;
 
@@ -127,6 +167,13 @@ bool PluginHost::loadOne(const ModCandidate& candidate, std::unique_ptr<LoadedMo
     JsValue allIds(ctx, JS_NewCFunction(ctx, &vanillaAllEffectIds, "allEffectIds", 0));
     JS_SetPropertyStr(ctx, vanilla.get(), "allEffectIds", allIds.release());
     mod->loader->setBuiltin("@bedrock/vanilla-data", vanilla.get());
+    const JsValue compatArgs(ctx, JS_NewObject(ctx));
+    JS_SetPropertyStr(ctx, compatArgs.get(), "sdk", JS_DupValue(ctx, mod->bindings->moduleObject()));
+    JS_SetPropertyStr(ctx, compatArgs.get(), "vanillaEffects", JS_DupValue(ctx, ids.get()));
+    if (!mod->loader->installBuiltin("@minecraft/server", builtin::server, compatArgs.get(), error)) {
+        out = std::move(mod);
+        return false;
+    }
 
     if (!mod->loader->loadEntry(mod->manifest.entry, error)) { out = std::move(mod); return false; }
     if (!constructAndEnable(*mod, error)) { out = std::move(mod); return false; }
@@ -184,6 +231,7 @@ void PluginHost::unloadOne(LoadedMod& mod) {
         callLifecycle(mod, "onDisable", ignored);
     }
     if (mod.bindings) mod.bindings->forceCleanup();
+    mod.http.reset();
     mod.loader.reset();
     mod.bindings.reset();
     mod.commands.reset();
@@ -206,6 +254,7 @@ void PluginHost::tick() {
 void PluginHost::tickMod(const std::string& name) {
     auto* mod = findByName(name);
     if (!mod || mod->status != ModStatus::Active || !mod->runtime) return;
+    if (mod->http) mod->http->advance();
     mod->runtime->drainJobs();
     if (mod->bindings) mod->bindings->advanceTick();
     if (mod->runtime->faulted()) {

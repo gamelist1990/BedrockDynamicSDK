@@ -40,6 +40,34 @@ ModuleLoader::ModuleLoader(JsRuntime& runtime, Transpiler& transpiler,
     JS_DefinePropertyValueStr(ctx, global.get(), "console", console.release(), JS_PROP_C_W_E);
 }
 
+ModuleLoader::~ModuleLoader() {
+    clearCache();
+    for (const auto& entry : builtins_) JS_FreeValue(runtime_.context(), entry.second);
+    host_.loader = nullptr;
+}
+
+bool ModuleLoader::installBuiltin(const char* name, const char* factory, JSValueConst argument,
+                                  std::string& error) {
+    auto* ctx = runtime_.context();
+    JsRuntime::CallScope scope(runtime_);
+    const JsValue function(ctx, JS_Eval(ctx, factory, std::char_traits<char>::length(factory),
+                                        name, JS_EVAL_TYPE_GLOBAL));
+    if (JS_IsException(function.get())) { error = runtime_.takeException(); return false; }
+    const JsValue value(ctx, JS_Call(ctx, function.get(), JS_UNDEFINED, 1, &argument));
+    if (JS_IsException(value.get())) { error = runtime_.takeException(); return false; }
+    setBuiltin(name, value.get());
+    if (std::string_view(name) == "fs") {
+        const JsValue promises(ctx, JS_GetPropertyStr(ctx, value.get(), "promises"));
+        setBuiltin("fs/promises", promises.get());
+    } else if (std::string_view(name) == "path") {
+        const JsValue posix(ctx, JS_GetPropertyStr(ctx, value.get(), "posix"));
+        const JsValue win32(ctx, JS_GetPropertyStr(ctx, value.get(), "win32"));
+        setBuiltin("path/posix", posix.get());
+        setBuiltin("path/win32", win32.get());
+    }
+    return true;
+}
+
 void ModuleLoader::setBuiltin(const std::string& name, JSValue value) {
     const auto ctx = runtime_.context();
     const auto it = builtins_.find(name);
@@ -206,26 +234,31 @@ JSValue ModuleLoader::requireCallback(JSContext* ctx, JSValueConst, int argc,
                                       JSValueConst* argv, int magic) {
     auto* host = static_cast<HostContext*>(JS_GetContextOpaque(ctx));
     if (!host || !host->loader) {
-        host->loader->throwError(ctx, "Internal", "module loader unavailable");
-        return JS_EXCEPTION;
+        return JS_ThrowInternalError(ctx, "module loader unavailable");
     }
     auto* self = host->loader;
     if (argc < 1 || !JS_IsString(argv[0])) {
         self->throwError(ctx, "Invalid", "require() expects a module name");
         return JS_EXCEPTION;
     }
-    const auto specifier = jsToString(ctx, argv[0]);
-    if (const auto it = self->builtins_.find(specifier); it != self->builtins_.end())
+    const auto requested = jsToString(ctx, argv[0]);
+    const bool node = requested.starts_with("node:");
+    const auto specifier = node ? requested.substr(5) : requested;
+    if (const auto it = self->builtins_.find(specifier);
+        it != self->builtins_.end() && (!node || !specifier.starts_with("@")))
         return JS_DupValue(ctx, it->second);
 
-    static const char* const unsupported[] = {"fs", "path", "events", "os", "net", "http",
-                                              "https", "child_process", "worker_threads"};
+    static const char* const unsupported[] = {"net", "child_process", "worker_threads"};
     for (const char* name : unsupported)
         if (specifier == name || specifier.rfind(std::string(name) + "/", 0) == 0) {
             self->throwError(ctx, "Unavailable",
                              std::string("unsupported built-in module: ") + specifier);
             return JS_EXCEPTION;
         }
+    if (node) {
+        self->throwError(ctx, "Unavailable", "unsupported built-in module: " + requested);
+        return JS_EXCEPTION;
+    }
 
     const auto fromDir = self->requireDirs_[static_cast<std::size_t>(magic)];
     std::optional<fs::path> resolved;
