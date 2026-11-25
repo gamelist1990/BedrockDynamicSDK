@@ -7,6 +7,11 @@ Target: 1.26.65.1 (`data/1.26.65.1/windows-x64/manifest.json`, exe sha256
 Phase 2 added the F3 debug screen (`docs/diet-f3.md`), fixed the frame-time
 guard so a uniformly slow machine is not starved of culling work, and extended
 the static analysis of the render and packet surfaces (evidence-04/05).
+Phase 3 profiled the RenderDragon extraction predicate (probe-only: its objects
+carry no actor identity) and the packet handler map. Phase 4 wired packet
+deferral on the three shared_ptr `UpdateBlock`-family handler entries, verified
+it live on BOL, and closed the actor-submission investigation with a
+players-only insertion path (evidence-10/11).
 
 ## Surfaces Diet builds on (all confirmed)
 
@@ -27,8 +32,8 @@ the static analysis of the render and packet surfaces (evidence-04/05).
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
 | skip a hidden actor's draw | something that receives an `Actor*` per frame **for every actor** | the extraction predicate for `SceneObjectActors` receives RenderDragon frame records with no actor identity (evidence-07 §3, probe). The submission side was searched in phase 4: `ActorRenderCandidates::addPlayers` provably receives `Actor*` and inserts it into the render-candidate vector, but that path is players-only and its consumer loop lives inside one 46 KB function with no separate entry or type name (evidence-10). The terrain `LevelCuller` answers chunk questions only (evidence-04). No per-actor surface is armed. |
-| defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed. The `shared_ptr` handler set is now machine-verifiable: the compiled lambda of `handle(…, shared_ptr<UpdateBlockPacket>)`, `UpdateBlockSyncedPacket` and `BlockActorDataPacket` gives a callable table (`0xF2D2E80` / `0xF2D2E50` / `0xF2D2EE0`), a queued body and a type getter. `LevelChunkPacket` is *not* in that set — chunks go through `LevelChunkPacketHandler` (evidence-08 §2–4). The overload **entries** are still not resolved, so nothing is hooked. |
-| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The RenderDragon extraction object has no actor identity (evidence-07 §3), so a render-side smoothing hook has nothing to key on either (evidence-09 §2). |
+| defer delay-tolerant packets | **done** — `sdk::PacketDeferral` at the concrete handler entries | the three `LegacyClientNetworkHandler::handle(NetworkIdentifier const&, shared_ptr<…>)` entries are pinned by RVA + entry guard, by the `lea` of their own queued-lambda callable table and by their vtable slot (`0xF2D1E20`: 228/229/192). The by-value `shared_ptr` is taken over and replayed from the game thread under `net_defer_budget`; chunks are **not** in this set (`LevelChunkPacketHandler`), so `LevelChunkPacket` stays out of scope (evidence-11). |
+| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The extraction object has no actor identity, the candidate list is pointer-only, and ping is unmeasurable in the only harness (evidence-09 §2, evidence-12). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
 
 ## Exact/opaque classification rule
@@ -52,6 +57,48 @@ sample", a wrong verdict costs frames, never a wrongly hidden mob.
 | --- | --- | --- |
 | `cull_skip_draw` | on | arms the RenderDragon scene-actor exclusion filter (only installs when the profile's `object_identity` is resolved) |
 | `cull_probe` | off | diagnostics only: records what each `SceneObjectActors` pass iterates, never excludes |
+
+## Settings added in phase 4
+
+| id | default | effect |
+| --- | --- | --- |
+| `net_defer` | on | kill switch for packet deferral: off ⇒ every intercepted handler runs immediately |
+| `net_defer_budget` | 8 | held packets returned per level tick (1–64) |
+
+## Packet deferral (phase 4)
+
+`sdk::PacketDeferral` (`internal/include/bedrock/native/packet_deferral.hpp`,
+`sdk/src/packet_deferral.cpp`) detours the concrete
+`LegacyClientNetworkHandler::handle(NetworkIdentifier const&, shared_ptr<…>)`
+entries for `UpdateBlock` (21), `UpdateBlockSynced` (110) and `BlockActorData`
+(56). Install verifies, before hooking anything:
+
+1. the exact entry bytes at the profiled RVA (40-byte guard);
+2. that the handler body contains the `lea` of its own queued-lambda callable
+   table (pairs the address with the overload);
+3. that the handler is the target of vtable `0xF2D1E20` at the profiled slot;
+4. that the control-block layout is the one the handler's own epilogue uses
+   (`uses` at +8, `weaks` at +0xC).
+
+At run time every call re-checks `[this] == module + 0xF2D1E20`; a call from any
+other receiver goes straight to the original (`defer_other_object`).
+
+Held packets keep the by-value `shared_ptr` reference the handler would have
+consumed, plus a 0xB0-byte copy of the `NetworkIdentifier` (the handler itself
+memcpys that object, so it is trivially copyable). `onLevelTick` returns at most
+`net_defer_budget` per tick in FIFO order; anything older than 400 ms is drained
+regardless of the budget; a world change drops the queue (`defer_world_drops`)
+because held block updates belong to the level being left.
+
+Log fields: `deferred=`, `replayed=`, `queue=`, `defer_calls=`,
+`defer_overflow=`, `defer_other_object=`, `defer_aged=`, `defer_world_drops=`,
+`defer_total=`; F3 shows `deferred=` and `queue=` on the packets line.
+
+Limits (measured on BOL, evidence-11 §5): these three handlers carry only a
+trickle in single player (20–40 packets / 5 s) — a `/fill` burst travels as
+subchunk updates, which this surface does not intercept — so the queue never
+exceeds a couple of entries and frame times are unchanged. The feature is
+correct and bounded; it is not a chunk-flood fix by itself.
 
 ## Budget and threading
 
@@ -118,6 +165,10 @@ Run Diet alone (no other Mods) and read
   correctly — on BOL, with two cows behind a stone wall in a flat world,
   `targets=4 hidden=2 block_queries=16` — but nothing consumes `hidden` on the
   render path.
+- Packet deferral intercepts exactly three handler entries. Everything else,
+  including every `unknown` id, keeps the untouched path; chunk traffic
+  (`LevelChunkPacket`, `UpdateSubChunkBlocks`, `SubChunkPacket`) is not
+  intercepted at all.
 - Packet classes cover the ids in the classifier table; everything else is
   `unknown` and therefore Critical, so nothing unknown can ever be deferred.
   In single player the observer also sees serverbound ids (e.g. 144

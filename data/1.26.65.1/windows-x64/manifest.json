@@ -169,7 +169,7 @@
     },
     {
       "path": "classes/Packet.json",
-      "sha256": "55c08d3c4f864f7bf6998dd48a2e528a0b309b726bf5e86a77ec03edc8340c44"
+      "sha256": "65f8bff0db4ac20a09e5fce4c434da2a087aa8ceaada167d4a44396e78aa4cb6"
     },
     {
       "path": "classes/PacketRead.json",

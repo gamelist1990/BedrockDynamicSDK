@@ -67,9 +67,9 @@
     "1.26.65.1": {
       "windows-x64": {
         "path": "data/1.26.65.1/windows-x64/manifest.json",
-        "sha256": "3c246b88cbd17580678ddf96b143254ab4c41b2519d3a16cea5ad79df944cacb",
+        "sha256": "b3c0d12b070c98987df86525318768d4bc43fe6c029f1255b76cc20b81165a2b",
         "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
-        "symbols": 98,
+        "symbols": 101,
         "protocol": {
           "path": "data/protocols/1.26.60/protocol.json",
           "version_path": "data/protocols/1.26.60/version.json",

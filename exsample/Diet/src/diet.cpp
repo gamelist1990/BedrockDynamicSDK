@@ -68,11 +68,13 @@ struct Config {
     bool skipDraw = true;
     bool renderProbe = false;
     bool measure = true;
+    bool defer = true;
     bool debug = false;
     bool f3 = false;
     double maxDistance = 96.0;
     double tickBudgetMs = 0.7;
     double netBudgetMs = 3.0;
+    unsigned deferBudget = 8;
 };
 
 std::mutex configMutex;
@@ -80,6 +82,9 @@ Config liveConfig{};
 // Paint-only mirrors for the render callback (no mutex on the render thread).
 std::atomic<bool> renderEnabled{true};
 std::atomic<bool> renderDebugDraw{false};
+// Harness marker (Diet.probe): observe the packet handlers without deferring,
+// which is the logging-only stage of the BOL proof.
+std::atomic<bool> deferProbeOnly{false};
 
 Config configCopy() {
     std::lock_guard lock(configMutex);
@@ -89,6 +94,27 @@ Config configCopy() {
 // Defined after Runtime: the settings callback may arrive before the screen
 // exists, so this is a no-op until then.
 void applyF3Visibility(bool visible);
+
+// Long-lived SDK clips. Declared here because the tick and world-change
+// callbacks (defined below the config block) use the packet-deferral clip.
+struct Clip {
+    std::unique_ptr<bedrock::sdk::Hooks> hooks;
+    std::vector<bedrock::sdk::HookSubscription> subscriptions;
+    std::unique_ptr<bedrock::sdk::WorldRender> worldRender;
+    std::optional<bedrock::sdk::WorldRenderSubscription> renderSubscription;
+    std::unique_ptr<bedrock::sdk::PacketObserver> observer;
+    std::unique_ptr<bedrock::sdk::ActorRenderFilter> actorFilter;
+    std::unique_ptr<bedrock::sdk::PacketDeferral> packetDeferral;
+};
+Clip clip;
+
+// Pushes the kill switch to the installed adapter (no-op before install).
+void syncDeferral() {
+    const auto config = configCopy();
+    if (clip.packetDeferral && clip.packetDeferral->ready())
+        clip.packetDeferral->setEnabled(config.enabled && config.defer &&
+                                        !deferProbeOnly.load(std::memory_order_relaxed));
+}
 
 // ---------------------------------------------------------------------------
 // Render skip. The render-thread predicate may only compare pointers, so the
@@ -103,6 +129,8 @@ std::atomic<unsigned> trackedPointerCount{0};
 std::atomic<std::uintptr_t> trackedPointers[kMaxTrackedPointers];
 std::atomic<bool> skipDrawEnabled{true};
 std::atomic<std::uint64_t> skippedDraws{0};
+// Cumulative held-packet count (published to F3; the window count is logged).
+std::atomic<std::uint64_t> deferredTotal{0};
 
 // Runtime id -> native Actor pointer, learned from the actor capture. Only the
 // tick thread touches this map.
@@ -147,11 +175,16 @@ void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) 
     else if (id == "tick_budget_ms") liveConfig.tickBudgetMs = std::clamp(number(0.7), 0.1, 4.0);
     else if (id == "net_measure") liveConfig.measure = boolean();
     else if (id == "net_budget_ms") liveConfig.netBudgetMs = std::clamp(number(3.0), 0.5, 16.0);
+    else if (id == "net_defer") liveConfig.defer = boolean();
+    else if (id == "net_defer_budget")
+        liveConfig.deferBudget =
+            static_cast<unsigned>(std::clamp(number(8.0), 1.0, 64.0));
     else if (id == "f3_enabled") liveConfig.f3 = boolean();
     else if (id == "debug") liveConfig.debug = boolean();
     renderEnabled.store(liveConfig.enabled);
     renderDebugDraw.store(liveConfig.debugDraw);
     skipDrawEnabled.store(liveConfig.enabled && liveConfig.cull && liveConfig.skipDraw);
+    syncDeferral();
     if (!liveConfig.enabled || !liveConfig.cull || !liveConfig.skipDraw)
         hiddenPointerCount.store(0, std::memory_order_release);
     applyF3Visibility(liveConfig.f3);
@@ -336,6 +369,13 @@ void onLevelTick(const bedrock::sdk::LevelTickEventValue& event) {
     const auto config = configCopy();
     if (!config.enabled || !event.level) return;
 
+    // Panel 2: hand the held packets back under our own per-tick budget. The
+    // handler only enqueues level work, so a handful of replays per tick keeps
+    // the burst spread across frames instead of landing in one. This runs even
+    // when the kill switch is off so that toggling it drains what is held.
+    if (clip.packetDeferral && clip.packetDeferral->ready())
+        (void)clip.packetDeferral->pump(config.deferBudget);
+
     state.tickStamp++;
     ++state.ticks;
     state.blockQueries.store(0, std::memory_order_relaxed);
@@ -489,10 +529,16 @@ void onWorldChange(const bedrock::sdk::WorldChangeEventValue& event) {
     voxelCache.clear();
     runtime->captureCursor = 0;
     clearPublishedRenderState();
+    // Held block updates belong to the level we are leaving; applying them to
+    // the next one would be wrong, so they are dropped (the client re-syncs
+    // chunks on entry anyway).
+    unsigned droppedPackets = 0;
+    if (clip.packetDeferral) droppedPackets = clip.packetDeferral->clear();
     std::atomic_store_explicit(&publishedVerdicts, std::shared_ptr<const VerdictList>(),
                                std::memory_order_release);
     logger.info("world change reason=", static_cast<int>(event.reason),
-                " [voxel cache cleared, verdicts dropped]");
+                " [voxel cache cleared, verdicts dropped, held packets dropped=",
+                droppedPackets, "]");
 }
 
 void onGameplay(const bedrock::sdk::GameplayEventValue& event) {
@@ -619,6 +665,8 @@ std::vector<bedrock::sdk::Translation> englishLocale() {
         {"diet.tick_budget", "Tick budget for culling work (ms)"},
         {"diet.measure", "Measure frame spikes vs packet arrivals"},
         {"diet.net_budget", "Stand down on frames slower than (ms) or 2.5x the recent average"},
+        {"diet.defer", "Spread delay-tolerant packet handling over ticks (block updates only)"},
+        {"diet.defer_budget", "Packets handed back per tick"},
         {"diet.f3", "Show F3 debug screen (F3 toggles)"},
         {"diet.debug", "Verbose logging"},
     };
@@ -639,6 +687,8 @@ std::vector<bedrock::sdk::Translation> japaneseLocale() {
         {"diet.tick_budget", "カリング処理のティック予算 (ms)"},
         {"diet.measure", "フレームスパイクとパケット到着の相関を計測"},
         {"diet.net_budget", "この時間を超えたフレームでは Diet の処理を休止 (ms)（直近平均の2.5倍も同様）"},
+        {"diet.defer", "遅延許容パケットの処理を毎ティックに分散（ブロック更新系のみ）"},
+        {"diet.defer_budget", "1ティックで戻す遅延パケット数"},
         {"diet.f3", "F3 デバッグ画面を表示（F3 で切り替え）"},
         {"diet.debug", "詳細ログ"},
     };
@@ -664,6 +714,8 @@ public:
                         .add(Setting::toggle("cull_probe", "diet.probe", false))
                         .add(Setting::toggle("net_measure", "diet.measure", true))
                         .add(Setting::slider("net_budget_ms", "diet.net_budget", 3.0, 0.5, 16.0, 0.5))
+                        .add(Setting::toggle("net_defer", "diet.defer", true))
+                        .add(Setting::slider("net_defer_budget", "diet.defer_budget", 8, 1, 64, 1))
                         .add(Setting::toggle("f3_enabled", "diet.f3", false))
                         .add(Setting::toggle("debug", "diet.debug", false))
                         .locale("en_US", englishLocale())
@@ -680,7 +732,8 @@ public:
         static constexpr std::string_view ids[] = {
             "diet_enabled", "cull_enabled", "cull_players", "cull_leaves",
             "cull_max_distance", "tick_budget_ms", "cull_debug_draw", "cull_skip_draw",
-            "cull_probe", "net_measure", "net_budget_ms", "f3_enabled", "debug"};
+            "cull_probe", "net_measure", "net_budget_ms", "net_defer", "net_defer_budget",
+            "f3_enabled", "debug"};
         for (const auto id : ids) {
             const auto value = page_->value(id);
             if (value) applySetting(id, value.value());
@@ -703,15 +756,6 @@ DietMod& dietMod() {
     return instance;
 }
 
-struct Clip {
-    std::unique_ptr<bedrock::sdk::Hooks> hooks;
-    std::vector<bedrock::sdk::HookSubscription> subscriptions;
-    std::unique_ptr<bedrock::sdk::WorldRender> worldRender;
-    std::optional<bedrock::sdk::WorldRenderSubscription> renderSubscription;
-    std::unique_ptr<bedrock::sdk::PacketObserver> observer;
-    std::unique_ptr<bedrock::sdk::ActorRenderFilter> actorFilter;
-};
-Clip clip;
 
 // ---------------------------------------------------------------------------
 // Stat reporting (housekeeping thread only: never the game or render thread).
@@ -762,6 +806,11 @@ std::shared_ptr<const diet::F3Snapshot> buildF3Snapshot(const Config& config) {
 
     snapshot->trafficValid = true;
     snapshot->packets = traffic.packets;
+    snapshot->deferValid =
+        config.defer && clip.packetDeferral && clip.packetDeferral->ready();
+    snapshot->deferredPackets = deferredTotal.load(std::memory_order_relaxed);
+    snapshot->deferredQueue =
+        clip.packetDeferral ? clip.packetDeferral->queueDepth() : 0;
     snapshot->pingValid = traffic.latencyValid && traffic.latencyMs >= 0.0;
     snapshot->pingMs = traffic.latencyValid
         ? static_cast<unsigned>(traffic.latencyMs + 0.5)
@@ -820,6 +869,11 @@ void reportLoop(std::atomic<bool>& stopping) {
             filterVariants = static_cast<unsigned>(statistics.variants);
             skippedDraws.fetch_add(statistics.excluded, std::memory_order_relaxed);
         }
+        bedrock::sdk::PacketDeferralStatistics deferral{};
+        if (clip.packetDeferral) {
+            deferral = clip.packetDeferral->takeStatistics();
+            deferredTotal.fetch_add(deferral.deferred, std::memory_order_relaxed);
+        }
         logger.info("cull summary: tracked=", copy.engine.tracked,
                     " checked=", copy.engine.checked, " samples=", copy.engine.samples,
                     " visible=", copy.engine.visible, " occluded=", copy.engine.occluded,
@@ -835,6 +889,13 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " ping_ms=", pingMsForLog,
                     " lat_obs=", trafficNow.latencyObservations,
                     " lat_pairs=", trafficNow.latencyPairs,
+                    " deferred=", deferral.deferred, " replayed=", deferral.replayed,
+                    " queue=", deferral.queue, " defer_calls=", deferral.calls,
+                    " defer_overflow=", deferral.overflow,
+                    " defer_other_object=", deferral.otherObject,
+                    " defer_aged=", deferral.agedOut,
+                    " defer_world_drops=", deferral.worldDrops,
+                    " defer_total=", deferredTotal.load(std::memory_order_relaxed),
                     " deferred_ticks=", runtime->deferredTicks.load(std::memory_order_relaxed),
                     " ticks=", copy.ticks,
                     " f3_visible=", runtime->debugScreen.visible() ? 1 : 0,
@@ -936,13 +997,19 @@ DWORD WINAPI startClient(void*) {
     const bool drawMarker = std::filesystem::exists(directory / L"Diet.debugdraw", markerError);
     if (probeMarker || drawMarker) {
         std::lock_guard lock(configMutex);
-        if (probeMarker) liveConfig.renderProbe = true;
+        if (probeMarker) {
+            liveConfig.renderProbe = true;
+            // Logging-only stage: the packet handlers are detoured and counted,
+            // nothing is held. Removing the marker is the deferral stage.
+            deferProbeOnly.store(true);
+        }
         if (drawMarker) {
             liveConfig.debugDraw = true;
             renderDebugDraw.store(true);
         }
         logger.info("diagnostic markers: probe=", probeMarker ? 1 : 0,
-                    " debug_draw=", drawMarker ? 1 : 0);
+                    " debug_draw=", drawMarker ? 1 : 0,
+                    " defer_probe_only=", probeMarker ? 1 : 0);
     }
 
     std::string error;
@@ -1037,6 +1104,26 @@ DWORD WINAPI startClient(void*) {
         }
     }
 
+    // Packet deferral: the SDK verifies the authenticated handler entries, each
+    // one's vtable slot, the callable table of its queued lambda and the
+    // shared_ptr control-block layout before it detours anything. Only the
+    // profile-listed delay-tolerant classes can be held.
+    {
+        const auto config = configCopy();
+        clip.packetDeferral = std::make_unique<bedrock::sdk::PacketDeferral>();
+        std::vector<std::string> warnings;
+        std::string deferralError;
+        if (!clip.packetDeferral->configure(profile, deferralError, warnings)) {
+            logger.warn("packet deferral unavailable: ", deferralError);
+            clip.packetDeferral.reset();
+        } else {
+            for (const auto& warning : warnings) logger.info(warning);
+            syncDeferral();
+            logger.info("packet deferral armed=", clip.packetDeferral->enabled() ? 1 : 0,
+                        " budget=", config.deferBudget, " tick");
+        }
+    }
+
     gGameVersion = profile.version();
     if (!runtime->debugScreen.install(error)) {
         logger.warn("F3 debug screen unavailable: ", error);
@@ -1049,8 +1136,9 @@ DWORD WINAPI startClient(void*) {
     std::thread reporter(reportLoop, std::ref(stopping));
     gStatus.store(4);
     logger.info("ready; notes: render-skip predicate is profiled but its extraction "
-                "objects carry no actor identity (evidence-07); packet deferral surface "
-                "located, not hooked (evidence-08); ping from NetworkStackLatencyPacket");
+                "objects carry no actor identity (evidence-07); packet deferral holds the "
+                "UpdateBlock-family shared_ptr handlers and replays them per tick "
+                "(evidence-11); ping from NetworkStackLatencyPacket");
 
     while (!gStop.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -1058,6 +1146,11 @@ DWORD WINAPI startClient(void*) {
     reporter.join();
     runtime->debugScreen.uninstall();
     clip.actorFilter.reset();
+    if (clip.packetDeferral) {
+        clip.packetDeferral->setEnabled(false);
+        (void)clip.packetDeferral->clear();
+    }
+    clip.packetDeferral.reset();
     clip.observer.reset();
     clip.renderSubscription.reset();
     clip.worldRender.reset();

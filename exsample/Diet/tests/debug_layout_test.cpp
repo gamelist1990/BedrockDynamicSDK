@@ -148,19 +148,26 @@ void testOmission() {
 }
 
 void testPingAndSkipLines() {
-    // The ping line exists only with a real measurement, and the skipped-draw
-    // counter exists only while the draw skip is armed.
+    // The ping line exists only with a real measurement, the skipped-draw
+    // counter only while the draw skip is armed, and the deferral counters only
+    // when the packet-deferral adapter is installed.
     diet::F3Snapshot measured;
     measured.cullValid = true;
     measured.skippedDrawsValid = true;
     measured.skippedDraws = 42;
     measured.pingValid = true;
     measured.pingMs = 37;
+    measured.deferValid = true;
+    measured.trafficValid = true;
+    measured.deferredPackets = 128;
+    measured.deferredQueue = 3;
     const auto layout = diet::buildF3Layout(measured);
     std::string joined;
     for (const auto& line : layout.left) joined += line + "\n";
     checkContains(joined, "skipped=42", "skipped counter");
     checkContains(joined, "Diet: ping=37ms", "ping line");
+    checkContains(joined, "deferred=128", "deferred counter");
+    checkContains(joined, "queue=3", "deferred queue depth");
 
     diet::F3Snapshot unmeasured;
     unmeasured.cullValid = true;
@@ -170,6 +177,8 @@ void testPingAndSkipLines() {
     for (const auto& line : plain.left) plainText += line + "\n";
     check(plainText.find("ping=") == std::string::npos, "no ping line without a measurement");
     check(plainText.find("skipped=") == std::string::npos, "no skipped counter when unarmed");
+    check(plainText.find("deferred=") == std::string::npos,
+          "no deferred counter without the adapter");
 }
 
 }  // namespace

@@ -1,32 +1,113 @@
 {
- "layouts": {
-  "Packet": {
-   "schema": 1,
-   "pointer_size": 8,
-   "status": "verified",
-   "runtime_verified": true,
-   "get_id_slot": 1,
-   "is_valid_slot": 11,
-   "scope": "native virtual ABI, independent of the wire protocol field ordering",
-   "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor. See REA freecam/auth-valid-evidence.json and move-valid-evidence.json; Windows RCX and AL checked in exact PE disassembly.",
-   "verification_scope": "user-reported-mod-operation",
-   "runtime_validation": {
-    "status": "complete",
-    "authority": "user-reported",
-    "date": "2026-10-29",
-    "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
-    "mods": [
-     "Freecam",
-     "Fake"
-    ],
-    "scope": "getID slot1 used for packet routing; isValid slot11 remains a static ABI candidate",
-    "limitations": [
-     "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
-    ]
-   },
-   "runtime_unverified_fields": [
-    "is_valid_slot"
-   ]
+  "layouts": {
+    "Packet": {
+      "schema": 1,
+      "pointer_size": 8,
+      "status": "verified",
+      "runtime_verified": true,
+      "get_id_slot": 1,
+      "is_valid_slot": 11,
+      "scope": "native virtual ABI, independent of the wire protocol field ordering",
+      "evidence": "Exact-build movement packet tables: getId slot1 and isValid slot11; no per-packet function address required by the SDK accessor. See REA freecam/auth-valid-evidence.json and move-valid-evidence.json; Windows RCX and AL checked in exact PE disassembly.",
+      "verification_scope": "user-reported-mod-operation",
+      "runtime_validation": {
+        "status": "complete",
+        "authority": "user-reported",
+        "date": "2026-10-29",
+        "exe_sha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
+        "mods": [
+          "Freecam",
+          "Fake"
+        ],
+        "scope": "getID slot1 used for packet routing; isValid slot11 remains a static ABI candidate",
+        "limitations": [
+          "Confirmation applies to the exercised Mod behavior; optional branches, other origins and all object lifetimes are not individually established."
+        ]
+      },
+      "runtime_unverified_fields": [
+        "is_valid_slot"
+      ],
+      "packet_deferral": {
+        "schema": 1,
+        "status": "candidate",
+        "runtime_verified": false,
+        "network_identifier_size": 176,
+        "shared_ptr": {
+          "object_offset": 0,
+          "control_offset": 8,
+          "use_offset": 8,
+          "weak_offset": 12
+        },
+        "handlers": [
+          {
+            "packet_class": "UpdateBlockSynced",
+            "protocol_id": 110,
+            "symbol": "Network::handleUpdateBlockSyncedPacket",
+            "callable_vtable_rva": "0xF2D2E50",
+            "vtable_rva": "0xF2D1E20",
+            "vtable_slot": 228
+          },
+          {
+            "packet_class": "UpdateBlock",
+            "protocol_id": 21,
+            "symbol": "Network::handleUpdateBlockPacket",
+            "callable_vtable_rva": "0xF2D2E80",
+            "vtable_rva": "0xF2D1E20",
+            "vtable_slot": 229
+          },
+          {
+            "packet_class": "BlockActorData",
+            "protocol_id": 56,
+            "symbol": "Network::handleBlockActorDataPacket",
+            "callable_vtable_rva": "0xF2D2EE0",
+            "vtable_rva": "0xF2D1E20",
+            "vtable_slot": 192
+          }
+        ],
+        "evidence": "Exact-build PE: the three LegacyClientNetworkHandler shared_ptr handle overloads were located from the std::function type_info of their queued lambdas (lambda_92/93/97), then confirmed three ways: the handler body contains the lea of that callable table, the handler is the target of vtable 0xF2D1E20 at the recorded slot, and the by-value shared_ptr release epilogue uses the recorded control-block offsets. Deferral holds that reference and replays the handler on the game thread; nothing writes game memory. Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md.",
+        "runtime_unverified_fields": [
+          "handlers",
+          "network_identifier_size"
+        ]
+      }
+    }
+  },
+  "symbols": {
+    "Network::handleUpdateBlockSyncedPacket": {
+      "rva": "0x6bd5420",
+      "entry_check": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 A5 00 00 00 80 38 01 0F 85",
+      "signature": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 ?? ?? ?? ?? 80 38 01 0F 85 ?? ?? ?? ?? 4C 89 45 F0 48 89 D6 48 89 CF 48 8B 89 C0 02 00 00 48 8B 01 48 8B 80 00 0B 00 00 FF 15 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "Exact 1.26.65.1 PE: .pdata range 0x6BD5420-0x6BD5526. Handler body materialises the std::function callable table 0xF2D2E50 (slot 2 = 0x6BF0E80, slot 3 = 0x6BF0F50, whose lea target is the lambda_92 type descriptor 0x125E1610) and is the function in vtable 0xF2D1E20 at slot 228. It is byte-identical to the UpdateBlock entry except the callable lea and the CFG dispatch slot. Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md.",
+      "function_boundary": true,
+      "abi": "void __fastcall(void* self RCX, const void* networkIdentifier RDX, void* sharedPtr<Packet> R8)",
+      "abi_verified": false,
+      "runtime_verified": false
+    },
+    "Network::handleUpdateBlockPacket": {
+      "rva": "0x6bd55a0",
+      "entry_check": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 A5 00 00 00 80 38 01 0F 85",
+      "signature": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 ?? ?? ?? ?? 80 38 01 0F 85 ?? ?? ?? ?? 4C 89 45 F0 48 89 D6 48 89 CF 48 8B 89 C0 02 00 00 48 8B 01 48 8B 80 00 0B 00 00 FF 15 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "Exact 1.26.65.1 PE: .pdata range 0x6BD55A0-0x6BD56A6. Handler body materialises the std::function callable table 0xF2D2E80 (slot 2 = 0x6BF0FE0, slot 3 = 0x6BF10B0, whose lea target is the lambda_93 type descriptor 0x125E16B0) and is the function in vtable 0xF2D1E20 at slot 229. Signature: RCX = handler this (first qword must be 0x140F2D1E20), RDX = NetworkIdentifier* (0xB0 bytes copied by the handler with one memcpy), R8 = by-value shared_ptr<Packet> (object at +0, control at +8). The epilogue releases that by-value reference (lock dec [ctrl+8]; _Destroy via ctrl vtable slot 0; lock dec [ctrl+0xC]; _Delete_this via slot 1). Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md.",
+      "function_boundary": true,
+      "abi": "void __fastcall(void* self RCX, const void* networkIdentifier RDX, void* sharedPtr<Packet> R8)",
+      "abi_verified": false,
+      "runtime_verified": false
+    },
+    "Network::handleBlockActorDataPacket": {
+      "rva": "0x6bd62e0",
+      "entry_check": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 C3 00 00 00 80 38 01 0F 85",
+      "signature": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 ?? ?? ?? ?? 80 38 01 0F 85 ?? ?? ?? ?? 48 89 D6 48 89 CF 4C 89 45 F0 48 8B 89 C0 02 00 00 48 8B 01 48 8B 80 00 0B 00 00 FF 15 ?? ?? ?? ??",
+      "cross_version_signature_available": true,
+      "status": "candidate",
+      "source": "Exact 1.26.65.1 PE: .pdata range 0x6BD62E0-0x6BD6404. Handler body materialises the std::function callable table 0xF2D2EE0 (slot 2 = 0x6BF1290, slot 3 = 0x6BF1360, lambda_97 descriptor 0x125E17C0) and is the function in vtable 0xF2D1E20 at slot 192. Same entry ABI and the same shared_ptr release epilogue as the two block-update handlers. Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md.",
+      "function_boundary": true,
+      "abi": "void __fastcall(void* self RCX, const void* networkIdentifier RDX, void* sharedPtr<Packet> R8)",
+      "abi_verified": false,
+      "runtime_verified": false
+    }
   }
- }
 }
