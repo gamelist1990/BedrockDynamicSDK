@@ -18,6 +18,7 @@
 
 #include "diet/occlusion.hpp"
 #include "diet/traffic.hpp"
+#include "diet/debug_screen.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -58,6 +59,7 @@ struct Config {
     bool debugDraw = false;
     bool measure = true;
     bool debug = false;
+    bool f3 = false;
     double maxDistance = 96.0;
     double tickBudgetMs = 0.7;
     double netBudgetMs = 3.0;
@@ -73,6 +75,10 @@ Config configCopy() {
     std::lock_guard lock(configMutex);
     return liveConfig;
 }
+
+// Defined after Runtime: the settings callback may arrive before the screen
+// exists, so this is a no-op until then.
+void applyF3Visibility(bool visible);
 
 void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) {
     std::lock_guard lock(configMutex);
@@ -93,9 +99,11 @@ void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) 
     else if (id == "tick_budget_ms") liveConfig.tickBudgetMs = std::clamp(number(0.7), 0.1, 4.0);
     else if (id == "net_measure") liveConfig.measure = boolean();
     else if (id == "net_budget_ms") liveConfig.netBudgetMs = std::clamp(number(3.0), 0.5, 16.0);
+    else if (id == "f3_enabled") liveConfig.f3 = boolean();
     else if (id == "debug") liveConfig.debug = boolean();
     renderEnabled.store(liveConfig.enabled);
     renderDebugDraw.store(liveConfig.debugDraw);
+    applyF3Visibility(liveConfig.f3);
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +244,24 @@ struct Runtime {
     std::atomic<unsigned> blockQueries{};
     std::atomic<std::uint64_t> deferredTicks{};
     std::uint64_t ticks{};
+    // F3 pose mirror (float atomics: the render/housekeeping threads read
+    // these without touching native state; only the tick writes them).
+    std::atomic<float> poseX{}, poseY{}, poseZ{}, poseYaw{}, posePitch{};
+    std::atomic<bool> poseValid{};
+    std::atomic<bool> inWorld{};
+    // Packet-id diagnostics: the F3 screen and the traffic report need the raw
+    // ids the observer actually sees, so a mismatch with the classifier table
+    // is visible instead of silently classifying everything as unknown.
+    std::atomic<int> lastRawId{-1};
+    std::atomic<int> rawIdMin{2147483647};
+    std::atomic<int> rawIdMax{-2147483647 - 1};
+    diet::DebugScreen debugScreen;
 };
 Runtime* runtime{};
+
+void applyF3Visibility(bool visible) {
+    if (runtime) runtime->debugScreen.setVisible(visible);
+}
 
 void noteTick(const diet::EngineStats& engine, unsigned rows, unsigned population, float captureUs) {
     std::lock_guard lock(tickReport.mutex);
@@ -275,12 +299,37 @@ void onLevelTick(const bedrock::sdk::LevelTickEventValue& event) {
     if (!state.world.pose(local, position, runtimeId)) return;
     const diet::Vec3f camera{position.x, position.y + 1.62f, position.z};
 
+    // F3 pose mirror: feet position and rotation, published as plain floats so
+    // the screen never reads native memory off the tick thread.
+    state.poseX.store(position.x, std::memory_order_relaxed);
+    state.poseY.store(position.y, std::memory_order_relaxed);
+    state.poseZ.store(position.z, std::memory_order_relaxed);
+    if (const auto layout = state.world.actors(); layout.actorRotationComponentHash) {
+        if (void* rotation = state.world.component(local, layout.actorRotationComponentHash)) {
+            float pitch = 0.0f;
+            float yaw = 0.0f;
+            if (state.world.readField(rotation, layout.rotationPitchOffset, pitch) &&
+                state.world.readField(rotation, layout.rotationYawOffset, yaw)) {
+                state.posePitch.store(pitch, std::memory_order_relaxed);
+                state.poseYaw.store(yaw, std::memory_order_relaxed);
+                state.poseValid.store(true, std::memory_order_relaxed);
+            }
+        }
+    }
+
     const auto tickStarted = std::chrono::steady_clock::now();
     if (config.cull) {
-        // Frame-time guard: never add Diet work to a frame that is already over
-        // the configured budget. The work is deferred to a later frame, which
-        // the engine's per-target schedule already supports.
-        if (const double frameMs = state.traffic.lastFrameMs(); frameMs > config.netBudgetMs) {
+        // Frame-time guard: never add Diet work to a frame that is already
+        // over the configured budget. The work is deferred to a later frame,
+        // which the engine's per-target schedule already supports. The
+        // comparison is against the slower of the configured threshold and a
+        // multiple of this machine's smoothed frame time, so a uniformly slow
+        // machine (software rendering, a 20 fps laptop) is not permanently
+        // classified as "stalling" and starved of culling.
+        const double frameMs = state.traffic.lastFrameMs();
+        const double baselineMs = state.traffic.smoothedFrameMs();
+        const double guardMs = std::max(config.netBudgetMs, 2.5 * baselineMs);
+        if (frameMs > guardMs) {
             state.deferredTicks.fetch_add(1, std::memory_order_relaxed);
             return; // keep the last real summary; nothing ran this tick
         }
@@ -357,6 +406,9 @@ void onWorldChange(const bedrock::sdk::WorldChangeEventValue& event) {
     runtime->epoch.fetch_add(1, std::memory_order_acq_rel);
     runtime->level.store(nullptr);
     runtime->client.store(event.clientInstance);
+    runtime->poseValid.store(false, std::memory_order_relaxed);
+    runtime->inWorld.store(false, std::memory_order_relaxed);
+    runtime->debugScreen.setWorldActive(false);
     voxelCache.clear();
     runtime->captureCursor = 0;
     std::atomic_store_explicit(&publishedVerdicts, std::shared_ptr<const VerdictList>(),
@@ -366,7 +418,48 @@ void onWorldChange(const bedrock::sdk::WorldChangeEventValue& event) {
 }
 
 void onGameplay(const bedrock::sdk::GameplayEventValue& event) {
-    if (runtime && event.clientInstance) runtime->client.store(event.clientInstance);
+    if (!runtime) return;
+    if (event.clientInstance) runtime->client.store(event.clientInstance);
+    // Java's F3 screen exists only inside a world; the same gate here keeps it
+    // off the main menu and out of the pause screen of the title.
+    runtime->inWorld.store(event.active, std::memory_order_relaxed);
+    runtime->debugScreen.setWorldActive(event.active);
+}
+
+// F3 toggles the debug screen. Session-only (not persisted); key repeats are
+// filtered so holding the key does not flicker the screen.
+std::atomic<unsigned> keyEvents{};
+std::atomic<int> lastKey{-1};
+std::atomic<bool> f3Latch{false};
+
+void toggleDebugScreen() {
+    if (!runtime) return;
+    runtime->debugScreen.toggle();
+    logger.info("F3 debug screen ", runtime->debugScreen.visible() ? "on" : "off");
+}
+
+void onKey(bedrock::sdk::KeyEventValue& event) {
+    keyEvents.fetch_add(1, std::memory_order_relaxed);
+    lastKey.store(event.key, std::memory_order_relaxed);
+    if (event.key != VK_F3) return;
+    if (!event.pressed) {
+        f3Latch.store(false, std::memory_order_relaxed);
+        return;
+    }
+    if (f3Latch.exchange(true, std::memory_order_relaxed)) return;
+    toggleDebugScreen();
+}
+
+void onNativeKey(const bedrock::sdk::NativeKeyEventValue& event) {
+    keyEvents.fetch_add(1, std::memory_order_relaxed);
+    lastKey.store(static_cast<int>(event.inputKey), std::memory_order_relaxed);
+    if (event.inputKey != VK_F3) return;
+    if (!event.pressed) {
+        f3Latch.store(false, std::memory_order_relaxed);
+        return;
+    }
+    if (f3Latch.exchange(true, std::memory_order_relaxed)) return;
+    toggleDebugScreen();
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +469,16 @@ void onPacket(const bedrock::sdk::PacketObservation& observation, void* user) {
     auto* state = static_cast<Runtime*>(user);
     if (!state) return;
     state->traffic.observePacket(steadyNs(), observation.rawId, observation.bytes);
+    const int id = observation.rawId;
+    state->lastRawId.store(id, std::memory_order_relaxed);
+    int current = state->rawIdMin.load(std::memory_order_relaxed);
+    while (id < current &&
+           !state->rawIdMin.compare_exchange_weak(current, id, std::memory_order_relaxed)) {
+    }
+    current = state->rawIdMax.load(std::memory_order_relaxed);
+    while (id > current &&
+           !state->rawIdMax.compare_exchange_weak(current, id, std::memory_order_relaxed)) {
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +538,8 @@ std::vector<bedrock::sdk::Translation> englishLocale() {
         {"diet.distance", "Distance cull (blocks)"},
         {"diet.tick_budget", "Tick budget for culling work (ms)"},
         {"diet.measure", "Measure frame spikes vs packet arrivals"},
-        {"diet.net_budget", "Skip Diet's work on frames slower than (ms)"},
+        {"diet.net_budget", "Stand down on frames slower than (ms) or 2.5x the recent average"},
+        {"diet.f3", "Show F3 debug screen (F3 toggles)"},
         {"diet.debug", "Verbose logging"},
     };
 }
@@ -452,7 +556,8 @@ std::vector<bedrock::sdk::Translation> japaneseLocale() {
         {"diet.distance", "距離カリング（ブロック）"},
         {"diet.tick_budget", "カリング処理のティック予算 (ms)"},
         {"diet.measure", "フレームスパイクとパケット到着の相関を計測"},
-        {"diet.net_budget", "この時間を超えたフレームでは Diet の処理を休止 (ms)"},
+        {"diet.net_budget", "この時間を超えたフレームでは Diet の処理を休止 (ms)（直近平均の2.5倍も同様）"},
+        {"diet.f3", "F3 デバッグ画面を表示（F3 で切り替え）"},
         {"diet.debug", "詳細ログ"},
     };
 }
@@ -475,6 +580,7 @@ public:
                         .add(Setting::toggle("cull_debug_draw", "diet.draw", false))
                         .add(Setting::toggle("net_measure", "diet.measure", true))
                         .add(Setting::slider("net_budget_ms", "diet.net_budget", 3.0, 0.5, 16.0, 0.5))
+                        .add(Setting::toggle("f3_enabled", "diet.f3", false))
                         .add(Setting::toggle("debug", "diet.debug", false))
                         .locale("en_US", englishLocale())
                         .locale("ja_JP", japaneseLocale())
@@ -490,7 +596,7 @@ public:
         static constexpr std::string_view ids[] = {
             "diet_enabled", "cull_enabled", "cull_players", "cull_leaves",
             "cull_max_distance", "tick_budget_ms", "cull_debug_draw", "net_measure",
-            "net_budget_ms", "debug"};
+            "net_budget_ms", "f3_enabled", "debug"};
         for (const auto id : ids) {
             const auto value = page_->value(id);
             if (value) applySetting(id, value.value());
@@ -515,14 +621,82 @@ DietMod& dietMod() {
 
 // ---------------------------------------------------------------------------
 // Stat reporting (housekeeping thread only: never the game or render thread).
+// Also publishes the F3 debug-screen snapshot at 4 Hz.
 // ---------------------------------------------------------------------------
+std::string gGameVersion;
+
+std::shared_ptr<const diet::F3Snapshot> buildF3Snapshot(const Config& config) {
+    auto snapshot = std::make_shared<diet::F3Snapshot>();
+    snapshot->gameVersion = gGameVersion;
+    snapshot->gameVersionKnown = !gGameVersion.empty();
+
+    TickReportData report{};
+    {
+        std::lock_guard lock(tickReport.mutex);
+        report = tickReport.data;
+    }
+    const auto now = steadyNs();
+    auto traffic = runtime->traffic.snapshot(now);
+
+    snapshot->fpsValid = traffic.frames > 0;
+    snapshot->fps = traffic.fps;
+    snapshot->frameStatsValid = traffic.frames > 0;
+    snapshot->frameP50Ms = traffic.frameMsP50;
+    snapshot->frameP95Ms = traffic.frameMsP95;
+    snapshot->frameMaxMs = traffic.frameMsMax;
+
+    snapshot->positionValid = runtime->poseValid.load(std::memory_order_relaxed);
+    snapshot->x = runtime->poseX.load(std::memory_order_relaxed);
+    snapshot->y = runtime->poseY.load(std::memory_order_relaxed);
+    snapshot->z = runtime->poseZ.load(std::memory_order_relaxed);
+    snapshot->facingValid = snapshot->positionValid;
+    snapshot->yawDeg = runtime->poseYaw.load(std::memory_order_relaxed);
+    snapshot->pitchDeg = runtime->posePitch.load(std::memory_order_relaxed);
+
+    snapshot->cullValid = config.cull;
+    snapshot->tracked = report.engine.tracked;
+    snapshot->hidden = report.engine.hidden;
+    snapshot->checked = report.engine.checked;
+    snapshot->samples = report.engine.samples;
+    snapshot->budgetStops = report.engine.budgetStops;
+    snapshot->blockQueries = runtime->blockQueries.load(std::memory_order_relaxed);
+
+    snapshot->trafficValid = true;
+    snapshot->packets = traffic.packets;
+    // Top four non-empty packet classes in this window, Java-style "name=count".
+    for (int slot = 0; slot < 4; ++slot) {
+        std::uint64_t best = 0;
+        diet::PacketClass bestClass = diet::PacketClass::Unknown;
+        for (std::size_t c = 0; c < traffic.classPackets.size(); ++c) {
+            if (traffic.classPackets[c] > best) {
+                best = traffic.classPackets[c];
+                bestClass = static_cast<diet::PacketClass>(c);
+            }
+        }
+        if (!best) break;
+        if (!snapshot->packetClasses.empty()) snapshot->packetClasses += ' ';
+        snapshot->packetClasses += diet::packetClassName(bestClass);
+        snapshot->packetClasses += '=';
+        snapshot->packetClasses += std::to_string(best);
+        // Zero the class we just showed so the next pass picks the next one.
+        traffic.classPackets[static_cast<std::size_t>(bestClass)] = 0;
+    }
+
+    snapshot->system = diet::collectSystemInfo();
+    return snapshot;
+}
+
 void reportLoop(std::atomic<bool>& stopping) {
+    unsigned sinceLog = 0;
     while (!stopping.load(std::memory_order_acquire)) {
-        for (int i = 0; i < 50 && !stopping.load(std::memory_order_acquire); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        for (int i = 0; i < 5 && !stopping.load(std::memory_order_acquire); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         if (stopping.load(std::memory_order_acquire)) break;
         if (!runtime) continue;
         const auto config = configCopy();
+        runtime->debugScreen.publish(buildF3Snapshot(config));
+        if (++sinceLog < 20) continue;  // 5 s cadence for the log lines
+        sinceLog = 0;
         if (config.measure) {
             const auto text = runtime->traffic.buildReport(steadyNs());
             logger.info(text);
@@ -542,7 +716,14 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " population=", copy.capturePopulation, " capture_us=", copy.captureUs,
                     " block_queries=", runtime->blockQueries.load(std::memory_order_relaxed),
                     " deferred_ticks=", runtime->deferredTicks.load(std::memory_order_relaxed),
-                    " ticks=", copy.ticks);
+                    " ticks=", copy.ticks,
+                    " f3_visible=", runtime->debugScreen.visible() ? 1 : 0,
+                    " f3_paints=", runtime->debugScreen.paintCount(),
+                    " key_events=", keyEvents.load(std::memory_order_relaxed),
+                    " last_key=", lastKey.load(std::memory_order_relaxed),
+                    " raw_id_min=", runtime->rawIdMin.load(std::memory_order_relaxed),
+                    " raw_id_max=", runtime->rawIdMax.load(std::memory_order_relaxed),
+                    " raw_id_last=", runtime->lastRawId.load(std::memory_order_relaxed));
     }
 }
 
@@ -624,10 +805,22 @@ DWORD WINAPI startClient(void*) {
     clip.subscriptions.emplace_back(clip.hooks->onLevelTick(onLevelTick));
     clip.subscriptions.emplace_back(clip.hooks->onGameplay(onGameplay));
     clip.subscriptions.emplace_back(clip.hooks->onWorldChange(onWorldChange));
+    clip.subscriptions.emplace_back(clip.hooks->onKey(onKey));
+    clip.subscriptions.emplace_back(clip.hooks->onNativeKey(onNativeKey));
     if (!clip.hooks->install(resolver, profile.json(), error)) {
         logger.error("hook install failed: ", error);
     } else {
         logger.info("hooks active: level tick, gameplay, world change");
+        std::string inputError;
+        if (!clip.hooks->installInput(resolver, inputError))
+            logger.warn("keyboard input unavailable (F3 key): ", inputError);
+        else
+            logger.info("keyboard input active (F3 toggles the debug screen)");
+        std::string nativeInputError;
+        if (!clip.hooks->installNativeKeyboard(resolver, profile.json(), nativeInputError))
+            logger.warn("native keyboard events unavailable: ", nativeInputError);
+        else
+            logger.info("native keyboard events active (F3 second route)");
     }
 
     clip.worldRender = std::make_unique<bedrock::sdk::WorldRender>();
@@ -646,6 +839,14 @@ DWORD WINAPI startClient(void*) {
         logger.info("packet observation active (post-decode, copied payload size only)");
     }
 
+    gGameVersion = profile.version();
+    if (!runtime->debugScreen.install(error)) {
+        logger.warn("F3 debug screen unavailable: ", error);
+    } else {
+        runtime->debugScreen.setVisible(configCopy().f3);
+        logger.info("F3 debug screen active (version line: ", gGameVersion, ")");
+    }
+
     std::atomic<bool> stopping{false};
     std::thread reporter(reportLoop, std::ref(stopping));
     gStatus.store(4);
@@ -656,6 +857,7 @@ DWORD WINAPI startClient(void*) {
 
     stopping.store(true, std::memory_order_release);
     reporter.join();
+    runtime->debugScreen.uninstall();
     clip.observer.reset();
     clip.renderSubscription.reset();
     clip.worldRender.reset();

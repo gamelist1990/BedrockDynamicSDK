@@ -69,6 +69,8 @@ struct TrafficSnapshot {
     PacketClass maxBurstClass{PacketClass::Unknown};
     std::uint64_t delayTolerantPackets{};
     std::uint64_t delayTolerantBytes{};
+    // Per-class packet counts for this window (index = PacketClass).
+    std::array<std::uint64_t, static_cast<std::size_t>(PacketClass::Count)> classPackets{};
 };
 
 // Fixed-capacity, lock-guarded observation buffer. Producers never block:
@@ -98,6 +100,12 @@ public:
     // the tick uses it to stop adding its own work to an already-slow frame.
     [[nodiscard]] double lastFrameMs() const noexcept {
         return static_cast<double>(lastFrameNs_.load(std::memory_order_relaxed)) / 1.0e6;
+    }
+    // Slowly-smoothed frame time (milliseconds). The tick compares the current
+    // frame against this so a uniformly slow machine (software rendering, a
+    // 20 fps laptop) is not treated as a permanent stall.
+    [[nodiscard]] double smoothedFrameMs() const noexcept {
+        return static_cast<double>(smoothedFrameNs_.load(std::memory_order_relaxed)) / 1.0e6;
     }
 
 private:
@@ -133,6 +141,7 @@ private:
     std::uint64_t spikeCount_{};
     std::uint64_t lastFrameStampNs_{};
     std::atomic<std::uint64_t> lastFrameNs_{};
+    std::atomic<std::uint64_t> smoothedFrameNs_{};
     std::atomic<std::uint64_t> dropped_{};
 };
 

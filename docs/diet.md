@@ -2,7 +2,11 @@
 
 Target: 1.26.65.1 (`data/1.26.65.1/windows-x64/manifest.json`, exe sha256
 `dacd67e7…093b88`). Evidence for each claim lives outside the repo in
-`~/Documents/PEXData/diet/evidence-01-surface.md` … `evidence-03-build.md`.
+`~/Documents/PEXData/diet/evidence-01-surface.md` … `evidence-06-f3.md`.
+
+Phase 2 added the F3 debug screen (`docs/diet-f3.md`), fixed the frame-time
+guard so a uniformly slow machine is not starved of culling work, and extended
+the static analysis of the render and packet surfaces (evidence-04/05).
 
 ## Surfaces Diet builds on (all confirmed)
 
@@ -13,15 +17,17 @@ Target: 1.26.65.1 (`data/1.26.65.1/windows-x64/manifest.json`, exe sha256
 | local player / eye position | `ActorFacade::localPlayer` + `WorldAccess::pose` | camera = position + 1.62 |
 | tick | `sdk::Hooks::onLevelTick` | native reads stay on the game thread |
 | render frame clock + overlay | `sdk::WorldRender::onPostRender` | read-only snapshot consumption |
+| Present-thread text/overlay drawing | `sdk::Overlay` (ImGui foreground draw list) | F3 screen; render-only, no input capture |
 | incoming packet observation | `sdk::PacketObserver` (new, wraps `PacketAPI::onAnyReceive`) | post-decode, networking thread, payload size only |
+| local player rotation | `WorldAccess::component` + `readField` on the actor rotation component | F3 facing line |
 | settings | `sdk::Mod` + `sdk::SettingsPage` | persisted by the Mod Settings store |
 
 ## Surfaces Diet needs and does not have
 
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
-| skip a hidden actor's draw | per-actor render dispatcher entry, or a custom `LevelCullerBase` injected into the renderer | `BDS_HOOK_RENDER_LEVEL` is per frame; `LevelRendererCamera::render` (`sub_5376690`, `0x5376B10`) is per camera. HitBox's precedent is post-render drawing. `queueRenderEntities` exists as a string in the image but its RVA/data path is unverified (`docs/view-actor-enumeration-investigation.md:72-92`). |
-| defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed; the SDK forbids retaining packet objects. |
+| skip a hidden actor's draw | per-actor render dispatcher entry, or a custom `LevelCullerBase` injected into the renderer | `BDS_HOOK_RENDER_LEVEL` is per frame; `LevelRendererCamera::render` (`0x5376B10`) is view/frustum setup; the per-actor draw happens inside RenderDragon frame-object extraction (`extractAndDrawWithExclusion<…SceneObjectActors…>`). The terrain `LevelCuller` (`LevelRendererPlayer+0x9A0`, factory `0x537EB60`) answers chunk/`BlockPos`/AABB questions only — every one of its base virtual slots consumes a chunk position (evidence-04). |
+| defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed. The binary does prove that *some* inbound handlers take `std::shared_ptr<Packet>` (`LegacyClientNetworkHandler::handle(…, std::shared_ptr<LevelChunkPacket>)`, `UpdateBlockPacket`, `UpdateBlockSyncedPacket`, `BlockActorDataPacket`), so a chunk/block-update deferral surface exists in principle — but it is per-overload and the observation hook cannot reach it (evidence-05). |
 | smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
 
@@ -49,9 +55,18 @@ sample", a wrong verdict costs frames, never a wrongly hidden mob.
   left unchanged (never hidden on partial evidence).
 - Per-target schedule: 120/300/600 ms by distance band; no target is evaluated
   every frame.
-- Frame guard: a frame slower than `net_budget_ms` defers **all** Diet work.
+- Frame guard: a frame slower than `max(net_budget_ms, 2.5 × the smoothed frame
+  time)` defers **all** Diet work. The smoothed baseline matters: a machine that
+  runs at 100 ms/frame (software rendering) is not a permanent stall, so the
+  guard must not starve culling there. Before phase 2 the guard compared
+  against `net_budget_ms` alone (3 ms default), which deferred every tick on
+  every machine below 333 fps — `deferred_ticks` grew every second while
+  `checked` stayed at 0.
 - Render callback: atomic snapshot load + `drawLines` only; box scratch is a
   pre-reserved `thread_local` vector.
+- F3 screen: the housekeeping thread publishes a `F3Snapshot` at 4 Hz
+  (layout/formatting in `debug_layout.cpp`, host-tested); the Present thread
+  only formats two columns and fills ImGui draw commands.
 - Voxel cache: `unordered_map` bounded at 49 152 entries, 20-tick TTL, cleared
   on world change and on size overflow.
 
@@ -78,6 +93,11 @@ Run Diet alone (no other Mods) and read
    `frame_ms p95/max` before/after is the reproducible comparison.
 6. **No new stall.** Compare `frame_ms p50/p95` with Diet enabled vs disabled in
    the same spot; the difference is Diet's own cost plus the SDK payload copy.
+7. **F3 screen.** Press F3 in a world: the Java-style two-column overlay
+   appears (version, fps, XYZ/Block/Chunk, Facing; Wine/CPU/Display/GPU/Mem/
+   Allocated on the right; Diet's own `Diet:` lines at the bottom left). It is
+   not drawn on the title/menu screens, and F3 again hides it. See
+   `docs/diet-f3.md` for the element-by-element mapping.
 
 ## Known limits
 
@@ -87,3 +107,13 @@ Run Diet alone (no other Mods) and read
   nothing to attach to yet.
 - The voxel cache can serve a stale "opaque" for up to 20 ticks (~1 s) after a
   block is broken; hysteresis makes this a bounded, self-correcting error.
+- **Hidden verdicts do not skip a draw yet** (evidence-04). The engine decides
+  correctly — on BOL, with two cows behind a stone wall in a flat world,
+  `targets=4 hidden=2 block_queries=16` — but nothing consumes `hidden` on the
+  render path.
+- Packet classes cover the ids in the classifier table; everything else is
+  `unknown` and therefore Critical, so nothing unknown can ever be deferred.
+  In single player the observer also sees serverbound ids (e.g. 144
+  `player_auth_input`) because the integrated server decodes through the same
+  `Packet::read`.
+- The F3 ping line stays absent: no RTT is measured, so none is shown.

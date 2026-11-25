@@ -141,6 +141,13 @@ void TrafficAnalyzer::observeFrame(std::uint64_t nowNs, double spikeThresholdMs)
     if (previous && nowNs > previous) {
         const std::uint64_t duration = nowNs - previous;
         lastFrameNs_.store(duration, std::memory_order_relaxed);
+        // 1/16 EMA in microseconds: stable enough to distinguish "this machine
+        // runs at 100 ms/frame" from "this frame is a 250 ms stall".
+        const std::uint64_t previousSmooth = smoothedFrameNs_.load(std::memory_order_relaxed);
+        const std::uint64_t smooth = previousSmooth
+            ? previousSmooth - previousSmooth / 16 + duration / 16
+            : duration;
+        smoothedFrameNs_.store(smooth, std::memory_order_relaxed);
         auto& entry = frames_[frameNext_];
         entry.ns = nowNs;
         entry.durationNs = duration;
@@ -250,6 +257,7 @@ void TrafficAnalyzer::collect(std::uint64_t nowNs, std::uint64_t windowMs, Traff
     out.windowSeconds = static_cast<double>(windowMs) / 1000.0;
     out.fps = out.windowSeconds > 0 ? static_cast<double>(out.frames) / out.windowSeconds : 0.0;
     out.droppedSamples = dropped_.load(std::memory_order_relaxed);
+    out.classPackets = packets;
 
     rowCount = classCount;
     for (std::size_t c = 0; c < classCount; ++c) {
