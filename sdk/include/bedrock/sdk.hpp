@@ -22,6 +22,7 @@
 #include "bedrock/sdk/overlay.hpp"
 #include "bedrock/sdk/world_render.hpp"
 #include "bedrock/sdk/camera_control.hpp"
+#include "bedrock/sdk/actor_render_filter.hpp"
 #include "bedrock/sdk/movement_packets.hpp"
 #include "bedrock/sdk/packet_wire.hpp"
 #include "bedrock/sdk/automation_controls.hpp"

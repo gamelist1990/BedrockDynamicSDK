@@ -26,9 +26,9 @@ the static analysis of the render and packet surfaces (evidence-04/05).
 
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
-| skip a hidden actor's draw | per-actor render dispatcher entry, or a custom `LevelCullerBase` injected into the renderer | `BDS_HOOK_RENDER_LEVEL` is per frame; `LevelRendererCamera::render` (`0x5376B10`) is view/frustum setup; the per-actor draw happens inside RenderDragon frame-object extraction (`extractAndDrawWithExclusion<…SceneObjectActors…>`). The terrain `LevelCuller` (`LevelRendererPlayer+0x9A0`, factory `0x537EB60`) answers chunk/`BlockPos`/AABB questions only — every one of its base virtual slots consumes a chunk position (evidence-04). |
-| defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed. The binary does prove that *some* inbound handlers take `std::shared_ptr<Packet>` (`LegacyClientNetworkHandler::handle(…, std::shared_ptr<LevelChunkPacket>)`, `UpdateBlockPacket`, `UpdateBlockSyncedPacket`, `BlockActorDataPacket`), so a chunk/block-update deferral surface exists in principle — but it is per-overload and the observation hook cannot reach it (evidence-05). |
-| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). |
+| skip a hidden actor's draw | something that receives an `Actor*` per frame | the RenderDragon extraction predicate for `SceneObjectActors` is now located and verified (four callable tables, shared `_Do_call` `0x5689080`), but a live probe shows the argument object is a frame record with a shared id word and no `Actor*` anywhere in its first 32 quadwords (evidence-07 §3). The terrain `LevelCuller` (`LevelRendererPlayer+0x9A0`) answers chunk questions only (evidence-04). So the decision engine still has no per-actor surface to act on. |
+| defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed. The `shared_ptr` handler set is now machine-verifiable: the compiled lambda of `handle(…, shared_ptr<UpdateBlockPacket>)`, `UpdateBlockSyncedPacket` and `BlockActorDataPacket` gives a callable table (`0xF2D2E80` / `0xF2D2E50` / `0xF2D2EE0`), a queued body and a type getter. `LevelChunkPacket` is *not* in that set — chunks go through `LevelChunkPacketHandler` (evidence-08 §2–4). The overload **entries** are still not resolved, so nothing is hooked. |
+| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The RenderDragon extraction object has no actor identity (evidence-07 §3), so a render-side smoothing hook has nothing to key on either (evidence-09 §2). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
 
 ## Exact/opaque classification rule
@@ -45,6 +45,13 @@ the static analysis of the render and packet surfaces (evidence-04/05).
 Unknown names are **not** occluders, so the engine errs towards keeping an
 entity visible. Combined with `hideAfter` hysteresis and "show on any visible
 sample", a wrong verdict costs frames, never a wrongly hidden mob.
+
+## Settings added in phase 3
+
+| id | default | effect |
+| --- | --- | --- |
+| `cull_skip_draw` | on | arms the RenderDragon scene-actor exclusion filter (only installs when the profile's `object_identity` is resolved) |
+| `cull_probe` | off | diagnostics only: records what each `SceneObjectActors` pass iterates, never excludes |
 
 ## Budget and threading
 
@@ -116,4 +123,16 @@ Run Diet alone (no other Mods) and read
   In single player the observer also sees serverbound ids (e.g. 144
   `player_auth_input`) because the integrated server decodes through the same
   `Packet::read`.
-- The F3 ping line stays absent: no RTT is measured, so none is shown.
+- The F3 ping line appears only when a real NetworkStackLatencyPacket (id 115)
+  round trip is observed. Single-player sessions send no id-115 traffic, so the
+  line stays absent there; on a dedicated server only the server's probes are
+  decoded locally and the pair rule needs the outbound side
+  (`sdk::PacketWire`) to complete (evidence-09 §1).
+- Render skip is not armed: the extraction predicate is profiled and verified,
+  but its argument object is a RenderDragon frame record with no actor identity
+  (evidence-07). `install()` refuses to arm exclusion while the profile says
+  `object_identity: unresolved_actor_not_in_frame_object`.
+- Two marker files in the Diet data directory are diagnostic switches for the
+  BOL harness (the OreUI settings store is unavailable before the game UI
+  exists): `Diet.probe` enables the render probe ring, `Diet.debugdraw` enables
+  the diagnostic boxes. Neither changes a shipped default.

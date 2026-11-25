@@ -80,6 +80,50 @@ void testWindowExpiry() {
     std::puts("window expiry ok");
 }
 
+void testLatencyPairing() {
+    // Two observations of id 115 inside the gap bound are one round trip.
+    {
+        diet::TrafficAnalyzer analyzer;
+        const std::uint64_t base = 2000ull * ms;
+        analyzer.observePacket(base, 115, 9);
+        analyzer.observePacket(base + 4 * ms, 115, 9);
+        const auto snapshot = analyzer.snapshot(base + 10 * ms);
+        assert(snapshot.latencyValid);
+        assert(snapshot.latencySamples == 1);
+        assert(snapshot.latencyMs > 3.5 && snapshot.latencyMs < 4.5);
+        // A lone request with no reply must not produce a measurement.
+        analyzer.observePacket(base + 1000 * ms, 115, 9);
+        const auto later = analyzer.snapshot(base + 1200 * ms);
+        assert(later.latencySamples == 1);
+        assert(later.latencyPairs == 1);
+    }
+    // Steady one-per-second traffic is not a pair and yields no ping.
+    {
+        diet::TrafficAnalyzer analyzer;
+        for (int i = 0; i < 5; ++i)
+            analyzer.observePacket(3000ull * ms + static_cast<std::uint64_t>(i) * 1000 * ms, 115, 9);
+        const auto snapshot = analyzer.snapshot(8000ull * ms);
+        assert(!snapshot.latencyValid);
+        assert(snapshot.latencyPairs == 0);
+    }
+    // Median of several pairs, and other ids never feed the measurement.
+    {
+        diet::TrafficAnalyzer analyzer;
+        const std::uint64_t base = 4000ull * ms;
+        analyzer.observePacket(base, 21, 64);
+        for (int i = 0; i < 5; ++i) {
+            const std::uint64_t at = base + static_cast<std::uint64_t>(i) * 1000 * ms;
+            analyzer.observePacket(at, 115, 9);
+            analyzer.observePacket(at + static_cast<std::uint64_t>(2 + i) * ms, 115, 9);
+        }
+        const auto snapshot = analyzer.snapshot(base + 6000 * ms);
+        assert(snapshot.latencyValid);
+        assert(snapshot.latencySamples == 5);
+        assert(snapshot.latencyMs > 3.5 && snapshot.latencyMs < 4.5);
+    }
+    std::puts("latency pairing ok");
+}
+
 void testContentionDropAccounting() {
     diet::TrafficAnalyzer analyzer;
     // Two observations with the same timestamp still land in the ring.
@@ -95,6 +139,7 @@ int main() {
     testSafetyClasses();
     testFrameSpikes();
     testWindowExpiry();
+    testLatencyPairing();
     testContentionDropAccounting();
     std::puts("diet_traffic_test passed");
     return 0;

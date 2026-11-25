@@ -25,10 +25,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -47,6 +49,12 @@ std::uint64_t steadyNs() {
             .count());
 }
 
+std::string hexPointer(std::uintptr_t value) {
+    char buffer[24];
+    std::snprintf(buffer, sizeof(buffer), "0x%llx", static_cast<unsigned long long>(value));
+    return buffer;
+}
+
 // ---------------------------------------------------------------------------
 // Configuration (Mod Settings is the single source of truth; applying a value
 // only swaps this POD under a mutex, so readers never see a half-updated set).
@@ -57,6 +65,8 @@ struct Config {
     bool cullPlayers = false;
     bool leavesSolid = false;
     bool debugDraw = false;
+    bool skipDraw = true;
+    bool renderProbe = false;
     bool measure = true;
     bool debug = false;
     bool f3 = false;
@@ -80,6 +90,42 @@ Config configCopy() {
 // exists, so this is a no-op until then.
 void applyF3Visibility(bool visible);
 
+// ---------------------------------------------------------------------------
+// Render skip. The render-thread predicate may only compare pointers, so the
+// tick thread publishes the native Actor pointers it currently judges hidden
+// into a fixed array; `hiddenPointerCount` is the release/acquire fence.
+// ---------------------------------------------------------------------------
+constexpr unsigned kMaxPublishedPointers = 64;
+constexpr unsigned kMaxTrackedPointers = 16;
+std::atomic<unsigned> hiddenPointerCount{0};
+std::atomic<std::uintptr_t> hiddenPointers[kMaxPublishedPointers];
+std::atomic<unsigned> trackedPointerCount{0};
+std::atomic<std::uintptr_t> trackedPointers[kMaxTrackedPointers];
+std::atomic<bool> skipDrawEnabled{true};
+std::atomic<std::uint64_t> skippedDraws{0};
+
+// Runtime id -> native Actor pointer, learned from the actor capture. Only the
+// tick thread touches this map.
+std::unordered_map<std::uint64_t, std::uintptr_t> actorPointers;
+
+void clearPublishedRenderState() {
+    hiddenPointerCount.store(0, std::memory_order_release);
+    trackedPointerCount.store(0, std::memory_order_release);
+    actorPointers.clear();
+}
+
+// Render-thread policy: true excludes the object from the extraction pass.
+// Runs once per object of the watched passes, so it is a bounded pointer scan
+// with no allocation, no locks and no native reads.
+bool shouldExcludeRenderObject(void* object) noexcept {
+    if (!skipDrawEnabled.load(std::memory_order_relaxed) || !object) return false;
+    const auto value = reinterpret_cast<std::uintptr_t>(object);
+    const unsigned count = hiddenPointerCount.load(std::memory_order_acquire);
+    for (unsigned index = 0; index < count; ++index)
+        if (hiddenPointers[index].load(std::memory_order_relaxed) == value) return true;
+    return false;
+}
+
 void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) {
     std::lock_guard lock(configMutex);
     const auto boolean = [&value] {
@@ -95,6 +141,8 @@ void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) 
     else if (id == "cull_players") liveConfig.cullPlayers = boolean();
     else if (id == "cull_leaves") liveConfig.leavesSolid = boolean();
     else if (id == "cull_debug_draw") liveConfig.debugDraw = boolean();
+    else if (id == "cull_skip_draw") liveConfig.skipDraw = boolean();
+    else if (id == "cull_probe") liveConfig.renderProbe = boolean();
     else if (id == "cull_max_distance") liveConfig.maxDistance = std::clamp(number(96.0), 16.0, 192.0);
     else if (id == "tick_budget_ms") liveConfig.tickBudgetMs = std::clamp(number(0.7), 0.1, 4.0);
     else if (id == "net_measure") liveConfig.measure = boolean();
@@ -103,6 +151,9 @@ void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) 
     else if (id == "debug") liveConfig.debug = boolean();
     renderEnabled.store(liveConfig.enabled);
     renderDebugDraw.store(liveConfig.debugDraw);
+    skipDrawEnabled.store(liveConfig.enabled && liveConfig.cull && liveConfig.skipDraw);
+    if (!liveConfig.enabled || !liveConfig.cull || !liveConfig.skipDraw)
+        hiddenPointerCount.store(0, std::memory_order_release);
     applyF3Visibility(liveConfig.f3);
 }
 
@@ -111,6 +162,7 @@ void applySetting(std::string_view id, const bedrock::sdk::SettingValue& value) 
 // ---------------------------------------------------------------------------
 using VerdictList = std::vector<diet::Verdict>;
 std::shared_ptr<const VerdictList> publishedVerdicts{};
+
 
 struct TickReportData {
     diet::EngineStats engine{};
@@ -367,7 +419,11 @@ void onLevelTick(const bedrock::sdk::LevelTickEventValue& event) {
                 input.box.max = {sample.bounds.maximum.x, sample.bounds.maximum.y,
                                  sample.bounds.maximum.z};
                 state.engine.addTarget(input);
+                if (sample.actorKey) {
+                    actorPointers[sample.runtimeId] = sample.actorKey;
+                }
             }
+            if (actorPointers.size() > 8192) actorPointers.clear();
         }
         state.engine.endTick(steadyNs());
 
@@ -398,6 +454,27 @@ void onLevelTick(const bedrock::sdk::LevelTickEventValue& event) {
             state.publishHash = hash;
             state.lastPublishNs = now;
         }
+
+        // Publish the native pointers of the targets judged hidden right now,
+        // plus a small sample of tracked pointers for the diagnostic probe.
+        // A target without a known pointer is skipped, never guessed.
+        unsigned published = 0;
+        for (unsigned i = 0; i < state.engine.verdictCount() && published < kMaxPublishedPointers;
+             ++i) {
+            const auto& verdict = state.engine.verdicts()[i];
+            if (!verdict.hidden || verdict.isPlayer) continue;
+            const auto found = actorPointers.find(verdict.runtimeId);
+            if (found == actorPointers.end() || !found->second) continue;
+            hiddenPointers[published++].store(found->second, std::memory_order_relaxed);
+        }
+        hiddenPointerCount.store(published, std::memory_order_release);
+        unsigned tracked = 0;
+        for (const auto& sample : samples) {
+            if (tracked >= kMaxTrackedPointers) break;
+            if (!sample.actorKey) continue;
+            trackedPointers[tracked++].store(sample.actorKey, std::memory_order_relaxed);
+        }
+        trackedPointerCount.store(tracked, std::memory_order_release);
     }
 }
 
@@ -411,6 +488,7 @@ void onWorldChange(const bedrock::sdk::WorldChangeEventValue& event) {
     runtime->debugScreen.setWorldActive(false);
     voxelCache.clear();
     runtime->captureCursor = 0;
+    clearPublishedRenderState();
     std::atomic_store_explicit(&publishedVerdicts, std::shared_ptr<const VerdictList>(),
                                std::memory_order_release);
     logger.info("world change reason=", static_cast<int>(event.reason),
@@ -535,6 +613,8 @@ std::vector<bedrock::sdk::Translation> englishLocale() {
         {"diet.players", "Cull players (off = never hide a player)"},
         {"diet.leaves", "Treat leaves as occluding blocks"},
         {"diet.draw", "Draw occluded-target boxes"},
+        {"diet.skip", "Skip draws of hidden targets"},
+        {"diet.probe", "Render probe (diagnostic, no exclusion)"},
         {"diet.distance", "Distance cull (blocks)"},
         {"diet.tick_budget", "Tick budget for culling work (ms)"},
         {"diet.measure", "Measure frame spikes vs packet arrivals"},
@@ -553,6 +633,8 @@ std::vector<bedrock::sdk::Translation> japaneseLocale() {
         {"diet.players", "プレイヤーもカリング（OFF で絶対に隠さない）"},
         {"diet.leaves", "葉を遮蔽ブロックとして扱う"},
         {"diet.draw", "遮蔽判定されたターゲットを枠で表示"},
+        {"diet.skip", "遮蔽判定されたターゲットの描画をスキップ"},
+        {"diet.probe", "レンダープローブ（診断用・除外はしない）"},
         {"diet.distance", "距離カリング（ブロック）"},
         {"diet.tick_budget", "カリング処理のティック予算 (ms)"},
         {"diet.measure", "フレームスパイクとパケット到着の相関を計測"},
@@ -578,6 +660,8 @@ public:
                         .add(Setting::slider("cull_max_distance", "diet.distance", 96, 16, 192, 4))
                         .add(Setting::slider("tick_budget_ms", "diet.tick_budget", 0.7, 0.1, 4.0, 0.1))
                         .add(Setting::toggle("cull_debug_draw", "diet.draw", false))
+                        .add(Setting::toggle("cull_skip_draw", "diet.skip", true))
+                        .add(Setting::toggle("cull_probe", "diet.probe", false))
                         .add(Setting::toggle("net_measure", "diet.measure", true))
                         .add(Setting::slider("net_budget_ms", "diet.net_budget", 3.0, 0.5, 16.0, 0.5))
                         .add(Setting::toggle("f3_enabled", "diet.f3", false))
@@ -595,8 +679,8 @@ public:
         }
         static constexpr std::string_view ids[] = {
             "diet_enabled", "cull_enabled", "cull_players", "cull_leaves",
-            "cull_max_distance", "tick_budget_ms", "cull_debug_draw", "net_measure",
-            "net_budget_ms", "f3_enabled", "debug"};
+            "cull_max_distance", "tick_budget_ms", "cull_debug_draw", "cull_skip_draw",
+            "cull_probe", "net_measure", "net_budget_ms", "f3_enabled", "debug"};
         for (const auto id : ids) {
             const auto value = page_->value(id);
             if (value) applySetting(id, value.value());
@@ -618,6 +702,16 @@ DietMod& dietMod() {
     static DietMod instance;
     return instance;
 }
+
+struct Clip {
+    std::unique_ptr<bedrock::sdk::Hooks> hooks;
+    std::vector<bedrock::sdk::HookSubscription> subscriptions;
+    std::unique_ptr<bedrock::sdk::WorldRender> worldRender;
+    std::optional<bedrock::sdk::WorldRenderSubscription> renderSubscription;
+    std::unique_ptr<bedrock::sdk::PacketObserver> observer;
+    std::unique_ptr<bedrock::sdk::ActorRenderFilter> actorFilter;
+};
+Clip clip;
 
 // ---------------------------------------------------------------------------
 // Stat reporting (housekeeping thread only: never the game or render thread).
@@ -660,9 +754,18 @@ std::shared_ptr<const diet::F3Snapshot> buildF3Snapshot(const Config& config) {
     snapshot->samples = report.engine.samples;
     snapshot->budgetStops = report.engine.budgetStops;
     snapshot->blockQueries = runtime->blockQueries.load(std::memory_order_relaxed);
+    // The counter is only meaningful when the render filter actually installed:
+    // a hidden verdict without a wired exclusion changes nothing on screen.
+    snapshot->skippedDrawsValid =
+        config.cull && config.skipDraw && clip.actorFilter && clip.actorFilter->ready();
+    snapshot->skippedDraws = skippedDraws.load(std::memory_order_relaxed);
 
     snapshot->trafficValid = true;
     snapshot->packets = traffic.packets;
+    snapshot->pingValid = traffic.latencyValid && traffic.latencyMs >= 0.0;
+    snapshot->pingMs = traffic.latencyValid
+        ? static_cast<unsigned>(traffic.latencyMs + 0.5)
+        : 0u;
     // Top four non-empty packet classes in this window, Java-style "name=count".
     for (int slot = 0; slot < 4; ++slot) {
         std::uint64_t best = 0;
@@ -695,6 +798,7 @@ void reportLoop(std::atomic<bool>& stopping) {
         if (!runtime) continue;
         const auto config = configCopy();
         runtime->debugScreen.publish(buildF3Snapshot(config));
+        if (clip.actorFilter) clip.actorFilter->setProbe(config.renderProbe);
         if (++sinceLog < 20) continue;  // 5 s cadence for the log lines
         sinceLog = 0;
         if (config.measure) {
@@ -706,15 +810,31 @@ void reportLoop(std::atomic<bool>& stopping) {
             std::lock_guard lock(tickReport.mutex);
             copy = tickReport.data;
         }
+        const auto trafficNow = runtime->traffic.snapshot(steadyNs());
+        const double pingMsForLog = trafficNow.latencyValid ? trafficNow.latencyMs : -1.0;
+        unsigned filterCalls = 0, filterVariants = 0, filterExcluded = 0;
+        if (clip.actorFilter) {
+            const auto statistics = clip.actorFilter->takeStatistics();
+            filterCalls = statistics.calls;
+            filterExcluded = statistics.excluded;
+            filterVariants = static_cast<unsigned>(statistics.variants);
+            skippedDraws.fetch_add(statistics.excluded, std::memory_order_relaxed);
+        }
         logger.info("cull summary: tracked=", copy.engine.tracked,
                     " checked=", copy.engine.checked, " samples=", copy.engine.samples,
                     " visible=", copy.engine.visible, " occluded=", copy.engine.occluded,
                     " distance_culled=", copy.engine.distanceCulled,
                     " protected=", copy.engine.protectedTargets,
                     " budget_stops=", copy.engine.budgetStops, " hidden=", copy.engine.hidden,
+                    " skipped=", skippedDraws.load(std::memory_order_relaxed),
+                    " filter_calls=", filterCalls, " filter_excluded=", filterExcluded,
+                    " filter_variants=", filterVariants,
                     " engine_us=", copy.engine.elapsedUs, " capture_rows=", copy.captureRows,
                     " population=", copy.capturePopulation, " capture_us=", copy.captureUs,
                     " block_queries=", runtime->blockQueries.load(std::memory_order_relaxed),
+                    " ping_ms=", pingMsForLog,
+                    " lat_obs=", trafficNow.latencyObservations,
+                    " lat_pairs=", trafficNow.latencyPairs,
                     " deferred_ticks=", runtime->deferredTicks.load(std::memory_order_relaxed),
                     " ticks=", copy.ticks,
                     " f3_visible=", runtime->debugScreen.visible() ? 1 : 0,
@@ -724,17 +844,57 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " raw_id_min=", runtime->rawIdMin.load(std::memory_order_relaxed),
                     " raw_id_max=", runtime->rawIdMax.load(std::memory_order_relaxed),
                     " raw_id_last=", runtime->lastRawId.load(std::memory_order_relaxed));
+        if (clip.actorFilter && config.renderProbe) {
+            const auto samples = clip.actorFilter->takeProbeSamples();
+            unsigned shown = 0;
+            for (const auto& sample : samples) {
+                if (shown++ >= 12) break;
+                std::ostringstream line;
+                line << "render probe: table=" << hexPointer(sample.table)
+                     << " object=" << hexPointer(sample.object)
+                     << " context=" << hexPointer(sample.context) << " calls=" << sample.calls;
+                for (unsigned word = 0; word < bedrock::sdk::ActorRenderProbeSample::kSampleWords; ++word) {
+                    if (!sample.words[word]) continue;
+                    line << " w" << word << '=' << hexPointer(sample.words[word]);
+                }
+                const unsigned trackedNow = trackedPointerCount.load(std::memory_order_acquire);
+                for (unsigned word = 0; word < bedrock::sdk::ActorRenderProbeSample::kSampleWords; ++word) {
+                    if (!sample.words[word]) continue;
+                    for (unsigned actor = 0; actor < trackedNow && actor < kMaxTrackedPointers;
+                         ++actor) {
+                        if (sample.words[word] !=
+                            trackedPointers[actor].load(std::memory_order_relaxed))
+                            continue;
+                        line << " MATCH_ACTOR word=" << word;
+                    }
+                }
+                for (unsigned word = 0; word < bedrock::sdk::ActorRenderProbeSample::kContextWords; ++word) {
+                    if (!sample.contextWords[word]) continue;
+                    line << " c" << word << '=' << hexPointer(sample.contextWords[word]);
+                }
+                logger.info(line.str());
+            }
+            if (samples.empty()) logger.info("render probe: no watched-pass objects this window");
+            const unsigned tracked = trackedPointerCount.load(std::memory_order_acquire);
+            if (tracked) {
+                std::ostringstream line;
+                line << "render probe tracked actors:";
+                for (unsigned index = 0; index < tracked && index < kMaxTrackedPointers; ++index)
+                    line << ' ' << hexPointer(trackedPointers[index].load(std::memory_order_relaxed));
+                logger.info(line.str());
+            }
+            const unsigned hidden = hiddenPointerCount.load(std::memory_order_acquire);
+            if (hidden) {
+                std::ostringstream line;
+                line << "render probe hidden actors:";
+                for (unsigned index = 0; index < hidden && index < kMaxPublishedPointers; ++index)
+                    line << ' ' << hexPointer(hiddenPointers[index].load(std::memory_order_relaxed));
+                logger.info(line.str());
+            }
+        }
     }
 }
 
-struct Clip {
-    std::unique_ptr<bedrock::sdk::Hooks> hooks;
-    std::vector<bedrock::sdk::HookSubscription> subscriptions;
-    std::unique_ptr<bedrock::sdk::WorldRender> worldRender;
-    std::optional<bedrock::sdk::WorldRenderSubscription> renderSubscription;
-    std::unique_ptr<bedrock::sdk::PacketObserver> observer;
-};
-Clip clip;
 
 std::filesystem::path dataDirectory() {
     PWSTR documents = nullptr;
@@ -765,6 +925,25 @@ DWORD WINAPI startClient(void*) {
     }
     logSink.attach(logger);
     logger.info("Diet starting build=", BEDROCK_DIET_BUILD_ID, " cpp=", _MSC_VER);
+
+    // Diagnostic overrides for the BOL harness: the OreUI Mod Settings store is
+    // unavailable before the game UI exists, so these two marker files let a
+    // test run turn on the render probe / the debug boxes without a UI. They
+    // never change a shipped default.
+    std::error_code markerError;
+    const bool probeMarker = std::filesystem::exists(directory / L"Diet.probe", markerError);
+    markerError.clear();
+    const bool drawMarker = std::filesystem::exists(directory / L"Diet.debugdraw", markerError);
+    if (probeMarker || drawMarker) {
+        std::lock_guard lock(configMutex);
+        if (probeMarker) liveConfig.renderProbe = true;
+        if (drawMarker) {
+            liveConfig.debugDraw = true;
+            renderDebugDraw.store(true);
+        }
+        logger.info("diagnostic markers: probe=", probeMarker ? 1 : 0,
+                    " debug_draw=", drawMarker ? 1 : 0);
+    }
 
     std::string error;
     bedrock::sdk::Profiles profiles;
@@ -839,6 +1018,25 @@ DWORD WINAPI startClient(void*) {
         logger.info("packet observation active (post-decode, copied payload size only)");
     }
 
+    // Per-actor render skip: the SDK verifies the live callable tables and the
+    // shared predicate before it detours anything, so a profile mismatch leaves
+    // the game completely untouched.
+    {
+        const auto config = configCopy();
+        clip.actorFilter = std::make_unique<bedrock::sdk::ActorRenderFilter>();
+        clip.actorFilter->setProbe(config.renderProbe);
+        std::vector<std::string> warnings;
+        std::string filterError;
+        if (!clip.actorFilter->configure(profile, &shouldExcludeRenderObject, filterError, warnings)) {
+            logger.warn("render skip unavailable: ", filterError);
+            clip.actorFilter.reset();
+        } else {
+            for (const auto& warning : warnings) logger.info(warning);
+            logger.info("render skip active probe=", config.renderProbe ? 1 : 0,
+                        " (SceneObjectActors exclusion predicate; hidden verdicts only)");
+        }
+    }
+
     gGameVersion = profile.version();
     if (!runtime->debugScreen.install(error)) {
         logger.warn("F3 debug screen unavailable: ", error);
@@ -850,14 +1048,16 @@ DWORD WINAPI startClient(void*) {
     std::atomic<bool> stopping{false};
     std::thread reporter(reportLoop, std::ref(stopping));
     gStatus.store(4);
-    logger.info("ready; notes: entity render-skip and packet deferral need new RVAs "
-                "(see opencode-report.md)");
+    logger.info("ready; notes: render-skip predicate is profiled but its extraction "
+                "objects carry no actor identity (evidence-07); packet deferral surface "
+                "located, not hooked (evidence-08); ping from NetworkStackLatencyPacket");
 
     while (!gStop.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     stopping.store(true, std::memory_order_release);
     reporter.join();
     runtime->debugScreen.uninstall();
+    clip.actorFilter.reset();
     clip.observer.reset();
     clip.renderSubscription.reset();
     clip.worldRender.reset();

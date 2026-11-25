@@ -69,6 +69,14 @@ struct TrafficSnapshot {
     PacketClass maxBurstClass{PacketClass::Unknown};
     std::uint64_t delayTolerantPackets{};
     std::uint64_t delayTolerantBytes{};
+    // NetworkStackLatencyPacket (protocol id 115) round trip. Only valid when
+    // both directions are visible on the receive path (single player / LAN
+    // host), which is what the paired-observation measurement requires.
+    bool latencyValid{};
+    double latencyMs{};
+    std::uint64_t latencySamples{};
+    std::uint64_t latencyPairs{};
+    std::uint64_t latencyObservations{};
     // Per-class packet counts for this window (index = PacketClass).
     std::array<std::uint64_t, static_cast<std::size_t>(PacketClass::Count)> classPackets{};
 };
@@ -85,6 +93,13 @@ public:
 
     void observePacket(std::uint64_t nowNs, int rawId, std::size_t bytes) noexcept;
     void observeFrame(std::uint64_t nowNs, double spikeThresholdMs = 33.0) noexcept;
+
+    // Protocol id of NetworkStackLatencyPacket. The pair rule: two
+    // observations of this id less than kLatencyPairMaxGapNs apart are the
+    // request and its reply, so their delta is the round trip.
+    static constexpr int kLatencyPacketId = 115;
+    static constexpr std::uint64_t kLatencyPairMaxGapNs = 500ull * 1000ull * 1000ull;
+    static constexpr std::size_t kLatencyRing = 32;
 
     // Consumes the window [now - windowMs, now]. Not for the render or network
     // thread: it takes both locks and allocates the returned string.
@@ -140,6 +155,12 @@ private:
     std::size_t spikeNext_{};
     std::uint64_t spikeCount_{};
     std::uint64_t lastFrameStampNs_{};
+    std::uint64_t lastLatencyNs_{};
+    std::uint64_t latencySamples_{};
+    std::uint64_t latencyStaticSamples_{};
+    std::uint64_t latencySeen_{};
+    std::uint64_t latencyRing_[kLatencyRing]{};
+    std::size_t latencyNext_{};
     std::atomic<std::uint64_t> lastFrameNs_{};
     std::atomic<std::uint64_t> smoothedFrameNs_{};
     std::atomic<std::uint64_t> dropped_{};

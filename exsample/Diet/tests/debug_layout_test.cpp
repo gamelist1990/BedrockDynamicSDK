@@ -147,6 +147,31 @@ void testOmission() {
         checkContains(partialLayout.left[0], "Diet: packets=10", "packet line");
 }
 
+void testPingAndSkipLines() {
+    // The ping line exists only with a real measurement, and the skipped-draw
+    // counter exists only while the draw skip is armed.
+    diet::F3Snapshot measured;
+    measured.cullValid = true;
+    measured.skippedDrawsValid = true;
+    measured.skippedDraws = 42;
+    measured.pingValid = true;
+    measured.pingMs = 37;
+    const auto layout = diet::buildF3Layout(measured);
+    std::string joined;
+    for (const auto& line : layout.left) joined += line + "\n";
+    checkContains(joined, "skipped=42", "skipped counter");
+    checkContains(joined, "Diet: ping=37ms", "ping line");
+
+    diet::F3Snapshot unmeasured;
+    unmeasured.cullValid = true;
+    unmeasured.trafficValid = true;
+    const auto plain = diet::buildF3Layout(unmeasured);
+    std::string plainText;
+    for (const auto& line : plain.left) plainText += line + "\n";
+    check(plainText.find("ping=") == std::string::npos, "no ping line without a measurement");
+    check(plainText.find("skipped=") == std::string::npos, "no skipped counter when unarmed");
+}
+
 }  // namespace
 
 int main() {
@@ -154,6 +179,7 @@ int main() {
     testCoordinates();
     testFullLayout();
     testOmission();
+    testPingAndSkipLines();
     if (failures) {
         std::fprintf(stderr, "%d failure(s)\n", failures);
         return EXIT_FAILURE;

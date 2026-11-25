@@ -129,6 +129,23 @@ void TrafficAnalyzer::observePacket(std::uint64_t nowNs, int rawId, std::size_t 
     entry.bytes = bytes;
     packetNext_ = (packetNext_ + 1) % kPacketRing;
     ++packetCount_;
+
+    // NetworkStackLatencyPacket pairing. The receive hook decodes both the
+    // inbound packet and (in single player) the serverbound request, so two
+    // observations of this id inside the gap bound are one round trip.
+    if (rawId == kLatencyPacketId) {
+        ++latencySeen_;
+        if (lastLatencyNs_ && nowNs > lastLatencyNs_ &&
+            nowNs - lastLatencyNs_ < kLatencyPairMaxGapNs) {
+            latencyRing_[latencyNext_] = nowNs - lastLatencyNs_;
+            latencyNext_ = (latencyNext_ + 1) % kLatencyRing;
+            if (latencySamples_ < kLatencyRing) ++latencySamples_;
+            ++latencyStaticSamples_;
+            lastLatencyNs_ = 0;  // consumed: the next observation starts a new pair
+        } else {
+            lastLatencyNs_ = nowNs;
+        }
+    }
 }
 
 void TrafficAnalyzer::observeFrame(std::uint64_t nowNs, double spikeThresholdMs) noexcept {
@@ -179,6 +196,8 @@ void TrafficAnalyzer::collect(std::uint64_t nowNs, std::uint64_t windowMs, Traff
         int rawId;
     };
     std::vector<Sample> window;
+    std::uint64_t latencyValues[kLatencyRing]{};
+    std::size_t latencyCount = 0;
     {
         std::lock_guard lock(packetMutex_);
         window.reserve(std::min<std::size_t>(packetCount_, kPacketRing));
@@ -186,6 +205,19 @@ void TrafficAnalyzer::collect(std::uint64_t nowNs, std::uint64_t windowMs, Traff
             if (!entry.ns || entry.ns < begin || entry.ns > nowNs) continue;
             window.push_back({entry.ns, entry.bytes, entry.rawId});
         }
+        // The NetworkStackLatency round-trip samples are a rolling median, not
+        // a window counter: a quiet second must not erase the last measurement.
+        latencyCount = std::min<std::size_t>(latencySamples_, kLatencyRing);
+        for (std::size_t index = 0; index < latencyCount; ++index)
+            latencyValues[index] = latencyRing_[index];
+        out.latencyPairs = latencyStaticSamples_;
+        out.latencyObservations = latencySeen_;
+    }
+    if (latencyCount) {
+        std::sort(latencyValues, latencyValues + latencyCount);
+        out.latencyValid = true;
+        out.latencySamples = latencyCount;
+        out.latencyMs = static_cast<double>(latencyValues[latencyCount / 2]) / 1.0e6;
     }
     std::sort(window.begin(), window.end(),
               [](const Sample& a, const Sample& b) { return a.ns < b.ns; });

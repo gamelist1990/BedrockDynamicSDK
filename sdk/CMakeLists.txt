@@ -5,7 +5,7 @@ add_library(bedrock_stage_a STATIC
     src/roster.cpp src/packets.cpp src/overlay.cpp src/window_file_drop.cpp
     src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp
     src/automation_controls.cpp src/block_actions.cpp
-    src/item_stack_requests.cpp src/safe_teleport.cpp)
+    src/item_stack_requests.cpp src/safe_teleport.cpp src/actor_render_filter.cpp)
 if(WIN32)
     target_sources(bedrock_stage_a PRIVATE
         src/commands.cpp src/title_packets.cpp src/game_hooks.cpp)
