@@ -49,7 +49,7 @@ jobs:
           clients = ['HitBox', 'SpeedBuilder']
           tools = ['CheckSig', 'Top']
           if version == '1.26.65.1':
-              clients.extend(['DynamicClient', 'AutoMine', 'ScriptClient'])
+              clients.extend(['DynamicClient', 'AutoMine', 'ScriptClient', 'Diet'])
               tools.extend(['BlockProbe', 'CraftProbe', 'InputProbe', 'StackProbe', 'Fake', 'GlobalResourcePack', 'ModSettingsDemo'])
           available = clients + tools
           selected = available if os.environ['MODS'] == 'all' else list(dict.fromkeys(x.strip() for x in os.environ['MODS'].split(',')))
@@ -156,7 +156,7 @@ jobs:
             # Match ScriptClient's static CRT for QuickJS and standalone tests.
             $extraArgs += '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'
           }
-          cmake -S "${{ matrix.source }}" -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
+          cmake -S "${{ matrix.source }}" -B build-mod -A x64 "-DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$env:GITHUB_WORKSPACE" -DBEDROCK_HITBOX_BUILD_ID=${{ github.sha }} -DBEDROCK_BUILD_ID=${{ github.sha }} -DBEDROCK_DIET_BUILD_ID=${{ github.sha }} "-DBEDROCK_GAME_VERSION=${{ needs.plan.outputs.version }}" @extraArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build-mod --config Release --parallel 2

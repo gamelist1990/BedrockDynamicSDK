@@ -32,7 +32,7 @@ TOOLCHAIN=$ROOT/linux-xwin-toolchain.cmake
 
 LATEST=1.26.65.1
 LEGACY=1.26.60.5
-CLIENT_MODS=(DynamicClient AutoMine HitBox SpeedBuilder)
+CLIENT_MODS=(DynamicClient AutoMine HitBox SpeedBuilder Diet)
 DEV_MODS=(CheckSig BlockProbe CraftProbe InputProbe StackProbe Fake Top GlobalResourcePack ModSettingsDemo)
 JOBS=${BEDROCK_BUILD_JOBS:-$(nproc)}
 
@@ -80,6 +80,7 @@ CMAKE_ARGS=(
   -G Ninja --toolchain "$TOOLCHAIN" -DCMAKE_BUILD_TYPE=Release
   -DFETCHCONTENT_SOURCE_DIR_BEDROCK_SDK=$ROOT
   -DBEDROCK_BUILD_ID=$BUILD_ID -DBEDROCK_HITBOX_BUILD_ID=$BUILD_ID
+  -DBEDROCK_DIET_BUILD_ID=$BUILD_ID
 )
 
 build_one() { # name sourcedir version [build-dir-suffix]

@@ -1,5 +1,7 @@
 #pragma once
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -54,6 +56,65 @@ struct RosterStatistics {
     std::uint64_t receiveCalls{}, receiveFiltered{}, receiveCopied{},
         receiveStreamFailures{}, receiveDecodeFailures{}, receivePublished{},
         receiveNested{};
+};
+
+// ------------------------------------------------------------------------
+// PacketObservation — value-type record of one successfully decoded incoming
+// packet. Payload bytes never leave the SDK; only the numeric id and the
+// copied payload size are published, which is what a traffic/burst
+// measurement needs.
+// ------------------------------------------------------------------------
+struct PacketObservation {
+    int rawId{};
+    std::size_t bytes{};
+    std::uint64_t serial{};
+};
+
+struct PacketObservationStatistics {
+    std::uint64_t receiveCalls{}, receiveCopied{}, receiveFiltered{},
+        streamFailures{}, decodeFailures{}, published{}, delivered{};
+};
+
+// ------------------------------------------------------------------------
+// PacketObserver — observe every decoded incoming packet.
+//
+//   sdk::PacketObserver observer;
+//   observer.setHandler(&onPacket, &user);      // before install()
+//   if (!observer.install(resolver, profile.json(), error)) { ... }
+//   observer.stop();
+//
+// The handler runs on the networking thread *after* the game decoded the
+// packet (the common Packet::read hook publishes only on success). It must be
+// lock-free and non-blocking: copy scalars, never retain a payload or touch a
+// native object. `bytes` is the copied payload length that the SDK already
+// takes for any receive subscriber.
+// ------------------------------------------------------------------------
+class PacketObserver final {
+public:
+    using Handler = void (*)(const PacketObservation& observation, void* user);
+    PacketObserver();
+    ~PacketObserver();
+    PacketObserver(const PacketObserver&) = delete;
+    PacketObserver& operator=(const PacketObserver&) = delete;
+    PacketObserver(PacketObserver&&) noexcept;
+    PacketObserver& operator=(PacketObserver&&) noexcept;
+
+    // Must be called before install(); returns false when already installed.
+    bool setHandler(Handler handler, void* user) noexcept;
+
+    bool install(const SymbolResolver& resolver, std::string_view profileJson,
+                 std::string& error);
+    bool install(std::string_view selectedProfileJson, std::string_view embeddedProfileJson,
+                 std::string& error);
+
+    [[nodiscard]] bool installed() const noexcept;
+    [[nodiscard]] PacketObservationStatistics statistics() const noexcept;
+
+    void stop() noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class PacketRoster final {
