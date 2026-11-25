@@ -2,7 +2,7 @@
 
 Target: 1.26.65.1 (`data/1.26.65.1/windows-x64/manifest.json`, exe sha256
 `dacd67e7…093b88`). Evidence for each claim lives outside the repo in
-`~/Documents/PEXData/diet/evidence-01-surface.md` … `evidence-06-f3.md`.
+`~/Documents/PEXData/diet/evidence-01-surface.md` … `evidence-12-smoothing.md`.
 
 Phase 2 added the F3 debug screen (`docs/diet-f3.md`), fixed the frame-time
 guard so a uniformly slow machine is not starved of culling work, and extended
@@ -26,7 +26,7 @@ the static analysis of the render and packet surfaces (evidence-04/05).
 
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
-| skip a hidden actor's draw | something that receives an `Actor*` per frame | the RenderDragon extraction predicate for `SceneObjectActors` is now located and verified (four callable tables, shared `_Do_call` `0x5689080`), but a live probe shows the argument object is a frame record with a shared id word and no `Actor*` anywhere in its first 32 quadwords (evidence-07 §3). The terrain `LevelCuller` (`LevelRendererPlayer+0x9A0`) answers chunk questions only (evidence-04). So the decision engine still has no per-actor surface to act on. |
+| skip a hidden actor's draw | something that receives an `Actor*` per frame **for every actor** | the extraction predicate for `SceneObjectActors` receives RenderDragon frame records with no actor identity (evidence-07 §3, probe). The submission side was searched in phase 4: `ActorRenderCandidates::addPlayers` provably receives `Actor*` and inserts it into the render-candidate vector, but that path is players-only and its consumer loop lives inside one 46 KB function with no separate entry or type name (evidence-10). The terrain `LevelCuller` answers chunk questions only (evidence-04). No per-actor surface is armed. |
 | defer delay-tolerant packets | inbound queue / handler dispatch entry | the receive hook runs after `Packet::read` and must call `next()`; payloads are borrowed. The `shared_ptr` handler set is now machine-verifiable: the compiled lambda of `handle(…, shared_ptr<UpdateBlockPacket>)`, `UpdateBlockSyncedPacket` and `BlockActorDataPacket` gives a callable table (`0xF2D2E80` / `0xF2D2E50` / `0xF2D2EE0`), a queued body and a type getter. `LevelChunkPacket` is *not* in that set — chunks go through `LevelChunkPacketHandler` (evidence-08 §2–4). The overload **entries** are still not resolved, so nothing is hooked. |
 | smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The RenderDragon extraction object has no actor identity (evidence-07 §3), so a render-side smoothing hook has nothing to key on either (evidence-09 §2). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
