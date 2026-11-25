@@ -69,7 +69,7 @@
         "path": "data/1.26.65.1/windows-x64/manifest.json",
         "sha256": "3c246b88cbd17580678ddf96b143254ab4c41b2519d3a16cea5ad79df944cacb",
         "module_sha256": "dacd67e72d7f2d6bc55c36b5189ff91d0d17ccedeee5277ebeab8013b4093b88",
-        "symbols": 97,
+        "symbols": 98,
         "protocol": {
           "path": "data/protocols/1.26.60/protocol.json",
           "version_path": "data/protocols/1.26.60/version.json",
