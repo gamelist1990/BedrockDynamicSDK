@@ -113,7 +113,7 @@ const char* packetClassName(PacketClass value) noexcept {
 
 bool mayDefer(int rawId) noexcept {
     // Rule: unknown ids are critical. Only an explicit delay-tolerant rule
-    // returns true, and nothing in Diet consumes this yet (see evidence-02).
+    // returns true. The SDK still requires a proven handler for that id.
     return classifyPacket(rawId).safety == SafetyClass::DelayTolerant;
 }
 

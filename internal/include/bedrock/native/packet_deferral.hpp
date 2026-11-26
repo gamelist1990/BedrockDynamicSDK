@@ -13,9 +13,8 @@
 namespace bedrock {
 // Delay-tolerant packet deferral at the concrete client-network handler entry.
 //
-// The three handler overloads this adapter knows are
-// `LegacyClientNetworkHandler::handle(NetworkIdentifier const&,
-// std::shared_ptr<UpdateBlockPacket>)` and its two siblings. They are ordinary
+// The profiled `LegacyClientNetworkHandler::handle(NetworkIdentifier const&,
+// std::shared_ptr<PacketT>)` overloads are ordinary
 // virtual functions, so the profile pins each entry by RVA + entry guard and
 // additionally proves the identity by finding the `lea` of the std::function
 // callable table of that overload's queued lambda inside the handler body.
@@ -37,19 +36,29 @@ namespace bedrock {
 // the original.
 class NativePacketDeferral {
   public:
-    static constexpr unsigned kMaxHandlers = 4;
+    static constexpr unsigned kMaxHandlers = 5;
     static constexpr unsigned kQueueCapacity = 512;
     static constexpr unsigned kMaxIdentifierBytes = 256;
     static constexpr unsigned kMaxAgeMs = 400;
     using Handler = void(__fastcall *)(void *self, const void *identifier, void *shared);
+    using Dispatcher = void(__fastcall *)(void *dispatcher, const void *identifier,
+                                          void *self, const void *shared);
+    using Policy = bool (*)(int packetId) noexcept;
+
+    struct HandlerStatistics {
+        int packetId{};
+        unsigned calls{}, deferred{}, replayed{};
+    };
 
     struct Statistics {
         unsigned long long calls{}, deferred{}, replayed{}, overflow{}, otherObject{},
-            worldDrops{}, agedOut{};
+            otherClass{}, worldDrops{}, agedOut{};
         unsigned queue{};
+        std::array<HandlerStatistics, kMaxHandlers> byHandler{};
     };
 
-    bool install(const RuntimeProfile &profile, std::string_view embedded, std::string &error) {
+    bool install(const RuntimeProfile &profile, std::string_view embedded, Policy policy,
+                 std::string &error) {
         try {
             std::lock_guard lock(state().mutex);
             auto &s = state();
@@ -62,7 +71,8 @@ class NativePacketDeferral {
             const auto usable = [&](const nlohmann::json &node) {
                 return node.contains("layouts") && node.at("layouts").contains("Packet") &&
                        node.at("layouts").at("Packet").contains("packet_deferral") &&
-                       node.at("layouts").at("Packet").at("packet_deferral").contains("handlers");
+                       deferralPath(node).value("schema", 0) == 2 &&
+                       deferralPath(node).contains("handlers");
             };
             if (!usable(root)) {
                 const auto fallback = parseNativeProfile(embedded);
@@ -76,8 +86,6 @@ class NativePacketDeferral {
                 root = fallback;
             }
             const auto &deferral = deferralPath(root);
-            if (deferral.value("schema", 0) != 1)
-                throw std::runtime_error("unsupported packet deferral schema");
             const auto &handlers = deferral.at("handlers");
             if (!handlers.is_array() || handlers.empty() || handlers.size() > kMaxHandlers)
                 throw std::runtime_error("unsupported packet deferral handler count");
@@ -111,9 +119,41 @@ class NativePacketDeferral {
                 // The handler body must materialise the callable table of its
                 // own queued lambda; that pairs the RVA with the overload.
                 const auto callable = native_profile::number(handler.at("callable_vtable_rva"));
-                if (!referencesAddress(target, callable))
+                const auto referenceOffset = handler.contains("callable_reference_offset")
+                    ? native_profile::number(handler.at("callable_reference_offset")) : 0u;
+                if (callable >= extent || !referencesAddress(target, callable, referenceOffset))
                     throw std::runtime_error("packet deferral callable identity mismatch");
-                s.handlers[count] = {target, base + vtable, slot, nullptr, nullptr};
+                auto &binding = s.handlers[count];
+                binding = {};
+                binding.target = target;
+                binding.vtable = base + vtable;
+                if (handler.contains("dispatcher")) {
+                    const auto &dispatch = handler.at("dispatcher");
+                    const auto instance = native_profile::number(dispatch.at("instance_rva"));
+                    const auto table = native_profile::number(dispatch.at("table_rva"));
+                    const auto dispatchSlot = native_profile::number(dispatch.at("slot"));
+                    const auto packetVtable = native_profile::number(handler.at("packet_vtable_rva"));
+                    void *observedTable{}, *dispatchEntry{};
+                    auto *dispatchTarget = native_profile::checked(root, dispatch.at("target"));
+                    if (count + 1 != handlers.size() || count != kMaxHandlers - 1 ||
+                        dispatchSlot > 16 || std::uint64_t(instance) + 8 > extent ||
+                        std::uint64_t(table) + (dispatchSlot + 1) * 8 > extent ||
+                        !packetVtable || packetVtable + 16 > extent ||
+                        !native_profile::read(reinterpret_cast<void *>(base + instance), 0,
+                                              observedTable) ||
+                        reinterpret_cast<std::uintptr_t>(observedTable) != base + table ||
+                        !native_profile::read(observedTable, dispatchSlot * 8, dispatchEntry) ||
+                        dispatchEntry != dispatchTarget)
+                        throw std::runtime_error("packet deferral typed dispatcher mismatch");
+                    binding.target = dispatchTarget;
+                    binding.dispatcherInstance = reinterpret_cast<void *>(base + instance);
+                    binding.packetVtable = base + packetVtable;
+                }
+                const auto packetId = native_profile::number(handler.at("protocol_id"));
+                if (!packetId || packetId > 0xFFFF)
+                    throw std::runtime_error("invalid packet deferral class id");
+                s.handlers[count].packetId = static_cast<int>(packetId);
+                s.handlers[count].delayTolerant = policy && policy(static_cast<int>(packetId));
                 const auto label = handler.value("packet_class", std::string("unknown"));
                 std::strncpy(s.handlers[count].label, label.c_str(),
                              sizeof(s.handlers[count].label) - 1);
@@ -124,8 +164,13 @@ class NativePacketDeferral {
             s.extent = extent;
             s.enabled.store(false);
             for (std::size_t i = 0; i < count; ++i) {
-                if (BDS_HookDirectInstall(s.handlers[i].target, detours[i],
-                                          reinterpret_cast<void **>(&s.handlers[i].original),
+                auto &binding = s.handlers[i];
+                const auto detour = binding.dispatcherInstance
+                    ? reinterpret_cast<void *>(&detourDispatch) : reinterpret_cast<void *>(detours[i]);
+                auto **original = binding.dispatcherInstance
+                    ? reinterpret_cast<void **>(&binding.dispatchOriginal)
+                    : reinterpret_cast<void **>(&binding.original);
+                if (BDS_HookDirectInstall(binding.target, detour, original,
                                           &s.handlers[i].token))
                     continue;
                 for (std::size_t done = 0; done < i; ++done) {
@@ -219,9 +264,14 @@ class NativePacketDeferral {
             std::lock_guard lock(s.mutex);
             queue = s.queueCount;
         }
-        return {s.calls.exchange(0), s.deferred.exchange(0), s.replayed.exchange(0),
-                s.overflow.exchange(0), s.otherObject.exchange(0), s.worldDrops.exchange(0),
-                s.agedOut.exchange(0), queue};
+        Statistics result{s.calls.exchange(0), s.deferred.exchange(0), s.replayed.exchange(0),
+                          s.overflow.exchange(0), s.otherObject.exchange(0),
+                          s.otherClass.exchange(0), s.worldDrops.exchange(0),
+                          s.agedOut.exchange(0), queue};
+        for (std::size_t i = 0; i < s.count; ++i)
+            result.byHandler[i] = {s.handlers[i].packetId, s.handlerCalls[i].exchange(0),
+                                   s.handlerDeferred[i].exchange(0), s.handlerReplayed[i].exchange(0)};
+        return result;
     }
     unsigned queueDepth() const noexcept {
         auto &s = state();
@@ -246,6 +296,7 @@ class NativePacketDeferral {
   private:
     struct Entry {
         void *self{};
+        void *dispatcher{};
         void *object{};
         void *control{};
         long long stamp{};
@@ -255,10 +306,14 @@ class NativePacketDeferral {
     struct HandlerSlot {
         void *target{};
         std::uintptr_t vtable{};
-        unsigned slot{};
         Handler original{};
+        void *dispatcherInstance{};
+        Dispatcher dispatchOriginal{};
         BDS_HookToken token{};
         char label[32]{};
+        int packetId{};
+        bool delayTolerant{};
+        std::uintptr_t packetVtable{};
     };
     struct State {
         std::mutex mutex;
@@ -272,7 +327,9 @@ class NativePacketDeferral {
         bool installed{};
         std::atomic<bool> enabled{false};
         std::atomic<unsigned long long> calls{}, deferred{}, replayed{}, overflow{}, otherObject{},
-            worldDrops{}, agedOut{};
+            otherClass{}, worldDrops{}, agedOut{};
+        std::array<std::atomic<unsigned>, kMaxHandlers> handlerCalls{}, handlerDeferred{},
+            handlerReplayed{};
     };
     static State &state() {
         static State *s = new State;
@@ -283,14 +340,20 @@ class NativePacketDeferral {
                    std::chrono::steady_clock::now().time_since_epoch())
             .count();
     }
-    static bool referencesAddress(void *function, std::uint32_t target) noexcept {
-        const auto bytes = static_cast<const unsigned char *>(function);
-        for (unsigned offset = 0; offset + 7 <= 0x200; ++offset) {
-            const auto *at = bytes + offset;
-            if ((at[0] != 0x48 && at[0] != 0x4C) || at[1] != 0x8D || (at[2] & 0xC7) != 0x05)
+    static bool referencesAddress(void *function, std::uint32_t target,
+                                  unsigned referenceOffset) noexcept {
+        if (referenceOffset > 0x2000) return false;
+        const auto start = referenceOffset;
+        const auto stop = referenceOffset ? referenceOffset + 1 : 0x200 - 6;
+        for (unsigned offset = start; offset < stop; ++offset) {
+            unsigned char bytes[7]{};
+            const auto *at = static_cast<const unsigned char *>(function) + offset;
+            if (!native_profile::read(at, 0, bytes) ||
+                (bytes[0] != 0x48 && bytes[0] != 0x4C) || bytes[1] != 0x8D ||
+                (bytes[2] & 0xC7) != 0x05)
                 continue;
             std::int32_t displacement{};
-            std::memcpy(&displacement, at + 3, 4);
+            std::memcpy(&displacement, bytes + 3, 4);
             const auto instruction = reinterpret_cast<std::uintptr_t>(at);
             const auto address = instruction + 7 + static_cast<std::intptr_t>(displacement);
             if (address - reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) == target)
@@ -317,8 +380,10 @@ class NativePacketDeferral {
             releaseControl(entry.control);
             return;
         }
-        const auto original = s.handlers[entry.handler].original;
-        if (!original) {
+        const auto &handler = s.handlers[entry.handler];
+        std::uintptr_t vtable{};
+        if (!native_profile::read(entry.self, 0, vtable) || vtable != handler.vtable) {
+            s.otherObject.fetch_add(1, std::memory_order_relaxed);
             releaseControl(entry.control);
             return;
         }
@@ -327,49 +392,91 @@ class NativePacketDeferral {
             void *control;
         } shared{entry.object, entry.control};
         s.replayed.fetch_add(1);
-        // The callee owns the by-value shared_ptr and releases that use count in
-        // its epilogue, which is exactly the reference this entry holds.
-        original(entry.self, entry.identifier, &shared);
+        s.handlerReplayed[entry.handler].fetch_add(1, std::memory_order_relaxed);
+        if (entry.dispatcher) {
+            handler.dispatchOriginal(entry.dispatcher, entry.identifier, entry.self, &shared);
+            releaseControl(entry.control); // dispatcher borrowed the retained reference
+        } else {
+            // The by-value handler consumes the callee-owned reference.
+            handler.original(entry.self, entry.identifier, &shared);
+        }
     }
-    template <unsigned Index>
-    static void __fastcall detourAt(void *self, const void *identifier, void *shared) noexcept {
+    static bool tryHold(unsigned index, void *self, const void *identifier,
+                        const void *shared, void *dispatcher) noexcept {
         auto &s = state();
         s.calls.fetch_add(1);
-        auto &handler = s.handlers[Index];
-        const auto proceed = [&] { handler.original(self, identifier, shared); };
-        if (!handler.original || !self || !identifier || !shared) return proceed();
+        const auto &handler = s.handlers[index];
+        if (!self || !identifier || !shared || dispatcher != handler.dispatcherInstance)
+            return false;
         // Live identity: the object must still carry the profiled vtable.
         void *vtable{};
         if (!native_profile::read(self, 0, vtable) ||
             reinterpret_cast<std::uintptr_t>(vtable) != handler.vtable) {
             s.otherObject.fetch_add(1);
-            return proceed();
+            return false;
         }
-        if (!s.enabled.load(std::memory_order_acquire)) return proceed();
+        // The typed dispatcher is a per-class singleton, but prove the packet
+        // itself is the profiled class before holding anything.
+        if (dispatcher) {
+            std::uintptr_t packetVtable{};
+            void *object{};
+            std::memcpy(&object, shared, sizeof(void *));
+            if (!object || !native_profile::read(object, 0, packetVtable) ||
+                packetVtable != handler.packetVtable) {
+                s.otherClass.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+        }
+        s.handlerCalls[index].fetch_add(1, std::memory_order_relaxed);
+        if (!handler.delayTolerant || !s.enabled.load(std::memory_order_acquire))
+            return false;
         Entry entry;
         entry.self = self;
-        entry.handler = Index;
+        entry.dispatcher = dispatcher;
+        entry.handler = index;
         std::memcpy(&entry.object, shared, sizeof(void *));
-        std::memcpy(&entry.control, static_cast<char *>(shared) + sizeof(void *), sizeof(void *));
+        std::memcpy(&entry.control, static_cast<const char *>(shared) + sizeof(void *), sizeof(void *));
         std::memcpy(entry.identifier, identifier, s.identifierSize);
+        if (!entry.object || (dispatcher && !entry.control)) return false;
         entry.stamp = stamp();
+        bool queued = false;
         {
             std::lock_guard lock(s.mutex);
-            if (s.queueCount >= kQueueCapacity) {
-                s.overflow.fetch_add(1);
-                return proceed();
+            if (s.queueCount < kQueueCapacity && s.enabled.load(std::memory_order_acquire)) {
+                // The by-value paths transfer a reference. A typed dispatcher
+                // only borrows, so retain our own reference before returning.
+                if (dispatcher)
+                    _InterlockedIncrement(reinterpret_cast<volatile long *>(
+                        static_cast<char *>(entry.control) + s.useOffset));
+                const auto tail = (s.head + s.queueCount) % kQueueCapacity;
+                s.queue[tail] = entry;
+                ++s.queueCount;
+                queued = true;
+            } else if (s.queueCount == kQueueCapacity) {
+                s.overflow.fetch_add(1, std::memory_order_relaxed);
             }
-            // The by-value shared_ptr argument is owned by the callee (the
-            // original handler releases it in its epilogue), so a deferred call
-            // simply takes over that one reference instead of adding another.
-            const auto tail = (s.head + s.queueCount) % kQueueCapacity;
-            s.queue[tail] = entry;
-            ++s.queueCount;
         }
+        if (!queued) return false;
         s.deferred.fetch_add(1);
+        s.handlerDeferred[index].fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    template <unsigned Index>
+    static void __fastcall detourAt(void *self, const void *identifier, void *shared) noexcept {
+        auto &handler = state().handlers[Index];
+        if (!tryHold(Index, self, identifier, shared, nullptr) && handler.original)
+            handler.original(self, identifier, shared);
+    }
+    static void __fastcall detourDispatch(void *dispatcher, const void *identifier,
+                                         void *self, const void *shared) noexcept {
+        constexpr auto index = kMaxHandlers - 1;
+        auto &handler = state().handlers[index];
+        if (!tryHold(index, self, identifier, shared, dispatcher) && handler.dispatchOriginal)
+            handler.dispatchOriginal(dispatcher, identifier, self, shared);
     }
     static constexpr Handler detours[kMaxHandlers] = {
         &NativePacketDeferral::detourAt<0>, &NativePacketDeferral::detourAt<1>,
-        &NativePacketDeferral::detourAt<2>, &NativePacketDeferral::detourAt<3>};
+        &NativePacketDeferral::detourAt<2>, &NativePacketDeferral::detourAt<3>,
+        &NativePacketDeferral::detourAt<4>};
 };
 } // namespace bedrock

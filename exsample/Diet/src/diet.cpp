@@ -876,6 +876,13 @@ void reportLoop(std::atomic<bool>& stopping) {
             deferral = clip.packetDeferral->takeStatistics();
             deferredTotal.fetch_add(deferral.deferred, std::memory_order_relaxed);
         }
+        std::ostringstream chunkHandlers;
+        for (const auto& handler : deferral.byHandler) {
+            if (handler.packetId != 58 && handler.packetId != 172) continue;
+            chunkHandlers << " id" << handler.packetId << "_calls=" << handler.calls
+                          << " id" << handler.packetId << "_held=" << handler.deferred
+                          << " id" << handler.packetId << "_replayed=" << handler.replayed;
+        }
         logger.info("cull summary: tracked=", copy.engine.tracked,
                     " checked=", copy.engine.checked, " samples=", copy.engine.samples,
                     " visible=", copy.engine.visible, " occluded=", copy.engine.occluded,
@@ -895,9 +902,11 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " queue=", deferral.queue, " defer_calls=", deferral.calls,
                     " defer_overflow=", deferral.overflow,
                     " defer_other_object=", deferral.otherObject,
+                    " defer_class_filtered=", deferral.otherClass,
                     " defer_aged=", deferral.agedOut,
                     " defer_world_drops=", deferral.worldDrops,
                     " defer_total=", deferredTotal.load(std::memory_order_relaxed),
+                    chunkHandlers.str(),
                     " deferred_ticks=", runtime->deferredTicks.load(std::memory_order_relaxed),
                     " ticks=", copy.ticks,
                     " f3_visible=", runtime->debugScreen.visible() ? 1 : 0,
@@ -996,11 +1005,14 @@ DWORD WINAPI startClient(void*) {
     std::error_code markerError;
     const bool probeMarker = std::filesystem::exists(directory / L"Diet.probe", markerError);
     markerError.clear();
+    const bool renderProbeMarker =
+        std::filesystem::exists(directory / L"Diet.renderprobe", markerError);
+    markerError.clear();
     const bool drawMarker = std::filesystem::exists(directory / L"Diet.debugdraw", markerError);
-    if (probeMarker || drawMarker) {
+    if (probeMarker || renderProbeMarker || drawMarker) {
         std::lock_guard lock(configMutex);
+        liveConfig.renderProbe = probeMarker || renderProbeMarker;
         if (probeMarker) {
-            liveConfig.renderProbe = true;
             // Logging-only stage: the packet handlers are detoured and counted,
             // nothing is held. Removing the marker is the deferral stage.
             deferProbeOnly.store(true);
@@ -1009,7 +1021,7 @@ DWORD WINAPI startClient(void*) {
             liveConfig.debugDraw = true;
             renderDebugDraw.store(true);
         }
-        logger.info("diagnostic markers: probe=", probeMarker ? 1 : 0,
+        logger.info("diagnostic markers: probe=", liveConfig.renderProbe ? 1 : 0,
                     " debug_draw=", drawMarker ? 1 : 0,
                     " defer_probe_only=", probeMarker ? 1 : 0);
     }
@@ -1114,7 +1126,7 @@ DWORD WINAPI startClient(void*) {
         clip.packetDeferral = std::make_unique<bedrock::sdk::PacketDeferral>();
         std::vector<std::string> warnings;
         std::string deferralError;
-        if (!clip.packetDeferral->configure(profile, deferralError, warnings)) {
+        if (!clip.packetDeferral->configure(profile, deferralError, warnings, &diet::mayDefer)) {
             logger.warn("packet deferral unavailable: ", deferralError);
             clip.packetDeferral.reset();
         } else {
