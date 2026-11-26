@@ -13,7 +13,10 @@ deferral on the three shared_ptr `UpdateBlock`-family handler entries, verified
 it live on BOL. Phase 5 added the per-actor camera-queue skip
 (`queueRenderEntities`, evidence-13), extended deferral to the two chunk classes
 `LevelChunkPacket` (58) and `UpdateSubChunkBlocksPacket` (172), and measured the
-combined chunk burst on the local dedicated server (evidence-14).
+combined chunk burst on the local dedicated server (evidence-14). The smoothing
+task closes as a documented negative: the correction and movement handlers are
+identified, but the game already owns a `MovementInterpolatorSystem` and the
+only Mod-side writes would be authoritative state (evidence-15).
 
 ## Surfaces Diet builds on (all confirmed)
 
@@ -35,7 +38,7 @@ combined chunk burst on the local dedicated server (evidence-14).
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
 | defer delay-tolerant packets | **done** — `sdk::PacketDeferral` at the concrete handler entries | five entries are pinned by RVA + entry guard, by the `lea` of their own queued-lambda callable table and by their vtable slot (`0xF2D1E20`: 110/21/56/58/172 → 228/229/192/189/67). `UpdateBlock`, `UpdateBlockSynced`, `BlockActorData` and `LevelChunk` are by-value `shared_ptr` entries; `UpdateSubChunkBlocks` has no shared_ptr entry, so its typed dispatcher (`0x23A83B0`) is detoured instead and gated by the packet object's vtable. A held packet is replayed from the game thread under `net_defer_budget` (evidence-14). |
-| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The extraction object has no actor identity, the candidate list is pointer-only, and ping is unmeasurable in the only harness (evidence-09 §2, evidence-12). |
+| smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | the game's own `MovementInterpolatorSystem` already interpolates (`tickClient`, `copyInterpolateComponent`, `RenderPositionComponent`); the only Mod-side points are packet rewrites or writes to `StateVectorComponent`, which are authoritative state and forbidden. The local correction is `CorrectPlayerMovePredictionPacket` (161) handler `0x6BB1C30`; it is server-only, so BOL single player cannot exercise a blend. No safe write surface was found (evidence-15). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
 
 ## Exact/opaque classification rule
@@ -121,6 +124,20 @@ deferral off and 46.36 ms with it on. The burst cost is therefore chunk
 decode/generation and mesh work, not the handler invocation this surface moves;
 the feature is correct and bounded but is not a frame-time fix by itself.
 
+
+## Smoothing (phase 5, documented only)
+
+`CorrectPlayerMovePredictionPacket` (161) is the server correction: typed
+dispatcher `0x123EEA10`/`0x23A8230` → handler slot 76 (`0x6BB1C30`) →
+`0x10C9ED0` → `0x10C9910`. `MovePlayerPacket` (19), `MoveActorDeltaPacket`
+(111) and `SetActorMotionPacket` (40) follow the same typed-dispatch pattern
+(`0x6BD4990`, `0x6BD4DF0`, `0x6BD7200`). All of them apply through ECS state
+(`StateVectorComponent` and the actor update path), and the game already owns a
+`MovementInterpolatorSystem` (`tickClient` / `copyInterpolateComponent` /
+`RenderPositionComponent`). A packet rewrite can only scale one correction, not
+blend it across frames, and no per-actor render-transform surface exists. No
+smoothing code or setting was added; the full evidence is
+`evidence-15-smoothing.md`.
 
 ## Budget and threading
 
