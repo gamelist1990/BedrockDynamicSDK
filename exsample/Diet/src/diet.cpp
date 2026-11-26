@@ -801,7 +801,8 @@ std::shared_ptr<const diet::F3Snapshot> buildF3Snapshot(const Config& config) {
     // The counter is only meaningful when the render filter actually installed:
     // a hidden verdict without a wired exclusion changes nothing on screen.
     snapshot->skippedDrawsValid =
-        config.cull && config.skipDraw && clip.actorFilter && clip.actorFilter->ready();
+        config.cull && config.skipDraw && !config.renderProbe &&
+        clip.actorFilter && clip.actorFilter->ready();
     snapshot->skippedDraws = skippedDraws.load(std::memory_order_relaxed);
 
     snapshot->trafficValid = true;
@@ -861,11 +862,12 @@ void reportLoop(std::atomic<bool>& stopping) {
         }
         const auto trafficNow = runtime->traffic.snapshot(steadyNs());
         const double pingMsForLog = trafficNow.latencyValid ? trafficNow.latencyMs : -1.0;
-        unsigned filterCalls = 0, filterVariants = 0, filterExcluded = 0;
+        unsigned filterCalls = 0, filterVariants = 0, filterExcluded = 0, filterMatches = 0;
         if (clip.actorFilter) {
             const auto statistics = clip.actorFilter->takeStatistics();
             filterCalls = statistics.calls;
             filterExcluded = statistics.excluded;
+            filterMatches = statistics.matches;
             filterVariants = static_cast<unsigned>(statistics.variants);
             skippedDraws.fetch_add(statistics.excluded, std::memory_order_relaxed);
         }
@@ -881,8 +883,8 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " protected=", copy.engine.protectedTargets,
                     " budget_stops=", copy.engine.budgetStops, " hidden=", copy.engine.hidden,
                     " skipped=", skippedDraws.load(std::memory_order_relaxed),
-                    " filter_calls=", filterCalls, " filter_excluded=", filterExcluded,
-                    " filter_variants=", filterVariants,
+                     " filter_calls=", filterCalls, " filter_excluded=", filterExcluded,
+                     " filter_matches=", filterMatches, " filter_variants=", filterVariants,
                     " engine_us=", copy.engine.elapsedUs, " capture_rows=", copy.captureRows,
                     " population=", copy.capturePopulation, " capture_us=", copy.captureUs,
                     " block_queries=", runtime->blockQueries.load(std::memory_order_relaxed),
@@ -1099,8 +1101,7 @@ DWORD WINAPI startClient(void*) {
             clip.actorFilter.reset();
         } else {
             for (const auto& warning : warnings) logger.info(warning);
-            logger.info("render skip active probe=", config.renderProbe ? 1 : 0,
-                        " (SceneObjectActors exclusion predicate; hidden verdicts only)");
+            logger.info("render filter ready; diagnostics_only=", config.renderProbe ? 1 : 0);
         }
     }
 
@@ -1135,8 +1136,7 @@ DWORD WINAPI startClient(void*) {
     std::atomic<bool> stopping{false};
     std::thread reporter(reportLoop, std::ref(stopping));
     gStatus.store(4);
-    logger.info("ready; notes: render-skip predicate is profiled but its extraction "
-                "objects carry no actor identity (evidence-07); packet deferral holds the "
+    logger.info("ready; packet deferral holds the "
                 "UpdateBlock-family shared_ptr handlers and replays them per tick "
                 "(evidence-11); ping from NetworkStackLatencyPacket");
 

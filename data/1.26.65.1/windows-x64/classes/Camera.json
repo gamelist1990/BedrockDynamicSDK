@@ -1,5 +1,14 @@
 {
- "symbols": {
+  "symbols": {
+   "LevelRendererCamera::queueRenderEntity": {
+    "rva": "0x53EA400",
+    "entry_check": "55 41 57 41 56 41 54 56 57 53 48 81 EC 80 00 00 00 48 8D AC 24 80 00 00 00 0F 29 75 F0 48 C7 45 E8 FE FF FF FF 48 89 D6",
+    "cross_version_signature_available": false,
+    "status": "candidate",
+    "function_boundary": true,
+    "abi": "void __fastcall(void* callable RCX, Actor* RDX)",
+    "source": "queueRenderEntities lambda 156, callable slot 2, evidence-13-render-surface.md"
+   },
   "Camera::renderDragonSceneActorExclusion": {
    "rva": "0x5689080",
    "entry_check": "56 48 83 EC 20 48 8B 71 08 4C 8B 02",
@@ -241,7 +250,15 @@
       "variants"
      ]
     },
-    "render_dragon_scene_actor_exclusion": {
+     "queue_render_entity": {
+      "target": {"symbol": "LevelRendererCamera::queueRenderEntity"},
+      "table_rva": "0xF24A690",
+      "slot": 2,
+      "getter_slot": 3,
+      "getter": {"rva": "0x53EA820", "entry_check": "48 8D 05 A9 DA 0B 0D C3"},
+      "descriptor_rva": "0x124A82D0"
+     },
+     "render_dragon_scene_actor_exclusion": {
      "schema": 1,
      "status": "candidate",
      "runtime_verified": false,

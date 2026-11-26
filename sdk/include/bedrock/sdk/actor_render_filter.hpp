@@ -9,9 +9,8 @@
 
 namespace bedrock::sdk {
 
-// Thread-safe policy consulted by the RenderDragon scene-actor exclusion filter
-// on the render thread. `object` is the extraction argument object pointer; it
-// is opaque to the Mod. Return true to exclude that object from the pass.
+// Thread-safe policy consulted on the render thread. For the per-actor queue
+// surface, `object` is the actor key produced by ActorFacade capture.
 //
 // The callback must be lock-free, non-blocking and must not allocate: it runs
 // once per object of the watched extraction passes, every frame.
@@ -22,6 +21,7 @@ struct ActorRenderFilterStatistics {
     unsigned calls{};      // predicate calls observed on the watched passes
     unsigned permitted{};  // calls the policy allowed
     unsigned excluded{};   // calls the policy excluded
+    unsigned matches{};    // policy matches, including in logging-only mode
     unsigned long long variants{};  // bit i = variant i observed since the last call
 };
 
@@ -39,14 +39,13 @@ struct ActorRenderProbeSample {
     unsigned calls{};
 };
 
-// Per-actor render skip through the RenderDragon extraction predicate.
+// Per-actor render skip through a profiled per-actor submission callback.
 //
 // The profile definition names the shared predicate and the callable tables of
-// the watched (pass, component) instantiations. Install verifies the live
+// the watched surface. Install verifies the live
 // table slots and the type getters before it detours anything; a mismatch
-// leaves the game untouched and returns an error. The detour preserves the
-// original answer for every object the policy declines, including when the
-// game itself already excluded it.
+// leaves the game untouched and returns an error. The legacy RenderDragon
+// extraction probe remains diagnostic-only when actor identity is unresolved.
 class ActorRenderFilter {
 public:
     ActorRenderFilter();

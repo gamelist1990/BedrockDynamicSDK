@@ -2,7 +2,7 @@
 
 Target: 1.26.65.1 (`data/1.26.65.1/windows-x64/manifest.json`, exe sha256
 `dacd67e7…093b88`). Evidence for each claim lives outside the repo in
-`~/Documents/PEXData/diet/evidence-01-surface.md` … `evidence-12-smoothing.md`.
+`~/Documents/PEXData/diet/` (see `evidence-13-render-surface.md` for the per-actor queue).
 
 Phase 2 added the F3 debug screen (`docs/diet-f3.md`), fixed the frame-time
 guard so a uniformly slow machine is not starved of culling work, and extended
@@ -10,8 +10,8 @@ the static analysis of the render and packet surfaces (evidence-04/05).
 Phase 3 profiled the RenderDragon extraction predicate (probe-only: its objects
 carry no actor identity) and the packet handler map. Phase 4 wired packet
 deferral on the three shared_ptr `UpdateBlock`-family handler entries, verified
-it live on BOL, and closed the actor-submission investigation with a
-players-only insertion path (evidence-10/11).
+it live on BOL. Phase 5 traced the players-only insertion path back to a
+camera queue that also consumes the spatial actor query (evidence-13).
 
 ## Surfaces Diet builds on (all confirmed)
 
@@ -22,6 +22,7 @@ players-only insertion path (evidence-10/11).
 | local player / eye position | `ActorFacade::localPlayer` + `WorldAccess::pose` | camera = position + 1.62 |
 | tick | `sdk::Hooks::onLevelTick` | native reads stay on the game thread |
 | render frame clock + overlay | `sdk::WorldRender::onPostRender` | read-only snapshot consumption |
+| skip an occluded actor's draw | `sdk::ActorRenderFilter` → `queueRenderEntities` lambda 156 (`0x53EA400`) | The queue calls this once per candidate with the `Actor*`. The SDK checks the entry, callable slots and type descriptor. Diet can omit only hidden non-player keys, behind `cull_skip_draw`. |
 | Present-thread text/overlay drawing | `sdk::Overlay` (ImGui foreground draw list) | F3 screen; render-only, no input capture |
 | incoming packet observation | `sdk::PacketObserver` (new, wraps `PacketAPI::onAnyReceive`) | post-decode, networking thread, payload size only |
 | local player rotation | `WorldAccess::component` + `readField` on the actor rotation component | F3 facing line |
@@ -31,7 +32,6 @@ players-only insertion path (evidence-10/11).
 
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
-| skip a hidden actor's draw | something that receives an `Actor*` per frame **for every actor** | the extraction predicate for `SceneObjectActors` receives RenderDragon frame records with no actor identity (evidence-07 §3, probe). The submission side was searched in phase 4: `ActorRenderCandidates::addPlayers` provably receives `Actor*` and inserts it into the render-candidate vector, but that path is players-only and its consumer loop lives inside one 46 KB function with no separate entry or type name (evidence-10). The terrain `LevelCuller` answers chunk questions only (evidence-04). No per-actor surface is armed. |
 | defer delay-tolerant packets | **done** — `sdk::PacketDeferral` at the concrete handler entries | the three `LegacyClientNetworkHandler::handle(NetworkIdentifier const&, shared_ptr<…>)` entries are pinned by RVA + entry guard, by the `lea` of their own queued-lambda callable table and by their vtable slot (`0xF2D1E20`: 228/229/192). The by-value `shared_ptr` is taken over and replayed from the game thread under `net_defer_budget`; chunks are **not** in this set (`LevelChunkPacketHandler`), so `LevelChunkPacket` stays out of scope (evidence-11). |
 | smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | writes to native position components from Mod code are a mutation the brief forbids; no correction path is profiled (`MovePlayerPacket::isValid` only validates). The extraction object has no actor identity, the candidate list is pointer-only, and ping is unmeasurable in the only harness (evidence-09 §2, evidence-12). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
@@ -51,12 +51,12 @@ Unknown names are **not** occluders, so the engine errs towards keeping an
 entity visible. Combined with `hideAfter` hysteresis and "show on any visible
 sample", a wrong verdict costs frames, never a wrongly hidden mob.
 
-## Settings added in phase 3
+## Render settings
 
 | id | default | effect |
 | --- | --- | --- |
-| `cull_skip_draw` | on | arms the RenderDragon scene-actor exclusion filter (only installs when the profile's `object_identity` is resolved) |
-| `cull_probe` | off | diagnostics only: records what each `SceneObjectActors` pass iterates, never excludes |
+| `cull_skip_draw` | on | lets Diet skip a matching hidden non-player actor's submission when the SDK filter installs |
+| `cull_probe` | off | logging only: measures matches without skipping |
 
 ## Settings added in phase 4
 
@@ -161,10 +161,8 @@ Run Diet alone (no other Mods) and read
   nothing to attach to yet.
 - The voxel cache can serve a stale "opaque" for up to 20 ticks (~1 s) after a
   block is broken; hysteresis makes this a bounded, self-correcting error.
-- **Hidden verdicts do not skip a draw yet** (evidence-04). The engine decides
-  correctly — on BOL, with two cows behind a stone wall in a flat world,
-  `targets=4 hidden=2 block_queries=16` — but nothing consumes `hidden` on the
-  render path.
+- `skipped=` counts per-candidate callback exclusions, not GPU draw calls.
+  The filter does not change terrain submission, actor simulation, or AABBs.
 - Packet deferral intercepts exactly three handler entries. Everything else,
   including every `unknown` id, keeps the untouched path; chunk traffic
   (`LevelChunkPacket`, `UpdateSubChunkBlocks`, `SubChunkPacket`) is not
@@ -179,11 +177,11 @@ Run Diet alone (no other Mods) and read
   line stays absent there; on a dedicated server only the server's probes are
   decoded locally and the pair rule needs the outbound side
   (`sdk::PacketWire`) to complete (evidence-09 §1).
-- Render skip is not armed: the extraction predicate is profiled and verified,
-  but its argument object is a RenderDragon frame record with no actor identity
-  (evidence-07). `install()` refuses to arm exclusion while the profile says
-  `object_identity: unresolved_actor_not_in_frame_object`.
+- The old RenderDragon extraction predicate is still diagnostics-only: its
+  frame records have no actor identity. Live exclusion is on the earlier
+  `queueRenderEntities` path instead.
 - Two marker files in the Diet data directory are diagnostic switches for the
   BOL harness (the OreUI settings store is unavailable before the game UI
-  exists): `Diet.probe` enables the render probe ring, `Diet.debugdraw` enables
-  the diagnostic boxes. Neither changes a shipped default.
+  exists): `Diet.probe` selects logging-only for render and packet handlers;
+  `Diet.debugdraw` enables the diagnostic boxes. Neither changes a shipped
+  default.

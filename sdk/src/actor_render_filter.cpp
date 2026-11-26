@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 #include <bedrock/generated/symbols.hpp>
+#include <bedrock/native/queue_render_entity.hpp>
 #include <bedrock/native/scene_actor_exclusion.hpp>
 #include <bedrock/profiles/profile_json.hpp>
 #endif
@@ -17,12 +18,17 @@ struct ActorRenderFilter::Impl {
     bool probe{};
 #ifdef _WIN32
     bedrock::NativeSceneActorExclusion native;
+    bedrock::NativeQueueRenderEntity queue;
     ActorRenderPolicy policy{&NoExclusion::policy};
 #endif
 };
 
 ActorRenderFilter::ActorRenderFilter() : impl_(std::make_unique<Impl>()) {}
-ActorRenderFilter::~ActorRenderFilter() = default;
+ActorRenderFilter::~ActorRenderFilter() {
+#ifdef _WIN32
+    if (impl_ && impl_->queue.ready()) impl_->queue.setProbe(true);
+#endif
+}
 ActorRenderFilter::ActorRenderFilter(ActorRenderFilter&&) noexcept = default;
 ActorRenderFilter& ActorRenderFilter::operator=(ActorRenderFilter&&) noexcept = default;
 
@@ -30,6 +36,7 @@ void ActorRenderFilter::setProbe(bool enabled) noexcept {
     impl_->probe = enabled;
 #ifdef _WIN32
     impl_->native.setProbe(enabled);
+    impl_->queue.setProbe(enabled);
 #endif
 }
 
@@ -48,6 +55,20 @@ bool ActorRenderFilter::configure(const Profile& profile, ActorRenderPolicy poli
     }
     try {
         if (policy) impl_->policy = policy;
+        const auto selected = parseNativeProfile(runtime->json());
+        const auto embedded = parseNativeProfile(bedrock::generated::kSymbolDatabase);
+        const auto sameTarget = [&] {
+            for (const auto* field : {"sha256", "text_sha256", "size_of_image", "text_rva", "text_size"})
+                if (selected.at("target").at(field) != embedded.at("target").at(field))
+                    return false;
+            return true;
+        };
+        if (impl_->queue.install(selected, impl_->policy, impl_->probe) ||
+            (sameTarget() && impl_->queue.install(embedded, impl_->policy, impl_->probe))) {
+            warnings.push_back("per-actor queueRenderEntities filter ready");
+            error.clear();
+            return true;
+        }
         std::string filterError;
         if (!impl_->native.install(*runtime, bedrock::generated::kSymbolDatabase, impl_->policy,
                                    impl_->probe, filterError)) {
@@ -74,7 +95,7 @@ bool ActorRenderFilter::configure(const Profile& profile, ActorRenderPolicy poli
 
 bool ActorRenderFilter::ready() const noexcept {
 #ifdef _WIN32
-    return impl_->native.ready();
+    return impl_->native.ready() || impl_->queue.ready();
 #else
     return false;
 #endif
@@ -83,6 +104,13 @@ bool ActorRenderFilter::ready() const noexcept {
 ActorRenderFilterStatistics ActorRenderFilter::takeStatistics() noexcept {
     ActorRenderFilterStatistics result{};
 #ifdef _WIN32
+    if (impl_->queue.ready()) {
+        result.ready = true;
+        result.calls = impl_->queue.takeCalls();
+        result.matches = impl_->queue.takeMatches();
+        result.excluded = impl_->queue.takeExcluded();
+        return result;
+    }
     const auto statistics = impl_->native.takeStatistics();
     result.ready = impl_->native.ready();
     result.calls = statistics.calls;
