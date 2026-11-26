@@ -28,7 +28,7 @@
         "is_valid_slot"
       ],
       "packet_deferral": {
-        "schema": 2,
+        "schema": 1,
         "status": "candidate",
         "runtime_verified": false,
         "network_identifier_size": 176,
@@ -62,34 +62,9 @@
             "callable_vtable_rva": "0xF2D2EE0",
             "vtable_rva": "0xF2D1E20",
             "vtable_slot": 192
-          },
-          {
-            "packet_class": "LevelChunk",
-            "protocol_id": 58,
-            "symbol": "Network::handleLevelChunkPacket",
-            "callable_vtable_rva": "0xF2D2FF0",
-            "callable_reference_offset": "0xD1D",
-            "vtable_rva": "0xF2D1E20",
-            "vtable_slot": 189
-          },
-          {
-            "packet_class": "UpdateSubChunkBlocks",
-            "protocol_id": 172,
-            "symbol": "ClientNetworkHandler::handleUpdateSubChunkBlocksPacket",
-            "callable_vtable_rva": "0xF2D2D60",
-            "callable_reference_offset": "0xCA",
-            "vtable_rva": "0xF2D1E20",
-            "vtable_slot": 67,
-            "packet_vtable_rva": "0xF154BB0",
-            "dispatcher": {
-              "target": {"symbol": "UpdateSubChunkBlocksPacket::dispatch"},
-              "instance_rva": "0x123EEA70",
-              "table_rva": "0xF13A9A0",
-              "slot": 1
-            }
           }
         ],
-        "evidence": "Exact-build PE: the three LegacyClientNetworkHandler shared_ptr handle overloads were located from the std::function type_info of their queued lambdas (lambda_92/93/97), then confirmed three ways: the handler body contains the lea of that callable table, the handler is the target of vtable 0xF2D1E20 at the recorded slot, and the by-value shared_ptr release epilogue uses the recorded control-block offsets. The LevelChunk row (58) is the same by-value entry at slot 189; its callable lea lies at +0xD1D, beyond the phase-4 0x200-byte scan, so the row pins the offset. UpdateSubChunkBlocks (172) never reaches a shared_ptr entry: its packet factory installs typed dispatcher 0x123EEA70, whose vtable slot 1 (0x23A83B0) borrows the caller's shared pair and tail-jumps to handler slot 67. That dispatcher is detoured and additionally gated by the packet object's vtable 0xF154BB0. Deferral retains the reference and replays on the game thread; nothing writes game memory. Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md, evidence-14-chunk-defer.md.",
+        "evidence": "Exact-build PE: the three LegacyClientNetworkHandler shared_ptr handle overloads were located from the std::function type_info of their queued lambdas (lambda_92/93/97), then confirmed three ways: the handler body contains the lea of that callable table, the handler is the target of vtable 0xF2D1E20 at the recorded slot, and the by-value shared_ptr release epilogue uses the recorded control-block offsets. Deferral holds that reference and replays the handler on the game thread; nothing writes game memory. Evidence: ~/Documents/PEXData/diet/evidence-11-packet-slot.md Phase 5 also profiled LevelChunk (58, slot 189) and the UpdateSubChunkBlocks (172) typed dispatcher (0x23A83B0) and measured them on the dedicated server; the rows were removed again because the burst was frame-neutral (teleport peak 46.36 ms with deferral vs 41.25 ms without, the cost living in decode/mesh). Addresses and the full measurement: ~/Documents/PEXData/diet/evidence-14-chunk-defer.md.",
         "runtime_unverified_fields": [
           "handlers",
           "network_identifier_size"
@@ -98,33 +73,6 @@
     }
   },
   "symbols": {
-    "ClientNetworkHandler::handleUpdateSubChunkBlocksPacket": {
-      "rva": "0x6BC12D0",
-      "entry_check": "55 41 56 56 57 53 48 81 EC F0 00 00 00 48 8D AC 24 80 00 00 00 48 C7 45 68 FE FF FF FF 48 8B 81 B0 00 00 00 48 85 C0 0F",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "function_boundary": true,
-      "abi": "void __fastcall(void* self RCX, const void* networkIdentifier RDX, const UpdateSubChunkBlocksPacket* R8)",
-      "source": "Exact PE .pdata 0x6BC12D0-0x6BC1465, slot 67 and lambda 80 callable. Raw reference, not a shared_ptr entry. Evidence 14."
-    },
-    "UpdateSubChunkBlocksPacket::dispatch": {
-      "rva": "0x23A83B0",
-      "entry_check": "4C 89 C1 4D 8B 01 48 8B 01 48 8B 80 18 02 00 00 4C 8B 0D 49 8C 5F 0D 49 FF E1",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "function_boundary": true,
-      "abi": "void __fastcall(void* dispatcher RCX, const void* networkIdentifier RDX, void* handler R8, const void* sharedPtrRef R9)",
-      "source": "Packet 172 factory installs dispatcher 0x123EEA70; table slot 1 tail-dispatches to handler slot 67 with *R9, borrowing its shared_ptr. Evidence 14."
-    },
-    "Network::handleLevelChunkPacket": {
-      "rva": "0x6BDC100",
-      "entry_check": "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC B8 02 00 00 48 8D AC 24 80 00 00 00 0F 29 B5 20 02 00 00 48 C7 85 18 02 00",
-      "cross_version_signature_available": false,
-      "status": "candidate",
-      "source": "Exact PE .pdata 0x6BDC100-0x6BDD624; vtable 0xF2D1E20 slot 189; LevelChunkPacketHandler ctor lambda 117 callable materialized at 0x6BDCE1D. Evidence 14.",
-      "function_boundary": true,
-      "abi": "void __fastcall(void* self RCX, const void* networkIdentifier RDX, void* sharedPtr<LevelChunkPacket> R8)"
-    },
     "Network::handleUpdateBlockSyncedPacket": {
       "rva": "0x6bd5420",
       "entry_check": "55 56 57 48 83 EC 70 48 8D 6C 24 70 48 C7 45 F8 FE FF FF FF 48 8B 81 B0 02 00 00 48 85 C0 0F 84 A5 00 00 00 80 38 01 0F 85",

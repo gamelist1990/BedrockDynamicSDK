@@ -11,12 +11,13 @@ Phase 3 profiled the RenderDragon extraction predicate (probe-only: its objects
 carry no actor identity) and the packet handler map. Phase 4 wired packet
 deferral on the three shared_ptr `UpdateBlock`-family handler entries, verified
 it live on BOL. Phase 5 added the per-actor camera-queue skip
-(`queueRenderEntities`, evidence-13), extended deferral to the two chunk classes
-`LevelChunkPacket` (58) and `UpdateSubChunkBlocksPacket` (172), and measured the
-combined chunk burst on the local dedicated server (evidence-14). The smoothing
-task closes as a documented negative: the correction and movement handlers are
-identified, but the game already owns a `MovementInterpolatorSystem` and the
-only Mod-side writes would be authoritative state (evidence-15).
+(`queueRenderEntities`, evidence-13) and measured a chunk-class deferral trial
+on the local dedicated server; the trial was frame-neutral and worse at the
+teleport peak, so its detours were removed again and only the `UpdateBlock`
+family stays deferred (evidence-14). The smoothing task closes as a documented
+negative: the correction and movement handlers are identified, but the game
+already owns a `MovementInterpolatorSystem` and the only Mod-side writes would
+be authoritative state (evidence-15).
 
 ## Surfaces Diet builds on (all confirmed)
 
@@ -37,7 +38,7 @@ only Mod-side writes would be authoritative state (evidence-15).
 
 | Need | Missing surface | Why it blocks |
 | --- | --- | --- |
-| defer delay-tolerant packets | **done** — `sdk::PacketDeferral` at the concrete handler entries | five entries are pinned by RVA + entry guard, by the `lea` of their own queued-lambda callable table and by their vtable slot (`0xF2D1E20`: 110/21/56/58/172 → 228/229/192/189/67). `UpdateBlock`, `UpdateBlockSynced`, `BlockActorData` and `LevelChunk` are by-value `shared_ptr` entries; `UpdateSubChunkBlocks` has no shared_ptr entry, so its typed dispatcher (`0x23A83B0`) is detoured instead and gated by the packet object's vtable. A held packet is replayed from the game thread under `net_defer_budget` (evidence-14). |
+| defer delay-tolerant packets | **done** — `sdk::PacketDeferral` at the concrete handler entries | the three `LegacyClientNetworkHandler::handle(NetworkIdentifier const&, shared_ptr<…>)` entries are pinned by RVA + entry guard, by the `lea` of their own queued-lambda callable table and by their vtable slot (`0xF2D1E20`: 228/229/192). The by-value `shared_ptr` is taken over and replayed from the game thread under `net_defer_budget`. Chunk traffic is **not** intercepted: the phase-5 trial of `LevelChunk` (58) and `UpdateSubChunkBlocks` (172) measured frame-neutral and was removed (evidence-14). |
 | smooth remote entities / blend local corrections | a per-actor render transform hook, or a correction-handling entry | the game's own `MovementInterpolatorSystem` already interpolates (`tickClient`, `copyInterpolateComponent`, `RenderPositionComponent`); the only Mod-side points are packet rewrites or writes to `StateVectorComponent`, which are authoritative state and forbidden. The local correction is `CorrectPlayerMovePredictionPacket` (161) handler `0x6BB1C30`; it is server-only, so BOL single player cannot exercise a blend. No safe write surface was found (evidence-15). |
 | native full-cube/opaque query | e.g. `Block::getCollisionShape`/opacity | `Cell` exposes the solid flag, not the render shape; Diet uses a conservative identifier whitelist instead. |
 
@@ -70,59 +71,50 @@ sample", a wrong verdict costs frames, never a wrongly hidden mob.
 | `net_defer` | on | kill switch for packet deferral: off ⇒ every intercepted handler runs immediately |
 | `net_defer_budget` | 8 | held packets returned per level tick (1–64) |
 
-## Packet deferral (phase 4, extended in phase 5)
+## Packet deferral (phase 4)
 
 `sdk::PacketDeferral` (`internal/include/bedrock/native/packet_deferral.hpp`,
-`sdk/src/packet_deferral.cpp`) detours five profiled entries: the concrete
+`sdk/src/packet_deferral.cpp`) detours the concrete
 `LegacyClientNetworkHandler::handle(NetworkIdentifier const&, shared_ptr<…>)`
-overloads for `UpdateBlock` (21), `UpdateBlockSynced` (110), `BlockActorData`
-(56) and `LevelChunk` (58), plus the `UpdateSubChunkBlocks` (172) typed
-dispatcher. A handler is only held when the Mod policy (`diet::mayDefer`) marks
-its protocol id delay-tolerant; everything else runs immediately. Install
-verifies, before hooking anything:
+entries for `UpdateBlock` (21), `UpdateBlockSynced` (110) and `BlockActorData`
+(56). Install verifies, before hooking anything:
 
 1. the exact entry bytes at the profiled RVA (40-byte guard);
 2. that the handler body contains the `lea` of its own queued-lambda callable
-   table (pairs the address with the overload); the LevelChunk (58) and
-   UpdateSubChunkBlocks (172) references lie outside the first 0x200 bytes, so
-   their profile rows pin the exact offset;
+   table (pairs the address with the overload);
 3. that the handler is the target of vtable `0xF2D1E20` at the profiled slot;
 4. that the control-block layout is the one the handler's own epilogue uses
-   (`uses` at +8, `weaks` at +0xC);
-5. for 172 only: that the typed dispatcher singleton `0x123EEA70` exists and
-   its vtable `0xF13A9A0` slot 1 is the profiled `0x23A83B0`, and that
-   `0x23A83B0` is the packet class's own dispatcher (its factory is the only
-   module reference to that instance).
+   (`uses` at +8, `weaks` at +0xC).
 
 At run time every call re-checks `[this] == module + 0xF2D1E20`; a call from any
-other receiver goes straight to the original (`defer_other_object`). The 172
-detour additionally checks the packet object's vtable against `0xF154BB0`
-(`defer_class_filtered`), so a dispatcher shared by another packet type could
-never be queued as 172.
+other receiver goes straight to the original (`defer_other_object`).
 
 Held packets keep the by-value `shared_ptr` reference the handler would have
 consumed, plus a 0xB0-byte copy of the `NetworkIdentifier` (the handler itself
-memcpys that object, so it is trivially copyable). The 172 dispatcher borrows
-rather than consumes its caller's pair, so the adapter takes its own use count
-and releases it after replay. `onLevelTick` returns at most `net_defer_budget`
-per tick in FIFO order; anything older than 400 ms is drained regardless of the
-budget; a world change drops the queue (`defer_world_drops`) because held
-updates belong to the level being left.
+memcpys that object, so it is trivially copyable). `onLevelTick` returns at most
+`net_defer_budget` per tick in FIFO order; anything older than 400 ms is drained
+regardless of the budget; a world change drops the queue (`defer_world_drops`)
+because held block updates belong to the level being left.
 
 Log fields: `deferred=`, `replayed=`, `queue=`, `defer_calls=`,
-`defer_overflow=`, `defer_other_object=`, `defer_class_filtered=`,
-`defer_aged=`, `defer_world_drops=`, `defer_total=`, and per-class
-`id58_calls/held/replayed`, `id172_calls/held/replayed`; F3 shows `deferred=`
-and `queue=` on the packets line.
+`defer_overflow=`, `defer_other_object=`, `defer_aged=`, `defer_world_drops=`,
+`defer_total=`; F3 shows `deferred=` and `queue=` on the packets line.
 
-Measurement (HomePC dedicated server, same 10 086-block `/fill` burst and a
-fresh-area teleport, evidence-14 §5): deferral held and replayed every chunk
-packet (275 LevelChunk, 32 UpdateSubChunkBlocks over the burst windows) with no
-overflow, aged-out or world drop. `frame_ms p50/p95` were unchanged (≈16.0 /
-≈20 ms in both runs); the peak frame of the teleport windows was 41.25 ms with
-deferral off and 46.36 ms with it on. The burst cost is therefore chunk
-decode/generation and mesh work, not the handler invocation this surface moves;
-the feature is correct and bounded but is not a frame-time fix by itself.
+Chunk deferral was tried in phase 5 on `LevelChunk` (58) and
+`UpdateSubChunkBlocks` (172) and removed again: every held packet replayed, but
+frame p50/p95 were unchanged (≈16.0 / ≈20 ms in both arms) and the teleport peak
+was 46.36 ms with deferral against 41.25 ms without. The burst cost is chunk
+decode/generation and mesh work downstream of the handler, so deferring the
+handler only moves the call; the detours and their profile rows are gone
+(evidence-14, burst measurement). Chunk ids remain `DelayTolerant` in the
+classifier so the traffic report still counts them, but no handler can be
+deferred for them.
+
+Limits (measured on BOL, evidence-11 §5): these three handlers carry only a
+trickle in single player (20–40 packets / 5 s) — a `/fill` burst travels as
+subchunk updates, which this surface does not intercept — so the queue never
+exceeds a couple of entries and frame times are unchanged. The feature is
+correct and bounded; it is not a chunk-flood fix by itself.
 
 
 ## Smoothing (phase 5, documented only)
@@ -202,9 +194,10 @@ Run Diet alone (no other Mods) and read
   block is broken; hysteresis makes this a bounded, self-correcting error.
 - `skipped=` counts per-candidate callback exclusions, not GPU draw calls.
   The filter does not change terrain submission, actor simulation, or AABBs.
-- Packet deferral intercepts exactly five profiled entries. Everything else,
-  including every `unknown` id, keeps the untouched path; `SubChunkPacket`
-  (174) is not intercepted (its shared_ptr entry is not profiled yet).
+- Packet deferral intercepts exactly three handler entries. Everything else,
+  including every `unknown` id, keeps the untouched path; chunk traffic
+  (`LevelChunkPacket`, `UpdateSubChunkBlocks`, `SubChunkPacket`) is not
+  intercepted at all.
 - Packet classes cover the ids in the classifier table; everything else is
   `unknown` and therefore Critical, so nothing unknown can ever be deferred.
   In single player the observer also sees serverbound ids (e.g. 144

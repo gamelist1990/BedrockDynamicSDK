@@ -22,7 +22,7 @@ PacketDeferral::PacketDeferral(PacketDeferral&&) noexcept = default;
 PacketDeferral& PacketDeferral::operator=(PacketDeferral&&) noexcept = default;
 
 bool PacketDeferral::configure(const Profile& profile, std::string& error,
-                               std::vector<std::string>& warnings, PacketDeferralPolicy policy) {
+                               std::vector<std::string>& warnings) {
 #ifdef _WIN32
     warnings.clear();
     const auto runtime = ProfileRuntimeAccess::runtime(profile);
@@ -32,8 +32,7 @@ bool PacketDeferral::configure(const Profile& profile, std::string& error,
     }
     try {
         std::string deferralError;
-        if (!impl_->native.install(*runtime, bedrock::generated::kSymbolDatabase, policy,
-                                   deferralError)) {
+        if (!impl_->native.install(*runtime, bedrock::generated::kSymbolDatabase, deferralError)) {
             error = deferralError;
             return false;
         }
@@ -55,7 +54,6 @@ bool PacketDeferral::configure(const Profile& profile, std::string& error,
 #else
     (void)profile;
     (void)warnings;
-    (void)policy;
     error = "packet deferral is unavailable on this host";
     return false;
 #endif
@@ -121,15 +119,9 @@ PacketDeferralStatistics PacketDeferral::takeStatistics() noexcept {
     out.replayed = static_cast<unsigned>(raw.replayed);
     out.overflow = static_cast<unsigned>(raw.overflow);
     out.otherObject = static_cast<unsigned>(raw.otherObject);
-    out.otherClass = static_cast<unsigned>(raw.otherClass);
     out.worldDrops = static_cast<unsigned>(raw.worldDrops);
     out.agedOut = static_cast<unsigned>(raw.agedOut);
     out.queue = raw.queue;
-    static_assert(out.byHandler.size() == raw.byHandler.size());
-    for (unsigned i = 0; i < out.handlers; ++i) {
-        const auto& handler = raw.byHandler[i];
-        out.byHandler[i] = {handler.packetId, handler.calls, handler.deferred, handler.replayed};
-    }
 #endif
     return out;
 }

@@ -113,7 +113,10 @@ const char* packetClassName(PacketClass value) noexcept {
 
 bool mayDefer(int rawId) noexcept {
     // Rule: unknown ids are critical. Only an explicit delay-tolerant rule
-    // returns true. The SDK still requires a proven handler for that id.
+    // returns true. This is the measurement classification: chunk classes stay
+    // DelayTolerant so the traffic report keeps counting them, but phase 5
+    // removed their deferral surface, so no handler can consume that verdict
+    // for 58/172 (see docs/diet.md).
     return classifyPacket(rawId).safety == SafetyClass::DelayTolerant;
 }
 

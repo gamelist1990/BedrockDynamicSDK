@@ -876,13 +876,6 @@ void reportLoop(std::atomic<bool>& stopping) {
             deferral = clip.packetDeferral->takeStatistics();
             deferredTotal.fetch_add(deferral.deferred, std::memory_order_relaxed);
         }
-        std::ostringstream chunkHandlers;
-        for (const auto& handler : deferral.byHandler) {
-            if (handler.packetId != 58 && handler.packetId != 172) continue;
-            chunkHandlers << " id" << handler.packetId << "_calls=" << handler.calls
-                          << " id" << handler.packetId << "_held=" << handler.deferred
-                          << " id" << handler.packetId << "_replayed=" << handler.replayed;
-        }
         logger.info("cull summary: tracked=", copy.engine.tracked,
                     " checked=", copy.engine.checked, " samples=", copy.engine.samples,
                     " visible=", copy.engine.visible, " occluded=", copy.engine.occluded,
@@ -902,11 +895,9 @@ void reportLoop(std::atomic<bool>& stopping) {
                     " queue=", deferral.queue, " defer_calls=", deferral.calls,
                     " defer_overflow=", deferral.overflow,
                     " defer_other_object=", deferral.otherObject,
-                    " defer_class_filtered=", deferral.otherClass,
                     " defer_aged=", deferral.agedOut,
                     " defer_world_drops=", deferral.worldDrops,
                     " defer_total=", deferredTotal.load(std::memory_order_relaxed),
-                    chunkHandlers.str(),
                     " deferred_ticks=", runtime->deferredTicks.load(std::memory_order_relaxed),
                     " ticks=", copy.ticks,
                     " f3_visible=", runtime->debugScreen.visible() ? 1 : 0,
@@ -1120,13 +1111,14 @@ DWORD WINAPI startClient(void*) {
     // Packet deferral: the SDK verifies the authenticated handler entries, each
     // one's vtable slot, the callable table of its queued lambda and the
     // shared_ptr control-block layout before it detours anything. Only the
-    // profile-listed delay-tolerant classes can be held.
+    // profile-listed UpdateBlock-family entries are detoured; chunk classes are
+    // classified for measurement but have no deferral surface installed.
     {
         const auto config = configCopy();
         clip.packetDeferral = std::make_unique<bedrock::sdk::PacketDeferral>();
         std::vector<std::string> warnings;
         std::string deferralError;
-        if (!clip.packetDeferral->configure(profile, deferralError, warnings, &diet::mayDefer)) {
+        if (!clip.packetDeferral->configure(profile, deferralError, warnings)) {
             logger.warn("packet deferral unavailable: ", deferralError);
             clip.packetDeferral.reset();
         } else {
