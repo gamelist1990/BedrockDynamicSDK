@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.24)
+project(Hello LANGUAGES C CXX)
+set(SDK_DIR "" CACHE PATH "BedrockDynamicSDK checkout")
+set(BEDROCK_SDK_BUILD_TOOLS OFF)
+set(BEDROCK_SDK_ENABLE_NATIVE_CLIENT ON)
+set(BEDROCK_SDK_ENABLE_NATIVE_WORLD ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_subdirectory("${SDK_DIR}" bedrock-sdk EXCLUDE_FROM_ALL)
+
+add_library(Hello SHARED hello.cpp)
+target_link_libraries(Hello PRIVATE bedrock::sdk)
+target_compile_options(Hello PRIVATE /utf-8)

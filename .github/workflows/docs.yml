@@ -4,11 +4,11 @@ on:
     branches: ["main"]
   pull_request:
     paths:
-      - 'site/**'
       - 'docs/site/**'
-      - 'docs/**.md'
-      - 'internal/include/bedrock/**'
-      - 'src/profile_manager.cpp'
+      - 'tools/sitegen/**'
+      - 'sdk/include/bedrock/**'
+      - 'sdk/ts/node_modules/@bedrock/sdk/index.d.ts'
+      - 'data/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
   release:
@@ -23,20 +23,23 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
-      - name: Compile public C++ documentation examples
+      - name: Build the public C++ quickstart DLL
         shell: pwsh
         run: |
-          cmake -S . -B build-docs -A x64 -DBEDROCK_SDK_BUILD_TOOLS=OFF -DBEDROCK_SDK_BUILD_DOC_EXAMPLES=ON -DBEDROCK_SDK_ENABLE_NATIVE_WORLD=ON
+          cmake -S docs/site/quickstart -B build-docs -A x64 "-DSDK_DIR=${{ github.workspace }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build-docs --target bedrock_doc_examples --config Release --parallel 2
+          cmake --build build-docs --target Hello --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check documentation pages and links
+        run: python3 -m unittest discover -s tools/sitegen
       - name: Generate documentation site
         run: |
           python3 tools/sitegen/sitegen.py --out _site
+          # The Windows profile updater consumes the public /data/ URLs.
           cp -R data _site/data
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
