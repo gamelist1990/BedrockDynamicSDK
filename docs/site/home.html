@@ -1,0 +1,38 @@
+<h1>BedrockDynamicSDK</h1>
+<p>Minecraft Bedrock（Windows x64）向けの Mod 開発 SDK です。C++20 の DLL Mod と、ScriptClient で動く TypeScript Mod を作れます。どちらもクライアント向けです。</p>
+
+<section>
+  <h2>インストール・ビルド</h2>
+  <p><a href="https://github.com/gamelist1990/BedrockDynamicSDK/releases">Releases</a> からゲームのビルドに対応する配布物を選びます。TS Mod を使う場合は Windows x64 の DLL Mod ローダーで <code>ScriptClient.dll</code> を読み込みます。</p>
+  <p>ソースからは、xwin 対応の環境を用意し、リポジトリのルートでビルドします。出力先は <code>dist/&lt;version&gt;/</code> です。</p>
+  <pre tabindex="0"><code>./build-linux.sh</code></pre>
+  <p><code>--stage-a</code> を付けると SDK・DynamicClient・CheckSig のみをビルドします。公開 SDK は <code>sdk/</code>、同梱 Mod とサンプルは <code>exsample/</code> にあります。</p>
+</section>
+
+<section>
+  <h2>最初の Mod</h2>
+  <h3 id="cpp-build">C++</h3>
+  <p>次の <code>CMakeLists.txt</code> と <code>hello.cpp</code> を同じフォルダーに置きます。Windows で MSVC x64・CMake・Python 3 を用意します。</p>
+  <!-- cmake -->
+  <pre tabindex="0"><code>cmake -S . -B build -A x64 -DSDK_DIR=C:/path/to/BedrockDynamicSDK
+cmake --build build --config Release --target Hello</code></pre>
+  <p><code>hello.cpp</code>。ゲーム側で Creator Content Log を有効にし、DLL のロード後にローダーから <code>startMod</code> を呼びます。アンロード前に <code>stopMod</code> を呼びます（戻り値はいずれも成功時 <code>true</code>）。</p>
+  <!-- cpp -->
+  <h3>TypeScript</h3>
+  <p><code>Minecraft.Windows.exe</code> の隣に <code>mods/Hello/</code> を作ります（書き込めない場合は DLL の隣）。次の 2 ファイルを置き、ScriptClient を起動してワールドに入ります。</p>
+  <p><code>manifest.json</code></p>
+  <pre tabindex="0"><code>{
+  "name": "Hello",
+  "version": "1.0.0",
+  "apiVersion": "1.0.0",
+  "gameVersions": ["1.26.65.1"],
+  "entry": "index.ts"
+}</code></pre>
+  <p><code>gameVersions</code> は使うゲームのビルドに合わせます。<code>index.ts</code> はそのまま配置でき、実行時の <code>@bedrock/sdk</code> は ScriptClient が提供します。</p>
+  <!-- ts -->
+</section>
+
+<section aria-labelledby="apis">
+  <h2 id="apis">API 一覧</h2>
+  <div class="catalogue"><!-- apis --></div>
+</section>

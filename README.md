@@ -39,4 +39,4 @@ Linux から Windows x64 DLL をクロスビルドする。成果物は `dist/<v
 - ScriptClient（TS Mod）: [docs/scriptclient.md](docs/scriptclient.md)
 - SDK 構造: [docs/sdk-structure.md](docs/sdk-structure.md)
 - プロファイル保守: [docs/profile-maintenance.md](docs/profile-maintenance.md)
-- 開発ノート: https://gamelist1990.github.io/BedrockDynamicSDK/
+- API リファレンス: https://gamelist1990.github.io/BedrockDynamicSDK/
