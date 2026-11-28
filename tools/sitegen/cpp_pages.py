@@ -318,23 +318,19 @@ struct WorldNameVertex { Vector3 position{}; };
 """,
         """\
 #include <bedrock/sdk.hpp>
-
 namespace sdk = bedrock::sdk;
 sdk::WorldRender render;
 sdk::WorldRenderSubscription subscription;
-
 bool start(const sdk::Profile& profile, std::string& error) {
     if (!render.install(profile, error)) return false;
     subscription = render.onPostRender([](sdk::WorldRenderer& renderer) {
         const auto o = renderer.origin();
-        const sdk::WorldLineSegment line[] = {
-            {{-o.x, 64.f - o.y, -o.z}, {1.f - o.x, 64.f - o.y, -o.z}},
-        };
-        renderer.drawLines(line, {1.f, 0.f, 0.f, 1.f});
+        const sdk::WorldLineSegment line{{-o.x, 64.f - o.y, -o.z},
+                                         {1.f - o.x, 64.f - o.y, -o.z}};
+        renderer.drawLines(std::span{&line, 1}, {1.f, 0.f, 0.f, 1.f});
     });
     return true;
 }
-
 void stop() { subscription = {}; }
 """,
         "描画はコールバック内でのみ行い、座標は <code>origin()</code> からの相対値で渡します。",

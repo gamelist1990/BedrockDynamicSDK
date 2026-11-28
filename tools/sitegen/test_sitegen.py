@@ -14,6 +14,7 @@ class Page(HTMLParser):
         self.ids = []
         self.links = []
         self.tags = []
+        self.elements = []
         self.current = []
         self.headings = []
         self.in_main = False
@@ -23,6 +24,7 @@ class Page(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self.tags.append(tag)
+        self.elements.append((tag, attrs))
         if "id" in attrs:
             self.ids.append(attrs["id"])
         if "href" in attrs:
@@ -58,16 +60,35 @@ class SiteTest(unittest.TestCase):
     def test_every_api_is_linked_and_has_only_the_required_sections(self):
         home = self.out / "index.html"
         expected = {home}
-        for _, folder, pages in sitegen.GROUPS:
+        for label, folder, pages in sitegen.GROUPS:
+            section = self.out / folder / "index.html"
+            expected.add(section)
+            self.assertIn(f"{folder}/index.html", self.pages[home].links)
+            slugs = list(pages)
             for slug, (_, _, _, _, note) in pages.items():
                 url = f"{folder}/{slug}.html"
                 with self.subTest(url=url):
                     path = self.out / url
                     expected.add(path)
-                    self.assertIn(url, self.pages[home].links)
-                    self.assertEqual(self.pages[path].current, [f"../{url}"])
-                    self.assertEqual(self.pages[path].headings,
-                                     ["概要", "シグネチャ", "最小例"] + (["注意"] if note else []))
+                    self.assertIn("#sdk-host" if slug == "index" else f"{slug}.html", self.pages[section].links)
+                    page = self.pages[path]
+                    self.assertEqual(page.current, [f"{slug}.html"] * 2)
+                    self.assertIn(("nav", {"class": "breadcrumbs", "aria-label": "パンくずリスト"}), page.elements)
+                    section_nav = [attrs for tag, attrs in page.elements
+                                   if tag == "nav" and attrs.get("class") == "section-pages"]
+                    self.assertEqual([nav["aria-label"] for nav in section_nav], [f"{label} のページ"] * 2)
+                    neighbors = {attrs["rel"]: attrs["href"] for tag, attrs in page.elements
+                                 if tag == "a" and attrs.get("rel") in {"prev", "next"}}
+                    index = slugs.index(slug)
+                    wanted = {}
+                    if index:
+                        wanted["prev"] = f"{slugs[index-1]}.html"
+                    if index + 1 < len(slugs):
+                        wanted["next"] = f"{slugs[index+1]}.html"
+                    self.assertEqual(neighbors, wanted)
+                    headings = (["ページ一覧", "C++ SDK とホスト"] if slug == "index"
+                                else ["概要", "シグネチャ", "最小例"] + (["注意"] if note else []))
+                    self.assertEqual(page.headings, headings)
         self.assertEqual(set(self.pages), expected)
 
     def test_internal_links_and_fragments(self):
@@ -90,7 +111,11 @@ class SiteTest(unittest.TestCase):
         for path, page in self.pages.items():
             self.assertNotIn("script", page.tags, path)
             self.assertEqual(page.tags.count("h1"), 1, path)
+            self.assertEqual(page.tags.count("header"), 1, path)
+            self.assertEqual(page.tags.count("footer"), 1, path)
+            self.assertIn("details", page.tags, path)
             self.assertIn("style.css", " ".join(page.links), path)
+            self.assertIn(sitegen.FONTS, page.links)
         self.assertNotIn("<x>", sitegen.code("const a: Vector<x> = value;", "ts"))
         self.assertIn("&lt;x&gt;", sitegen.code("const a: Vector<x> = value;", "ts"))
 
@@ -103,6 +128,17 @@ class SiteTest(unittest.TestCase):
         self.assertIn("export type EquipmentSlot =", slot)
         with self.assertRaises(ValueError):
             sitegen.ts_signatures("System:unknownMember")
+
+    def test_curated_signatures_and_short_examples(self):
+        commands = (self.out / "ts/commands.html").read_text(encoding="utf-8")
+        self.assertNotIn("Parameter&lt;", commands)
+        self.assertIn('aria-label="CommandParameter の項目"', commands)
+        self.assertIn('effect / string / message / bool / int / float / duration', commands)
+        for page in self.pages:
+            source = page.read_text(encoding="utf-8")
+            for block in re.findall(r'<pre[^>]+aria-label="(?:最小例|hello.cpp|CMakeLists.txt|index.ts)"[^>]*>(.*?)</pre>',
+                                    source, re.S):
+                self.assertLessEqual(len(block.splitlines()), 15, page)
 
     def test_cpp_declarations_match_public_headers(self):
         # Compare the displayed declaration to its original declaration or

@@ -57,7 +57,7 @@ world.afterEvents.playerSpawn.subscribe(() => {
     "commands": (
         "コマンド",
         "チャットから実行できるクライアントコマンドと、その分岐・引数を登録します。",
-        "System:commands CommandRegistry CommandBranch CommandContext Parameter CommandParameter",
+        "System:commands CommandRegistry CommandParameter CommandBranch CommandContext",
         """\
 import { system, world } from "@bedrock/sdk";
 
