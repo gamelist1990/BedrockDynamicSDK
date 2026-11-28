@@ -36,6 +36,8 @@ TOKEN = re.compile(
 
 def code(text, language, label="コード"):
     text = text.strip()
+    longest = max((len(line) for line in text.split("\n")), default=0)
+    fit = (' class="fit-long"' if longest <= 64 else ' class="fit-wrap"') if longest > 52 else ""
     parts, pos = [], 0
     for match in TOKEN.finditer(text):
         token = match[0]
@@ -43,7 +45,7 @@ def code(text, language, label="コード"):
         parts.extend((escape(text[pos:match.start()]), f'<span class="{style}">{escape(token)}</span>'))
         pos = match.end()
     parts.append(escape(text[pos:]))
-    return (f'<pre tabindex="0" role="region" aria-label="{escape(label)}">'
+    return (f'<pre{fit} tabindex="0" role="region" aria-label="{escape(label)}">'
             f'<code class="language-{language}">{"".join(parts)}</code></pre>')
 
 

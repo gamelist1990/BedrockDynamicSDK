@@ -190,6 +190,10 @@ td:first-child, th[scope="row"] { white-space: nowrap; }
 td:first-child code, th[scope="row"] code { overflow-wrap: normal; word-break: normal; }
 
 @media (max-width: 52rem) {
+  pre, pre code { font-size: .72rem; }
+  pre.fit-long code { font-size: .56rem; }
+  pre.fit-wrap, pre.fit-wrap code { white-space: pre-wrap; font-size: .62rem; }
+  pre.fit-wrap code { width: auto; }
   .desktop-only { display: none; }
   .mobile-only { display: block; }
   .header-inner, .layout, .site-footer { width: calc(100% - 1.5rem); }
