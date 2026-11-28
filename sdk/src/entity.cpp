@@ -1,5 +1,7 @@
 #include "game_frame.hpp"
 
+#include <bedrock/sdk/client_info.hpp>
+
 #include <cmath>
 
 namespace bedrock::sdk {
@@ -136,5 +138,32 @@ Result<std::vector<Effect>> Player::getEffects() const {
 Result<void> Player::clearEffects() const {
     if (auto* frame = localPlayerFrame(session_, id_)) return frame->clearEffects(id_);
     return detail::unavailable("Effect operations require the local player in the owning tick");
+}
+
+namespace {
+bool isLocalPlayer(const std::weak_ptr<detail::WorldSession>& session, std::uint64_t id) {
+    auto* frame = detail::frameFor(session);
+    return frame && frame->localPlayerId() == id;
+}
+}
+
+double Player::fps() const {
+    if (!isLocalPlayer(session_, id_)) return 0.0;
+    return ClientInfo::fps();
+}
+
+PingSnapshot Player::ping() const {
+    if (!isLocalPlayer(session_, id_)) return {};
+    return ClientInfo::ping();
+}
+
+CpsSnapshot Player::cps() const {
+    if (!isLocalPlayer(session_, id_)) return {};
+    return ClientInfo::cps();
+}
+
+DeviceInfo Player::device() const {
+    if (!isLocalPlayer(session_, id_)) return {};
+    return ClientInfo::device();
 }
 } // namespace bedrock::sdk

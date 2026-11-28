@@ -1,4 +1,5 @@
 #include <bedrock/sdk/client_host.hpp>
+#include <bedrock/sdk/client_info.hpp>
 #include "native_game_frame.hpp"
 
 #include <bedrock/native/content_log.hpp>
@@ -185,6 +186,15 @@ Result<void> ClientHost::start(Mod& mod, ErrorHandler onError) {
         }
         impl_ = std::move(candidate);
         impl_->ready.store(true);
+        // Client diagnostics are best-effort: a missing sampler never fails the
+        // host. FPS/ping/CPS read zero until the sources are available.
+        std::string clientInfoError;
+        if (!ClientInfo::install(profile->json(), profile->json(), clientInfoError))
+            OutputDebugStringA(("[BedrockSDK] Client diagnostics unavailable: " +
+                                clientInfoError + "\n").c_str());
+        else if (!clientInfoError.empty())
+            OutputDebugStringA(("[BedrockSDK] Client diagnostics partial: " +
+                                clientInfoError + "\n").c_str());
         return Result<void>::ok();
     } catch (const std::exception& error) {
         return Result<void>::error(ErrorCode::Internal, error.what());
@@ -201,6 +211,7 @@ Result<void> ClientHost::stop() {
     auto host = std::move(impl_);
     host->ready.store(false);
     host->hooks.stop(); // The shared broker drains in-flight subscribers.
+    ClientInfo::stop();
     Result<void> firstError = Result<void>::ok();
     for (Mod* mod : host->mods) {
         const auto result = mod->disable();

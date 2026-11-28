@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client_metrics.hpp"
 #include "game_types.hpp"
 #include "result.hpp"
 
@@ -109,6 +110,15 @@ public:
     [[nodiscard]] Result<bool> removeEffect(std::string_view typeId) const;
     [[nodiscard]] Result<std::vector<Effect>> getEffects() const;
     [[nodiscard]] Result<void> clearEffects() const;
+
+    // Client diagnostics for the local player. The sampler is installed by
+    // ClientHost::start(); values read zero/empty for other players, when the
+    // sampler is not installed, or when a source is unavailable on this build.
+    // fps/ping/cps are allocation-free per-frame reads.
+    [[nodiscard]] double fps() const;
+    [[nodiscard]] PingSnapshot ping() const;
+    [[nodiscard]] CpsSnapshot cps() const;
+    [[nodiscard]] DeviceInfo device() const;
 private:
     friend class World;
     using Entity::Entity;

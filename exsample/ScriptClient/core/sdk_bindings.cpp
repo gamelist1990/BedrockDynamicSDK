@@ -876,6 +876,8 @@ bool SdkBindings::install(std::string& error) {
         {"playerName", Op::PlayerName}, {"playerSendMessage", Op::PlayerSendMessage},
         {"playerAddEffect", Op::PlayerAddEffect}, {"playerRemoveEffect", Op::PlayerRemoveEffect},
         {"playerClearEffects", Op::PlayerClearEffects}, {"playerGetEffects", Op::PlayerGetEffects},
+        {"playerFps", Op::PlayerFps}, {"playerPing", Op::PlayerPing},
+        {"playerCps", Op::PlayerCps}, {"playerDevice", Op::PlayerDevice},
         {"dimensionTypeId", Op::DimensionTypeId}, {"dimensionGetBlock", Op::DimensionGetBlock},
         {"dimensionGetEntities", Op::DimensionGetEntities},
         {"dimensionSpawnEntity", Op::DimensionSpawnEntity},
@@ -1262,6 +1264,40 @@ JSValue SdkBindings::hostCallback(JSContext* ctx, JSValueConst, int argc,
                 JS_SetPropertyInt64(ctx, array.get(), static_cast<int64_t>(i), effect.release());
             }
             return array.release();
+        }
+        case Op::PlayerFps: {
+            const auto id = static_cast<std::uint64_t>(jsToNumber(ctx, arg(0), 0));
+            return JS_NewFloat64(ctx, self.world_.playerFps(self.modName_, id));
+        }
+        case Op::PlayerPing: {
+            const auto id = static_cast<std::uint64_t>(jsToNumber(ctx, arg(0), 0));
+            return JS_NewFloat64(ctx, self.world_.playerPing(self.modName_, id));
+        }
+        case Op::PlayerCps: {
+            const auto id = static_cast<std::uint64_t>(jsToNumber(ctx, arg(0), 0));
+            const auto value = self.world_.playerCps(self.modName_, id);
+            JsValue object(ctx, JS_NewObject(ctx));
+            JS_SetPropertyStr(ctx, object.get(), "left",
+                              JS_NewInt32(ctx, static_cast<int32_t>(value.left)));
+            JS_SetPropertyStr(ctx, object.get(), "right",
+                              JS_NewInt32(ctx, static_cast<int32_t>(value.right)));
+            return object.release();
+        }
+        case Op::PlayerDevice: {
+            const auto id = static_cast<std::uint64_t>(jsToNumber(ctx, arg(0), 0));
+            const auto value = self.world_.playerDevice(self.modName_, id);
+            JsValue object(ctx, JS_NewObject(ctx));
+            JS_SetPropertyStr(ctx, object.get(), "available",
+                              JS_NewBool(ctx, value.available));
+            JS_SetPropertyStr(ctx, object.get(), "platform",
+                              JS_NewString(ctx, value.platform.c_str()));
+            JS_SetPropertyStr(ctx, object.get(), "clientVersion",
+                              JS_NewString(ctx, value.clientVersion.c_str()));
+            JS_SetPropertyStr(ctx, object.get(), "screenWidth",
+                              JS_NewInt32(ctx, static_cast<int32_t>(value.screenWidth)));
+            JS_SetPropertyStr(ctx, object.get(), "screenHeight",
+                              JS_NewInt32(ctx, static_cast<int32_t>(value.screenHeight)));
+            return object.release();
         }
 
         // --- Dimension & Block ---

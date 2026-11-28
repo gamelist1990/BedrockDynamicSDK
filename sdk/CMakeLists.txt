@@ -1,6 +1,6 @@
 add_library(bedrock_stage_a STATIC
     src/settings.cpp src/system.cpp src/mod.cpp src/keybinds.cpp
-    src/world.cpp src/entity.cpp src/display.cpp src/item_packet_decode.cpp
+    src/world.cpp src/entity.cpp src/client_info.cpp src/display.cpp src/item_packet_decode.cpp
     src/logging.cpp src/content_log.cpp src/profiles.cpp src/resolver.cpp src/actors.cpp src/world_render.cpp
     src/roster.cpp src/packets.cpp src/overlay.cpp
     src/camera_control.cpp src/movement_packets.cpp src/packet_wire.cpp
@@ -106,4 +106,14 @@ if(BEDROCK_SDK_BUILD_TOOLS AND BUILD_TESTING)
         target_compile_options(stage_a_world_render_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME stage_a_world_render_test COMMAND stage_a_world_render_test)
+
+    add_executable(stage_a_client_info_test tests/client_info_test.cpp)
+    target_link_libraries(stage_a_client_info_test PRIVATE bedrock::stage_a)
+    target_compile_features(stage_a_client_info_test PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(stage_a_client_info_test PRIVATE /UNDEBUG /utf-8)
+    else()
+        target_compile_options(stage_a_client_info_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME stage_a_client_info_test COMMAND stage_a_client_info_test)
 endif()

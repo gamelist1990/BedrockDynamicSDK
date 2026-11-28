@@ -134,6 +134,7 @@ const runId = system.runInterval(() => {
 - `world.getLocalPlayer()` はクライアント拡張です。プレイヤーがまだ使えなければ `undefined` を返します。`getPlayers({ name, excludeNames })` / `getAllPlayers()` はクライアントから見えるプレイヤーが対象です。`getDimension()` / `currentDimension` は現在のクライアントディメンションのみアクセスできます。
 - `Player` は `Entity` を継承します。`location` はブロック単位、`getRotation()` は度です。`getComponent()` で体力・空腹値・速度・インベントリ・装備・ドロップアイテムを読み取れます。`ItemStack` は `typeId` と `amount` のみ、`EquipmentSlot` は装備部位の定数です。`Dimension.getBlock()` は小数座標を切り下げます。`Block.setType()` はクライアントの地形操作が利用できる場合のみで、既存のスナップショットは更新されません。
 - `player.addEffect()` / `Effect.duration` は **ティック** 単位です。`TicksPerSecond` は `20` です。`Infinity` を指定できますが、ネイティブが有限の最大値として保存する場合は読み取りにもその値が返ります。効果の操作はローカルプレイヤーのティック内に限られます。`sendMessage()` は文字列または `text` / `rawtext` のローカル表示です。
+- クライアント診断（ローカルプレイヤーのみ）: `player.fps` は直前1秒のフレーム数、`player.ping` は `NetworkStackLatencyPacket` の往復中央値（ミリ秒、未接続は 0）、`player.cps` は `{ left, right }`（直前1秒の左/右クリック数）、`player.device` は `{ available, platform, clientVersion, screenWidth, screenHeight }` です。サンプラーはホスト起動時に導入され、利用できない値は 0 / 空になります（例外にはなりません）。
 - 動的プロパティは Mod ごと・ワールドセッション内のメモリにのみ保存されます。永続データには `files` を使います。サーバー操作、`beforeEvents`、スポーン以外のワールドイベント、汎用のテレポート・タグ付け・エンティティ生成、アイテムメタデータ、インベントリ/装備の書き換え、翻訳/スコアメッセージは公開していません。
 - `system.keybinds` は `add()`、`locale()`、`key()`。`system.settings(titleKey)` と `Setting` はクライアント設定ページの宣言用です。実際の表示はネイティブ設定バックエンドの利用可否に依存します。`brightness.setGamma()` は 0〜25 の上書きで、引数なしで解除。`dev` はプラットフォーム依存の診断用で、隔離機構ではありません。
 

@@ -498,6 +498,20 @@ public:
     std::optional<std::string> playerName(const std::string& modName, std::uint64_t) const override {
         return modName == "ModB" ? "Steve" : "Alex";
     }
+    double playerFps(const std::string& modName, std::uint64_t id) const override {
+        return modName == "SdkTest" && id == 100 ? 143.5 : 0.0;
+    }
+    double playerPing(const std::string& modName, std::uint64_t id) const override {
+        return modName == "SdkTest" && id == 100 ? 42.0 : 0.0;
+    }
+    CpsData playerCps(const std::string& modName, std::uint64_t id) const override {
+        return modName == "SdkTest" && id == 100 ? CpsData{5, 3} : CpsData{};
+    }
+    DeviceData playerDevice(const std::string& modName, std::uint64_t id) const override {
+        if (modName == "SdkTest" && id == 100)
+            return DeviceData{true, "windows-x64", "1.26.65.1", 1920, 1080};
+        return {};
+    }
     BackendOutcome playerSendMessage(const std::string& modName, std::uint64_t,
                                      const std::string& text) override {
         messagesByMod[modName].push_back(text);
@@ -1477,6 +1491,12 @@ const cb = ({ player, initialSpawn }) => {
   player.clearEffects();
   check(player.getEffects().length === 0, 'clear all effects');
   player.addEffect('speed', 41);
+  check(player.fps === 143.5 && player.ping === 42, 'client diagnostics scalars');
+  check(player.cps.left === 5 && player.cps.right === 3, 'client diagnostics cps object');
+  check(player.device.available && player.device.platform === 'windows-x64' &&
+    player.device.clientVersion === '1.26.65.1' && player.device.screenWidth === 1920 &&
+    player.device.screenHeight === 1080, 'client diagnostics device object');
+  check(world.getPlayers({ name: 'Alex' })[0].fps === 143.5, 'diagnostics follow the local player');
   console.log('sdk-player-ok');
 };
 check(spawn instanceof EventSignal && spawn.subscribe(cb) === cb && spawn.subscribe(cb) === cb,

@@ -352,6 +352,34 @@ public:
         return std::nullopt;
     }
 
+    double playerFps(const std::string& modName, std::uint64_t id) const override {
+        if (const auto* p = findPlayer(modName, id)) return p->fps();
+        return 0.0;
+    }
+
+    double playerPing(const std::string& modName, std::uint64_t id) const override {
+        if (const auto* p = findPlayer(modName, id)) return p->ping().medianMs;
+        return 0.0;
+    }
+
+    stageb::CpsData playerCps(const std::string& modName, std::uint64_t id) const override {
+        if (const auto* p = findPlayer(modName, id)) {
+            const auto value = p->cps();
+            return stageb::CpsData{value.left, value.right};
+        }
+        return {};
+    }
+
+    stageb::DeviceData playerDevice(const std::string& modName,
+                                    std::uint64_t id) const override {
+        if (const auto* p = findPlayer(modName, id)) {
+            const auto value = p->device();
+            return stageb::DeviceData{value.available, value.platform, value.clientVersion,
+                                     value.screenWidth, value.screenHeight};
+        }
+        return {};
+    }
+
     stageb::BackendOutcome playerSendMessage(const std::string& modName,
                                              std::uint64_t id,
                                              const std::string& text) override {

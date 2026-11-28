@@ -33,7 +33,7 @@ TOOLCHAIN=$ROOT/linux-xwin-toolchain.cmake
 LATEST=1.26.65.1
 LEGACY=1.26.60.5
 CLIENT_MODS=(DynamicClient AutoMine HitBox SpeedBuilder)
-DEV_MODS=(CheckSig BlockProbe CraftProbe InputProbe StackProbe Fake Top GlobalResourcePack ModSettingsDemo)
+DEV_MODS=(CheckSig BlockProbe CraftProbe InputProbe StackProbe Fake Top GlobalResourcePack ModSettingsDemo ClientInfoProbe)
 JOBS=${BEDROCK_BUILD_JOBS:-$(nproc)}
 
 command -v clang-cl >/dev/null || { echo "clang-cl missing: sudo apt-get install -y clang"; exit 1; }

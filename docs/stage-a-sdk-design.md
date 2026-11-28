@@ -99,6 +99,42 @@ Equippable。`sendMessage` はローカル HUD 宛てで、サーバーにチャ
 `ClientHost` のネイティブ実装は Windows x64 ビルドで
 `BEDROCK_SDK_ENABLE_NATIVE_CLIENT` と `BEDROCK_SDK_ENABLE_NATIVE_WORLD` を有効にする。
 
+### クライアント診断（FPS / ping / CPS / デバイス）
+
+`ClientHost::start()` は診断サンプラーを best-effort で導入する（失敗してもホストは起動する）。
+Mod はローカルプレイヤーから直接読む。値はフレームパスで割り当てなしに読める。
+
+```cpp
+void onUpdate() override {
+    const auto player = world().localPlayer();
+    if (!player) return;
+    const double fps = player->fps();               // 直前1秒のフレーム数
+    const auto ping = player->ping();               // lastMs / medianMs / samples / connected
+    const auto cps = player->cps();                 // left / right（直前1秒）
+    const auto device = player->device();           // platform / clientVersion / screenWidth / screenHeight
+}
+```
+
+| C++（`bedrock::sdk::Player`） | TypeScript（`@bedrock/sdk`） | 値の出所 |
+| --- | --- | --- |
+| `fps() -> double` | `player.fps: number` | `LevelRenderer::render_level` を共有 render-level フックで毎フレーム計数 |
+| `ping() -> PingSnapshot` | `player.ping: number`（中央値） | `NetworkStackLatencyPacket`（id 115）の送信timestampと応答の照合 |
+| `cps() -> CpsSnapshot` | `player.cps: { left, right }` | `MouseDevice::feed` の非合成 左(action 1)/右(action 2) 押下 |
+| `device() -> DeviceInfo` | `player.device: DeviceInfo` | 選択プロファイルの版、プラットフォーム、ゲームウィンドウのクライアント領域 |
+
+`ClientInfo::snapshot()` は同じ値をまとめて返す。`ClientInfo::install()` / `stop()` は参照カウントで、
+`ClientHost` を使わないホストでも明示的に導入できる。
+ping は観測のみで、こちらから `NetworkStackLatencyPacket` を送信しない（1.26.65.1 の
+native パケット vtable / フィールド配置は未解決）。ローカルプレイヤー以外、サンプラー未導入、
+または対象ビルドで未対応の値は 0 / 空を返す。
+
+### 入力モード・GUIスケール・接続先（未提供）
+
+1.26.65.1 のプロファイルには、現在の入力モード（キーボード+マウス / タッチ / ゲームパッド）、
+GUI スケール、接続先サーバーのアドレスを読む検証済みの関数・配置がない。
+共有入力フックはキーボードとマウスだけを観測するため、ゲームパッドを区別できない。
+これらは `DeviceInfo` に含めず、必要になった時点で新しいシンボル／オフセットの RE を行う。
+
 ## キーとバニラ ID
 
 `keybinds().add(actionId, translationKey, Key::C)` でアクションを宣言し、`locale` に

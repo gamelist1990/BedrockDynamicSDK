@@ -7,6 +7,8 @@
 #include "bedrock/sdk/client_host.hpp"
 #include "bedrock/sdk/display.hpp"
 #include "bedrock/sdk/world.hpp"
+#include "bedrock/sdk/client_metrics.hpp"
+#include "bedrock/sdk/client_info.hpp"
 #include "bedrock/sdk/logging.hpp"
 #include "bedrock/sdk/content_log.hpp"
 #include "bedrock/sdk/profiles.hpp"

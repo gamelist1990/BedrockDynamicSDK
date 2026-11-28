@@ -49,6 +49,19 @@ struct EffectData {
     bool showParticles = true;
 };
 
+struct CpsData {
+    unsigned left = 0;
+    unsigned right = 0;
+};
+
+struct DeviceData {
+    bool available = false;
+    std::string platform;
+    std::string clientVersion;
+    unsigned screenWidth = 0;
+    unsigned screenHeight = 0;
+};
+
 struct BackendOutcome {
     bool ok = true;
     std::string code = "Unavailable";
@@ -271,6 +284,22 @@ public:
     }
     virtual std::vector<std::pair<std::string, double>> getEffects() { return {}; }
 
+    // Client diagnostics (§ client info). These are read-only snapshots of the
+    // SDK sampler and are not failures when unavailable: they read zero/empty
+    // for a non-local player or a client without the sampler installed.
+    virtual double playerFps(const std::string& /*modName*/, std::uint64_t /*id*/) const {
+        return 0.0;
+    }
+    virtual double playerPing(const std::string& /*modName*/, std::uint64_t /*id*/) const {
+        return 0.0;
+    }
+    virtual CpsData playerCps(const std::string& /*modName*/, std::uint64_t /*id*/) const {
+        return {};
+    }
+    virtual DeviceData playerDevice(const std::string& /*modName*/, std::uint64_t /*id*/) const {
+        return {};
+    }
+
     // --- Dimension & Block ---
     virtual std::optional<std::string> dimensionGetBlockType(
         const std::string& /*modName*/, const std::string& /*dimId*/,
@@ -434,6 +463,7 @@ private:
         EntityGetComponent,
         PlayerName, PlayerSendMessage,
         PlayerAddEffect, PlayerRemoveEffect, PlayerClearEffects, PlayerGetEffects,
+        PlayerFps, PlayerPing, PlayerCps, PlayerDevice,
         DimensionTypeId, DimensionGetBlock, DimensionGetEntities, DimensionSpawnEntity,
         BlockTypeId, BlockLocation, BlockSetType,
         SystemRun, SystemRunTimeout, SystemRunInterval, SystemClear,
