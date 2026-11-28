@@ -186,6 +186,8 @@ table { width: 100%; min-width: 33rem; border-collapse: collapse; text-align: st
 th, td { text-align: start; vertical-align: top; padding: .55rem .75rem; border-bottom: 1px solid var(--line); }
 tbody tr:last-child > * { border-bottom: 0; }
 thead th { color: var(--accent); white-space: nowrap; }
+td:first-child, th[scope="row"] { white-space: nowrap; }
+td:first-child code, th[scope="row"] code { overflow-wrap: normal; word-break: normal; }
 
 @media (max-width: 52rem) {
   .desktop-only { display: none; }
