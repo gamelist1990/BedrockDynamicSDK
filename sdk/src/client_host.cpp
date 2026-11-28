@@ -72,8 +72,7 @@ struct ClientHost::Impl {
             lastWorldRevision = world;
         }
         const auto dimension = dimensionRevision.load();
-        detail::NativeGameFrame frame{game, client.load(), level, dimension};
-        frame.session = session;
+        detail::NativeGameFrame frame{game, client.load(), level, dimension, session};
         frame.dimensionRevision = dimension;
         detail::GameFrameScope scope{frame};
         // One WorldSession / GameFrame for all attached Mods. A failing Mod
@@ -101,6 +100,10 @@ struct ClientHost::Impl {
         game.dispatch.on<WorldChangeEvent>([this](const auto& event) {
             ++dimensionRevision;
             if (event.reason != WorldChangeReason::DimensionChanged) ++worldRevision;
+            if (event.reason == WorldChangeReason::Left || event.reason == WorldChangeReason::JoinCancelled) {
+                game.currentSession.store(nullptr, std::memory_order_release);
+                game.resetHealth();
+            }
             if (event.reason == WorldChangeReason::Joined) {
                 client.store(event.clientInstance);
                 game.access.observeClient(event.clientInstance);

@@ -17,7 +17,6 @@ struct WorldSession {
     // Item registry / live item actors live in NativeGameBindings so packets
     // received before the first level tick are not dropped with a session.
     struct LocalPlayerState {
-        float health{};
         float hunger{};
         std::vector<Effect> effects;
     };

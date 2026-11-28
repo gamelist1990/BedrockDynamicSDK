@@ -229,6 +229,11 @@ bool NativeGameBindings::installPacketReceive(const RuntimeProfile& profile, std
     };
     add(bedrock::PacketId::SetHealth);
     add(bedrock::PacketId::UpdateAttributes);
+    add(bedrock::PacketId::AddActor);
+    add(bedrock::PacketId::AddPlayer);
+    add(bedrock::PacketId::PlayerList);
+    add(bedrock::PacketId::RemoveActor);
+    add(bedrock::PacketId::Disconnect);
     add(bedrock::PacketId::MobEffect);
     add(bedrock::PacketId::AddItemActor);
     add(bedrock::PacketId::TakeItemActor);
@@ -246,7 +251,12 @@ void NativeGameBindings::observePacket(const bedrock::PacketReadEvent& event) {
     try {
         switch (event.id()) {
         case bedrock::PacketId::SetHealth:
-            onSetHealth(codec.decode(event.id(), event.payload()));
+        case bedrock::PacketId::AddActor:
+        case bedrock::PacketId::AddPlayer:
+        case bedrock::PacketId::PlayerList:
+        case bedrock::PacketId::RemoveActor:
+        case bedrock::PacketId::Disconnect:
+            observeHealthPacket(event.id(), event.payload());
             break;
         case bedrock::PacketId::UpdateAttributes:
             onUpdateAttributes(codec.decode(event.id(), event.payload()));
@@ -270,9 +280,11 @@ void NativeGameBindings::observePacket(const bedrock::PacketReadEvent& event) {
             onItemRegistry(event.payload());
             break;
         case bedrock::PacketId::ChangeDimension:
+            observeHealthPacket(event.id(), event.payload());
             onDimensionPacket(codec.decode(event.id(), event.payload()), "dimension");
             break;
         case bedrock::PacketId::StartGame: {
+            observeHealthPacket(event.id(), event.payload());
             auto prefix = codec.decodePrefix(event.id(), event.payload(), 9);
             onDimensionPacket(std::move(prefix), "dimension");
             break;
@@ -290,27 +302,65 @@ void NativeGameBindings::observePacket(const bedrock::PacketReadEvent& event) {
     }
 }
 
-void NativeGameBindings::onSetHealth(const nlohmann::json& payload) {
-    const auto health = payload.value("health", 0);
-    if (health <= 0) return;
-    auto session = lockedSession(currentSession);
-    if (!session) return;
-    std::lock_guard lock(session->stateMutex);
-    session->localState.health = static_cast<float>(health);
+void NativeGameBindings::resetHealth() {
+    std::lock_guard lock(healthMutex);
+    entityHealth = {};
+}
+
+void NativeGameBindings::observeHealthPacket(bedrock::PacketId id, std::string_view payload) {
+    using bedrock::PacketId;
+    std::lock_guard lock(healthMutex);
+    switch (id) {
+    case PacketId::SetHealth:
+        entityHealth.setLocalHealth(codec.decode(id, payload).at("health").get<int>());
+        break;
+    case PacketId::AddActor:
+        // Read through attributes only; the following metadata can contain NBT.
+        entityHealth.observeActor(codec.decodePrefix(id, payload, 10));
+        break;
+    case PacketId::AddPlayer:
+        // Match runtime ID to the earlier PlayerList entry by UUID. The spawn
+        // packet's unique ID follows item/metadata fields the codec can't read.
+        entityHealth.observePlayer(codec.decodePrefix(id, payload, 3));
+        break;
+    case PacketId::PlayerList:
+        entityHealth.observePlayerList(codec.decode(id, payload));
+        break;
+    case PacketId::RemoveActor:
+        entityHealth.remove(codec.decode(id, payload).at("entity_id_self").get<std::int64_t>());
+        break;
+    case PacketId::StartGame:
+        entityHealth = {};
+        entityHealth.setLocalRuntimeId(
+            codec.decodePrefix(id, payload, 2).at("runtime_entity_id").get<std::uint64_t>());
+        break;
+    case PacketId::ChangeDimension:
+        entityHealth.changeDimension();
+        break;
+    case PacketId::Disconnect:
+        entityHealth = {};
+        break;
+    default:
+        break;
+    }
 }
 
 void NativeGameBindings::onUpdateAttributes(const nlohmann::json& payload) {
+    {
+        std::lock_guard lock(healthMutex);
+        entityHealth.observeAttributes(payload);
+    }
     auto session = lockedSession(currentSession);
     if (!session) return;
     const auto attributesIt = payload.find("attributes");
     if (attributesIt == payload.end() || !attributesIt->is_array()) return;
     std::lock_guard lock(session->stateMutex);
+    if (payload.at("runtime_entity_id").get<std::uint64_t>() != session->localRuntimeId) return;
     for (const auto& attr : *attributesIt) {
         if (!attr.is_object()) continue;
         const auto name = attr.value("name", std::string{});
         const auto current = attr.value("current", 0.0f);
-        if (name == "minecraft:health") session->localState.health = current;
-        else if (name == "minecraft:player.hunger" || name == "minecraft:hunger")
+        if (name == "minecraft:player.hunger" || name == "minecraft:hunger")
             session->localState.hunger = current;
     }
 }
@@ -380,11 +430,16 @@ void NativeGameBindings::onDimensionPacket(const nlohmann::json& payload, const 
 }
 
 NativeGameFrame::NativeGameFrame(NativeGameBindings& bindings, void* client, void* level,
-                                 std::uint64_t epoch)
+                                 std::uint64_t epoch, const std::shared_ptr<WorldSession>& worldSession)
     : bindings_(bindings), localActor_(bindings.access.localPlayer()), level_(level),
       localId_(localActor_ ? bindings.access.actorRuntimeId(localActor_) : std::nullopt),
-      terrain_(bindings.terrain, bindings.terrainReady ? client : nullptr, level, epoch, {}),
-      gui_(bindings.gui.tick(bindings.guiReady ? client : nullptr, level, epoch)) {
+       terrain_(bindings.terrain, bindings.terrainReady ? client : nullptr, level, epoch, {}),
+       gui_(bindings.gui.tick(bindings.guiReady ? client : nullptr, level, epoch)) {
+    session = worldSession;
+    if (localId_) {
+        std::lock_guard lock(bindings.healthMutex);
+        bindings.entityHealth.setLocalRuntimeId(*localId_);
+    }
     if (session) {
         std::lock_guard lock(session->stateMutex);
         session->localRuntimeId = localId_;
@@ -516,10 +571,11 @@ std::optional<ItemStack> NativeGameFrame::itemStack(std::uint64_t id) const {
 }
 
 std::optional<HealthComponent> NativeGameFrame::health(std::uint64_t id) const {
-    if (!session || id != localId_) return std::nullopt;
-    std::lock_guard lock(session->stateMutex);
-    if (session->localState.health <= 0) return std::nullopt;
-    return HealthComponent{session->localState.health};
+    if (!session) return std::nullopt;
+    std::lock_guard lock(bindings_.healthMutex);
+    const auto value = bindings_.entityHealth.health(id);
+    if (!value || (id == localId_ && *value <= 0)) return std::nullopt;
+    return HealthComponent{*value};
 }
 
 std::optional<FoodComponent> NativeGameFrame::food(std::uint64_t id) const {

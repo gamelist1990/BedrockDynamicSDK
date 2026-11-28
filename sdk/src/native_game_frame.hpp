@@ -1,5 +1,6 @@
 #pragma once
 
+#include "entity_health_cache.hpp"
 #include "game_frame.hpp"
 
 #include <atomic>
@@ -50,9 +51,15 @@ struct NativeGameBindings {
     bool load(const RuntimeProfile& profile, std::string& error);
     bool installPacketReceive(const RuntimeProfile& profile, std::string& error);
     void observePacket(const bedrock::PacketReadEvent& event);
+    void resetHealth();
 
 private:
-    void onSetHealth(const nlohmann::json& payload);
+    friend class NativeGameFrame;
+    // Actor spawn packets can arrive before the first WorldSession tick.
+    mutable std::mutex healthMutex;
+    EntityHealthCache entityHealth;
+
+    void observeHealthPacket(bedrock::PacketId, std::string_view);
     void onUpdateAttributes(const nlohmann::json& payload);
     void onMobEffect(const nlohmann::json& payload);
     void onAddItemEntity(std::string_view payload);
@@ -63,7 +70,8 @@ private:
 
 class NativeGameFrame final : public GameFrame {
 public:
-    NativeGameFrame(NativeGameBindings&, void* client, void* level, std::uint64_t epoch);
+    NativeGameFrame(NativeGameBindings&, void* client, void* level, std::uint64_t epoch,
+                    const std::shared_ptr<WorldSession>&);
     std::optional<std::uint64_t> localPlayerId() const override { return localId_; }
     const std::vector<std::uint64_t>& entityIds() override;
     bool contains(std::uint64_t) override;
